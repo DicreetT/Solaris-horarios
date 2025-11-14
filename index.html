@@ -444,34 +444,6 @@
         font-size: 0.9rem;
         font-family: inherit;
       }
-
-      .rpe-card {
-        margin-top: 8px;
-        padding: 8px;
-        background: #fff;
-        border-radius: 12px;
-        border: 1px solid #ddd;
-        font-size: 0.8rem;
-      }
-
-      .rpe-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        margin-top: 4px;
-      }
-
-      .rpe-chip {
-        border-radius: 999px;
-        border: 1px solid #ddd;
-        padding: 2px 8px;
-        font-size: 0.75rem;
-      }
-
-      .rpe-chip-ideal {
-        border-color: #22c55e;
-        background: #dcfce7;
-      }
     </style>
 
     <!-- React + ReactDOM + Babel (para poder escribir JSX sin build) -->
@@ -530,11 +502,6 @@
         return `${y}-${m}-${d}`;
       }
 
-      function fromDateKey(key) {
-        const [y, m, d] = key.split("-").map(Number);
-        return new Date(y, m - 1, d);
-      }
-
       function formatDatePretty(date) {
         return date.toLocaleDateString("es-ES", {
           weekday: "long",
@@ -558,43 +525,6 @@
           return { label: "Vacaciones (pendiente)", className: "status-vacation" };
         if (status === "present") return { label: "Presente", className: "status-present" };
         return null;
-      }
-
-      function RPECard({ min = 2, max = 4 }) {
-        const chips = [
-          { value: "0", text: "0: Sin esfuerzo (sentado)" },
-          { value: "1-2", text: "1–2: Muy fácil, respiras igual" },
-          { value: "3-4", text: "3–4: Suave, notas movimiento" },
-          { value: "5-6", text: "5–6: Moderado, respiras más profundo" },
-          { value: "7-8", text: "7–8: Intenso, conversación cortada" },
-          { value: "9-10", text: "9–10: Máximo (no usar aquí)" },
-        ];
-
-        return (
-          <div className="rpe-card">
-            <strong>Escala de esfuerzo (RPE)</strong>
-            <p style={{ margin: "4px 0" }}>
-              Ideal: entre <strong>{min}</strong> y <strong>{max}</strong> sobre 10.
-            </p>
-            <div className="rpe-row">
-              {chips.map((chip) => {
-                const isIdeal =
-                  (chip.value === "3-4" && min <= 3 && max >= 4) ||
-                  (chip.value === "1-2" && min <= 2 && max >= 2);
-                return (
-                  <span
-                    key={chip.value}
-                    className={
-                      "rpe-chip" + (isIdeal ? " rpe-chip-ideal" : "")
-                    }
-                  >
-                    {chip.text}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        );
       }
 
       function LoginView({ onSelectUser }) {
@@ -683,6 +613,7 @@
         data,
         onChangeMonth,
         onSelectDate,
+        isAdminView,
       }) {
         const year = monthDate.getFullYear();
         const month = monthDate.getMonth();
@@ -714,10 +645,34 @@
 
         const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
 
-        const getDotForDay = (date, userId) => {
+        const getDotForDay = (date) => {
           const key = toDateKey(date);
           const byDay = data[key];
           if (!byDay) return null;
+
+          // Para admin: resumen del equipo
+          if (isAdminView) {
+            let hasVacation = false;
+            let hasVacationReq = false;
+            let hasAbsence = false;
+            let hasPresent = false;
+
+            USERS.forEach((u) => {
+              const record = byDay[u.id];
+              if (!record) return;
+              if (record.status === "vacation") hasVacation = true;
+              if (record.status === "vacation-request") hasVacationReq = true;
+              if (record.status === "absent") hasAbsence = true;
+              if (record.entry || record.exit) hasPresent = true;
+            });
+
+            if (hasVacation || hasVacationReq) return "vacation";
+            if (hasAbsence) return "absent";
+            if (hasPresent) return "present";
+            return null;
+          }
+
+          // Vista normal: solo el usuario
           const record = byDay[userId];
           if (!record) return null;
           if (record.status === "absent") return "absent";
@@ -778,7 +733,7 @@
                   const isToday = isSameDate(date, today);
                   const isSelected =
                     selectedDate && isSameDate(date, selectedDate);
-                  const dot = getDotForDay(date, userId);
+                  const dot = getDotForDay(date);
 
                   let badgeClass = "";
                   if (dot === "present") badgeClass = "day-badge";
@@ -833,8 +788,88 @@
 
         const key = toDateKey(date);
         const byDay = data[key] || {};
-        const record = byDay[user.id] || {};
 
+        // --- Vista ADMIN: resumen de todo el equipo ---
+        if (isAdminView) {
+          return (
+            <div className="day-card">
+              <h3>Resumen del día</h3>
+              <div className="day-date">{formatDatePretty(date)}</div>
+
+              {USERS.map((u) => {
+                const record = byDay[u.id] || {};
+                const statusProps = getStatusBadgeProps(record.status);
+                return (
+                  <div
+                    key={u.id}
+                    style={{
+                      borderTop: "1px solid #eee",
+                      paddingTop: 6,
+                      marginTop: 6,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <strong>{u.name}</strong>
+                      {statusProps && (
+                        <div
+                          className={
+                            "status-tag " + statusProps.className
+                          }
+                        >
+                          {statusProps.label}
+                        </div>
+                      )}
+                    </div>
+                    <div className="field-label">Entrada</div>
+                    <div className="field-value">
+                      {record.entry || (
+                        <span className="small-muted">No registrada</span>
+                      )}
+                    </div>
+                    <div className="field-label">Salida</div>
+                    <div className="field-value">
+                      {record.exit || (
+                        <span className="small-muted">No registrada</span>
+                      )}
+                    </div>
+                    {record.note && (
+                      <>
+                        <div className="field-label">Nota</div>
+                        <div className="field-value">{record.note}</div>
+                      </>
+                    )}
+                    {record.status === "vacation-request" && (
+                      <div style={{ marginTop: 4 }}>
+                        <button
+                          type="button"
+                          className="btn btn-small btn-primary"
+                          onClick={() => onApproveVacation(u.id)}
+                        >
+                          Aprobar vacaciones
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <p className="small-muted" style={{ marginTop: 8 }}>
+                Los cambios de entrada/salida, ausencias y notas los hace cada
+                persona desde su propio usuario. Aquí solo puedes aprobar
+                vacaciones y revisar.
+              </p>
+            </div>
+          );
+        }
+
+        // --- Vista USUARIO normal ---
+        const record = byDay[user.id] || {};
         const statusProps = getStatusBadgeProps(record.status);
 
         return (
@@ -908,21 +943,8 @@
                     Solicitar vacaciones
                   </button>
                 </div>
-                {isAdminView && record.status === "vacation-request" && (
-                  <div style={{ marginTop: 6 }}>
-                    <button
-                      className="btn btn-small btn-primary"
-                      type="button"
-                      onClick={onApproveVacation}
-                    >
-                      Aprobar vacaciones
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
-
-            <RPECard min={1} max={3} />
           </div>
         );
       }
@@ -1104,7 +1126,7 @@
                   <h1 style={{ fontSize: "1.3rem" }}>Solaris · Control horario</h1>
                   <p className="subtitle">
                     {isAdmin
-                      ? "Vista de administración"
+                      ? "Vista de administración (equipo completo)"
                       : "Registro diario de jornada y ausencias"}
                   </p>
                   <div className="pill">
@@ -1147,6 +1169,7 @@
                   data={data}
                   onChangeMonth={setMonthDate}
                   onSelectDate={setSelectedDate}
+                  isAdminView={isAdmin}
                 />
                 {isAdmin && <AdminExportView data={data} />}
               </div>
@@ -1183,8 +1206,8 @@
                       status: "vacation-request",
                     }))
                   }
-                  onApproveVacation={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
+                  onApproveVacation={(userId) =>
+                    updateRecord(selectedDate, userId, (r) => ({
                       ...r,
                       status: "vacation",
                     }))
