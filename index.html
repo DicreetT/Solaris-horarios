@@ -1,1209 +1,263 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Control horario Solaris</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-    <!-- Estilos básicos, responsive y un poquito cute -->
-    <style>
-      :root {
-        --primary: #ffb347;
-        --primary-dark: #ff9933;
-        --bg: #fff8ee;
-        --card-bg: #ffffff;
-        --border: #222222;
-        --text: #222222;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        background: radial-gradient(circle at top, #fff3d9, #ffe7c7, #fdddc0);
-        color: var(--text);
-        min-height: 100vh;
-        display: flex;
-        justify-content: center;
-        padding: 16px;
-      }
-
-      #root {
-        max-width: 960px;
-        width: 100%;
-      }
-
-      .app-card {
-        background: var(--bg);
-        border-radius: 20px;
-        border: 2px solid var(--border);
-        box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.2);
-        padding: 16px;
-      }
-
-      @media (min-width: 768px) {
-        .app-card {
-          padding: 24px 28px;
-        }
-      }
-
-      h1,
-      h2,
-      h3 {
-        margin: 0;
-      }
-
-      .app-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-
-      .logo-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .fake-logo {
-        width: 40px;
-        height: 40px;
-        border-radius: 999px;
-        background: radial-gradient(circle at top, #fff2cc, #ffb347);
-        border: 2px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 800;
-      }
-
-      .subtitle {
-        font-size: 0.9rem;
-        color: #555;
-      }
-
-      .current-user-tag {
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: #fff;
-        font-size: 0.8rem;
-      }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: #fffbe6;
-        font-size: 0.8rem;
-        margin-top: 4px;
-      }
-
-      .tag {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 2px 8px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        font-size: 0.7rem;
-      }
-
-      button {
-        font-family: inherit;
-      }
-
-      .btn {
-        border-radius: 999px;
-        border: 2px solid var(--border);
-        padding: 8px 14px;
-        font-size: 0.9rem;
-        font-weight: 600;
-        cursor: pointer;
-        background: #fff;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .btn-primary {
-        background: var(--primary);
-      }
-
-      .btn-primary:hover {
-        background: var(--primary-dark);
-      }
-
-      .btn-ghost {
-        background: transparent;
-      }
-
-      .btn-full {
-        width: 100%;
-        justify-content: center;
-      }
-
-      .btn-small {
-        padding: 6px 10px;
-        font-size: 0.8rem;
-      }
-
-      .avatar-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 12px;
-      }
-
-      @media (min-width: 480px) {
-        .avatar-grid {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-      }
-
-      .avatar-card {
-        border-radius: 18px;
-        border: 2px solid var(--border);
-        background: #ffffff;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 6px;
-        cursor: pointer;
-        transition: transform 0.08s ease, box-shadow 0.08s ease;
-      }
-
-      .avatar-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2);
-      }
-
-      .avatar-circle {
-        width: 42px;
-        height: 42px;
-        border-radius: 999px;
-        border: 2px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 1.1rem;
-        color: #222;
-      }
-
-      .avatar-name {
-        font-size: 0.9rem;
-        font-weight: 600;
-      }
-
-      .avatar-role {
-        font-size: 0.7rem;
-        color: #666;
-      }
-
-      .separator {
-        height: 1px;
-        background: #ddd;
-        margin: 12px 0;
-      }
-
-      .layout {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      @media (min-width: 768px) {
-        .layout {
-          flex-direction: row;
-          align-items: flex-start;
-        }
-      }
-
-      .calendar-card,
-      .day-card {
-        border-radius: 16px;
-        border: 2px solid var(--border);
-        background: var(--card-bg);
-        padding: 12px;
-      }
-
-      .calendar-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
-      }
-
-      .calendar-grid {
-        display: grid;
-        grid-template-columns: repeat(7, minmax(0, 1fr));
-        gap: 4px;
-        font-size: 0.75rem;
-      }
-
-      .day-name {
-        text-align: center;
-        font-weight: 600;
-      }
-
-      .day-cell {
-        height: 34px;
-        border-radius: 10px;
-        border: 1px solid #ccc;
-        background: #fff;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        position: relative;
-      }
-
-      .day-cell.empty {
-        background: transparent;
-        border: none;
-        cursor: default;
-      }
-
-      .day-cell.today {
-        border-color: var(--primary-dark);
-        box-shadow: 0 0 0 2px rgba(255, 153, 51, 0.4);
-        font-weight: 700;
-      }
-
-      .day-cell.selected {
-        background: var(--primary);
-        border-color: var(--border);
-      }
-
-      .day-badge {
-        position: absolute;
-        bottom: 3px;
-        right: 3px;
-        width: 6px;
-        height: 6px;
-        border-radius: 999px;
-        background: #22c55e;
-      }
-
-      .day-badge-absent {
-        background: #ef4444;
-      }
-
-      .day-badge-vacation {
-        background: #3b82f6;
-      }
-
-      .day-card h3 {
-        margin-bottom: 4px;
-      }
-
-      .day-date {
-        font-size: 0.8rem;
-        color: #666;
-        margin-bottom: 8px;
-      }
-
-      .status-tag {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 3px 8px;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        border: 1px solid var(--border);
-        margin-bottom: 6px;
-      }
-
-      .status-present {
-        background: #e0ffe8;
-      }
-
-      .status-absent {
-        background: #ffe4e6;
-      }
-
-      .status-vacation {
-        background: #dbeafe;
-      }
-
-      .field-label {
-        font-size: 0.8rem;
-        font-weight: 600;
-        margin-top: 4px;
-      }
-
-      .field-value {
-        font-size: 0.9rem;
-        margin-bottom: 4px;
-      }
-
-      .field-note {
-        font-size: 0.75rem;
-        color: #666;
-      }
-
-      .buttons-column {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 8px;
-      }
-
-      .note-input {
-        width: 100%;
-        border-radius: 10px;
-        border: 1px solid #ccc;
-        padding: 6px 8px;
-        font-size: 0.85rem;
-        font-family: inherit;
-        resize: vertical;
-        min-height: 40px;
-        max-height: 120px;
-      }
-
-      .panel {
-        border-radius: 12px;
-        border: 1px dashed #bbb;
-        padding: 8px;
-        margin-top: 6px;
-        background: #fffdf6;
-        font-size: 0.8rem;
-      }
-
-      .flex-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .export-box {
-        margin-top: 10px;
-        padding: 8px;
-        border-radius: 12px;
-        border: 1px dashed #aaa;
-        background: #f8fafc;
-        font-size: 0.8rem;
-      }
-
-      .small-muted {
-        font-size: 0.75rem;
-        color: #666;
-      }
-
-      /* Dialog simple */
-      .dialog-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.45);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 20;
-      }
-
-      .dialog-paper {
-        max-width: 360px;
-        width: 100%;
-        background: #ffffff;
-        border-radius: 16px;
-        border: 2px solid var(--border);
-        box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.25);
-        padding: 16px;
-      }
-
-      .dialog-title {
-        font-size: 1.1rem;
-        font-weight: 700;
-        margin-bottom: 4px;
-      }
-
-      .dialog-text {
-        font-size: 0.85rem;
-        color: #555;
-        margin-bottom: 10px;
-      }
-
-      .input {
-        width: 100%;
-        border-radius: 10px;
-        border: 1px solid #ccc;
-        padding: 6px 8px;
-        font-size: 0.9rem;
-        font-family: inherit;
-      }
-
-      .rpe-card {
-        margin-top: 8px;
-        padding: 8px;
-        background: #fff;
-        border-radius: 12px;
-        border: 1px solid #ddd;
-        font-size: 0.8rem;
-      }
-
-      .rpe-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        margin-top: 4px;
-      }
-
-      .rpe-chip {
-        border-radius: 999px;
-        border: 1px solid #ddd;
-        padding: 2px 8px;
-        font-size: 0.75rem;
-      }
-
-      .rpe-chip-ideal {
-        border-color: #22c55e;
-        background: #dcfce7;
-      }
-    </style>
-
-    <!-- React + ReactDOM + Babel (para poder escribir JSX sin build) -->
-    <script
-      crossorigin
-      src="https://unpkg.com/react@18/umd/react.development.js"
-    ></script>
-    <script
-      crossorigin
-      src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"
-    ></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-
-    <!-- APP EN REACT -->
-    <script type="text/babel">
-      const { useState, useEffect } = React;
-
-      // --- Datos base ---
-      const USERS = [
-        { id: "anabella", name: "Anabella", role: "Operativa" },
-        { id: "esteban", name: "Esteban", role: "Operativo" },
-        { id: "itzi", name: "Itzi", role: "Operativa" },
-        { id: "fer", name: "Fer", role: "Operativo" },
-      ];
-
-      const ADMIN = { id: "admin", name: "Admin Solaris", role: "Admin" };
-
-      // Estructura de un registro por día y persona:
-      // { entry: "08:15", exit: "17:02", status: "present|absent|vacation|vacation-request", note: "texto" }
-
-      const STORAGE_KEY = "solaris_horarios_data_v1";
-
-      function loadData() {
-        try {
-          const raw = localStorage.getItem(STORAGE_KEY);
-          if (!raw) return {};
-          return JSON.parse(raw);
-        } catch (e) {
-          console.error("Error loading data", e);
-          return {};
-        }
-      }
-
-      function saveData(data) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      }
-
-      // Helpers fecha
-      function toDateKey(date) {
-        const y = date.getFullYear();
-        const m = String(date.getMonth() + 1).padStart(2, "0");
-        const d = String(date.getDate()).padStart(2, "0");
-        return `${y}-${m}-${d}`;
-      }
-
-      function fromDateKey(key) {
-        const [y, m, d] = key.split("-").map(Number);
-        return new Date(y, m - 1, d);
-      }
-
-      function formatDatePretty(date) {
-        return date.toLocaleDateString("es-ES", {
-          weekday: "long",
-          day: "2-digit",
-          month: "long",
-          year: "numeric",
-        });
-      }
-
-      function formatTimeNow() {
-        const now = new Date();
-        const h = String(now.getHours()).padStart(2, "0");
-        const m = String(now.getMinutes()).padStart(2, "0");
-        return `${h}:${m}`;
-      }
-
-      function getStatusBadgeProps(status) {
-        if (status === "absent") return { label: "Ausencia", className: "status-absent" };
-        if (status === "vacation") return { label: "Vacaciones", className: "status-vacation" };
-        if (status === "vacation-request")
-          return { label: "Vacaciones (pendiente)", className: "status-vacation" };
-        if (status === "present") return { label: "Presente", className: "status-present" };
-        return null;
-      }
-
-      function RPECard({ min = 2, max = 4 }) {
-        const chips = [
-          { value: "0", text: "0: Sin esfuerzo (sentado)" },
-          { value: "1-2", text: "1–2: Muy fácil, respiras igual" },
-          { value: "3-4", text: "3–4: Suave, notas movimiento" },
-          { value: "5-6", text: "5–6: Moderado, respiras más profundo" },
-          { value: "7-8", text: "7–8: Intenso, conversación cortada" },
-          { value: "9-10", text: "9–10: Máximo (no usar aquí)" },
-        ];
-
-        return (
-          <div className="rpe-card">
-            <strong>Escala de esfuerzo (RPE)</strong>
-            <p style={{ margin: "4px 0" }}>
-              Ideal: entre <strong>{min}</strong> y <strong>{max}</strong> sobre 10.
-            </p>
-            <div className="rpe-row">
-              {chips.map((chip) => {
-                const isIdeal =
-                  (chip.value === "3-4" && min <= 3 && max >= 4) ||
-                  (chip.value === "1-2" && min <= 2 && max >= 2);
-                return (
-                  <span
-                    key={chip.value}
-                    className={
-                      "rpe-chip" + (isIdeal ? " rpe-chip-ideal" : "")
-                    }
-                  >
-                    {chip.text}
-                  </span>
-                );
-              })}
+<head>
+  <meta charset="UTF-8" />
+  <title>Solaris · Control horario</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Pantalla de selección de usuario -->
+    <section id="user-select" class="panel active">
+      <header class="app-header">
+        <h1>Solaris · Control horario</h1>
+        <p class="subtitle">Elige tu usuario para fichar o gestionar el día.</p>
+      </header>
+
+      <div class="user-grid">
+        <!-- Anabella -->
+        <button class="user-card" data-user="anabella">
+          <div class="avatar avatar-female-glasses">
+            <span>👓</span>
+          </div>
+          <div class="user-info">
+            <h2>Anabella</h2>
+            <p>Operativa · Producción / logística</p>
+          </div>
+        </button>
+
+        <!-- Fer -->
+        <button class="user-card" data-user="fer">
+          <div class="avatar avatar-male-young">
+            <span>🙂</span>
+          </div>
+          <div class="user-info">
+            <h2>Fer</h2>
+            <p>Operativo · Ventas</p>
+          </div>
+        </button>
+
+        <!-- Esteban -->
+        <button class="user-card" data-user="esteban">
+          <div class="avatar avatar-male-laptop">
+            <span>💻</span>
+          </div>
+          <div class="user-info">
+            <h2>Esteban</h2>
+            <p>Operativo · Sistemas / soporte</p>
+          </div>
+        </button>
+
+        <!-- Itzi -->
+        <button class="user-card" data-user="itzi">
+          <div class="avatar avatar-female-phone">
+            <span>📱</span>
+          </div>
+          <div class="user-info">
+            <h2>Itzi</h2>
+            <p>Operativa · Atención / clientes</p>
+          </div>
+        </button>
+
+        <!-- ELA (admin) -->
+        <button class="user-card admin-card" data-user="admin">
+          <div class="avatar avatar-admin">
+            <span>📒</span>
+          </div>
+          <div class="user-info">
+            <h2>ELA (Admin)</h2>
+            <p>Resumen mensual · ausencias · vacaciones</p>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Panel trabajador -->
+    <section id="worker-dashboard" class="panel">
+      <header class="top-bar">
+        <button id="back-to-users" class="back-btn">← Volver</button>
+        <div class="top-bar-center">
+          <div class="top-user">
+            <div class="avatar avatar-small" id="worker-avatar"></div>
+            <div>
+              <h2 id="worker-name"></h2>
+              <p id="worker-role" class="small-muted"></p>
             </div>
           </div>
-        );
-      }
+        </div>
+        <div class="top-bar-right">
+          <span id="current-month-label" class="month-label"></span>
+        </div>
+      </header>
 
-      function LoginView({ onSelectUser }) {
-        return (
-          <div className="app-card">
-            <div className="app-header">
-              <div className="logo-title">
-                <div className="fake-logo">S</div>
-                <div>
-                  <h1 style={{ fontSize: "1.4rem" }}>Solaris · Control horario</h1>
-                  <p className="subtitle">
-                    Elige tu usuario para fichar entrada/salida o gestionar ausencias.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="separator" />
-
-            <p style={{ fontSize: "0.9rem", marginBottom: 6 }}>
-              👇 Toca tu tarjeta para entrar:
-            </p>
-
-            <div className="avatar-grid">
-              {USERS.map((u) => (
-                <button
-                  key={u.id}
-                  className="avatar-card"
-                  onClick={() => onSelectUser(u)}
-                  type="button"
-                >
-                  <div
-                    className="avatar-circle"
-                    style={{
-                      background:
-                        u.id === "anabella"
-                          ? "#fde68a"
-                          : u.id === "esteban"
-                          ? "#bfdbfe"
-                          : u.id === "itzi"
-                          ? "#fecaca"
-                          : "#bbf7d0",
-                    }}
-                  >
-                    {u.name.charAt(0)}
-                  </div>
-                  <div className="avatar-name">{u.name}</div>
-                  <div className="avatar-role">{u.role}</div>
-                </button>
-              ))}
-
-              <button
-                className="avatar-card"
-                onClick={() => onSelectUser(ADMIN)}
-                type="button"
-              >
-                <div
-                  className="avatar-circle"
-                  style={{
-                    background: "#e5e7eb",
-                  }}
-                >
-                  ★
-                </div>
-                <div className="avatar-name">Admin</div>
-                <div className="avatar-role">Ver todo / exportar</div>
-              </button>
-            </div>
-
-            <div className="panel">
-              <strong>Cómo funciona:</strong>
-              <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
-                <li>El equipo ficha entrada y salida desde esta pantalla.</li>
-                <li>También pueden marcar ausencias y vacaciones.</li>
-                <li>El Admin puede ver todo y descargar un Excel/CSV.</li>
-              </ul>
+      <main class="layout">
+        <!-- Calendario trabajador -->
+        <section class="card calendar-card">
+          <div class="card-header">
+            <h3>Calendario</h3>
+            <div class="month-controls">
+              <button id="worker-prev-month" class="icon-btn">◀</button>
+              <button id="worker-today" class="small-btn">Hoy</button>
+              <button id="worker-next-month" class="icon-btn">▶</button>
             </div>
           </div>
-        );
-      }
+          <div class="calendar-legend">
+            <span><span class="dot worked"></span> Día trabajado</span>
+            <span><span class="dot absence"></span> Ausencia</span>
+            <span><span class="dot vacation-pending"></span> Vacaciones (pend.)</span>
+            <span><span class="dot vacation-approved"></span> Vacaciones (ok)</span>
+          </div>
+          <div id="worker-calendar" class="calendar-grid"></div>
+        </section>
 
-      function CalendarGrid({
-        monthDate,
-        selectedDate,
-        userId,
-        data,
-        onChangeMonth,
-        onSelectDate,
-      }) {
-        const year = monthDate.getFullYear();
-        const month = monthDate.getMonth();
-        const firstDay = new Date(year, month, 1);
-        const firstWeekday = (firstDay.getDay() + 6) % 7; // Lunes = 0
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        <!-- Detalle del día + acciones -->
+        <section class="card detail-card">
+          <div class="card-header">
+            <h3 id="selected-day-label">Selecciona un día</h3>
+          </div>
 
-        const today = new Date();
-        const isSameDate = (d1, d2) =>
-          d1.getFullYear() === d2.getFullYear() &&
-          d1.getMonth() === d2.getMonth() &&
-          d1.getDate() === d2.getDate();
+          <div class="day-actions">
+            <button id="btn-clock-in" class="primary-btn">Fichar entrada</button>
+            <button id="btn-clock-out" class="secondary-btn">Fichar salida</button>
+          </div>
 
-        const weeks = [];
-        let currentDay = 1 - firstWeekday;
-        while (currentDay <= daysInMonth) {
-          const row = [];
-          for (let i = 0; i < 7; i++) {
-            if (currentDay < 1 || currentDay > daysInMonth) {
-              row.push(null);
-            } else {
-              const date = new Date(year, month, currentDay);
-              row.push(date);
-            }
-            currentDay++;
-          }
-          weeks.push(row);
-        }
+          <div class="day-actions">
+            <button id="btn-mark-absence" class="outline-btn">Marcar ausencia</button>
+            <button id="btn-request-vacation" class="outline-btn pink">
+              Solicitar vacaciones
+            </button>
+          </div>
 
-        const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
+          <div class="day-summary">
+            <h4>Registros del día</h4>
+            <ul id="day-records-list" class="records-list"></ul>
+          </div>
+        </section>
+      </main>
+    </section>
 
-        const getDotForDay = (date, userId) => {
-          const key = toDateKey(date);
-          const byDay = data[key];
-          if (!byDay) return null;
-          const record = byDay[userId];
-          if (!record) return null;
-          if (record.status === "absent") return "absent";
-          if (record.status === "vacation" || record.status === "vacation-request")
-            return "vacation";
-          if (record.entry || record.exit) return "present";
-          return null;
-        };
-
-        return (
-          <div className="calendar-card">
-            <div className="calendar-header">
-              <button
-                type="button"
-                className="btn btn-small btn-ghost"
-                onClick={() =>
-                  onChangeMonth(new Date(year, month - 1, 1))
-                }
-              >
-                ←
-              </button>
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontWeight: 700 }}>
-                  {monthDate.toLocaleDateString("es-ES", {
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </div>
-                <div className="small-muted">
-                  Toca un día para ver o editar sus datos.
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn btn-small btn-ghost"
-                onClick={() =>
-                  onChangeMonth(new Date(year, month + 1, 1))
-                }
-              >
-                →
-              </button>
+    <!-- Panel ADMIN -->
+    <section id="admin-dashboard" class="panel">
+      <header class="top-bar">
+        <button id="back-to-users-admin" class="back-btn">← Volver</button>
+        <div class="top-bar-center">
+          <div class="top-user">
+            <div class="avatar avatar-small avatar-admin-small">
+              <span>📒</span>
             </div>
-
-            <div className="calendar-grid">
-              {dayNames.map((n) => (
-                <div key={n} className="day-name">
-                  {n}
-                </div>
-              ))}
-              {weeks.map((week, wi) =>
-                week.map((date, di) => {
-                  if (!date) {
-                    return (
-                      <div key={`${wi}-${di}`} className="day-cell empty" />
-                    );
-                  }
-
-                  const isToday = isSameDate(date, today);
-                  const isSelected =
-                    selectedDate && isSameDate(date, selectedDate);
-                  const dot = getDotForDay(date, userId);
-
-                  let badgeClass = "";
-                  if (dot === "present") badgeClass = "day-badge";
-                  if (dot === "absent") badgeClass = "day-badge day-badge-absent";
-                  if (dot === "vacation")
-                    badgeClass = "day-badge day-badge-vacation";
-
-                  return (
-                    <button
-                      key={`${wi}-${di}`}
-                      type="button"
-                      className={
-                        "day-cell" +
-                        (isToday ? " today" : "") +
-                        (isSelected ? " selected" : "")
-                      }
-                      onClick={() => onSelectDate(date)}
-                    >
-                      {date.getDate()}
-                      {dot && <span className={badgeClass} />}
-                    </button>
-                  );
-                })
-              )}
+            <div>
+              <h2>ELA · Panel administrador</h2>
+              <p class="small-muted">Vista general del equipo</p>
             </div>
           </div>
-        );
-      }
+        </div>
+        <div class="top-bar-right">
+          <span id="admin-month-label" class="month-label"></span>
+        </div>
+      </header>
 
-      function DayDetail({
-        user,
-        date,
-        data,
-        onMarkEntry,
-        onMarkExit,
-        onMarkAbsent,
-        onRequestVacation,
-        onApproveVacation,
-        onUpdateNote,
-        isAdminView,
-      }) {
-        if (!date) {
-          return (
-            <div className="day-card">
-              <h3>Sin día seleccionado</h3>
-              <p className="small-muted">
-                Elige un día del calendario para ver o registrar información.
-              </p>
-            </div>
-          );
-        }
-
-        const key = toDateKey(date);
-        const byDay = data[key] || {};
-        const record = byDay[user.id] || {};
-
-        const statusProps = getStatusBadgeProps(record.status);
-
-        return (
-          <div className="day-card">
-            <h3>{user.name}</h3>
-            <div className="day-date">{formatDatePretty(date)}</div>
-
-            {statusProps && (
-              <div className={"status-tag " + statusProps.className}>
-                {statusProps.label}
-              </div>
-            )}
-
-            <div style={{ marginTop: 6 }}>
-              <div className="field-label">Entrada</div>
-              <div className="field-value">
-                {record.entry || <span className="small-muted">No registrada</span>}
-              </div>
-
-              <div className="field-label">Salida</div>
-              <div className="field-value">
-                {record.exit || <span className="small-muted">No registrada</span>}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 6 }}>
-              <div className="field-label">Nota / motivo (opcional)</div>
-              <textarea
-                className="note-input"
-                value={record.note || ""}
-                onChange={(e) => onUpdateNote(e.target.value)}
-                placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
-              />
-            </div>
-
-            <div className="buttons-column">
-              <button
-                className="btn btn-primary btn-full"
-                type="button"
-                onClick={onMarkEntry}
-              >
-                Fichar entrada ({formatTimeNow()})
-              </button>
-              <button
-                className="btn btn-full"
-                type="button"
-                onClick={onMarkExit}
-              >
-                Fichar salida ({formatTimeNow()})
-              </button>
-
-              <div className="panel">
-                <strong>Ausencias y vacaciones</strong>
-                <p className="field-note">
-                  Úsalo para días completos. Si solo fue media jornada, explícalo
-                  en la nota.
-                </p>
-                <div className="flex-row">
-                  <button
-                    className="btn btn-small"
-                    type="button"
-                    onClick={onMarkAbsent}
-                  >
-                    Marcar ausencia
-                  </button>
-                  <button
-                    className="btn btn-small"
-                    type="button"
-                    onClick={onRequestVacation}
-                  >
-                    Solicitar vacaciones
-                  </button>
-                </div>
-                {isAdminView && record.status === "vacation-request" && (
-                  <div style={{ marginTop: 6 }}>
-                    <button
-                      className="btn btn-small btn-primary"
-                      type="button"
-                      onClick={onApproveVacation}
-                    >
-                      Aprobar vacaciones
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <RPECard min={1} max={3} />
-          </div>
-        );
-      }
-
-      function AdminExportView({ data }) {
-        const [showDialog, setShowDialog] = useState(false);
-        const [csvGenerated, setCsvGenerated] = useState("");
-
-        function buildCsv() {
-          const rows = [
-            [
-              "Fecha",
-              "Persona",
-              "Entrada",
-              "Salida",
-              "Estado",
-              "Nota",
-            ],
-          ];
-
-          const userMap = Object.fromEntries(
-            [...USERS, ADMIN].map((u) => [u.id, u.name])
-          );
-
-          const sortedDates = Object.keys(data).sort();
-          for (const dateKey of sortedDates) {
-            const dayData = data[dateKey];
-            for (const userId of Object.keys(dayData)) {
-              const r = dayData[userId];
-              rows.push([
-                dateKey,
-                userMap[userId] || userId,
-                r.entry || "",
-                r.exit || "",
-                r.status || "",
-                (r.note || "").replace(/\n/g, " "),
-              ]);
-            }
-          }
-
-          const csv = rows
-            .map((row) =>
-              row
-                .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                .join(",")
-            )
-            .join("\n");
-
-          setCsvGenerated(csv);
-          setShowDialog(true);
-        }
-
-        function downloadCsv() {
-          const blob = new Blob([csvGenerated], {
-            type: "text/csv;charset=utf-8;",
-          });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "solaris-horarios.csv";
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }
-
-        return (
-          <>
-            <div className="export-box">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                Herramientas de Admin
-              </div>
-              <p className="small-muted">
-                Aquí puedes descargar todo el historial en formato CSV (se abre
-                en Excel / Google Sheets).
-              </p>
-              <button
-                type="button"
-                className="btn btn-small btn-primary"
-                onClick={buildCsv}
-              >
-                Descargar CSV
-              </button>
-            </div>
-
-            {showDialog && (
-              <div className="dialog-backdrop">
-                <div className="dialog-paper">
-                  <div className="dialog-title">Exportar CSV</div>
-                  <div className="dialog-text">
-                    Toca “Descargar” para guardar el archivo. Si quieres verlo
-                    primero, puedes copiarlo desde el cuadro de abajo.
-                  </div>
-                  <textarea
-                    readOnly
-                    className="note-input"
-                    style={{ maxHeight: 150 }}
-                    value={csvGenerated}
-                  />
-                  <div
-                    className="flex-row"
-                    style={{ marginTop: 8, justifyContent: "flex-end" }}
-                  >
-                    <button
-                      type="button"
-                      className="btn btn-small btn-ghost"
-                      onClick={() => setShowDialog(false)}
-                    >
-                      Cerrar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-small btn-primary"
-                      onClick={downloadCsv}
-                    >
-                      Descargar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        );
-      }
-
-      function App() {
-        const [currentUser, setCurrentUser] = useState(null);
-        const [data, setData] = useState({});
-        const [monthDate, setMonthDate] = useState(() => new Date());
-        const [selectedDate, setSelectedDate] = useState(() => new Date());
-
-        useEffect(() => {
-          setData(loadData());
-        }, []);
-
-        useEffect(() => {
-          saveData(data);
-        }, [data]);
-
-        function handleSelectUser(user) {
-          setCurrentUser(user);
-          setSelectedDate(new Date());
-          setMonthDate(new Date());
-        }
-
-        function handleLogout() {
-          setCurrentUser(null);
-        }
-
-        function updateRecord(date, userId, updater) {
-          const key = toDateKey(date);
-          setData((prev) => {
-            const prevDay = prev[key] || {};
-            const prevRecord = prevDay[userId] || {};
-            const nextRecord = updater(prevRecord);
-            return {
-              ...prev,
-              [key]: {
-                ...prevDay,
-                [userId]: nextRecord,
-              },
-            };
-          });
-        }
-
-        if (!currentUser) {
-          return <LoginView onSelectUser={handleSelectUser} />;
-        }
-
-        const isAdmin = currentUser.id === "admin";
-        const effectiveUser = isAdmin ? ADMIN : currentUser;
-
-        return (
-          <div className="app-card">
-            <div className="app-header">
-              <div className="logo-title">
-                <div className="fake-logo">S</div>
-                <div>
-                  <h1 style={{ fontSize: "1.3rem" }}>Solaris · Control horario</h1>
-                  <p className="subtitle">
-                    {isAdmin
-                      ? "Vista de administración"
-                      : "Registro diario de jornada y ausencias"}
-                  </p>
-                  <div className="pill">
-                    <span
-                      className="tag"
-                      style={{
-                        background: isAdmin ? "#fee2e2" : "#dcfce7",
-                        marginRight: 6,
-                      }}
-                    >
-                      {isAdmin ? "Admin" : "Usuario"}
-                    </span>
-                    {isAdmin
-                      ? "Puede ver todo y exportar CSV"
-                      : "Solo tus propios registros en este dispositivo"}
-                  </div>
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div className="current-user-tag">
-                  {currentUser.name}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-small btn-ghost"
-                  onClick={handleLogout}
-                  style={{ marginTop: 4 }}
-                >
-                  Cambiar usuario
-                </button>
-              </div>
-            </div>
-
-            <div className="layout">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <CalendarGrid
-                  monthDate={monthDate}
-                  selectedDate={selectedDate}
-                  userId={effectiveUser.id}
-                  data={data}
-                  onChangeMonth={setMonthDate}
-                  onSelectDate={setSelectedDate}
-                />
-                {isAdmin && <AdminExportView data={data} />}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <DayDetail
-                  user={effectiveUser}
-                  date={selectedDate}
-                  data={data}
-                  isAdminView={isAdmin}
-                  onMarkEntry={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      entry: formatTimeNow(),
-                      status: r.status || "present",
-                    }))
-                  }
-                  onMarkExit={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      exit: formatTimeNow(),
-                      status: r.status || "present",
-                    }))
-                  }
-                  onMarkAbsent={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      status: "absent",
-                    }))
-                  }
-                  onRequestVacation={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      status: "vacation-request",
-                    }))
-                  }
-                  onApproveVacation={() =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      status: "vacation",
-                    }))
-                  }
-                  onUpdateNote={(note) =>
-                    updateRecord(selectedDate, effectiveUser.id, (r) => ({
-                      ...r,
-                      note,
-                    }))
-                  }
-                />
-              </div>
+      <main class="layout layout-admin">
+        <!-- Calendario general -->
+        <section class="card calendar-card">
+          <div class="card-header">
+            <h3>Calendario del equipo</h3>
+            <div class="month-controls">
+              <button id="admin-prev-month" class="icon-btn">◀</button>
+              <button id="admin-today" class="small-btn">Hoy</button>
+              <button id="admin-next-month" class="icon-btn">▶</button>
             </div>
           </div>
-        );
-      }
+          <div class="calendar-legend">
+            <span><span class="dot worked"></span> Día trabajado</span>
+            <span><span class="dot absence"></span> Ausencia</span>
+            <span><span class="dot vacation-pending"></span> Vacaciones (pend.)</span>
+            <span><span class="dot vacation-approved"></span> Vacaciones (aprob.)</span>
+          </div>
+          <div id="admin-calendar" class="calendar-grid"></div>
 
-      const root = ReactDOM.createRoot(document.getElementById("root"));
-      root.render(<App />);
-    </script>
-  </body>
+          <div class="admin-day-info">
+            <h4 id="admin-selected-day-label">Haz clic en un día para ver detalle</h4>
+            <ul id="admin-day-detail" class="records-list small"></ul>
+          </div>
+        </section>
+
+        <!-- Solicitudes y ausencias -->
+        <section class="card side-card">
+          <div class="card-header">
+            <h3>Solicitudes de vacaciones</h3>
+          </div>
+          <div id="vacation-requests" class="requests-list empty-state">
+            <p class="small-muted">No hay solicitudes pendientes.</p>
+          </div>
+
+          <div class="card-header space-top">
+            <h3>Ausencias registradas</h3>
+          </div>
+          <div id="absence-list" class="requests-list empty-state">
+            <p class="small-muted">No hay ausencias registradas todavía.</p>
+          </div>
+
+          <div class="card-footer">
+            <button id="btn-export-csv" class="primary-btn full-width">
+              Descargar reporte en CSV
+            </button>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <!-- Modal AUSENCIA -->
+  <div id="modal-absence" class="modal hidden">
+    <div class="modal-content">
+      <h3>Registrar ausencia</h3>
+      <p class="small-muted">
+        Este registro se guarda solo en Solaris como referencia interna.
+      </p>
+      <label class="field-label">
+        Tipo de ausencia
+        <select id="absence-type">
+          <option value="salud">Salud</option>
+          <option value="personal">Motivo personal</option>
+          <option value="cita">Cita (médica / gestión)</option>
+          <option value="otro">Otro</option>
+        </select>
+      </label>
+      <label class="field-label">
+        Comentario breve
+        <textarea id="absence-note" rows="3" placeholder="Ej.: fiebre, revisión médica, tema familiar..."></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="absence-cancel" class="outline-btn">Cancelar</button>
+        <button id="absence-save" class="primary-btn">Guardar ausencia</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal VACACIONES -->
+  <div id="modal-vacation" class="modal hidden">
+    <div class="modal-content">
+      <h3>Solicitar vacaciones</h3>
+      <p class="small-muted">
+        Esta solicitud quedará marcada como <strong>pendiente</strong> hasta que ELA la apruebe o rechace.
+      </p>
+      <p id="vacation-date-label" class="small-muted"></p>
+      <label class="field-label">
+        Comentario (opcional)
+        <textarea id="vacation-note" rows="3" placeholder="Ej.: Vacaciones, viaje, descanso..."></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="vacation-cancel" class="outline-btn">Cancelar</button>
+        <button id="vacation-save" class="primary-btn pink">Enviar solicitud</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overlay modales -->
+  <div id="modal-overlay" class="modal-overlay hidden"></div>
+
+  <script src="app.js"></script>
+</body>
 </html>
