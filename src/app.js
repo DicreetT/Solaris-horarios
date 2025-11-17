@@ -298,8 +298,9 @@ function CalendarGrid({
   const getDotForDay = (date) => {
     const key = toDateKey(date);
     const byDay = data[key];
+    const isTrainingManager = currentUser?.isTrainingManager;
 
-    // Vista admin: ver resumen del equipo (solo fichajes, ausencias, vacaciones)
+    // 1) Vista ADMIN: resumen del equipo (fichajes / ausencias / vacaciones)
     if (isAdminView) {
       if (!byDay) return null;
       let hasVacation = false;
@@ -322,19 +323,23 @@ function CalendarGrid({
       return null;
     }
 
-    // Vista normal: usuario individual
-    // Si es Esteban (responsable de formación), marcamos también días con solicitudes
-    const isTrainingManager = currentUser?.isTrainingManager;
-
+    // 2) Vista de Esteban (responsable de formación):
+    //    ve puntito morado en todos los días con alguna formación programada
     if (isTrainingManager) {
       const hasTrainingForDay = trainingRequests.some(
         (r) => r.scheduledDateKey === key
       );
-      if (hasTrainingForDay) {
-        return "training";
-      }
+      if (hasTrainingForDay) return "training";
+    } else {
+      // 3) Vista de usuario normal:
+      //    ve puntito morado en los días donde ÉL/ELLA tiene formación
+      const hasMyTrainingForDay = trainingRequests.some(
+        (r) => r.userId === userId && r.scheduledDateKey === key
+      );
+      if (hasMyTrainingForDay) return "training";
     }
 
+    // 4) Dots normales de fichaje / ausencias / vacaciones
     const record = byDay?.[userId];
     if (!record) return null;
     if (record.status === "absent") return "absent";
@@ -363,6 +368,9 @@ function CalendarGrid({
           </div>
           <div className="small-muted">
             Toca un día para ver o editar sus datos.
+          </div>
+          <div className="small-muted">
+            Días con formación → puntito morado en el calendario.
           </div>
         </div>
         <button
