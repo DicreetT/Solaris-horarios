@@ -6,6 +6,15 @@ const { useState, useEffect } = React;
  */
 const USERS = [
   {
+    id: "thalia",
+    name: "Thalia",
+    role: "Admin general",
+    email: "thalia@empresa.com",
+    password: "thalia123",
+    canAdminHours: false,
+    isTrainingManager: false,
+  },
+  {
     id: "anabella",
     name: "Anabella",
     role: "Operativa",
@@ -45,55 +54,55 @@ const USERS = [
 
 /**
  * Data de fichajes en localStorage
- * Estructura:
- *  timeData = {
- *    "2025-02-01": {
- *       "anabella": { entry, exit, status, note },
- *       "esteban": { ... }
- *    },
- *    ...
- *  }
  */
 const STORAGE_KEY_TIMES = "solaris_times_v1";
 
 /**
- * Data de solicitudes de formación en localStorage
- * Estructura:
- *  trainingRequests = [
- *    {
- *      id,
- *      userId,
- *      requestedDateKey,  // día en el que lo pidió
- *      scheduledDateKey,  // día para el que está programado
- *      status: "pending" | "accepted" | "rescheduled",
- *      comments: [
- *        { by: "esteban", text: "¿Te viene bien a las 15:00?", at: "01/02/2025 12:34" },
- *        ...
- *      ]
- *    },
- *    ...
- *  ]
+ * Data de solicitudes de formación
  */
 const STORAGE_KEY_TRAININGS = "solaris_trainings_v1";
 
 /**
- * Data de To-Do en localStorage
- * Estructura:
- *  todos = [
- *    {
- *      id,
- *      title,
- *      description,
- *      createdBy,
- *      assignedTo: [userId],
- *      createdAt,
- *      dueDateKey: "AAAA-MM-DD" | null,
- *      completedBy: [userId]   // quién ya marcó como hecho
- *    },
- *    ...
- *  ]
+ * Data de To-Do
  */
 const STORAGE_KEY_TODOS = "solaris_todos_v1";
+
+/**
+ * Data de solicitudes de reunión
+ * meetingRequests = [
+ *  {
+ *    id,
+ *    createdBy,
+ *    createdAt,
+ *    title,
+ *    description,
+ *    preferredDateKey,
+ *    preferredSlot, // "mañana" | "tarde" | "indiferente"
+ *    participants: [userId],
+ *    status: "pending" | "scheduled" | "rejected",
+ *    scheduledDateKey,
+ *    scheduledTime,
+ *    responseMessage
+ *  }
+ * ]
+ */
+const STORAGE_KEY_MEETINGS = "solaris_meetings_v1";
+
+/**
+ * Data de solicitudes de permiso de ausencia
+ * absenceRequests = [
+ *  {
+ *    id,
+ *    createdBy,
+ *    createdAt,
+ *    dateKey,
+ *    reason,
+ *    status: "pending" | "approved" | "rejected",
+ *    responseMessage
+ *  }
+ * ]
+ */
+const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
 
 function loadTimeData() {
   try {
@@ -140,6 +149,36 @@ function saveTodos(list) {
   localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(list));
 }
 
+function loadMeetingRequests() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_MEETINGS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading meetings", e);
+    return [];
+  }
+}
+
+function saveMeetingRequests(list) {
+  localStorage.setItem(STORAGE_KEY_MEETINGS, JSON.stringify(list));
+}
+
+function loadAbsenceRequests() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ABSENCES);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading absences", e);
+    return [];
+  }
+}
+
+function saveAbsenceRequests(list) {
+  localStorage.setItem(STORAGE_KEY_ABSENCES, JSON.stringify(list));
+}
+
 // Helpers fecha/hora
 function toDateKey(date) {
   const y = date.getFullYear();
@@ -178,7 +217,6 @@ function getStatusBadgeProps(status) {
 
 /**
  * Login por email y contraseña (simulado).
- * Más adelante esto hablará con Supabase Auth.
  */
 function LoginView({ onLogin }) {
   const [email, setEmail] = useState("");
@@ -268,7 +306,8 @@ function LoginView({ onLogin }) {
       </form>
 
       <p className="login-help">
-        (De momento usuarios de prueba: <br />
+        (Usuarios de prueba: <br />
+        <strong>Thalia</strong>: thalia@empresa.com / thalia123 <br />
         <strong>Anabella</strong>: anabella@empresa.com / anabella123 <br />
         <strong>Esteban</strong>: esteban@empresa.com / esteban123 <br />
         <strong>Itzi</strong>: itzi@empresa.com / itzi123 <br />
@@ -362,22 +401,20 @@ function CalendarGrid({
     }
 
     // 2) Vista de Esteban (responsable de formación):
-    //    ve puntito morado en todos los días con alguna formación programada
     if (isTrainingManager) {
       const hasTrainingForDay = trainingRequests.some(
         (r) => r.scheduledDateKey === key
       );
       if (hasTrainingForDay) return "training";
     } else {
-      // 3) Vista de usuario normal:
-      //    ve puntito morado en los días donde ÉL/ELLA tiene formación
+      // 3) Vista de usuario normal: formación propia
       const hasMyTrainingForDay = trainingRequests.some(
         (r) => r.userId === userId && r.scheduledDateKey === key
       );
       if (hasMyTrainingForDay) return "training";
     }
 
-    // 4) Dots normales de fichaje / ausencias / vacaciones
+    // 4) Dots normales
     const record = byDay?.[userId];
     if (!record) return null;
     if (record.status === "absent") return "absent";
@@ -469,7 +506,7 @@ function CalendarGrid({
 }
 
 /**
- * Panel día: vista admin o vista usuario normal (con formación)
+ * Panel día: vista admin o vista usuario normal
  */
 function DayDetail({
   user,
@@ -489,8 +526,26 @@ function DayDetail({
   onAcceptTraining,
   onRescheduleTraining,
   onAddTrainingComment,
+  meetingRequestsForUser,
+  onCreateMeetingRequest,
+  absenceRequestsForDay,
+  onCreateAbsenceRequest,
 }) {
   const [messageDrafts, setMessageDrafts] = useState({});
+  const [meetingFormOpen, setMeetingFormOpen] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingDescription, setMeetingDescription] = useState("");
+  const [meetingPreferredSlot, setMeetingPreferredSlot] =
+    useState("indiferente");
+  const [meetingParticipants, setMeetingParticipants] = useState(() =>
+    user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+  );
+
+  useEffect(() => {
+    setMeetingParticipants(
+      user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+    );
+  }, [user.id]);
 
   if (!date) {
     return (
@@ -513,7 +568,42 @@ function DayDetail({
     setMessageDrafts((prev) => ({ ...prev, [requestId]: "" }));
   }
 
-  // --- Vista ADMIN: resumen de todo el equipo ---
+  function handleToggleParticipant(id) {
+    setMeetingParticipants((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function handleMeetingSubmit(e) {
+    e.preventDefault();
+    const title = meetingTitle.trim();
+    if (!title || meetingParticipants.length === 0) return;
+    const payload = {
+      title,
+      description: meetingDescription.trim(),
+      preferredDateKey: toDateKey(date),
+      preferredSlot: meetingPreferredSlot,
+      participants: meetingParticipants,
+    };
+    onCreateMeetingRequest(payload);
+    setMeetingTitle("");
+    setMeetingDescription("");
+    setMeetingPreferredSlot("indiferente");
+    setMeetingFormOpen(false);
+    setMeetingParticipants(
+      user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+    );
+  }
+
+  function handleSpecialAbsence() {
+    const motivo = window.prompt(
+      "Describe brevemente el motivo del permiso especial para este día:"
+    );
+    if (!motivo || !motivo.trim()) return;
+    onCreateAbsenceRequest(motivo.trim());
+  }
+
+  // --- Vista ADMIN (Anabella gestionando fichajes) ---
   if (isAdminView) {
     return (
       <div className="day-card">
@@ -594,7 +684,7 @@ function DayDetail({
   const record = byDay[user.id] || {};
   const statusProps = getStatusBadgeProps(record.status);
 
-  // --- Formación ---
+  // Formación
   const myTrainingForDay = trainingRequestsForDay.filter(
     (req) => req.userId === user.id
   );
@@ -647,7 +737,7 @@ function DayDetail({
                       </p>
                     )}
 
-                  {/* Chat de comentarios (vista Esteban) */}
+                  {/* Chat formación (Esteban) */}
                   <div className="training-chat">
                     <div className="training-messages">
                       {comments.length === 0 && (
@@ -764,7 +854,7 @@ function DayDetail({
                       </strong>
                     </p>
 
-                    {/* Chat de comentarios (vista persona que solicita) */}
+                    {/* Chat formación (persona solicitante) */}
                     <div className="training-chat">
                       <div className="training-messages">
                         {comments.length === 0 && (
@@ -831,6 +921,103 @@ function DayDetail({
         )
       )}
 
+      {/* Panel de reuniones generales */}
+      <div className="panel" style={{ marginTop: 8 }}>
+        <strong>Reuniones generales</strong>
+        <p className="field-note">
+          Solicita una reunión contigo, con Thalia o con varias personas del
+          equipo.
+        </p>
+
+        {!meetingFormOpen ? (
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => setMeetingFormOpen(true)}
+          >
+            Solicitar reunión
+          </button>
+        ) : (
+          <form onSubmit={handleMeetingSubmit} style={{ marginTop: 6 }}>
+            <div className="field-label">Título</div>
+            <input
+              className="input"
+              value={meetingTitle}
+              onChange={(e) => setMeetingTitle(e.target.value)}
+              placeholder="Ej.: Reunión de seguimiento, dudas de proyecto..."
+              required
+            />
+
+            <div className="field-label">Motivo / descripción</div>
+            <textarea
+              className="note-input"
+              value={meetingDescription}
+              onChange={(e) => setMeetingDescription(e.target.value)}
+              placeholder="¿Qué quieres tratar en la reunión?"
+            />
+
+            <div className="field-label">Franja horaria preferida</div>
+            <select
+              className="input"
+              value={meetingPreferredSlot}
+              onChange={(e) => setMeetingPreferredSlot(e.target.value)}
+            >
+              <option value="mañana">Mañana</option>
+              <option value="tarde">Tarde</option>
+              <option value="indiferente">Indiferente</option>
+            </select>
+
+            <div className="field-label">Personas que deberían estar</div>
+            <div className="todo-assignees">
+              {USERS.map((u) => (
+                <label key={u.id} className="todo-assignee-pill">
+                  <input
+                    type="checkbox"
+                    checked={meetingParticipants.includes(u.id)}
+                    onChange={() => handleToggleParticipant(u.id)}
+                  />
+                  {u.name}
+                </label>
+              ))}
+            </div>
+
+            <button
+              type="submit"
+              className="btn btn-small btn-primary"
+              style={{ marginTop: 6 }}
+            >
+              Enviar solicitud
+            </button>
+            <button
+              type="button"
+              className="btn btn-small btn-ghost"
+              style={{ marginTop: 6, marginLeft: 6 }}
+              onClick={() => setMeetingFormOpen(false)}
+            >
+              Cancelar
+            </button>
+          </form>
+        )}
+
+        {meetingRequestsForUser && meetingRequestsForUser.length > 0 && (
+          <>
+            <div className="field-label" style={{ marginTop: 8 }}>
+              Tus solicitudes de reunión
+            </div>
+            {meetingRequestsForUser.map((m) => (
+              <div key={m.id} className="small-muted" style={{ marginTop: 2 }}>
+                • {m.title} —{" "}
+                {m.status === "pending" && "Pendiente de revisión"}
+                {m.status === "scheduled" &&
+                  `Programada (fecha preferida: ${m.preferredDateKey})`}
+                {m.status === "rejected" &&
+                  `Rechazada${m.responseMessage ? `: ${m.responseMessage}` : ""}`}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
       <div style={{ marginTop: 6 }}>
         <div className="field-label">Entrada</div>
         <div className="field-value">
@@ -895,6 +1082,31 @@ function DayDetail({
               Solicitar vacaciones
             </button>
           </div>
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            style={{ marginTop: 6, width: "100%" }}
+            onClick={handleSpecialAbsence}
+          >
+            Solicitar permiso especial a Thalia
+          </button>
+
+          {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
+            <div className="small-muted" style={{ marginTop: 4 }}>
+              {absenceRequestsForDay.map((r) => (
+                <div key={r.id}>
+                  Has solicitado un permiso especial para este día. Estado:{" "}
+                  <strong>
+                    {r.status === "pending" && "Pendiente"}
+                    {r.status === "approved" && "Aprobado"}
+                    {r.status === "rejected" && "Rechazado"}
+                  </strong>
+                  {r.responseMessage &&
+                    ` · Mensaje de Thalia: ${r.responseMessage}`}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1017,7 +1229,13 @@ function AdminExportView({ data }) {
 /**
  * Modal To-Do List
  */
-function TodoModal({ currentUser, todos, onClose, onCreateTodo, onToggleTodoCompleted }) {
+function TodoModal({
+  currentUser,
+  todos,
+  onClose,
+  onCreateTodo,
+  onToggleTodoCompleted,
+}) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -1202,6 +1420,255 @@ function TodoModal({ currentUser, todos, onClose, onCreateTodo, onToggleTodoComp
 }
 
 /**
+ * Modal admin de solicitudes de reunión (solo Thalia)
+ */
+function MeetingAdminModal({ meetingRequests, onClose, onUpdateMeetingStatus }) {
+  const sorted = [...meetingRequests].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-paper">
+        <div className="dialog-title">Solicitudes de reunión</div>
+        <div className="dialog-text">
+          Aquí ves todas las solicitudes de reunión del equipo. Puedes marcarlas
+          como programadas o rechazarlas dejando un comentario.
+        </div>
+
+        {sorted.length === 0 ? (
+          <p className="small-muted">
+            No hay solicitudes de reunión por ahora.
+          </p>
+        ) : (
+          sorted.map((m) => {
+            const creator = USERS.find((u) => u.id === m.createdBy);
+            const participantsNames = (m.participants || [])
+              .map((id) => USERS.find((u) => u.id === id)?.name || id)
+              .join(", ");
+
+            return (
+              <div
+                key={m.id}
+                style={{
+                  borderTop: "1px solid #e5e7eb",
+                  paddingTop: 6,
+                  marginTop: 6,
+                }}
+              >
+                <strong>{m.title}</strong>
+                <div className="small-muted">
+                  Solicitada por {creator?.name || m.createdBy} el{" "}
+                  {new Date(m.createdAt).toLocaleString("es-ES", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </div>
+                {m.description && (
+                  <div className="small-muted" style={{ marginTop: 2 }}>
+                    Motivo: {m.description}
+                  </div>
+                )}
+                <div className="small-muted">
+                  Fecha preferida: {m.preferredDateKey} · Franja:{" "}
+                  {m.preferredSlot}
+                </div>
+                <div className="small-muted">
+                  Participantes: {participantsNames || "—"}
+                </div>
+                <div className="small-muted" style={{ marginTop: 2 }}>
+                  Estado:{" "}
+                  <strong>
+                    {m.status === "pending" && "Pendiente"}
+                    {m.status === "scheduled" && "Programada"}
+                    {m.status === "rejected" && "Rechazada"}
+                  </strong>
+                  {m.responseMessage && ` · Nota: ${m.responseMessage}`}
+                </div>
+
+                {m.status === "pending" && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      marginTop: 4,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() =>
+                        onUpdateMeetingStatus(m.id, {
+                          status: "scheduled",
+                          scheduledDateKey: m.preferredDateKey,
+                        })
+                      }
+                    >
+                      Marcar como programada
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small btn-ghost"
+                      onClick={() => {
+                        const msg = window.prompt(
+                          "Motivo del rechazo (opcional):",
+                          ""
+                        );
+                        onUpdateMeetingStatus(m.id, {
+                          status: "rejected",
+                          responseMessage: msg || "",
+                        });
+                      }}
+                    >
+                      Rechazar
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+
+        <div
+          className="flex-row"
+          style={{ marginTop: 10, justifyContent: "flex-end" }}
+        >
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            onClick={onClose}
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Modal admin de permisos de ausencia (solo Thalia)
+ */
+function AbsenceAdminModal({
+  absenceRequests,
+  onClose,
+  onUpdateAbsenceStatus,
+}) {
+  const sorted = [...absenceRequests].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-paper">
+        <div className="dialog-title">Permisos de ausencia</div>
+        <div className="dialog-text">
+          Aquí ves las solicitudes de permisos especiales (más allá de las
+          vacaciones). Puedes aprobar o rechazar dejando un comentario.
+        </div>
+
+        {sorted.length === 0 ? (
+          <p className="small-muted">
+            No hay solicitudes de permisos especiales por ahora.
+          </p>
+        ) : (
+          sorted.map((r) => {
+            const creator = USERS.find((u) => u.id === r.createdBy);
+            return (
+              <div
+                key={r.id}
+                style={{
+                  borderTop: "1px solid #e5e7eb",
+                  paddingTop: 6,
+                  marginTop: 6,
+                }}
+              >
+                <strong>Permiso para el día {r.dateKey}</strong>
+                <div className="small-muted">
+                  Solicitado por {creator?.name || r.createdBy} el{" "}
+                  {new Date(r.createdAt).toLocaleString("es-ES", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </div>
+                <div className="small-muted" style={{ marginTop: 2 }}>
+                  Motivo: {r.reason}
+                </div>
+                <div className="small-muted" style={{ marginTop: 2 }}>
+                  Estado:{" "}
+                  <strong>
+                    {r.status === "pending" && "Pendiente"}
+                    {r.status === "approved" && "Aprobado"}
+                    {r.status === "rejected" && "Rechazado"}
+                  </strong>
+                  {r.responseMessage && ` · Nota: ${r.responseMessage}`}
+                </div>
+
+                {r.status === "pending" && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      marginTop: 4,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() => {
+                        const msg = window.prompt(
+                          "Nota para la persona (opcional):",
+                          ""
+                        );
+                        onUpdateAbsenceStatus(r.id, {
+                          status: "approved",
+                          responseMessage: msg || "",
+                        });
+                      }}
+                    >
+                      Aprobar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small btn-ghost"
+                      onClick={() => {
+                        const msg = window.prompt(
+                          "Motivo del rechazo (opcional):",
+                          ""
+                        );
+                        onUpdateAbsenceStatus(r.id, {
+                          status: "rejected",
+                          responseMessage: msg || "",
+                        });
+                      }}
+                    >
+                      Rechazar
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+
+        <div
+          className="flex-row"
+          style={{ marginTop: 10, justifyContent: "flex-end" }}
+        >
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            onClick={onClose}
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * App principal
  */
 function App() {
@@ -1212,9 +1679,17 @@ function App() {
     loadTrainingRequests()
   );
   const [todos, setTodos] = useState(() => loadTodos());
+  const [meetingRequests, setMeetingRequests] = useState(() =>
+    loadMeetingRequests()
+  );
+  const [absenceRequests, setAbsenceRequests] = useState(() =>
+    loadAbsenceRequests()
+  );
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [showTodoModal, setShowTodoModal] = useState(false);
+  const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
+  const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
 
   // Guardar en localStorage cuando cambie
   useEffect(() => {
@@ -1228,6 +1703,14 @@ function App() {
   useEffect(() => {
     saveTodos(todos);
   }, [todos]);
+
+  useEffect(() => {
+    saveMeetingRequests(meetingRequests);
+  }, [meetingRequests]);
+
+  useEffect(() => {
+    saveAbsenceRequests(absenceRequests);
+  }, [absenceRequests]);
 
   function handleLogin(user) {
     setCurrentUser(user);
@@ -1266,7 +1749,7 @@ function App() {
       const already = prev.find(
         (r) => r.userId === currentUser.id && r.scheduledDateKey === dateKey
       );
-      if (already) return prev; // ya tiene una para ese día
+      if (already) return prev;
       const newReq = {
         id: Date.now(),
         userId: currentUser.id,
@@ -1329,7 +1812,6 @@ function App() {
       current
     );
     if (!newDateStr) return;
-    // Validación muy simple, lo guardamos tal cual
     setTrainingRequests((prev) =>
       prev.map((r) =>
         r.id === id
@@ -1375,6 +1857,58 @@ function App() {
     );
   }
 
+  // Reuniones: crear solicitud
+  function handleCreateMeetingRequest(payload) {
+    if (!currentUser) return;
+    const now = new Date();
+    const newReq = {
+      id: Date.now(),
+      createdBy: currentUser.id,
+      createdAt: now.toISOString(),
+      title: payload.title,
+      description: payload.description,
+      preferredDateKey: payload.preferredDateKey,
+      preferredSlot: payload.preferredSlot,
+      participants: payload.participants,
+      status: "pending",
+      scheduledDateKey: null,
+      scheduledTime: "",
+      responseMessage: "",
+    };
+    setMeetingRequests((prev) => [newReq, ...prev]);
+  }
+
+  // Reuniones: actualizar estado (Thalia)
+  function handleUpdateMeetingStatus(id, updates) {
+    setMeetingRequests((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...updates } : m))
+    );
+  }
+
+  // Permisos especiales de ausencia: crear solicitud
+  function handleCreateAbsenceRequest(reason) {
+    if (!currentUser || !selectedDate) return;
+    const now = new Date();
+    const dateKey = toDateKey(selectedDate);
+    const newReq = {
+      id: Date.now(),
+      createdBy: currentUser.id,
+      createdAt: now.toISOString(),
+      dateKey,
+      reason,
+      status: "pending",
+      responseMessage: "",
+    };
+    setAbsenceRequests((prev) => [newReq, ...prev]);
+  }
+
+  // Permisos especiales: actualizar estado (Thalia)
+  function handleUpdateAbsenceStatus(id, updates) {
+    setAbsenceRequests((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+  }
+
   if (!currentUser) {
     return <LoginView onLogin={handleLogin} />;
   }
@@ -1388,6 +1922,18 @@ function App() {
     ? trainingRequests.filter((r) => r.scheduledDateKey === dateKey)
     : [];
 
+  const meetingRequestsForUser = meetingRequests.filter(
+    (m) => m.createdBy === currentUser.id
+  );
+
+  const absenceRequestsForDay = dateKey
+    ? absenceRequests.filter(
+        (r) => r.createdBy === currentUser.id && r.dateKey === dateKey
+      )
+    : [];
+
+  const isThalia = currentUser.id === "thalia";
+
   return (
     <div className="app-card">
       <div className="app-header">
@@ -1398,7 +1944,7 @@ function App() {
             <p className="subtitle">
               {isAdmin
                 ? "Vista de administración (equipo completo)"
-                : "Registro diario de jornada, ausencias, formación y tareas"}
+                : "Registro diario de jornada, ausencias, formación, tareas y reuniones"}
             </p>
             <div className="pill">
               <span
@@ -1416,6 +1962,8 @@ function App() {
                   ? "Admin horario"
                   : currentUser.isTrainingManager
                   ? "Responsable formación"
+                  : isThalia
+                  ? "Admin general"
                   : "Usuario"}
               </span>
               {currentUser.canAdminHours && !isAdmin && (
@@ -1425,6 +1973,7 @@ function App() {
               {!currentUser.canAdminHours &&
                 currentUser.isTrainingManager &&
                 !isAdmin && <>Gestiona solicitudes de formación</>}
+              {isThalia && <>Ve reuniones y permisos especiales del equipo</>}
             </div>
           </div>
         </div>
@@ -1445,6 +1994,26 @@ function App() {
                 ? "Volver a mi vista"
                 : "Administrar registro horario"}
             </button>
+          )}
+          {isThalia && (
+            <>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 4, width: "100%" }}
+                onClick={() => setShowMeetingAdmin(true)}
+              >
+                Solicitudes de reunión
+              </button>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 4, width: "100%" }}
+                onClick={() => setShowAbsenceAdmin(true)}
+              >
+                Permisos de ausencia
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -1496,6 +2065,10 @@ function App() {
             onAcceptTraining={handleAcceptTraining}
             onRescheduleTraining={handleRescheduleTraining}
             onAddTrainingComment={handleAddTrainingComment}
+            meetingRequestsForUser={meetingRequestsForUser}
+            onCreateMeetingRequest={handleCreateMeetingRequest}
+            absenceRequestsForDay={absenceRequestsForDay}
+            onCreateAbsenceRequest={handleCreateAbsenceRequest}
             onMarkEntry={() =>
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
@@ -1545,6 +2118,22 @@ function App() {
           onClose={() => setShowTodoModal(false)}
           onCreateTodo={handleCreateTodo}
           onToggleTodoCompleted={handleToggleTodoCompleted}
+        />
+      )}
+
+      {showMeetingAdmin && (
+        <MeetingAdminModal
+          meetingRequests={meetingRequests}
+          onClose={() => setShowMeetingAdmin(false)}
+          onUpdateMeetingStatus={handleUpdateMeetingStatus}
+        />
+      )}
+
+      {showAbsenceAdmin && (
+        <AbsenceAdminModal
+          absenceRequests={absenceRequests}
+          onClose={() => setShowAbsenceAdmin(false)}
+          onUpdateAbsenceStatus={handleUpdateAbsenceStatus}
         />
       )}
     </div>
