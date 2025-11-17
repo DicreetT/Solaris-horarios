@@ -76,6 +76,25 @@ const STORAGE_KEY_TIMES = "solaris_times_v1";
  */
 const STORAGE_KEY_TRAININGS = "solaris_trainings_v1";
 
+/**
+ * Data de To-Do en localStorage
+ * Estructura:
+ *  todos = [
+ *    {
+ *      id,
+ *      title,
+ *      description,
+ *      createdBy,
+ *      assignedTo: [userId],
+ *      createdAt,
+ *      dueDateKey: "AAAA-MM-DD" | null,
+ *      completedBy: [userId]   // quién ya marcó como hecho
+ *    },
+ *    ...
+ *  ]
+ */
+const STORAGE_KEY_TODOS = "solaris_todos_v1";
+
 function loadTimeData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TIMES);
@@ -104,6 +123,21 @@ function loadTrainingRequests() {
 
 function saveTrainingRequests(list) {
   localStorage.setItem(STORAGE_KEY_TRAININGS, JSON.stringify(list));
+}
+
+function loadTodos() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TODOS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading todos", e);
+    return [];
+  }
+}
+
+function saveTodos(list) {
+  localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(list));
 }
 
 // Helpers fecha/hora
@@ -963,7 +997,7 @@ function AdminExportView({ data }) {
                 className="btn btn-small btn-ghost"
                 onClick={() => setShowDialog(false)}
               >
-                  Cerrar
+                Cerrar
               </button>
               <button
                 type="button"
@@ -981,6 +1015,193 @@ function AdminExportView({ data }) {
 }
 
 /**
+ * Modal To-Do List
+ */
+function TodoModal({ currentUser, todos, onClose, onCreateTodo, onToggleTodoCompleted }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [assignedIds, setAssignedIds] = useState([currentUser.id]);
+
+  function handleToggleAssigned(id) {
+    setAssignedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle || assignedIds.length === 0) return;
+
+    onCreateTodo({
+      title: trimmedTitle,
+      description: description.trim(),
+      dueDateKey: dueDate || null,
+      assignedTo: assignedIds,
+    });
+
+    setTitle("");
+    setDescription("");
+    setDueDate("");
+    setAssignedIds([currentUser.id]);
+  }
+
+  const tasksForMe = todos.filter((t) => t.assignedTo.includes(currentUser.id));
+  const tasksCreatedByMe = todos.filter(
+    (t) => t.createdBy === currentUser.id && !t.assignedTo.includes(currentUser.id)
+  );
+
+  function renderTodoRow(todo) {
+    const isDoneForMe = todo.completedBy.includes(currentUser.id);
+    const allDone =
+      todo.assignedTo.length > 0 &&
+      todo.assignedTo.every((uid) => todo.completedBy.includes(uid));
+    const creator = USERS.find((u) => u.id === todo.createdBy);
+    const assignees = todo.assignedTo
+      .map((id) => USERS.find((u) => u.id === id)?.name || id)
+      .join(", ");
+
+    return (
+      <div key={todo.id} className="todo-row">
+        <label className="todo-main">
+          <input
+            type="checkbox"
+            checked={isDoneForMe}
+            onChange={() => onToggleTodoCompleted(todo.id)}
+          />
+          <div className="todo-text">
+            <div className="todo-title">
+              {todo.title}
+              {allDone && (
+                <span className="todo-pill-done">
+                  ✓ Todo el equipo ha completado esta tarea
+                </span>
+              )}
+            </div>
+            {todo.description && (
+              <div className="todo-desc small-muted">{todo.description}</div>
+            )}
+            <div className="todo-meta small-muted">
+              Creada por {creator?.name || todo.createdBy}
+              {" · Para: "}
+              {assignees || "—"}
+              {todo.dueDateKey && <> · Fecha objetivo: {todo.dueDateKey}</>}
+            </div>
+          </div>
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-paper">
+        <div className="dialog-title">To-Do List de {currentUser.name}</div>
+        <div className="dialog-text">
+          Crea tareas, asígnalas a tus compis y marca cada una cuando esté
+          hecha. Cuando todas las personas asignadas la marcan, la tarea se
+          considera completada por el equipo. ✨
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="todo-form-row">
+            <label className="field-label">Título de la tarea</label>
+            <input
+              className="input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Ej.: Revisar manual de acogida, preparar informe, etc."
+              required
+            />
+          </div>
+
+          <div className="todo-form-row">
+            <label className="field-label">Descripción (opcional)</label>
+            <textarea
+              className="note-input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Detalles, pasos, enlaces…"
+            />
+          </div>
+
+          <div className="todo-form-row">
+            <label className="field-label">Fecha objetivo (opcional)</label>
+            <input
+              className="input"
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+            />
+          </div>
+
+          <div className="todo-form-row">
+            <label className="field-label">Asignar a</label>
+            <div className="todo-assignees">
+              {USERS.map((u) => (
+                <label key={u.id} className="todo-assignee-pill">
+                  <input
+                    type="checkbox"
+                    checked={assignedIds.includes(u.id)}
+                    onChange={() => handleToggleAssigned(u.id)}
+                  />
+                  {u.name}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn-small btn-primary"
+            style={{ marginTop: 4 }}
+          >
+            Crear tarea
+          </button>
+        </form>
+
+        <div className="todo-section-title">Tareas para ti</div>
+        {tasksForMe.length === 0 ? (
+          <p className="todo-empty">
+            No tienes tareas asignadas todavía. Crea una o espera a que te
+            etiqueten. 💫
+          </p>
+        ) : (
+          <div className="todo-list">
+            {tasksForMe.map((t) => renderTodoRow(t))}
+          </div>
+        )}
+
+        <div className="todo-section-title">Tareas que has creado</div>
+        {tasksCreatedByMe.length === 0 ? (
+          <p className="todo-empty">
+            Aún no has creado tareas solo para otras personas.
+          </p>
+        ) : (
+          <div className="todo-list">
+            {tasksCreatedByMe.map((t) => renderTodoRow(t))}
+          </div>
+        )}
+
+        <div
+          className="flex-row"
+          style={{ marginTop: 10, justifyContent: "flex-end" }}
+        >
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            onClick={onClose}
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * App principal
  */
 function App() {
@@ -990,8 +1211,10 @@ function App() {
   const [trainingRequests, setTrainingRequests] = useState(() =>
     loadTrainingRequests()
   );
+  const [todos, setTodos] = useState(() => loadTodos());
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [showTodoModal, setShowTodoModal] = useState(false);
 
   // Guardar en localStorage cuando cambie
   useEffect(() => {
@@ -1001,6 +1224,10 @@ function App() {
   useEffect(() => {
     saveTrainingRequests(trainingRequests);
   }, [trainingRequests]);
+
+  useEffect(() => {
+    saveTodos(todos);
+  }, [todos]);
 
   function handleLogin(user) {
     setCurrentUser(user);
@@ -1046,7 +1273,7 @@ function App() {
         requestedDateKey: dateKey,
         scheduledDateKey: dateKey,
         status: "pending",
-        comments: [], // importante para el chat
+        comments: [],
       };
       return [...prev, newReq];
     });
@@ -1116,6 +1343,38 @@ function App() {
     );
   }
 
+  // To-Do: crear tarea
+  function handleCreateTodo({ title, description, dueDateKey, assignedTo }) {
+    if (!currentUser) return;
+    const now = new Date();
+    const newTodo = {
+      id: Date.now(),
+      title,
+      description,
+      createdBy: currentUser.id,
+      assignedTo,
+      createdAt: now.toISOString(),
+      dueDateKey,
+      completedBy: [],
+    };
+    setTodos((prev) => [newTodo, ...prev]);
+  }
+
+  // To-Do: marcar / desmarcar completado por la persona actual
+  function handleToggleTodoCompleted(todoId) {
+    if (!currentUser) return;
+    setTodos((prev) =>
+      prev.map((t) => {
+        if (t.id !== todoId) return t;
+        const isDone = t.completedBy.includes(currentUser.id);
+        const nextCompleted = isDone
+          ? t.completedBy.filter((id) => id !== currentUser.id)
+          : [...t.completedBy, currentUser.id];
+        return { ...t, completedBy: nextCompleted };
+      })
+    );
+  }
+
   if (!currentUser) {
     return <LoginView onLogin={handleLogin} />;
   }
@@ -1139,7 +1398,7 @@ function App() {
             <p className="subtitle">
               {isAdmin
                 ? "Vista de administración (equipo completo)"
-                : "Registro diario de jornada, ausencias y formación"}
+                : "Registro diario de jornada, ausencias, formación y tareas"}
             </p>
             <div className="pill">
               <span
@@ -1187,6 +1446,14 @@ function App() {
                 : "Administrar registro horario"}
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            style={{ marginTop: 4, width: "100%" }}
+            onClick={() => setShowTodoModal(true)}
+          >
+            To-Do List
+          </button>
           <button
             type="button"
             className="btn btn-small btn-ghost"
@@ -1270,6 +1537,16 @@ function App() {
           />
         </div>
       </div>
+
+      {showTodoModal && (
+        <TodoModal
+          currentUser={currentUser}
+          todos={todos}
+          onClose={() => setShowTodoModal(false)}
+          onCreateTodo={handleCreateTodo}
+          onToggleTodoCompleted={handleToggleTodoCompleted}
+        />
+      )}
     </div>
   );
 }
