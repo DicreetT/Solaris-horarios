@@ -357,7 +357,7 @@ button {
 }
 
 .dialog-paper {
-  max-width: 360px;
+  max-width: 420px;
   width: 100%;
   background: #ffffff;
   border-radius: 16px;
@@ -490,4 +490,103 @@ button {
 
 .training-input-row input {
   flex: 1;
+}
+
+/* --- To-Do List --- */
+
+.todo-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.todo-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.todo-assignees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.todo-assignee-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: #ffffff;
+}
+
+.todo-assignee-pill input {
+  margin: 0;
+}
+
+.todo-list {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-row {
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 6px 8px;
+}
+
+.todo-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.todo-main input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.todo-text {
+  flex: 1;
+}
+
+.todo-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-desc {
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.todo-meta {
+  font-size: 0.7rem;
+  margin-top: 2px;
+}
+
+.todo-pill-done {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid #16a34a;
+  background: #dcfce7;
+}
+
+.todo-empty {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 2px;
 }
