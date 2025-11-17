@@ -242,7 +242,7 @@ button {
   background: #3b82f6;
 }
 
-/* Formación (para Esteban) */
+/* Formación (para Esteban / y personas con formación) */
 .day-badge-training {
   background: #a855f7;
 }
@@ -426,4 +426,68 @@ button {
   border-top: 1px solid #e5e7eb;
   padding-top: 4px;
   margin-top: 4px;
+}
+
+/* --- Chat de formación (estilo burbujitas) --- */
+
+.training-chat {
+  margin-top: 6px;
+}
+
+.training-messages {
+  max-height: 140px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.training-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 90%;
+  font-size: 0.75rem;
+}
+
+.training-message.me {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.training-message.other {
+  align-self: flex-start;
+  text-align: left;
+}
+
+.training-bubble {
+  display: inline-block;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.training-bubble.me {
+  background: #ffedd5; /* naranjita suave */
+}
+
+.training-bubble.other {
+  background: #e5e7eb; /* gris suave */
+}
+
+.training-meta {
+  font-size: 0.65rem;
+  color: #666;
+  margin-top: 2px;
+}
+
+.training-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.training-input-row input {
+  flex: 1;
 }
