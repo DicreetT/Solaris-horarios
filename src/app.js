@@ -65,7 +65,11 @@ const STORAGE_KEY_TIMES = "solaris_times_v1";
  *      userId,
  *      requestedDateKey,  // día en el que lo pidió
  *      scheduledDateKey,  // día para el que está programado
- *      status: "pending" | "accepted" | "rescheduled"
+ *      status: "pending" | "accepted" | "rescheduled",
+ *      comments: [
+ *        { by: "esteban", text: "¿Te viene bien a las 15:00?", at: "01/02/2025 12:34" },
+ *        ...
+ *      ]
  *    },
  *    ...
  *  ]
@@ -450,7 +454,10 @@ function DayDetail({
   onCreateTrainingRequest,
   onAcceptTraining,
   onRescheduleTraining,
+  onAddTrainingComment,
 }) {
+  const [messageDrafts, setMessageDrafts] = useState({});
+
   if (!date) {
     return (
       <div className="day-card">
@@ -464,6 +471,13 @@ function DayDetail({
 
   const key = toDateKey(date);
   const byDay = data[key] || {};
+
+  function sendMessage(requestId) {
+    const text = messageDrafts[requestId] || "";
+    if (!text.trim()) return;
+    onAddTrainingComment(requestId, text);
+    setMessageDrafts((prev) => ({ ...prev, [requestId]: "" }));
+  }
 
   // --- Vista ADMIN: resumen de todo el equipo ---
   if (isAdminView) {
@@ -546,7 +560,7 @@ function DayDetail({
   const record = byDay[user.id] || {};
   const statusProps = getStatusBadgeProps(record.status);
 
-  // --- Formación: lógica distinta según rol ---
+  // --- Formación ---
   const myTrainingForDay = trainingRequestsForDay.filter(
     (req) => req.userId === user.id
   );
@@ -573,9 +587,15 @@ function DayDetail({
           ) : (
             trainingRequestsForDay.map((req) => {
               const person = USERS.find((u) => u.id === req.userId);
+              const comments = req.comments || [];
               return (
                 <div key={req.id} className="training-item">
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                    }}
+                  >
                     <span>
                       <strong>{person?.name || req.userId}</strong>
                     </span>
@@ -585,13 +605,73 @@ function DayDetail({
                       {req.status === "rescheduled" && "Reprogramada"}
                     </span>
                   </div>
-                  {req.status === "rescheduled" && req.scheduledDateKey !== req.requestedDateKey && (
-                    <p className="small-muted">
-                      Reprogramada para el día {req.scheduledDateKey}.
-                    </p>
-                  )}
+
+                  {req.status === "rescheduled" &&
+                    req.scheduledDateKey !== req.requestedDateKey && (
+                      <p className="small-muted">
+                        Reprogramada para el día {req.scheduledDateKey}.
+                      </p>
+                    )}
+
+                  {/* Chat de comentarios (vista Esteban) */}
+                  <div className="training-chat">
+                    <div className="training-messages">
+                      {comments.length === 0 && (
+                        <p className="small-muted">
+                          Aún no hay mensajes. Puedes escribir para coordinar la
+                          hora o el contenido de la formación.
+                        </p>
+                      )}
+                      {comments.map((c, idx) => {
+                        const isMe = c.by === user.id;
+                        const author = USERS.find((u) => u.id === c.by);
+                        return (
+                          <div
+                            key={idx}
+                            className={
+                              "training-message " + (isMe ? "me" : "other")
+                            }
+                          >
+                            <div
+                              className={
+                                "training-bubble " +
+                                (isMe ? "me" : "other")
+                              }
+                            >
+                              <strong>{author?.name || c.by}</strong>
+                              <br />
+                              {c.text}
+                            </div>
+                            <div className="training-meta">{c.at}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="training-input-row">
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="Escribe un mensaje..."
+                        value={messageDrafts[req.id] || ""}
+                        onChange={(e) =>
+                          setMessageDrafts((prev) => ({
+                            ...prev,
+                            [req.id]: e.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        onClick={() => sendMessage(req.id)}
+                      >
+                        Enviar
+                      </button>
+                    </div>
+                  </div>
+
                   <div
-                    style={{ display: "flex", gap: 6, marginTop: 4 }}
+                    style={{ display: "flex", gap: 6, marginTop: 6 }}
                   >
                     <button
                       type="button"
@@ -632,22 +712,86 @@ function DayDetail({
                 </button>
               </>
             ) : (
-              myTrainingForDay.map((req) => (
-                <div key={req.id} className="training-item">
-                  <p className="small-muted">
-                    Has solicitado formación para este día.
-                  </p>
-                  <p className="small-muted">
-                    Estado:{" "}
-                    <strong>
-                      {req.status === "pending" && "Pendiente de respuesta"}
-                      {req.status === "accepted" && "Aceptada"}
-                      {req.status === "rescheduled" &&
-                        `Reprogramada para el día ${req.scheduledDateKey}`}
-                    </strong>
-                  </p>
-                </div>
-              ))
+              myTrainingForDay.map((req) => {
+                const comments = req.comments || [];
+                return (
+                  <div key={req.id} className="training-item">
+                    <p className="small-muted">
+                      Has solicitado formación para este día.
+                    </p>
+                    <p className="small-muted">
+                      Estado:{" "}
+                      <strong>
+                        {req.status === "pending" &&
+                          "Pendiente de respuesta"}
+                        {req.status === "accepted" && "Aceptada"}
+                        {req.status === "rescheduled" &&
+                          `Reprogramada para el día ${req.scheduledDateKey}`}
+                      </strong>
+                    </p>
+
+                    {/* Chat de comentarios (vista persona que solicita) */}
+                    <div className="training-chat">
+                      <div className="training-messages">
+                        {comments.length === 0 && (
+                          <p className="small-muted">
+                            Puedes escribir a Esteban para acordar la hora o
+                            detalles de la formación.
+                          </p>
+                        )}
+                        {comments.map((c, idx) => {
+                          const isMe = c.by === user.id;
+                          const author = USERS.find((u) => u.id === c.by);
+                          return (
+                            <div
+                              key={idx}
+                              className={
+                                "training-message " +
+                                (isMe ? "me" : "other")
+                              }
+                            >
+                              <div
+                                className={
+                                  "training-bubble " +
+                                  (isMe ? "me" : "other")
+                                }
+                              >
+                                <strong>{author?.name || c.by}</strong>
+                                <br />
+                                {c.text}
+                              </div>
+                              <div className="training-meta">
+                                {c.at}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="training-input-row">
+                        <input
+                          type="text"
+                          className="input"
+                          placeholder="Escribe un mensaje..."
+                          value={messageDrafts[req.id] || ""}
+                          onChange={(e) =>
+                            setMessageDrafts((prev) => ({
+                              ...prev,
+                              [req.id]: e.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-small"
+                          onClick={() => sendMessage(req.id)}
+                        >
+                          Enviar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         )
@@ -819,7 +963,7 @@ function AdminExportView({ data }) {
                 className="btn btn-small btn-ghost"
                 onClick={() => setShowDialog(false)}
               >
-                Cerrar
+                  Cerrar
               </button>
               <button
                 type="button"
@@ -902,9 +1046,41 @@ function App() {
         requestedDateKey: dateKey,
         scheduledDateKey: dateKey,
         status: "pending",
+        comments: [], // importante para el chat
       };
       return [...prev, newReq];
     });
+  }
+
+  // Formación: añadir comentario
+  function handleAddTrainingComment(requestId, text) {
+    if (!currentUser) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const now = new Date();
+    const stamp = now.toLocaleString("es-ES", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+
+    setTrainingRequests((prev) =>
+      prev.map((req) =>
+        req.id === requestId
+          ? {
+              ...req,
+              comments: [
+                ...(req.comments || []),
+                {
+                  by: currentUser.id,
+                  text: trimmed,
+                  at: stamp,
+                },
+              ],
+            }
+          : req
+      )
+    );
   }
 
   // Formación: aceptar (Esteban)
@@ -1052,6 +1228,7 @@ function App() {
             onCreateTrainingRequest={handleCreateTrainingRequest}
             onAcceptTraining={handleAcceptTraining}
             onRescheduleTraining={handleRescheduleTraining}
+            onAddTrainingComment={handleAddTrainingComment}
             onMarkEntry={() =>
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
