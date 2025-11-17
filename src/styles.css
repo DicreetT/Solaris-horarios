@@ -1,0 +1,429 @@
+:root {
+  --primary: #ffb347;
+  --primary-dark: #ff9933;
+  --bg: #fff8ee;
+  --card-bg: #ffffff;
+  --border: #222222;
+  --text: #222222;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: radial-gradient(circle at top, #fff3d9, #ffe7c7, #fdddc0);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+#root {
+  max-width: 960px;
+  width: 100%;
+}
+
+.app-card {
+  background: var(--bg);
+  border-radius: 20px;
+  border: 2px solid var(--border);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.2);
+  padding: 16px;
+}
+
+@media (min-width: 768px) {
+  .app-card {
+    padding: 24px 28px;
+  }
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.logo-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fake-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: radial-gradient(circle at top, #fff2cc, #ffb347);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.subtitle {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.current-user-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 0.8rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fffbe6;
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+}
+
+button {
+  font-family: inherit;
+}
+
+.btn {
+  border-radius: 999px;
+  border: 2px solid var(--border);
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: var(--primary);
+}
+
+.btn-primary:hover {
+  background: var(--primary-dark);
+}
+
+.btn-ghost {
+  background: transparent;
+}
+
+.btn-full {
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-small {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+}
+
+.separator {
+  height: 1px;
+  background: #ddd;
+  margin: 12px 0;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+}
+
+.calendar-card,
+.day-card {
+  border-radius: 16px;
+  border: 2px solid var(--border);
+  background: var(--card-bg);
+  padding: 12px;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  font-size: 0.75rem;
+}
+
+.day-name {
+  text-align: center;
+  font-weight: 600;
+}
+
+.day-cell {
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.day-cell.empty {
+  background: transparent;
+  border: none;
+  cursor: default;
+}
+
+.day-cell.today {
+  border-color: var(--primary-dark);
+  box-shadow: 0 0 0 2px rgba(255, 153, 51, 0.4);
+  font-weight: 700;
+}
+
+.day-cell.selected {
+  background: var(--primary);
+  border-color: var(--border);
+}
+
+.day-badge {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #22c55e;
+}
+
+.day-badge-absent {
+  background: #ef4444;
+}
+
+.day-badge-vacation {
+  background: #3b82f6;
+}
+
+/* Formación (para Esteban) */
+.day-badge-training {
+  background: #a855f7;
+}
+
+.day-card h3 {
+  margin-bottom: 4px;
+}
+
+.day-date {
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.status-present {
+  background: #e0ffe8;
+}
+
+.status-absent {
+  background: #ffe4e6;
+}
+
+.status-vacation {
+  background: #dbeafe;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.field-value {
+  font-size: 0.9rem;
+  margin-bottom: 4px;
+}
+
+.field-note {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.buttons-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.note-input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 40px;
+  max-height: 120px;
+}
+
+.panel {
+  border-radius: 12px;
+  border: 1px dashed #bbb;
+  padding: 8px;
+  margin-top: 6px;
+  background: #fffdf6;
+  font-size: 0.8rem;
+}
+
+.flex-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.export-box {
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px dashed #aaa;
+  background: #f8fafc;
+  font-size: 0.8rem;
+}
+
+.small-muted {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+/* Dialog simple */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.dialog-paper {
+  max-width: 360px;
+  width: 100%;
+  background: #ffffff;
+  border-radius: 16px;
+  border: 2px solid var(--border);
+  box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.25);
+  padding: 16px;
+}
+
+.dialog-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.dialog-text {
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 10px;
+}
+
+.input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+/* Login */
+
+.login-description {
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 10px;
+}
+
+.login-help {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 6px;
+}
+
+.badge-info {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  background: #eef2ff;
+  margin-top: 4px;
+}
+
+/* Formación (panel en DayDetail) */
+.training-panel {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px dashed #a855f7;
+  background: #faf5ff;
+  font-size: 0.8rem;
+}
+
+.training-item {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 4px;
+  margin-top: 4px;
+}
