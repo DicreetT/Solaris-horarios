@@ -440,9 +440,7 @@ function CalendarGrid({
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const firstDay = new Date(year, month, 1);
-  const firstWeekday = (firstDay.get
-
-Month() + 6) % 7; // Lunes = 0
+  const firstWeekday = (firstDay.getDay() + 6) % 7; // Lunes = 0
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   const today = new Date();
@@ -2456,8 +2454,33 @@ function App() {
     });
   }
 
-  if (!currentUser) {
-      return (
+    if (!currentUser) {
+    return <LoginView onLogin={handleLogin} />;
+  }
+
+  const isAdmin = currentUser.canAdminHours && adminMode;
+  const isTrainingManager = !!currentUser.isTrainingManager;
+  const canRequestTraining = !isTrainingManager;
+
+  const dateKey = selectedDate ? toDateKey(selectedDate) : null;
+
+  const trainingRequestsForDay = dateKey
+    ? trainingRequests.filter((r) => r.scheduledDateKey === dateKey)
+    : [];
+
+  const meetingRequestsForUser = meetingRequests.filter(
+    (m) => m.createdBy === currentUser.id
+  );
+
+  const absenceRequestsForDay = dateKey
+    ? absenceRequests.filter(
+        (r) => r.createdBy === currentUser.id && r.dateKey === dateKey
+      )
+    : [];
+
+  const isThalia = currentUser.id === "thalia";
+
+  return (
     <div className="app-card">
       <div className="app-header">
         <div className="logo-title">
@@ -2502,6 +2525,7 @@ function App() {
             </div>
           </div>
         </div>
+
         <div style={{ textAlign: "right" }}>
           <div className="current-user-tag">
             {currentUser.name}
@@ -2637,7 +2661,12 @@ function App() {
           />
 
           {/* Carpetas de Drive */}
-          <SharedFoldersPanel currentUser={currentUser} />
+          <SharedFoldersPanel
+            currentUser={currentUser}
+            folderUpdates={folderUpdates}
+            onOpenFolder={handleOpenFolder}
+            onMarkFolderUpdated={handleMarkFolderUpdated}
+          />
 
           {/* Panel de exportaciones solo para Thalia */}
           {isThalia && (
