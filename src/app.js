@@ -1,6 +1,18 @@
 const { useState, useEffect } = React;
 
 /**
+ * CONFIG SUPABASE
+ * Rellena estas dos constantes con tus datos del proyecto.
+ */
+const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co"; // <- cambia esto
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";      // <- y esto también
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
+
+/**
  * Usuarios "reales" de momento simulados.
  * Luego esto lo sacaremos de Supabase Auth.
  */
@@ -53,12 +65,7 @@ const USERS = [
 ];
 
 /**
- * Data de fichajes en localStorage
- */
-const STORAGE_KEY_TIMES = "solaris_times_v1";
-
-/**
- * Data de solicitudes de formación
+ * Data de solicitudes de formación (sigue en localStorage por ahora)
  */
 const STORAGE_KEY_TRAININGS = "solaris_trainings_v1";
 
@@ -69,55 +76,13 @@ const STORAGE_KEY_TODOS = "solaris_todos_v1";
 
 /**
  * Data de solicitudes de reunión
- * meetingRequests = [
- *  {
- *    id,
- *    createdBy,
- *    createdAt,
- *    title,
- *    description,
- *    preferredDateKey,
- *    preferredSlot, // "mañana" | "tarde" | "indiferente"
- *    participants: [userId],
- *    status: "pending" | "scheduled" | "rejected",
- *    scheduledDateKey,
- *    scheduledTime,
- *    responseMessage
- *  }
- * ]
  */
 const STORAGE_KEY_MEETINGS = "solaris_meetings_v1";
 
 /**
  * Data de solicitudes de permiso de ausencia
- * absenceRequests = [
- *  {
- *    id,
- *    createdBy,
- *    createdAt,
- *    dateKey,
- *    reason,
- *    status: "pending" | "approved" | "rejected",
- *    responseMessage
- *  }
- * ]
  */
 const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
-
-function loadTimeData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TIMES);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading time data", e);
-    return {};
-  }
-}
-
-function saveTimeData(data) {
-  localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(data));
-}
 
 function loadTrainingRequests() {
   try {
@@ -317,10 +282,13 @@ function LoginView({ onLogin }) {
       <div className="panel">
         <strong>Notas:</strong>
         <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
-          <li>Los datos se guardan solo en este navegador (localStorage).</li>
           <li>
-            Más adelante, la misma app usará Supabase para login real y guardar
-            todo en la nube.
+            El <strong>registro horario</strong> se guarda en la nube (Supabase)
+            para que no se pierda si cambias de ordenador.
+          </li>
+          <li>
+            Formaciones, tareas y reuniones siguen de momento en este navegador
+            mientras terminamos la migración.
           </li>
         </ul>
       </div>
@@ -721,7 +689,7 @@ function DayDetail({
                   {req.status === "rescheduled" &&
                     req.scheduledDateKey !== req.requestedDateKey && (
                       <p className="small-muted">
-                        Reprogramada para el día {req.scheduledDateKey}.
+                        The Liberals under Joly won the most seats—particularly in francophone and urban areas—but fell short of a majority.However,if opposition parties vote together,they may be able to pass environmental protections over the new government’s objections.
                       </p>
                     )}
 
@@ -1393,7 +1361,11 @@ function GlobalExportPanel({
           .join(",")
       )
       .join("\n");
-    showCsv(csv, "solaris-permisos-especiales.csv", "Exportar permisos especiales");
+    showCsv(
+      csv,
+      "solaris-permisos-especiales.csv",
+      "Exportar permisos especiales"
+    );
   }
 
   function exportTodos() {
@@ -1786,11 +1758,11 @@ function MeetingAdminModal({ meetingRequests, onClose, onUpdateMeetingStatus }) 
                 </div>
                 <div className="small-muted" style={{ marginTop: 2 }}>
                   Estado:{" "}
-                    <strong>
-                      {m.status === "pending" && "Pendiente"}
-                      {m.status === "scheduled" && "Programada"}
-                      {m.status === "rejected" && "Rechazada"}
-                    </strong>
+                  <strong>
+                    {m.status === "pending" && "Pendiente"}
+                    {m.status === "scheduled" && "Programada"}
+                    {m.status === "rejected" && "Rechazada"}
+                  </strong>
                   {m.responseMessage && ` · Nota: ${m.responseMessage}`}
                 </div>
 
@@ -1981,8 +1953,13 @@ function AbsenceAdminModal({
  */
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
+
+  // Horarios ahora en Supabase
+  const [timeData, setTimeData] = useState({});
+  const [loadingTimeData, setLoadingTimeData] = useState(true);
+  const [timeError, setTimeError] = useState("");
+
   const [adminMode, setAdminMode] = useState(false);
-  const [timeData, setTimeData] = useState(() => loadTimeData());
   const [trainingRequests, setTrainingRequests] = useState(() =>
     loadTrainingRequests()
   );
@@ -1999,11 +1976,31 @@ function App() {
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
 
-  // Guardar en localStorage cuando cambie
+  // Cargar horarios desde Supabase al iniciar
   useEffect(() => {
-    saveTimeData(timeData);
-  }, [timeData]);
+    async function loadTimes() {
+      setLoadingTimeData(true);
+      setTimeError("");
+      const { data, error } = await supabase.from("time_entries").select("*");
+      if (error) {
+        console.error("Error cargando horarios desde Supabase", error);
+        setTimeError("No se pudo cargar el registro horario desde la nube.");
+        setLoadingTimeData(false);
+        return;
+      }
+      const map = {};
+      data.forEach((row) => {
+        const { date_key, user_id, entry, exit, status, note } = row;
+        if (!map[date_key]) map[date_key] = {};
+        map[date_key][user_id] = { entry, exit, status, note };
+      });
+      setTimeData(map);
+      setLoadingTimeData(false);
+    }
+    loadTimes();
+  }, []);
 
+  // Guardar en localStorage las otras cosas
   useEffect(() => {
     saveTrainingRequests(trainingRequests);
   }, [trainingRequests]);
@@ -2038,13 +2035,30 @@ function App() {
       const prevDay = prev[key] || {};
       const prevRecord = prevDay[userId] || {};
       const nextRecord = updater(prevRecord);
-      return {
+      const newData = {
         ...prev,
         [key]: {
           ...prevDay,
           [userId]: nextRecord,
         },
       };
+
+      // Enviar a Supabase (upsert)
+      (async () => {
+        const { error } = await supabase.from("time_entries").upsert({
+          date_key: key,
+          user_id: userId,
+          entry: nextRecord.entry || null,
+          exit: nextRecord.exit || null,
+          status: nextRecord.status || null,
+          note: nextRecord.note || null,
+        });
+        if (error) {
+          console.error("Error guardando horario en Supabase", error);
+        }
+      })();
+
+      return newData;
     });
   }
 
@@ -2355,6 +2369,19 @@ function App() {
             trainingRequests={trainingRequests}
             currentUser={currentUser}
           />
+          {loadingTimeData && !timeError && (
+            <p className="small-muted" style={{ marginTop: 4 }}>
+              Cargando registro horario desde la nube…
+            </p>
+          )}
+          {timeError && (
+            <p
+              className="small-muted"
+              style={{ marginTop: 4, color: "#b91c1c" }}
+            >
+              {timeError}
+            </p>
+          )}
           {currentUser.canAdminHours && adminMode && (
             <AdminExportView data={timeData} />
           )}
