@@ -373,35 +373,34 @@ function CalendarGrid({
   const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
 
   const getDotForDay = (date) => {
-  const key = toDateKey(date);
-  const byDay = data[key];
-  const isTrainingManager = currentUser?.isTrainingManager;
+    const key = toDateKey(date);
+    const byDay = data[key];
+    const isTrainingManager = currentUser?.isTrainingManager;
 
-  // Thalia no ficha, así que no mostramos puntitos de horas/ausencias para ella
-  if (currentUser?.id === "thalia") {
-    // Pero sí podría ver sus formaciones, si algún día las usamos para ella
-    const hasMyTrainingForDay = trainingRequests.some(
-      (r) => r.userId === currentUser.id && r.scheduledDateKey === key
-    );
-    if (hasMyTrainingForDay) return "training";
-    return null;
-  }
+    // Thalia no ficha, así que no mostramos puntitos de horas/ausencias para ella
+    if (currentUser?.id === "thalia") {
+      const hasMyTrainingForDay = trainingRequests.some(
+        (r) => r.userId === currentUser.id && r.scheduledDateKey === key
+      );
+      if (hasMyTrainingForDay) return "training";
+      return null;
+    }
 
-    // 2) Vista de Esteban (responsable de formación):
+    // Vista de Esteban (responsable de formación):
     if (isTrainingManager) {
       const hasTrainingForDay = trainingRequests.some(
         (r) => r.scheduledDateKey === key
       );
       if (hasTrainingForDay) return "training";
     } else {
-      // 3) Vista de usuario normal: formación propia
+      // Vista de usuario normal: formación propia
       const hasMyTrainingForDay = trainingRequests.some(
         (r) => r.userId === userId && r.scheduledDateKey === key
       );
       if (hasMyTrainingForDay) return "training";
     }
 
-    // 4) Dots normales
+    // Dots normales de fichaje / ausencias / vacaciones
     const record = byDay?.[userId];
     if (!record) return null;
     if (record.status === "absent") return "absent";
@@ -527,6 +526,8 @@ function DayDetail({
   const [meetingParticipants, setMeetingParticipants] = useState(() =>
     user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
   );
+
+  const isThalia = user.id === "thalia";
 
   useEffect(() => {
     setMeetingParticipants(
@@ -1007,97 +1008,102 @@ function DayDetail({
         )}
       </div>
 
-      <div style={{ marginTop: 6 }}>
-        <div className="field-label">Entrada</div>
-        <div className="field-value">
-          {record.entry || (
-            <span className="small-muted">No registrada</span>
-          )}
-        </div>
-
-        <div className="field-label">Salida</div>
-        <div className="field-value">
-          {record.exit || (
-            <span className="small-muted">No registrada</span>
-          )}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 6 }}>
-        <div className="field-label">Nota / motivo (opcional)</div>
-        <textarea
-          className="note-input"
-          value={record.note || ""}
-          onChange={(e) => onUpdateNote(e.target.value)}
-          placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
-        />
-      </div>
-
-      <div className="buttons-column">
-        <button
-          className="btn btn-primary btn-full"
-          type="button"
-          onClick={onMarkEntry}
-        >
-          Fichar entrada ({formatTimeNow()})
-        </button>
-        <button
-          className="btn btn-full"
-          type="button"
-          onClick={onMarkExit}
-        >
-          Fichar salida ({formatTimeNow()})
-        </button>
-
-        <div className="panel">
-          <strong>Ausencias y vacaciones</strong>
-          <p className="field-note">
-            Úsalo para días completos. Si solo fue media jornada, explícalo en
-            la nota.
-          </p>
-          <div className="flex-row">
-            <button
-              className="btn btn-small"
-              type="button"
-              onClick={onMarkAbsent}
-            >
-              Marcar ausencia
-            </button>
-            <button
-              className="btn btn-small"
-              type="button"
-              onClick={onRequestVacation}
-            >
-              Solicitar vacaciones
-            </button>
-          </div>
-          <button
-            type="button"
-            className="btn btn-small btn-ghost"
-            style={{ marginTop: 6, width: "100%" }}
-            onClick={handleSpecialAbsence}
-          >
-            Solicitar permiso especial a Thalia
-          </button>
-
-          {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
-            <div className="small-muted" style={{ marginTop: 4 }}>
-              {absenceRequestsForDay.map((r) => (
-                <div key={r.id}>
-                  Has solicitado un permiso especial para este día. Estado:{" "}
-                  <strong>
-                    {r.status === "pending" && "Pendiente"}
-                    {r.status === "approved" && "Aprobado"}
-                    {r.status === "rejected" && "Rechazado"}
-                  </strong>
-                  {r.responseMessage &&
-                    ` · Mensaje de Thalia: ${r.responseMessage}`}
-                </div>
-              ))}
+      {/* Bloque de fichaje y ausencias: NO aplica a Thalia */}
+      {!isThalia && (
+        <>
+          <div style={{ marginTop: 6 }}>
+            <div className="field-label">Entrada</div>
+            <div className="field-value">
+              {record.entry || (
+                <span className="small-muted">No registrada</span>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+
+            <div className="field-label">Salida</div>
+            <div className="field-value">
+              {record.exit || (
+                <span className="small-muted">No registrada</span>
+              )}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <div className="field-label">Nota / motivo (opcional)</div>
+            <textarea
+              className="note-input"
+              value={record.note || ""}
+              onChange={(e) => onUpdateNote(e.target.value)}
+              placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
+            />
+          </div>
+
+          <div className="buttons-column">
+            <button
+              className="btn btn-primary btn-full"
+              type="button"
+              onClick={onMarkEntry}
+            >
+              Fichar entrada ({formatTimeNow()})
+            </button>
+            <button
+              className="btn btn-full"
+              type="button"
+              onClick={onMarkExit}
+            >
+              Fichar salida ({formatTimeNow()})
+            </button>
+
+            <div className="panel">
+              <strong>Ausencias y vacaciones</strong>
+              <p className="field-note">
+                Úsalo para días completos. Si solo fue media jornada, explícalo
+                en la nota.
+              </p>
+              <div className="flex-row">
+                <button
+                  className="btn btn-small"
+                  type="button"
+                  onClick={onMarkAbsent}
+                >
+                  Marcar ausencia
+                </button>
+                <button
+                  className="btn btn-small"
+                  type="button"
+                  onClick={onRequestVacation}
+                >
+                  Solicitar vacaciones
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 6, width: "100%" }}
+                onClick={handleSpecialAbsence}
+              >
+                Solicitar permiso especial a Thalia
+              </button>
+
+              {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
+                <div className="small-muted" style={{ marginTop: 4 }}>
+                  {absenceRequestsForDay.map((r) => (
+                    <div key={r.id}>
+                      Has solicitado un permiso especial para este día. Estado:{" "}
+                      <strong>
+                        {r.status === "pending" && "Pendiente"}
+                        {r.status === "approved" && "Aprobado"}
+                        {r.status === "rejected" && "Rechazado"}
+                      </strong>
+                      {r.responseMessage &&
+                        ` · Mensaje de Thalia: ${r.responseMessage}`}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1780,11 +1786,11 @@ function MeetingAdminModal({ meetingRequests, onClose, onUpdateMeetingStatus }) 
                 </div>
                 <div className="small-muted" style={{ marginTop: 2 }}>
                   Estado:{" "}
-                  <strong>
-                    {m.status === "pending" && "Pendiente"}
-                    {m.status === "scheduled" && "Programada"}
-                    {m.status === "rejected" && "Rechazada"}
-                  </strong>
+                    <strong>
+                      {m.status === "pending" && "Pendiente"}
+                      {m.status === "scheduled" && "Programada"}
+                      {m.status === "rejected" && "Rechazada"}
+                    </strong>
                   {m.responseMessage && ` · Nota: ${m.responseMessage}`}
                 </div>
 
