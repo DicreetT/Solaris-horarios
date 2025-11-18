@@ -242,7 +242,7 @@ button {
   background: #3b82f6;
 }
 
-/* Formación (para Esteban / y personas con formación) */
+/* Formación (para Esteban y usuarios) */
 .day-badge-training {
   background: #a855f7;
 }
@@ -428,52 +428,47 @@ button {
   margin-top: 4px;
 }
 
-/* --- Chat de formación (estilo burbujitas) --- */
-
+/* Chat dentro de formación */
 .training-chat {
   margin-top: 6px;
-}
-
-.training-messages {
-  max-height: 140px;
-  overflow-y: auto;
-  margin-bottom: 6px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 6px;
+  max-height: 180px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
+.training-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .training-message {
   display: flex;
   flex-direction: column;
-  max-width: 90%;
-  font-size: 0.75rem;
-}
-
-.training-message.me {
-  align-self: flex-end;
-  text-align: right;
-}
-
-.training-message.other {
-  align-self: flex-start;
-  text-align: left;
+  margin-bottom: 4px;
 }
 
 .training-bubble {
   display: inline-block;
   padding: 6px 8px;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  background: #ffffff;
+  font-size: 0.75rem;
+  max-width: 100%;
 }
 
 .training-bubble.me {
-  background: #ffedd5; /* naranjita suave */
+  background: #dcfce7;
+  align-self: flex-end;
 }
 
 .training-bubble.other {
-  background: #e5e7eb; /* gris suave */
+  background: #eef2ff;
 }
 
 .training-meta {
@@ -482,73 +477,57 @@ button {
   margin-top: 2px;
 }
 
+.training-message.me {
+  align-items: flex-end;
+}
+
+.training-message.other {
+  align-items: flex-start;
+}
+
 .training-input-row {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   margin-top: 4px;
 }
 
-.training-input-row input {
-  flex: 1;
-}
-
-/* --- To-Do List --- */
+/* To-Do List */
 
 .todo-section-title {
+  margin-top: 10px;
   font-size: 0.85rem;
   font-weight: 600;
-  margin-top: 10px;
-  margin-bottom: 4px;
 }
 
-.todo-form-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.todo-assignees {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.todo-assignee-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 999px;
-  border: 1px solid #ccc;
-  padding: 2px 8px;
-  font-size: 0.75rem;
-  background: #ffffff;
-}
-
-.todo-assignee-pill input {
-  margin: 0;
+.todo-empty {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 4px;
 }
 
 .todo-list {
   margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 6px;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .todo-row {
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  padding: 6px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 4px 0;
+}
+
+.todo-row:last-child {
+  border-bottom: none;
 }
 
 .todo-main {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  cursor: pointer;
+  gap: 6px;
 }
 
 .todo-main input[type="checkbox"] {
@@ -562,31 +541,50 @@ button {
 .todo-title {
   font-size: 0.85rem;
   font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .todo-desc {
-  font-size: 0.75rem;
   margin-top: 2px;
 }
 
 .todo-meta {
-  font-size: 0.7rem;
   margin-top: 2px;
 }
 
 .todo-pill-done {
-  font-size: 0.65rem;
+  display: inline-block;
+  margin-left: 6px;
   padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid #16a34a;
+  font-size: 0.65rem;
   background: #dcfce7;
 }
 
-.todo-empty {
+.todo-form-row {
+  margin-top: 6px;
+}
+
+.todo-assignees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.todo-assignee-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
   font-size: 0.75rem;
-  color: #888;
-  margin-top: 2px;
+}
+
+/* Ajustes pequeños para textos en paneles */
+.todo-desc.small-muted,
+.todo-meta.small-muted {
+  font-size: 0.7rem;
 }
