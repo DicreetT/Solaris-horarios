@@ -107,7 +107,29 @@ function loadTimeData() {
     return {};
   }
 }
+async function fetchTimeDataFromSupabase() {
+  const { data, error } = await supabase
+    .from("time_entries")
+    .select("*");
 
+  if (error) {
+    console.error("Error loading time_entries from Supabase", error);
+    return {};
+  }
+
+  const result = {};
+  for (const row of data) {
+    const { date_key, user_id, entry, exit, status, note } = row;
+    if (!result[date_key]) result[date_key] = {};
+    result[date_key][user_id] = {
+      entry: entry || "",
+      exit: exit || "",
+      status: status || "",
+      note: note || "",
+    };
+  }
+  return result;
+}
 function saveTimeData(data) {
   localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(data));
 }
