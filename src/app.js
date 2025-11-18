@@ -2026,23 +2026,23 @@ function App() {
 
   // Intentar recuperar sesión de Supabase al cargar la app
   useEffect(() => {
-    async function loadAuthUser() {
-      const { data, error } = await supabaseClient.auth.getUser();
-      if (data?.user) {
-        const email = data.user.email?.toLowerCase();
-        const localUser = USERS.find(
-          (u) => u.email.toLowerCase() === email
-        );
-        if (localUser) {
-          setCurrentUser(localUser);
-          const today = new Date();
-          setSelectedDate(today);
-          setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
-        }
+  async function loadAuthUser() {
+    const { data, error } = await supabase.auth.getUser();
+    if (data?.user) {
+      const email = data.user.email?.toLowerCase();
+      const localUser = USERS.find(
+        (u) => u.email.toLowerCase() === email
+      );
+      if (localUser) {
+        setCurrentUser(localUser);
+        const today = new Date();
+        setSelectedDate(today);
+        setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
       }
     }
-    loadAuthUser();
-  }, []);
+  }
+  loadAuthUser();
+}, []);
 
   function handleLogin(user) {
     setCurrentUser(user);
@@ -2053,13 +2053,13 @@ function App() {
   }
 
   async function handleLogout() {
-    try {
-      await supabaseClient.auth.signOut();
-    } catch (e) {
-      console.error("Error closing Supabase session", e);
-    }
-    setCurrentUser(null);
+  try {
+    await supabase.auth.signOut();
+  } catch (e) {
+    console.error("Error closing Supabase session", e);
   }
+  setCurrentUser(null);
+}
 
   function updateRecord(date, userId, updater) {
     const key = toDateKey(date);
