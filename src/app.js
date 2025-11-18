@@ -1,3 +1,13 @@
+const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
+const SUPABASE_ANON_KEY = "TU_ANON_KEY_AQUÍ"; // la largaaaaa
+
+// Cliente Supabase (vía script UMD)
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
+
+const { useState, useEffect } = React;
 const { useState, useEffect } = React;
 
 /**
