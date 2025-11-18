@@ -27,6 +27,15 @@ const USERS = [
     isTrainingManager: false,
   },
   {
+    id: "contable",
+    name: "Contable",
+    role: "Contabilidad",
+    email: "contable@empresa.com", // MISMO que en Supabase
+    password: "",                  // ya no se usa
+    canAdminHours: false,
+    isTrainingManager: false,
+  },
+  {
     id: "anabella",
     name: "Anabella",
     role: "Operativa",
