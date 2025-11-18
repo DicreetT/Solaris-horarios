@@ -72,6 +72,30 @@ const USERS = [
     isTrainingManager: false,
   },
 ];
+// 🔗 Carpetas compartidas de Google Drive
+const DRIVE_FOLDERS = [
+  {
+    id: "inventario",
+    label: "Carpeta de inventario",
+    emoji: "📦",
+    url: "https://drive.google.com/drive/folders/TU_LINK_INVENTARIO_AQUI",
+    users: ["anabella", "itzi", "esteban"],
+  },
+  {
+    id: "etiquetas",
+    label: "Carpeta de etiquetas",
+    emoji: "🏷️",
+    url: "https://drive.google.com/drive/folders/TU_LINK_ETIQUETAS_AQUI",
+    users: ["anabella", "esteban"],
+  },
+  {
+    id: "facturacion",
+    label: "Carpeta de facturación",
+    emoji: "📑",
+    url: "https://drive.google.com/drive/folders/TU_LINK_FACTURACION_AQUI",
+    users: ["esteban", "itzi", "contable"],
+  },
+];
 /**
  * Data de fichajes en localStorage
  */
@@ -2017,7 +2041,45 @@ function AbsenceAdminModal({
     </div>
   );
 }
+/**
+ * Panel de carpetas compartidas (Drive)
+ */
+function SharedFoldersPanel({ currentUser }) {
+  const foldersForUser = DRIVE_FOLDERS.filter((f) =>
+    f.users.includes(currentUser.id)
+  );
 
+  if (foldersForUser.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ marginTop: 8 }}>
+      <strong>Carpetas compartidas</strong>
+      <p className="field-note">
+        Accesos directos a las carpetas de Google Drive relacionadas con tu trabajo.
+      </p>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          marginTop: 6,
+        }}
+      >
+        {foldersForUser.map((folder) => (
+          <button
+            key={folder.id}
+            type="button"
+            className="btn btn-small btn-ghost"
+            onClick={() => window.open(folder.url, "_blank")}
+          >
+            <span style={{ marginRight: 4 }}>{folder.emoji}</span>
+            {folder.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 /**
  * App principal
  */
@@ -2509,8 +2571,7 @@ function updateRecord(date, userId, updater) {
               }))
             }
           />
-        </div>
-      </div>
+   <SharedFoldersPanel currentUser={currentUser} />
 
       {/* Panel de exportaciones solo para Thalia */}
       {isThalia && (
