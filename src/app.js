@@ -7,10 +7,7 @@ const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";
 
 // Cliente Supabase (UMD)
-const supabase = window.supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY
-);
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
  * Usuarios "reales" de momento simulados.
@@ -31,7 +28,7 @@ const USERS = [
     name: "Contable",
     role: "Contabilidad",
     email: "contable@empresa.com", // MISMO que en Supabase
-    password: "",                  // ya no se usa
+    password: "", // ya no se usa
     canAdminHours: false,
     isTrainingManager: false,
   },
@@ -72,30 +69,32 @@ const USERS = [
     isTrainingManager: false,
   },
 ];
-// 🔗 Carpetas compartidas de Google Drive
+
+// 🔗 Carpetas compartidas de Google Drive (con tus links reales)
 const DRIVE_FOLDERS = [
   {
     id: "inventario",
     label: "Carpeta de inventario",
     emoji: "📦",
-    url: "https://drive.google.com/drive/folders/TU_LINK_INVENTARIO_AQUI",
+    url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
     users: ["anabella", "itzi", "esteban"],
   },
   {
     id: "etiquetas",
     label: "Carpeta de etiquetas",
     emoji: "🏷️",
-    url: "https://drive.google.com/drive/folders/TU_LINK_ETIQUETAS_AQUI",
+    url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
     users: ["anabella", "esteban"],
   },
   {
     id: "facturacion",
     label: "Carpeta de facturación",
     emoji: "📑",
-    url: "https://drive.google.com/drive/folders/TU_LINK_FACTURACION_AQUI",
+    url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
     users: ["esteban", "itzi", "contable"],
   },
 ];
+
 /**
  * Data de fichajes en localStorage
  */
@@ -121,6 +120,11 @@ const STORAGE_KEY_MEETINGS = "solaris_meetings_v1";
  */
 const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
 
+/**
+ * Data de notificaciones de carpetas compartidas
+ */
+const STORAGE_KEY_FOLDER_UPDATES = "solaris_folder_updates_v1";
+
 function loadTimeData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TIMES);
@@ -131,10 +135,9 @@ function loadTimeData() {
     return {};
   }
 }
+
 async function fetchTimeDataFromSupabase() {
-  const { data, error } = await supabase
-    .from("time_entries")
-    .select("*");
+  const { data, error } = await supabase.from("time_entries").select("*");
 
   if (error) {
     console.error("Error loading time_entries from Supabase", error);
@@ -154,6 +157,7 @@ async function fetchTimeDataFromSupabase() {
   }
   return result;
 }
+
 function saveTimeData(data) {
   localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(data));
 }
@@ -183,24 +187,7 @@ function loadTodos() {
     return [];
   }
 }
-async function saveTimeEntryToSupabase(dateKey, userId, record) {
-  const payload = {
-    date_key: dateKey,
-    user_id: userId,
-    entry: record.entry || null,
-    exit: record.exit || null,
-    status: record.status || null,
-    note: record.note || null,
-  };
 
-  const { error } = await supabase
-    .from("time_entries")
-    .upsert(payload);
-
-  if (error) {
-    console.error("Error saving to Supabase:", error);
-  }
-}
 function saveTodos(list) {
   localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(list));
 }
@@ -235,6 +222,38 @@ function saveAbsenceRequests(list) {
   localStorage.setItem(STORAGE_KEY_ABSENCES, JSON.stringify(list));
 }
 
+function loadFolderUpdates() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FOLDER_UPDATES);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading folder updates", e);
+    return {};
+  }
+}
+
+function saveFolderUpdates(data) {
+  localStorage.setItem(STORAGE_KEY_FOLDER_UPDATES, JSON.stringify(data));
+}
+
+async function saveTimeEntryToSupabase(dateKey, userId, record) {
+  const payload = {
+    date_key: dateKey,
+    user_id: userId,
+    entry: record.entry || null,
+    exit: record.exit || null,
+    status: record.status || null,
+    note: record.note || null,
+  };
+
+  const { error } = await supabase.from("time_entries").upsert(payload);
+
+  if (error) {
+    console.error("Error saving to Supabase:", error);
+  }
+}
+
 // Helpers fecha/hora
 function toDateKey(date) {
   const y = date.getFullYear();
@@ -242,6 +261,7 @@ function toDateKey(date) {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
 function formatDatePretty(date) {
   return date.toLocaleDateString("es-ES", {
     weekday: "long",
@@ -421,7 +441,9 @@ function CalendarGrid({
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const firstDay = new Date(year, month, 1);
-  const firstWeekday = (firstDay.getDay() + 6) % 7; // Lunes = 0
+  const firstWeekday = (firstDay.get
+
+Month() + 6) % 7; // Lunes = 0
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   const today = new Date();
@@ -527,9 +549,7 @@ function CalendarGrid({
         {weeks.map((week, wi) =>
           week.map((date, di) => {
             if (!date) {
-              return (
-                <div key={`${wi}-${di}`} className="day-cell empty" />
-              );
+              return <div key={`${wi}-${di}`} className="day-cell empty" />;
             }
 
             const isToday = isSameDate(date, today);
@@ -939,9 +959,7 @@ function DayDetail({
                                 <br />
                                 {c.text}
                               </div>
-                              <div className="training-meta">
-                                {c.at}
-                              </div>
+                              <div className="training-meta">{c.at}</div>
                             </div>
                           );
                         })}
@@ -1085,9 +1103,7 @@ function DayDetail({
 
         <div className="field-label">Salida</div>
         <div className="field-value">
-          {record.exit || (
-            <span className="small-muted">No registrada</span>
-          )}
+          {record.exit || <span className="small-muted">No registrada</span>}
         </div>
       </div>
 
@@ -1109,11 +1125,7 @@ function DayDetail({
         >
           Fichar entrada ({formatTimeNow()})
         </button>
-        <button
-          className="btn btn-full"
-          type="button"
-          onClick={onMarkExit}
-        >
+        <button className="btn btn-full" type="button" onClick={onMarkExit}>
           Fichar salida ({formatTimeNow()})
         </button>
 
@@ -1760,9 +1772,7 @@ function TodoModal({
             etiqueten. 💫
           </p>
         ) : (
-          <div className="todo-list">
-            {tasksForMe.map((t) => renderTodoRow(t))}
-          </div>
+          <div className="todo-list">{tasksForMe.map((t) => renderTodoRow(t))}</div>
         )}
 
         <div className="todo-section-title">Tareas que has creado</div>
@@ -1796,7 +1806,11 @@ function TodoModal({
 /**
  * Modal admin de solicitudes de reunión (solo Thalia)
  */
-function MeetingAdminModal({ meetingRequests, onClose, onUpdateMeetingStatus }) {
+function MeetingAdminModal({
+  meetingRequests,
+  onClose,
+  onUpdateMeetingStatus,
+}) {
   const sorted = [...meetingRequests].sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
@@ -1811,9 +1825,7 @@ function MeetingAdminModal({ meetingRequests, onClose, onUpdateMeetingStatus }) 
         </div>
 
         {sorted.length === 0 ? (
-          <p className="small-muted">
-            No hay solicitudes de reunión por ahora.
-          </p>
+          <p className="small-muted">No hay solicitudes de reunión por ahora.</p>
         ) : (
           sorted.map((m) => {
             const creator = USERS.find((u) => u.id === m.createdBy);
@@ -2041,10 +2053,16 @@ function AbsenceAdminModal({
     </div>
   );
 }
+
 /**
- * Panel de carpetas compartidas (Drive)
+ * Panel de carpetas compartidas (Drive) con notificaciones internas
  */
-function SharedFoldersPanel({ currentUser }) {
+function SharedFoldersPanel({
+  currentUser,
+  folderUpdates,
+  onOpenFolder,
+  onMarkFolderUpdated,
+}) {
   const foldersForUser = DRIVE_FOLDERS.filter((f) =>
     f.users.includes(currentUser.id)
   );
@@ -2055,7 +2073,8 @@ function SharedFoldersPanel({ currentUser }) {
     <div className="panel" style={{ marginTop: 8 }}>
       <strong>Carpetas compartidas</strong>
       <p className="field-note">
-        Accesos directos a las carpetas de Google Drive relacionadas con tu trabajo.
+        Accesos directos a las carpetas de Google Drive relacionadas con tu
+        trabajo. El puntito indica que alguien marcó que hay algo nuevo. 🔔
       </p>
       <div
         style={{
@@ -2065,21 +2084,62 @@ function SharedFoldersPanel({ currentUser }) {
           marginTop: 6,
         }}
       >
-        {foldersForUser.map((folder) => (
-          <button
-            key={folder.id}
-            type="button"
-            className="btn btn-small btn-ghost"
-            onClick={() => window.open(folder.url, "_blank")}
-          >
-            <span style={{ marginRight: 4 }}>{folder.emoji}</span>
-            {folder.label}
-          </button>
-        ))}
+        {foldersForUser.map((folder) => {
+          const auth = folderUpdates[folder.id]?.author || null;
+          const hasUpdate = !!folderUpdates[folder.id];
+          return (
+            <div
+              key={folder.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                onClick={() => onOpenFolder(folder)}
+              >
+                <span style={{ marginRight: 4 }}>{folder.emoji}</span>
+                {folder.label}
+                {hasUpdate && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: 8,
+                      height: 8,
+                      borderRadius: "999px",
+                      background: "#a855f7",
+                      marginLeft: 6,
+                    }}
+                  />
+                )}
+              </button>
+              {hasUpdate && (
+                <span className="small-muted">
+                  (Marcado como nuevo
+                  {auth ? ` por ${auth}` : ""})
+                </span>
+              )}
+              {currentUser.id === "thalia" && (
+                <button
+                  type="button"
+                  className="btn btn-tiny btn-ghost"
+                  title="Marcar / desmarcar novedades"
+                  onClick={() => onMarkFolderUpdated(folder.id)}
+                >
+                  {hasUpdate ? "✓" : "★"}
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
+
 /**
  * App principal
  */
@@ -2097,32 +2157,34 @@ function App() {
   const [absenceRequests, setAbsenceRequests] = useState(() =>
     loadAbsenceRequests()
   );
+  const [folderUpdates, setFolderUpdates] = useState(() =>
+    loadFolderUpdates()
+  );
+
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [showTodoModal, setShowTodoModal] = useState(false);
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
+
   useEffect(() => {
-  async function loadRemoteTimes() {
-    try {
-      const remoteData = await fetchTimeDataFromSupabase();
+    async function loadRemoteTimes() {
+      try {
+        const remoteData = await fetchTimeDataFromSupabase();
 
-      // Si quieres que lo de Supabase tenga prioridad:
-      setTimeData((prev) => {
-        // Si no hay nada en local, usa directamente remoto
-        if (!prev || Object.keys(prev).length === 0) {
-          return remoteData;
-        }
-        // O, si quieres, podrías hacer un merge inteligente aquí
-        return prev;
-      });
-    } catch (e) {
-      console.error("Error loading time data from Supabase", e);
+        setTimeData((prev) => {
+          if (!prev || Object.keys(prev).length === 0) {
+            return remoteData;
+          }
+          return prev;
+        });
+      } catch (e) {
+        console.error("Error loading time data from Supabase", e);
+      }
     }
-  }
 
-  loadRemoteTimes();
-}, []);
+    loadRemoteTimes();
+  }, []);
 
   // Guardar en localStorage cuando cambie
   useEffect(() => {
@@ -2145,10 +2207,14 @@ function App() {
     saveAbsenceRequests(absenceRequests);
   }, [absenceRequests]);
 
+  useEffect(() => {
+    saveFolderUpdates(folderUpdates);
+  }, [folderUpdates]);
+
   // Intentar recuperar sesión de Supabase al cargar la app
   useEffect(() => {
     async function loadAuthUser() {
-      const { data, error } = await supabase.auth.getUser();
+      const { data } = await supabase.auth.getUser();
       if (data?.user) {
         const email = data.user.email?.toLowerCase();
         const localUser = USERS.find((u) => u.email.toLowerCase() === email);
@@ -2180,27 +2246,27 @@ function App() {
     setCurrentUser(null);
   }
 
-function updateRecord(date, userId, updater) {
-  const key = toDateKey(date);
+  function updateRecord(date, userId, updater) {
+    const key = toDateKey(date);
 
-  setTimeData((prev) => {
-    const prevDay = prev[key] || {};
-    const prevRecord = prevDay[userId] || {};
-    const nextRecord = updater(prevRecord);
+    setTimeData((prev) => {
+      const prevDay = prev[key] || {};
+      const prevRecord = prevDay[userId] || {};
+      const nextRecord = updater(prevRecord);
 
-    // Guardar en Supabase usando el helper
-    saveTimeEntryToSupabase(key, userId, nextRecord);
+      // Guardar en Supabase usando el helper
+      saveTimeEntryToSupabase(key, userId, nextRecord);
 
-    // Devolver el nuevo estado (el useEffect ya lo guarda en localStorage)
-    return {
-      ...prev,
-      [key]: {
-        ...prevDay,
-        [userId]: nextRecord,
-      },
-    };
-  });
-}
+      return {
+        ...prev,
+        [key]: {
+          ...prevDay,
+          [userId]: nextRecord,
+        },
+      };
+    });
+  }
+
   // Formación: crear solicitud (para usuarios normales)
   function handleCreateTrainingRequest() {
     if (!currentUser || !selectedDate) return;
@@ -2257,9 +2323,7 @@ function updateRecord(date, userId, updater) {
   // Formación: aceptar (Esteban)
   function handleAcceptTraining(id) {
     setTrainingRequests((prev) =>
-      prev.map((req) =>
-        req.id === id ? { ...req, status: "accepted" } : req
-      )
+      prev.map((req) => (req.id === id ? { ...req, status: "accepted" } : req))
     );
   }
 
@@ -2269,7 +2333,7 @@ function updateRecord(date, userId, updater) {
     if (!req) return;
     const current = req.scheduledDateKey || req.requestedDateKey;
     const newDateStr = window.prompt(
-      `Escribe la nueva fecha en formato AAAA-MM-DD`,
+      "Escribe la nueva fecha en formato AAAA-MM-DD",
       current
     );
     if (!newDateStr) return;
@@ -2370,6 +2434,29 @@ function updateRecord(date, userId, updater) {
     );
   }
 
+  // Carpetas compartidas: abrir carpeta (marca como visto para la persona)
+  function handleOpenFolder(folder) {
+    window.open(folder.url, "_blank");
+  }
+
+  // Carpetas compartidas: Thalia marca / desmarca novedades globales
+  function handleMarkFolderUpdated(folderId) {
+    setFolderUpdates((prev) => {
+      const exists = prev[folderId];
+      if (exists) {
+        const { [folderId]: _, ...rest } = prev;
+        return rest;
+      }
+      return {
+        ...prev,
+        [folderId]: {
+          author: "Thalia",
+          at: new Date().toISOString(),
+        },
+      };
+    });
+  }
+
   if (!currentUser) {
     return <LoginView onLogin={handleLogin} />;
   }
@@ -2453,9 +2540,7 @@ function updateRecord(date, userId, updater) {
               style={{ marginTop: 4, width: "100%" }}
               onClick={() => setAdminMode((prev) => !prev)}
             >
-              {adminMode
-                ? "Volver a mi vista"
-                : "Administrar registro horario"}
+              {adminMode ? "Volver a mi vista" : "Administrar registro horario"}
             </button>
           )}
           {isThalia && (
@@ -2533,12 +2618,12 @@ function updateRecord(date, userId, updater) {
             absenceRequestsForDay={absenceRequestsForDay}
             onCreateAbsenceRequest={handleCreateAbsenceRequest}
             onMarkEntry={() =>
-  updateRecord(selectedDate, currentUser.id, (r) => ({
-    ...r,
-    entry: formatTimeNow(),
-    status: "present",
-  }))
-}
+              updateRecord(selectedDate, currentUser.id, (r) => ({
+                ...r,
+                entry: formatTimeNow(),
+                status: "present",
+              }))
+            }
             onMarkExit={() =>
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
@@ -2571,44 +2656,52 @@ function updateRecord(date, userId, updater) {
               }))
             }
           />
-   <SharedFoldersPanel currentUser={currentUser} />
 
-      {/* Panel de exportaciones solo para Thalia */}
-      {isThalia && (
-        <GlobalExportPanel
-          timeData={timeData}
-          trainingRequests={trainingRequests}
-          meetingRequests={meetingRequests}
-          absenceRequests={absenceRequests}
-          todos={todos}
-        />
-      )}
+          <SharedFoldersPanel
+            currentUser={currentUser}
+            folderUpdates={folderUpdates}
+            onOpenFolder={handleOpenFolder}
+            onMarkFolderUpdated={handleMarkFolderUpdated}
+          />
 
-      {showTodoModal && (
-        <TodoModal
-          currentUser={currentUser}
-          todos={todos}
-          onClose={() => setShowTodoModal(false)}
-          onCreateTodo={handleCreateTodo}
-          onToggleTodoCompleted={handleToggleTodoCompleted}
-        />
-      )}
+          {/* Panel de exportaciones solo para Thalia */}
+          {isThalia && (
+            <GlobalExportPanel
+              timeData={timeData}
+              trainingRequests={trainingRequests}
+              meetingRequests={meetingRequests}
+              absenceRequests={absenceRequests}
+              todos={todos}
+            />
+          )}
 
-      {showMeetingAdmin && (
-        <MeetingAdminModal
-          meetingRequests={meetingRequests}
-          onClose={() => setShowMeetingAdmin(false)}
-          onUpdateMeetingStatus={handleUpdateMeetingStatus}
-        />
-      )}
+          {showTodoModal && (
+            <TodoModal
+              currentUser={currentUser}
+              todos={todos}
+              onClose={() => setShowTodoModal(false)}
+              onCreateTodo={handleCreateTodo}
+              onToggleTodoCompleted={handleToggleTodoCompleted}
+            />
+          )}
 
-      {showAbsenceAdmin && (
-        <AbsenceAdminModal
-          absenceRequests={absenceRequests}
-          onClose={() => setShowAbsenceAdmin(false)}
-          onUpdateAbsenceStatus={handleUpdateAbsenceStatus}
-        />
-      )}
+          {showMeetingAdmin && (
+            <MeetingAdminModal
+              meetingRequests={meetingRequests}
+              onClose={() => setShowMeetingAdmin(false)}
+              onUpdateMeetingStatus={handleUpdateMeetingStatus}
+            />
+          )}
+
+          {showAbsenceAdmin && (
+            <AbsenceAdminModal
+              absenceRequests={absenceRequests}
+              onClose={() => setShowAbsenceAdmin(false)}
+              onUpdateAbsenceStatus={handleUpdateAbsenceStatus}
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
