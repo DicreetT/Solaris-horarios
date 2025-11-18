@@ -45,7 +45,7 @@ const USERS = [
     id: "esteban",
     name: "Esteban",
     role: "Operativo",
-    email: "esteban@empresa.com",
+    email: "contacto@solaris.global",
     password: "esteban123",
     canAdminHours: false,
     isTrainingManager: true,
