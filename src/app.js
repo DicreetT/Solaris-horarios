@@ -220,39 +220,39 @@ function LoginView({ onLogin }) {
     setError("");
     setLoading(true);
 
-    try {
-      const { data, error } = await supabaseClient.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (error) {
-        console.error("Supabase login error", error);
-        setError("Correo o contraseña incorrectos, o usuario no registrado.");
-        return;
-      }
+    setLoading(false);
 
-      const supaUser = data?.user;
-      const userEmail = supaUser?.email?.toLowerCase();
-      const localUser = USERS.find(
-        (u) => u.email.toLowerCase() === userEmail
-      );
-
-      if (!localUser) {
-        setError(
-          "Tu correo existe en Supabase pero no está configurado en Solaris. Habla con Thalia 😊"
-        );
-        await supabaseClient.auth.signOut();
-        return;
-      }
-
-      onLogin(localUser);
-    } catch (err) {
-      console.error(err);
-      setError("Ha ocurrido un error al iniciar sesión.");
-    } finally {
-      setLoading(false);
+    if (error || !data?.user) {
+      console.error(error);
+      setError("Correo o contraseña incorrectos");
+      return;
     }
+
+    const loggedEmail = (data.user.email || "").toLowerCase();
+
+    // Buscamos la config de rol en nuestro array USERS
+    const configuredUser =
+      USERS.find(
+        (u) => u.email.toLowerCase() === loggedEmail
+      ) || null;
+
+    const finalUser =
+      configuredUser ||
+      {
+        id: data.user.id,
+        name: data.user.email,
+        role: "Usuario",
+        email: data.user.email,
+        canAdminHours: false,
+        isTrainingManager: false,
+      };
+
+    onLogin(finalUser);
   }
 
   return (
@@ -324,22 +324,17 @@ function LoginView({ onLogin }) {
       </form>
 
       <p className="login-help">
-        (Usuarios de prueba <strong>que debes crear en Supabase Auth</strong>:{" "}
-        <br />
-        Thalia: thalia@empresa.com / thalia123 <br />
-        Anabella: anabella@empresa.com / anabella123 <br />
-        Esteban: esteban@empresa.com / esteban123 <br />
-        Itzi: itzi@empresa.com / itzi123 <br />
-        Fer: fer@empresa.com / fer123)
+        (Usa los correos reales que diste de alta en Supabase: <br />
+        Thalia, Anabella, Esteban, Itzi, Fer…)
       </p>
 
       <div className="panel">
         <strong>Notas:</strong>
         <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
-          <li>Los datos de horas aún se guardan solo en este navegador.</li>
+          <li>Los datos de acceso los valida Supabase (Auth seguro).</li>
           <li>
-            El login ya usa Supabase. Próximo paso: guardar todo también en la
-            nube. ✨
+            Más adelante migraremos todos los registros (horas, tareas, etc.) a
+            Supabase Database.
           </li>
         </ul>
       </div>
