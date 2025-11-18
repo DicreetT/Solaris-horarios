@@ -94,7 +94,6 @@ const DRIVE_FOLDERS = [
     users: ["esteban", "itzi", "contable"],
   },
 ];
-
 /**
  * Data de fichajes en localStorage
  */
@@ -2458,31 +2457,7 @@ function App() {
   }
 
   if (!currentUser) {
-    return <LoginView onLogin={handleLogin} />;
-  }
-
-  const isAdmin = currentUser.canAdminHours && adminMode;
-  const isTrainingManager = !!currentUser.isTrainingManager;
-  const canRequestTraining = !isTrainingManager;
-
-  const dateKey = selectedDate ? toDateKey(selectedDate) : null;
-  const trainingRequestsForDay = dateKey
-    ? trainingRequests.filter((r) => r.scheduledDateKey === dateKey)
-    : [];
-
-  const meetingRequestsForUser = meetingRequests.filter(
-    (m) => m.createdBy === currentUser.id
-  );
-
-  const absenceRequestsForDay = dateKey
-    ? absenceRequests.filter(
-        (r) => r.createdBy === currentUser.id && r.dateKey === dateKey
-      )
-    : [];
-
-  const isThalia = currentUser.id === "thalia";
-
-  return (
+      return (
     <div className="app-card">
       <div className="app-header">
         <div className="logo-title">
@@ -2540,7 +2515,9 @@ function App() {
               style={{ marginTop: 4, width: "100%" }}
               onClick={() => setAdminMode((prev) => !prev)}
             >
-              {adminMode ? "Volver a mi vista" : "Administrar registro horario"}
+              {adminMode
+                ? "Volver a mi vista"
+                : "Administrar registro horario"}
             </button>
           )}
           {isThalia && (
@@ -2583,6 +2560,7 @@ function App() {
       </div>
 
       <div className="layout">
+        {/* Columna izquierda: calendario */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <CalendarGrid
             monthDate={monthDate}
@@ -2600,6 +2578,7 @@ function App() {
           )}
         </div>
 
+        {/* Columna derecha: detalle del día + extras */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <DayDetail
             user={currentUser}
@@ -2657,12 +2636,8 @@ function App() {
             }
           />
 
-          <SharedFoldersPanel
-            currentUser={currentUser}
-            folderUpdates={folderUpdates}
-            onOpenFolder={handleOpenFolder}
-            onMarkFolderUpdated={handleMarkFolderUpdated}
-          />
+          {/* Carpetas de Drive */}
+          <SharedFoldersPanel currentUser={currentUser} />
 
           {/* Panel de exportaciones solo para Thalia */}
           {isThalia && (
@@ -2674,37 +2649,37 @@ function App() {
               todos={todos}
             />
           )}
-
-          {showTodoModal && (
-            <TodoModal
-              currentUser={currentUser}
-              todos={todos}
-              onClose={() => setShowTodoModal(false)}
-              onCreateTodo={handleCreateTodo}
-              onToggleTodoCompleted={handleToggleTodoCompleted}
-            />
-          )}
-
-          {showMeetingAdmin && (
-            <MeetingAdminModal
-              meetingRequests={meetingRequests}
-              onClose={() => setShowMeetingAdmin(false)}
-              onUpdateMeetingStatus={handleUpdateMeetingStatus}
-            />
-          )}
-
-          {showAbsenceAdmin && (
-            <AbsenceAdminModal
-              absenceRequests={absenceRequests}
-              onClose={() => setShowAbsenceAdmin(false)}
-              onUpdateAbsenceStatus={handleUpdateAbsenceStatus}
-            />
-          )}
         </div>
       </div>
+
+      {/* Modales globales */}
+      {showTodoModal && (
+        <TodoModal
+          currentUser={currentUser}
+          todos={todos}
+          onClose={() => setShowTodoModal(false)}
+          onCreateTodo={handleCreateTodo}
+          onToggleTodoCompleted={handleToggleTodoCompleted}
+        />
+      )}
+
+      {showMeetingAdmin && (
+        <MeetingAdminModal
+          meetingRequests={meetingRequests}
+          onClose={() => setShowMeetingAdmin(false)}
+          onUpdateMeetingStatus={handleUpdateMeetingStatus}
+        />
+      )}
+
+      {showAbsenceAdmin && (
+        <AbsenceAdminModal
+          absenceRequests={absenceRequests}
+          onClose={() => setShowAbsenceAdmin(false)}
+          onUpdateAbsenceStatus={handleUpdateAbsenceStatus}
+        />
+      )}
     </div>
   );
 }
-
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
