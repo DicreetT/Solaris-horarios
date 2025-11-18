@@ -123,6 +123,29 @@ const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
  * Data de notificaciones de carpetas compartidas
  */
 const STORAGE_KEY_FOLDER_UPDATES = "solaris_folder_updates_v1";
+/**
+ * Data de notificaciones internas (simple)
+ */
+const STORAGE_KEY_NOTIFICATIONS = "solaris_notifications_v1";
+
+function loadNotifications() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_NOTIFICATIONS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading notifications", e);
+    return [];
+  }
+}
+
+function saveNotifications(list) {
+  try {
+    localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, JSON.stringify(list));
+  } catch (e) {
+    console.error("Error saving notifications", e);
+  }
+}
 
 function loadTimeData() {
   try {
@@ -2050,6 +2073,54 @@ function AbsenceAdminModal({
     </div>
   );
 }
+function NotificationBell({ notifications, onMarkAllRead }) {
+  const [open, setOpen] = useState(false);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  function toggleOpen() {
+    const next = !open;
+    setOpen(next);
+    if (!open) {
+      onMarkAllRead();
+    }
+  }
+
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        className="btn btn-small btn-ghost"
+        onClick={toggleOpen}
+      >
+        🔔 Notificaciones
+        {unreadCount > 0 && ` (${unreadCount})`}
+      </button>
+
+      {open && (
+        <div className="notification-panel">
+          {notifications.length === 0 ? (
+            <div className="small-muted" style={{ padding: 6 }}>
+              No tienes notificaciones todavía.
+            </div>
+          ) : (
+            notifications.slice(0, 30).map((n) => (
+              <div key={n.id} className="notification-row">
+                <div>{n.message}</div>
+                <div className="small-muted">
+                  {new Date(n.createdAt).toLocaleString("es-ES", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Panel de carpetas compartidas (Drive) con notificaciones internas
@@ -2141,6 +2212,7 @@ function SharedFoldersPanel({
  * App principal
  */
 function App() {
+  const [notifications, setNotifications] = useState(() => loadNotifications());
   const [currentUser, setCurrentUser] = useState(null);
   const [adminMode, setAdminMode] = useState(false);
   const [timeData, setTimeData] = useState(() => loadTimeData());
@@ -2192,6 +2264,10 @@ function App() {
     saveTrainingRequests(trainingRequests);
   }, [trainingRequests]);
 
+    useEffect(() => {
+    saveNotifications(notifications);
+  }, [notifications]);
+  
   useEffect(() => {
     saveTodos(todos);
   }, [todos]);
@@ -2226,12 +2302,14 @@ function App() {
     loadAuthUser();
   }, []);
 
-  function handleLogin(user) {
+    function handleLogin(user) {
     setCurrentUser(user);
     setAdminMode(false);
     const today = new Date();
     setSelectedDate(today);
     setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+
+    addNotification(`Has iniciado sesión como ${user.name}. ¡Buenos días! ☀️`);
   }
 
   async function handleLogout() {
@@ -2263,6 +2341,22 @@ function App() {
       };
     });
   }
+  
+    // --- Notificaciones simples (solo en este dispositivo) ---
+  function addNotification(message) {
+    const now = new Date();
+    const n = {
+      id: Date.now(),
+      message,
+      createdAt: now.toISOString(),
+      read: false,
+    };
+    setNotifications((prev) => [n, ...prev].slice(0, 100)); // máximo 100
+  }
+
+  function markAllNotificationsRead() {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  }
 
   // Formación: crear solicitud (para usuarios normales)
   function handleCreateTrainingRequest() {
@@ -2282,6 +2376,9 @@ function App() {
         status: "pending",
         comments: [],
       };
+            addNotification(
+        `Has solicitado formación para el día ${dateKey}.`
+      );
       return [...prev, newReq];
     });
   }
@@ -2362,8 +2459,9 @@ function App() {
       completedBy: [],
     };
     setTodos((prev) => [newTodo, ...prev]);
+  addNotification(`Has creado la tarea: "${title}".`);
   }
-
+    
   // To-Do: marcar / desmarcar completado por la persona actual
   function handleToggleTodoCompleted(todoId) {
     if (!currentUser) return;
@@ -2409,27 +2507,34 @@ function App() {
 
   // Permisos especiales de ausencia: crear solicitud
   function handleCreateAbsenceRequest(reason) {
-    if (!currentUser || !selectedDate) return;
-    const now = new Date();
-    const dateKey = toDateKey(selectedDate);
-    const newReq = {
-      id: Date.now(),
-      createdBy: currentUser.id,
-      createdAt: now.toISOString(),
-      dateKey,
-      reason,
-      status: "pending",
-      responseMessage: "",
-    };
-    setAbsenceRequests((prev) => [newReq, ...prev]);
-  }
+  if (!currentUser || !selectedDate) return;
+  const now = new Date();
+  const dateKey = toDateKey(selectedDate);
+  const newReq = {
+    id: Date.now(),
+    createdBy: currentUser.id,
+    createdAt: now.toISOString(),
+    dateKey,
+    reason,
+    status: "pending",
+    responseMessage: "",
+  };
+  setAbsenceRequests((prev) => [newReq, ...prev]);
 
+  // 👉 notificación DENTRO de la función, usando dateKey
+  addNotification(
+    `Has solicitado un permiso especial para el día ${dateKey}.`
+  );
+}
+  
   // Permisos especiales: actualizar estado (Thalia)
   function handleUpdateAbsenceStatus(id, updates) {
-    setAbsenceRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
-    );
-  }
+  setAbsenceRequests((prev) =>
+    prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+  );
+
+  addNotification(`Has cambiado el estado de un permiso especial.`);
+}
 
   // Carpetas compartidas: abrir carpeta (marca como visto para la persona)
   function handleOpenFolder(folder) {
@@ -2528,6 +2633,10 @@ function App() {
 
         <div style={{ textAlign: "right" }}>
           <div className="current-user-tag">
+          <NotificationBell
+            notifications={notifications}
+            onMarkAllRead={markAllNotificationsRead}
+          />
             {currentUser.name}
             <br />
             <span className="small-muted">{currentUser.email}</span>
@@ -2620,20 +2729,26 @@ function App() {
             onCreateMeetingRequest={handleCreateMeetingRequest}
             absenceRequestsForDay={absenceRequestsForDay}
             onCreateAbsenceRequest={handleCreateAbsenceRequest}
-            onMarkEntry={() =>
+                        onMarkEntry={() => {
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
                 entry: formatTimeNow(),
                 status: "present",
-              }))
-            }
-            onMarkExit={() =>
+              }));
+              addNotification(
+                `Has fichado tu entrada (${formatTimeNow()}).`
+              );
+            }}
+            onMarkExit={() => {
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
                 exit: formatTimeNow(),
                 status: r.status || "present",
-              }))
-            }
+              }));
+              addNotification(
+                `Has fichado tu salida (${formatTimeNow()}). ¡Hasta luego! 🌙`
+              );
+            }}
             onMarkAbsent={() =>
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
