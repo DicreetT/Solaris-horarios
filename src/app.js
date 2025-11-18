@@ -159,7 +159,24 @@ function loadTodos() {
     return [];
   }
 }
+async function saveTimeEntryToSupabase(dateKey, userId, record) {
+  const payload = {
+    date_key: dateKey,
+    user_id: userId,
+    entry: record.entry || null,
+    exit: record.exit || null,
+    status: record.status || null,
+    note: record.note || null,
+  };
 
+  const { error } = await supabase
+    .from("time_entries")
+    .upsert(payload);
+
+  if (error) {
+    console.error("Error saving to Supabase:", error);
+  }
+}
 function saveTodos(list) {
   localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(list));
 }
@@ -201,7 +218,6 @@ function toDateKey(date) {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
-
 function formatDatePretty(date) {
   return date.toLocaleDateString("es-ES", {
     weekday: "long",
@@ -2024,6 +2040,27 @@ function App() {
   const [showTodoModal, setShowTodoModal] = useState(false);
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
+  useEffect(() => {
+  async function loadRemoteTimes() {
+    try {
+      const remoteData = await fetchTimeDataFromSupabase();
+
+      // Si quieres que lo de Supabase tenga prioridad:
+      setTimeData((prev) => {
+        // Si no hay nada en local, usa directamente remoto
+        if (!prev || Object.keys(prev).length === 0) {
+          return remoteData;
+        }
+        // O, si quieres, podrías hacer un merge inteligente aquí
+        return prev;
+      });
+    } catch (e) {
+      console.error("Error loading time data from Supabase", e);
+    }
+  }
+
+  loadRemoteTimes();
+}, []);
 
   // Guardar en localStorage cuando cambie
   useEffect(() => {
@@ -2081,22 +2118,27 @@ function App() {
     setCurrentUser(null);
   }
 
-  function updateRecord(date, userId, updater) {
-    const key = toDateKey(date);
-    setTimeData((prev) => {
-      const prevDay = prev[key] || {};
-      const prevRecord = prevDay[userId] || {};
-      const nextRecord = updater(prevRecord);
-      return {
-        ...prev,
-        [key]: {
-          ...prevDay,
-          [userId]: nextRecord,
-        },
-      };
-    });
-  }
+function updateRecord(date, userId, updater) {
+  const key = toDateKey(date);
 
+  setTimeData((prev) => {
+    const prevDay = prev[key] || {};
+    const prevRecord = prevDay[userId] || {};
+    const nextRecord = updater(prevRecord);
+
+    // Guardar en Supabase usando el helper
+    saveTimeEntryToSupabase(key, userId, nextRecord);
+
+    // Devolver el nuevo estado (el useEffect ya lo guarda en localStorage)
+    return {
+      ...prev,
+      [key]: {
+        ...prevDay,
+        [userId]: nextRecord,
+      },
+    };
+  });
+}
   // Formación: crear solicitud (para usuarios normales)
   function handleCreateTrainingRequest() {
     if (!currentUser || !selectedDate) return;
@@ -2429,12 +2471,12 @@ function App() {
             absenceRequestsForDay={absenceRequestsForDay}
             onCreateAbsenceRequest={handleCreateAbsenceRequest}
             onMarkEntry={() =>
-              updateRecord(selectedDate, currentUser.id, (r) => ({
-                ...r,
-                entry: formatTimeNow(),
-                status: r.status || "present",
-              }))
-            }
+  updateRecord(selectedDate, currentUser.id, (r) => ({
+    ...r,
+    entry: formatTimeNow(),
+    status: "present",
+  }))
+}
             onMarkExit={() =>
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
