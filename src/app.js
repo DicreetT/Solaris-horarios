@@ -289,22 +289,6 @@ function LoginView({ onLogin }) {
           {loading ? "Entrando..." : "Entrar"}
         </button>
       </form>
-
-      <p className="login-help">
-        (Usa los correos reales que diste de alta en Supabase: <br />
-        Thalia, Anabella, Esteban, Itzi, Fer… y la contable si ya la creaste.)
-      </p>
-
-      <div className="panel">
-        <strong>Notas:</strong>
-        <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
-          <li>Los datos de acceso los valida Supabase (Auth seguro).</li>
-          <li>
-            Ahora todos los registros (horas, tareas, etc.) se guardan en
-            Supabase Database.
-          </li>
-        </ul>
-      </div>
     </div>
   );
 }
