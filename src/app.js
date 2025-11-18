@@ -373,32 +373,19 @@ function CalendarGrid({
   const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
 
   const getDotForDay = (date) => {
-    const key = toDateKey(date);
-    const byDay = data[key];
-    const isTrainingManager = currentUser?.isTrainingManager;
+  const key = toDateKey(date);
+  const byDay = data[key];
+  const isTrainingManager = currentUser?.isTrainingManager;
 
-    // 1) Vista ADMIN: resumen del equipo (fichajes / ausencias / vacaciones)
-    if (isAdminView) {
-      if (!byDay) return null;
-      let hasVacation = false;
-      let hasVacationReq = false;
-      let hasAbsence = false;
-      let hasPresent = false;
-
-      USERS.forEach((u) => {
-        const record = byDay[u.id];
-        if (!record) return;
-        if (record.status === "vacation") hasVacation = true;
-        if (record.status === "vacation-request") hasVacationReq = true;
-        if (record.status === "absent") hasAbsence = true;
-        if (record.entry || record.exit) hasPresent = true;
-      });
-
-      if (hasVacation || hasVacationReq) return "vacation";
-      if (hasAbsence) return "absent";
-      if (hasPresent) return "present";
-      return null;
-    }
+  // Thalia no ficha, así que no mostramos puntitos de horas/ausencias para ella
+  if (currentUser?.id === "thalia") {
+    // Pero sí podría ver sus formaciones, si algún día las usamos para ella
+    const hasMyTrainingForDay = trainingRequests.some(
+      (r) => r.userId === currentUser.id && r.scheduledDateKey === key
+    );
+    if (hasMyTrainingForDay) return "training";
+    return null;
+  }
 
     // 2) Vista de Esteban (responsable de formación):
     if (isTrainingManager) {
