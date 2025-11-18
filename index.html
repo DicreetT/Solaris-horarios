@@ -19,6 +19,23 @@
   <body>
     <div id="root"></div>
 
+    <!-- React + ReactDOM + Babel (para poder escribir JSX sin build) -->
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.development.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Supabase JS (UMD) -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
     <!-- APP EN REACT -->
     <script type="text/babel" src="./src/app.js"></script>
   </body>
