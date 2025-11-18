@@ -1,14 +1,16 @@
-const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4"; // la largaaaaa
+// React hooks
+const { useState, useEffect } = React;
 
-// Cliente Supabase (vía script UMD)
+// 🔐 Config Supabase
+const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";
+
+// Cliente Supabase (UMD)
 const supabase = window.supabase.createClient(
   SUPABASE_URL,
   SUPABASE_ANON_KEY
 );
-
-const { useState, useEffect } = React;
-const { useState, useEffect } = React;
 
 /**
  * Usuarios "reales" de momento simulados.
@@ -30,7 +32,7 @@ const USERS = [
     role: "Operativa",
     email: "anabella@empresa.com",
     password: "anabella123",
-    canAdminHours: true, // puede ver panel de administración de registro horario
+    canAdminHours: true,
     isTrainingManager: false,
   },
   {
@@ -40,7 +42,7 @@ const USERS = [
     email: "esteban@empresa.com",
     password: "esteban123",
     canAdminHours: false,
-    isTrainingManager: true, // responsable de formación
+    isTrainingManager: true,
   },
   {
     id: "itzi",
@@ -61,14 +63,6 @@ const USERS = [
     isTrainingManager: false,
   },
 ];
-
-/* 🔐 Config Supabase */
-const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";
-
-const { createClient } = supabase;
-const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
  * Data de fichajes en localStorage
