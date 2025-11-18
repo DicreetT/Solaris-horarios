@@ -1,20 +1,8 @@
 const { useState, useEffect } = React;
 
 /**
- * CONFIG SUPABASE
- * Rellena estas dos constantes con tus datos del proyecto.
- */
-const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co"; // <- cambia esto
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";      // <- y esto también
-
-const supabase = window.supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY
-);
-
-/**
  * Usuarios "reales" de momento simulados.
- * Luego esto lo sacaremos de Supabase Auth.
+ * Luego esto lo sacaremos de Supabase (roles, etc.).
  */
 const USERS = [
   {
@@ -64,8 +52,21 @@ const USERS = [
   },
 ];
 
+/* 🔐 Config Supabase */
+const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";
+
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 /**
- * Data de solicitudes de formación (sigue en localStorage por ahora)
+ * Data de fichajes en localStorage
+ */
+const STORAGE_KEY_TIMES = "solaris_times_v1";
+
+/**
+ * Data de solicitudes de formación
  */
 const STORAGE_KEY_TRAININGS = "solaris_trainings_v1";
 
@@ -83,6 +84,21 @@ const STORAGE_KEY_MEETINGS = "solaris_meetings_v1";
  * Data de solicitudes de permiso de ausencia
  */
 const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
+
+function loadTimeData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TIMES);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error loading time data", e);
+    return {};
+  }
+}
+
+function saveTimeData(data) {
+  localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(data));
+}
 
 function loadTrainingRequests() {
   try {
@@ -181,26 +197,52 @@ function getStatusBadgeProps(status) {
 }
 
 /**
- * Login por email y contraseña (simulado).
+ * Login por email y contraseña usando Supabase Auth.
  */
 function LoginView({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    const user = USERS.find(
-      (u) =>
-        u.email.toLowerCase() === email.trim().toLowerCase() &&
-        u.password === password
-    );
-    if (!user) {
-      setError("Correo o contraseña incorrectos");
-      return;
-    }
     setError("");
-    onLogin(user);
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (error) {
+        console.error("Supabase login error", error);
+        setError("Correo o contraseña incorrectos, o usuario no registrado.");
+        return;
+      }
+
+      const supaUser = data?.user;
+      const userEmail = supaUser?.email?.toLowerCase();
+      const localUser = USERS.find(
+        (u) => u.email.toLowerCase() === userEmail
+      );
+
+      if (!localUser) {
+        setError(
+          "Tu correo existe en Supabase pero no está configurado en Solaris. Habla con Thalia 😊"
+        );
+        await supabaseClient.auth.signOut();
+        return;
+      }
+
+      onLogin(localUser);
+    } catch (err) {
+      console.error(err);
+      setError("Ha ocurrido un error al iniciar sesión.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -265,30 +307,29 @@ function LoginView({ onLogin }) {
           type="submit"
           className="btn btn-primary btn-full"
           style={{ marginTop: 12 }}
+          disabled={loading}
         >
-          Entrar
+          {loading ? "Entrando..." : "Entrar"}
         </button>
       </form>
 
       <p className="login-help">
-        (Usuarios de prueba: <br />
-        <strong>Thalia</strong>: thalia@empresa.com / thalia123 <br />
-        <strong>Anabella</strong>: anabella@empresa.com / anabella123 <br />
-        <strong>Esteban</strong>: esteban@empresa.com / esteban123 <br />
-        <strong>Itzi</strong>: itzi@empresa.com / itzi123 <br />
-        <strong>Fer</strong>: fer@empresa.com / fer123)
+        (Usuarios de prueba <strong>que debes crear en Supabase Auth</strong>:{" "}
+        <br />
+        Thalia: thalia@empresa.com / thalia123 <br />
+        Anabella: anabella@empresa.com / anabella123 <br />
+        Esteban: esteban@empresa.com / esteban123 <br />
+        Itzi: itzi@empresa.com / itzi123 <br />
+        Fer: fer@empresa.com / fer123)
       </p>
 
       <div className="panel">
         <strong>Notas:</strong>
         <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
+          <li>Los datos de horas aún se guardan solo en este navegador.</li>
           <li>
-            El <strong>registro horario</strong> se guarda en la nube (Supabase)
-            para que no se pierda si cambias de ordenador.
-          </li>
-          <li>
-            Formaciones, tareas y reuniones siguen de momento en este navegador
-            mientras terminamos la migración.
+            El login ya usa Supabase. Próximo paso: guardar todo también en la
+            nube. ✨
           </li>
         </ul>
       </div>
@@ -345,7 +386,7 @@ function CalendarGrid({
     const byDay = data[key];
     const isTrainingManager = currentUser?.isTrainingManager;
 
-    // Thalia no ficha, así que no mostramos puntitos de horas/ausencias para ella
+    // Thalia no ficha, solo podría ver formaciones propias si algún día las usa
     if (currentUser?.id === "thalia") {
       const hasMyTrainingForDay = trainingRequests.some(
         (r) => r.userId === currentUser.id && r.scheduledDateKey === key
@@ -354,21 +395,20 @@ function CalendarGrid({
       return null;
     }
 
-    // Vista de Esteban (responsable de formación):
+    // Esteban: ve todas las formaciones
     if (isTrainingManager) {
       const hasTrainingForDay = trainingRequests.some(
         (r) => r.scheduledDateKey === key
       );
       if (hasTrainingForDay) return "training";
     } else {
-      // Vista de usuario normal: formación propia
+      // Usuario normal: ve sus formaciones
       const hasMyTrainingForDay = trainingRequests.some(
         (r) => r.userId === userId && r.scheduledDateKey === key
       );
       if (hasMyTrainingForDay) return "training";
     }
 
-    // Dots normales de fichaje / ausencias / vacaciones
     const record = byDay?.[userId];
     if (!record) return null;
     if (record.status === "absent") return "absent";
@@ -495,8 +535,6 @@ function DayDetail({
     user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
   );
 
-  const isThalia = user.id === "thalia";
-
   useEffect(() => {
     setMeetingParticipants(
       user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
@@ -559,7 +597,7 @@ function DayDetail({
     onCreateAbsenceRequest(motivo.trim());
   }
 
-  // --- Vista ADMIN (Anabella gestionando fichajes) ---
+  // Vista ADMIN (Anabella gestionando fichajes)
   if (isAdminView) {
     return (
       <div className="day-card">
@@ -636,7 +674,7 @@ function DayDetail({
     );
   }
 
-  // --- Vista USUARIO normal ---
+  // Vista USUARIO normal
   const record = byDay[user.id] || {};
   const statusProps = getStatusBadgeProps(record.status);
 
@@ -689,7 +727,7 @@ function DayDetail({
                   {req.status === "rescheduled" &&
                     req.scheduledDateKey !== req.requestedDateKey && (
                       <p className="small-muted">
-                        The Liberals under Joly won the most seats—particularly in francophone and urban areas—but fell short of a majority.However,if opposition parties vote together,they may be able to pass environmental protections over the new government’s objections.
+                        Reprogramada para el día {req.scheduledDateKey}.
                       </p>
                     )}
 
@@ -976,102 +1014,97 @@ function DayDetail({
         )}
       </div>
 
-      {/* Bloque de fichaje y ausencias: NO aplica a Thalia */}
-      {!isThalia && (
-        <>
-          <div style={{ marginTop: 6 }}>
-            <div className="field-label">Entrada</div>
-            <div className="field-value">
-              {record.entry || (
-                <span className="small-muted">No registrada</span>
-              )}
-            </div>
+      <div style={{ marginTop: 6 }}>
+        <div className="field-label">Entrada</div>
+        <div className="field-value">
+          {record.entry || (
+            <span className="small-muted">No registrada</span>
+          )}
+        </div>
 
-            <div className="field-label">Salida</div>
-            <div className="field-value">
-              {record.exit || (
-                <span className="small-muted">No registrada</span>
-              )}
-            </div>
-          </div>
+        <div className="field-label">Salida</div>
+        <div className="field-value">
+          {record.exit || (
+            <span className="small-muted">No registrada</span>
+          )}
+        </div>
+      </div>
 
-          <div style={{ marginTop: 6 }}>
-            <div className="field-label">Nota / motivo (opcional)</div>
-            <textarea
-              className="note-input"
-              value={record.note || ""}
-              onChange={(e) => onUpdateNote(e.target.value)}
-              placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
-            />
-          </div>
+      <div style={{ marginTop: 6 }}>
+        <div className="field-label">Nota / motivo (opcional)</div>
+        <textarea
+          className="note-input"
+          value={record.note || ""}
+          onChange={(e) => onUpdateNote(e.target.value)}
+          placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
+        />
+      </div>
 
-          <div className="buttons-column">
+      <div className="buttons-column">
+        <button
+          className="btn btn-primary btn-full"
+          type="button"
+          onClick={onMarkEntry}
+        >
+          Fichar entrada ({formatTimeNow()})
+        </button>
+        <button
+          className="btn btn-full"
+          type="button"
+          onClick={onMarkExit}
+        >
+          Fichar salida ({formatTimeNow()})
+        </button>
+
+        <div className="panel">
+          <strong>Ausencias y vacaciones</strong>
+          <p className="field-note">
+            Úsalo para días completos. Si solo fue media jornada, explícalo en
+            la nota.
+          </p>
+          <div className="flex-row">
             <button
-              className="btn btn-primary btn-full"
+              className="btn btn-small"
               type="button"
-              onClick={onMarkEntry}
+              onClick={onMarkAbsent}
             >
-              Fichar entrada ({formatTimeNow()})
+              Marcar ausencia
             </button>
             <button
-              className="btn btn-full"
+              className="btn btn-small"
               type="button"
-              onClick={onMarkExit}
+              onClick={onRequestVacation}
             >
-              Fichar salida ({formatTimeNow()})
+              Solicitar vacaciones
             </button>
+          </div>
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            style={{ marginTop: 6, width: "100%" }}
+            onClick={handleSpecialAbsence}
+          >
+            Solicitar permiso especial a Thalia
+          </button>
 
-            <div className="panel">
-              <strong>Ausencias y vacaciones</strong>
-              <p className="field-note">
-                Úsalo para días completos. Si solo fue media jornada, explícalo
-                en la nota.
-              </p>
-              <div className="flex-row">
-                <button
-                  className="btn btn-small"
-                  type="button"
-                  onClick={onMarkAbsent}
-                >
-                  Marcar ausencia
-                </button>
-                <button
-                  className="btn btn-small"
-                  type="button"
-                  onClick={onRequestVacation}
-                >
-                  Solicitar vacaciones
-                </button>
-              </div>
-              <button
-                type="button"
-                className="btn btn-small btn-ghost"
-                style={{ marginTop: 6, width: "100%" }}
-                onClick={handleSpecialAbsence}
-              >
-                Solicitar permiso especial a Thalia
-              </button>
-
-              {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
-                <div className="small-muted" style={{ marginTop: 4 }}>
-                  {absenceRequestsForDay.map((r) => (
-                    <div key={r.id}>
-                      Has solicitado un permiso especial para este día. Estado:{" "}
-                      <strong>
-                        {r.status === "pending" && "Pendiente"}
-                        {r.status === "approved" && "Aprobado"}
-                        {r.status === "rejected" && "Rechazado"}
-                      </strong>
-                      {r.responseMessage &&
-                        ` · Mensaje de Thalia: ${r.responseMessage}`}
-                    </div>
-                  ))}
+          {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
+            <div className="small-muted" style={{ marginTop: 4 }}>
+              {absenceRequestsForDay.map((r) => (
+                <div key={r.id}>
+                  Has solicitado un permiso especial para este día. Estado:{" "}
+                  <strong>
+                    {r.status === "pending" && "Pendiente"}
+                    {r.status === "approved" && "Aprobado"}
+                    {r.status === "rejected" && "Rechazado"}
+                  </strong>
+                  {r.responseMessage &&
+                    ` · Mensaje de Thalia: ${r.responseMessage}`}
                 </div>
-              )}
+              ))}
             </div>
-          </div>
-        </>
-      )}
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1953,13 +1986,8 @@ function AbsenceAdminModal({
  */
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
-
-  // Horarios ahora en Supabase
-  const [timeData, setTimeData] = useState({});
-  const [loadingTimeData, setLoadingTimeData] = useState(true);
-  const [timeError, setTimeError] = useState("");
-
   const [adminMode, setAdminMode] = useState(false);
+  const [timeData, setTimeData] = useState(() => loadTimeData());
   const [trainingRequests, setTrainingRequests] = useState(() =>
     loadTrainingRequests()
   );
@@ -1976,31 +2004,11 @@ function App() {
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
 
-  // Cargar horarios desde Supabase al iniciar
+  // Guardar en localStorage cuando cambie
   useEffect(() => {
-    async function loadTimes() {
-      setLoadingTimeData(true);
-      setTimeError("");
-      const { data, error } = await supabase.from("time_entries").select("*");
-      if (error) {
-        console.error("Error cargando horarios desde Supabase", error);
-        setTimeError("No se pudo cargar el registro horario desde la nube.");
-        setLoadingTimeData(false);
-        return;
-      }
-      const map = {};
-      data.forEach((row) => {
-        const { date_key, user_id, entry, exit, status, note } = row;
-        if (!map[date_key]) map[date_key] = {};
-        map[date_key][user_id] = { entry, exit, status, note };
-      });
-      setTimeData(map);
-      setLoadingTimeData(false);
-    }
-    loadTimes();
-  }, []);
+    saveTimeData(timeData);
+  }, [timeData]);
 
-  // Guardar en localStorage las otras cosas
   useEffect(() => {
     saveTrainingRequests(trainingRequests);
   }, [trainingRequests]);
@@ -2017,6 +2025,26 @@ function App() {
     saveAbsenceRequests(absenceRequests);
   }, [absenceRequests]);
 
+  // Intentar recuperar sesión de Supabase al cargar la app
+  useEffect(() => {
+    async function loadAuthUser() {
+      const { data, error } = await supabaseClient.auth.getUser();
+      if (data?.user) {
+        const email = data.user.email?.toLowerCase();
+        const localUser = USERS.find(
+          (u) => u.email.toLowerCase() === email
+        );
+        if (localUser) {
+          setCurrentUser(localUser);
+          const today = new Date();
+          setSelectedDate(today);
+          setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+        }
+      }
+    }
+    loadAuthUser();
+  }, []);
+
   function handleLogin(user) {
     setCurrentUser(user);
     setAdminMode(false);
@@ -2025,7 +2053,12 @@ function App() {
     setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    try {
+      await supabaseClient.auth.signOut();
+    } catch (e) {
+      console.error("Error closing Supabase session", e);
+    }
     setCurrentUser(null);
   }
 
@@ -2035,30 +2068,13 @@ function App() {
       const prevDay = prev[key] || {};
       const prevRecord = prevDay[userId] || {};
       const nextRecord = updater(prevRecord);
-      const newData = {
+      return {
         ...prev,
         [key]: {
           ...prevDay,
           [userId]: nextRecord,
         },
       };
-
-      // Enviar a Supabase (upsert)
-      (async () => {
-        const { error } = await supabase.from("time_entries").upsert({
-          date_key: key,
-          user_id: userId,
-          entry: nextRecord.entry || null,
-          exit: nextRecord.exit || null,
-          status: nextRecord.status || null,
-          note: nextRecord.note || null,
-        });
-        if (error) {
-          console.error("Error guardando horario en Supabase", error);
-        }
-      })();
-
-      return newData;
     });
   }
 
@@ -2276,6 +2292,8 @@ function App() {
                     ? "#fee2e2"
                     : currentUser.isTrainingManager
                     ? "#e0f2fe"
+                    : isThalia
+                    ? "#fef3c7"
                     : "#dcfce7",
                   marginRight: 6,
                 }}
@@ -2369,19 +2387,6 @@ function App() {
             trainingRequests={trainingRequests}
             currentUser={currentUser}
           />
-          {loadingTimeData && !timeError && (
-            <p className="small-muted" style={{ marginTop: 4 }}>
-              Cargando registro horario desde la nube…
-            </p>
-          )}
-          {timeError && (
-            <p
-              className="small-muted"
-              style={{ marginTop: 4, color: "#b91c1c" }}
-            >
-              {timeError}
-            </p>
-          )}
           {currentUser.canAdminHours && adminMode && (
             <AdminExportView data={timeData} />
           )}
