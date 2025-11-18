@@ -72,7 +72,6 @@ const USERS = [
     isTrainingManager: false,
   },
 ];
-
 /**
  * Data de fichajes en localStorage
  */
@@ -240,9 +239,7 @@ function LoginView({ onLogin }) {
 
     // Buscamos la config de rol en nuestro array USERS
     const configuredUser =
-      USERS.find(
-        (u) => u.email.toLowerCase() === loggedEmail
-      ) || null;
+      USERS.find((u) => u.email.toLowerCase() === loggedEmail) || null;
 
     const finalUser =
       configuredUser ||
@@ -328,7 +325,7 @@ function LoginView({ onLogin }) {
 
       <p className="login-help">
         (Usa los correos reales que diste de alta en Supabase: <br />
-        Thalia, Anabella, Esteban, Itzi, Fer…)
+        Thalia, Anabella, Esteban, Itzi, Fer… y la contable si ya la creaste.)
       </p>
 
       <div className="panel">
@@ -633,9 +630,7 @@ function DayDetail({
               >
                 <strong>{u.name}</strong>
                 {statusProps && (
-                  <div
-                    className={"status-tag " + statusProps.className}
-                  >
+                  <div className={"status-tag " + statusProps.className}>
                     {statusProps.label}
                   </div>
                 )}
@@ -760,8 +755,7 @@ function DayDetail({
                           >
                             <div
                               className={
-                                "training-bubble " +
-                                (isMe ? "me" : "other")
+                                "training-bubble " + (isMe ? "me" : "other")
                               }
                             >
                               <strong>{author?.name || c.by}</strong>
@@ -796,9 +790,7 @@ function DayDetail({
                     </div>
                   </div>
 
-                  <div
-                    style={{ display: "flex", gap: 6, marginTop: 6 }}
-                  >
+                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                     <button
                       type="button"
                       className="btn btn-small"
@@ -872,8 +864,7 @@ function DayDetail({
                             <div
                               key={idx}
                               className={
-                                "training-message " +
-                                (isMe ? "me" : "other")
+                                "training-message " + (isMe ? "me" : "other")
                               }
                             >
                               <div
@@ -2035,23 +2026,21 @@ function App() {
 
   // Intentar recuperar sesión de Supabase al cargar la app
   useEffect(() => {
-  async function loadAuthUser() {
-    const { data, error } = await supabase.auth.getUser();
-    if (data?.user) {
-      const email = data.user.email?.toLowerCase();
-      const localUser = USERS.find(
-        (u) => u.email.toLowerCase() === email
-      );
-      if (localUser) {
-        setCurrentUser(localUser);
-        const today = new Date();
-        setSelectedDate(today);
-        setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    async function loadAuthUser() {
+      const { data, error } = await supabase.auth.getUser();
+      if (data?.user) {
+        const email = data.user.email?.toLowerCase();
+        const localUser = USERS.find((u) => u.email.toLowerCase() === email);
+        if (localUser) {
+          setCurrentUser(localUser);
+          const today = new Date();
+          setSelectedDate(today);
+          setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+        }
       }
     }
-  }
-  loadAuthUser();
-}, []);
+    loadAuthUser();
+  }, []);
 
   function handleLogin(user) {
     setCurrentUser(user);
@@ -2062,13 +2051,13 @@ function App() {
   }
 
   async function handleLogout() {
-  try {
-    await supabase.auth.signOut();
-  } catch (e) {
-    console.error("Error closing Supabase session", e);
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("Error closing Supabase session", e);
+    }
+    setCurrentUser(null);
   }
-  setCurrentUser(null);
-}
 
   function updateRecord(date, userId, updater) {
     const key = toDateKey(date);
