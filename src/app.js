@@ -20,7 +20,7 @@ const USERS = [
     role: "Admin general",
     email: "thaliaoliveros.solaris@gmail.com",
     password: "Thalia123",
-    canAdminHours: false,
+    canAdminHours: true,
     isTrainingManager: false,
   },
   {
@@ -38,7 +38,7 @@ const USERS = [
     role: "Operativa",
     email: "anabella@empresa.com",
     password: "anabella123",
-    canAdminHours: true,
+    canAdminHours: false,
     isTrainingManager: false,
   },
   {
