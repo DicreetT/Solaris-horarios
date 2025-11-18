@@ -10,8 +10,8 @@ const SUPABASE_ANON_KEY =
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
- * Usuarios "reales" de momento simulados.
- * Luego esto lo sacaremos de Supabase (roles, etc.).
+ * Usuarios "reales" simulados.
+ * Luego roles/flags podrían venir de Supabase.
  */
 const USERS = [
   {
@@ -27,8 +27,8 @@ const USERS = [
     id: "contable",
     name: "Contable",
     role: "Contabilidad",
-    email: "contable@empresa.com", // MISMO que en Supabase
-    password: "", // ya no se usa
+    email: "contable@empresa.com",
+    password: "",
     canAdminHours: false,
     isTrainingManager: false,
   },
@@ -94,187 +94,6 @@ const DRIVE_FOLDERS = [
     users: ["esteban", "itzi", "contable"],
   },
 ];
-/**
- * Data de fichajes en localStorage
- */
-const STORAGE_KEY_TIMES = "solaris_times_v1";
-
-/**
- * Data de solicitudes de formación
- */
-const STORAGE_KEY_TRAININGS = "solaris_trainings_v1";
-
-/**
- * Data de To-Do
- */
-const STORAGE_KEY_TODOS = "solaris_todos_v1";
-
-/**
- * Data de solicitudes de reunión
- */
-const STORAGE_KEY_MEETINGS = "solaris_meetings_v1";
-
-/**
- * Data de solicitudes de permiso de ausencia
- */
-const STORAGE_KEY_ABSENCES = "solaris_absences_v1";
-
-/**
- * Data de notificaciones de carpetas compartidas
- */
-const STORAGE_KEY_FOLDER_UPDATES = "solaris_folder_updates_v1";
-/**
- * Data de notificaciones internas (simple)
- */
-const STORAGE_KEY_NOTIFICATIONS = "solaris_notifications_v1";
-
-function loadNotifications() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_NOTIFICATIONS);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading notifications", e);
-    return [];
-  }
-}
-
-function saveNotifications(list) {
-  try {
-    localStorage.setItem(STORAGE_KEY_NOTIFICATIONS, JSON.stringify(list));
-  } catch (e) {
-    console.error("Error saving notifications", e);
-  }
-}
-
-function loadTimeData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TIMES);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading time data", e);
-    return {};
-  }
-}
-
-async function fetchTimeDataFromSupabase() {
-  const { data, error } = await supabase.from("time_entries").select("*");
-
-  if (error) {
-    console.error("Error loading time_entries from Supabase", error);
-    return {};
-  }
-
-  const result = {};
-  for (const row of data) {
-    const { date_key, user_id, entry, exit, status, note } = row;
-    if (!result[date_key]) result[date_key] = {};
-    result[date_key][user_id] = {
-      entry: entry || "",
-      exit: exit || "",
-      status: status || "",
-      note: note || "",
-    };
-  }
-  return result;
-}
-
-function saveTimeData(data) {
-  localStorage.setItem(STORAGE_KEY_TIMES, JSON.stringify(data));
-}
-
-function loadTrainingRequests() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TRAININGS);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading training requests", e);
-    return [];
-  }
-}
-
-function saveTrainingRequests(list) {
-  localStorage.setItem(STORAGE_KEY_TRAININGS, JSON.stringify(list));
-}
-
-function loadTodos() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TODOS);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading todos", e);
-    return [];
-  }
-}
-
-function saveTodos(list) {
-  localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(list));
-}
-
-function loadMeetingRequests() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_MEETINGS);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading meetings", e);
-    return [];
-  }
-}
-
-function saveMeetingRequests(list) {
-  localStorage.setItem(STORAGE_KEY_MEETINGS, JSON.stringify(list));
-}
-
-function loadAbsenceRequests() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_ABSENCES);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading absences", e);
-    return [];
-  }
-}
-
-function saveAbsenceRequests(list) {
-  localStorage.setItem(STORAGE_KEY_ABSENCES, JSON.stringify(list));
-}
-
-function loadFolderUpdates() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_FOLDER_UPDATES);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error loading folder updates", e);
-    return {};
-  }
-}
-
-function saveFolderUpdates(data) {
-  localStorage.setItem(STORAGE_KEY_FOLDER_UPDATES, JSON.stringify(data));
-}
-
-async function saveTimeEntryToSupabase(dateKey, userId, record) {
-  const payload = {
-    date_key: dateKey,
-    user_id: userId,
-    entry: record.entry || null,
-    exit: record.exit || null,
-    status: record.status || null,
-    note: record.note || null,
-  };
-
-  const { error } = await supabase.from("time_entries").upsert(payload);
-
-  if (error) {
-    console.error("Error saving to Supabase:", error);
-  }
-}
 
 // Helpers fecha/hora
 function toDateKey(date) {
@@ -310,6 +129,50 @@ function getStatusBadgeProps(status) {
   if (status === "present")
     return { label: "Presente", className: "status-present" };
   return null;
+}
+
+/**
+ * Fichajes en Supabase:
+ * Tabla: time_entries
+ * Campos: date_key (text), user_id (text), entry (text), exit (text), status (text), note (text/null)
+ */
+async function fetchTimeDataFromSupabase() {
+  const { data, error } = await supabase.from("time_entries").select("*");
+
+  if (error) {
+    console.error("Error loading time_entries from Supabase", error);
+    return {};
+  }
+
+  const result = {};
+  for (const row of data) {
+    const { date_key, user_id, entry, exit, status, note } = row;
+    if (!result[date_key]) result[date_key] = {};
+    result[date_key][user_id] = {
+      entry: entry || "",
+      exit: exit || "",
+      status: status || "",
+      note: note || "",
+    };
+  }
+  return result;
+}
+
+async function saveTimeEntryToSupabase(dateKey, userId, record) {
+  const payload = {
+    date_key: dateKey,
+    user_id: userId,
+    entry: record.entry || null,
+    exit: record.exit || null,
+    status: record.status || null,
+    note: record.note || null,
+  };
+
+  const { error } = await supabase.from("time_entries").upsert(payload);
+
+  if (error) {
+    console.error("Error saving to Supabase:", error);
+  }
 }
 
 /**
@@ -437,7 +300,7 @@ function LoginView({ onLogin }) {
         <ul style={{ paddingLeft: 18, margin: "4px 0", fontSize: "0.8rem" }}>
           <li>Los datos de acceso los valida Supabase (Auth seguro).</li>
           <li>
-            Más adelante migraremos todos los registros (horas, tareas, etc.) a
+            Ahora todos los registros (horas, tareas, etc.) se guardan en
             Supabase Database.
           </li>
         </ul>
@@ -1825,6 +1688,7 @@ function TodoModal({
 
 /**
  * Modal admin de solicitudes de reunión (solo Thalia)
+ * Tabla: meeting_requests
  */
 function MeetingAdminModal({
   meetingRequests,
@@ -1954,6 +1818,7 @@ function MeetingAdminModal({
 
 /**
  * Modal admin de permisos de ausencia (solo Thalia)
+ * Tabla: absence_requests
  */
 function AbsenceAdminModal({
   absenceRequests,
@@ -2073,6 +1938,12 @@ function AbsenceAdminModal({
     </div>
   );
 }
+
+/**
+ * Notificaciones con Supabase
+ * Tabla: notifications
+ * Campos: id, user_id, message, created_at, read (bool)
+ */
 function NotificationBell({ notifications, onMarkAllRead }) {
   const [open, setOpen] = useState(false);
 
@@ -2124,6 +1995,8 @@ function NotificationBell({ notifications, onMarkAllRead }) {
 
 /**
  * Panel de carpetas compartidas (Drive) con notificaciones internas
+ * Tabla: folder_updates
+ * Campos: id, folder_id, author, at (timestamp)
  */
 function SharedFoldersPanel({
   currentUser,
@@ -2209,26 +2082,19 @@ function SharedFoldersPanel({
 }
 
 /**
- * App principal
+ * App principal (TODO en Supabase)
  */
 function App() {
-  const [notifications, setNotifications] = useState(() => loadNotifications());
+  const [notifications, setNotifications] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [adminMode, setAdminMode] = useState(false);
-  const [timeData, setTimeData] = useState(() => loadTimeData());
-  const [trainingRequests, setTrainingRequests] = useState(() =>
-    loadTrainingRequests()
-  );
-  const [todos, setTodos] = useState(() => loadTodos());
-  const [meetingRequests, setMeetingRequests] = useState(() =>
-    loadMeetingRequests()
-  );
-  const [absenceRequests, setAbsenceRequests] = useState(() =>
-    loadAbsenceRequests()
-  );
-  const [folderUpdates, setFolderUpdates] = useState(() =>
-    loadFolderUpdates()
-  );
+
+  const [timeData, setTimeData] = useState({});
+  const [trainingRequests, setTrainingRequests] = useState([]);
+  const [todos, setTodos] = useState([]);
+  const [meetingRequests, setMeetingRequests] = useState([]);
+  const [absenceRequests, setAbsenceRequests] = useState([]);
+  const [folderUpdates, setFolderUpdates] = useState({});
 
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
@@ -2236,17 +2102,12 @@ function App() {
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
 
+  // 👉 Horarios: cargar desde Supabase al arrancar
   useEffect(() => {
     async function loadRemoteTimes() {
       try {
         const remoteData = await fetchTimeDataFromSupabase();
-
-        setTimeData((prev) => {
-          if (!prev || Object.keys(prev).length === 0) {
-            return remoteData;
-          }
-          return prev;
-        });
+        setTimeData(remoteData);
       } catch (e) {
         console.error("Error loading time data from Supabase", e);
       }
@@ -2254,35 +2115,6 @@ function App() {
 
     loadRemoteTimes();
   }, []);
-
-  // Guardar en localStorage cuando cambie
-  useEffect(() => {
-    saveTimeData(timeData);
-  }, [timeData]);
-
-  useEffect(() => {
-    saveTrainingRequests(trainingRequests);
-  }, [trainingRequests]);
-
-    useEffect(() => {
-    saveNotifications(notifications);
-  }, [notifications]);
-  
-  useEffect(() => {
-    saveTodos(todos);
-  }, [todos]);
-
-  useEffect(() => {
-    saveMeetingRequests(meetingRequests);
-  }, [meetingRequests]);
-
-  useEffect(() => {
-    saveAbsenceRequests(absenceRequests);
-  }, [absenceRequests]);
-
-  useEffect(() => {
-    saveFolderUpdates(folderUpdates);
-  }, [folderUpdates]);
 
   // Intentar recuperar sesión de Supabase al cargar la app
   useEffect(() => {
@@ -2302,23 +2134,245 @@ function App() {
     loadAuthUser();
   }, []);
 
-    function handleLogin(user) {
-    setCurrentUser(user);
-    setAdminMode(false);
-    const today = new Date();
-    setSelectedDate(today);
-    setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  // 👉 Cargar datos relacionados con el usuario desde Supabase
+  useEffect(() => {
+    if (!currentUser) return;
 
-    addNotification(`Has iniciado sesión como ${user.name}. ¡Buenos días! ☀️`);
+    // To-Do: tabla "todos"
+    async function loadTodosFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("todos")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Error loading todos from Supabase", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description || "",
+          createdBy: row.created_by,
+          assignedTo: row.assigned_to || [],
+          createdAt: row.created_at,
+          dueDateKey: row.due_date_key || null,
+          completedBy: row.completed_by || [],
+        }));
+
+        setTodos(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading todos", e);
+      }
+    }
+
+    // Formación: tabla "training_requests"
+    async function loadTrainingRequestsFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("training_requests")
+          .select("*");
+
+        if (error) {
+          console.error("Error loading training_requests", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          requestedDateKey: row.requested_date_key,
+          scheduledDateKey: row.scheduled_date_key,
+          status: row.status,
+          comments: row.comments || [],
+        }));
+
+        setTrainingRequests(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading training_requests", e);
+      }
+    }
+
+    // Reuniones: tabla "meeting_requests"
+    async function loadMeetingRequestsFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("meeting_requests")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Error loading meeting_requests", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          createdBy: row.created_by,
+          createdAt: row.created_at,
+          title: row.title,
+          description: row.description || "",
+          preferredDateKey: row.preferred_date_key,
+          preferredSlot: row.preferred_slot,
+          participants: row.participants || [],
+          status: row.status,
+          scheduledDateKey: row.scheduled_date_key || null,
+          scheduledTime: row.scheduled_time || "",
+          responseMessage: row.response_message || "",
+        }));
+
+        setMeetingRequests(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading meeting_requests", e);
+      }
+    }
+
+    // Permisos especiales: tabla "absence_requests"
+    async function loadAbsenceRequestsFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("absence_requests")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Error loading absence_requests", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          createdBy: row.created_by,
+          createdAt: row.created_at,
+          dateKey: row.date_key,
+          reason: row.reason,
+          status: row.status,
+          responseMessage: row.response_message || "",
+        }));
+
+        setAbsenceRequests(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading absence_requests", e);
+      }
+    }
+
+    // Carpetas actualizadas: tabla "folder_updates"
+    async function loadFolderUpdatesFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("folder_updates")
+          .select("*");
+
+        if (error) {
+          console.error("Error loading folder_updates", error);
+          return;
+        }
+
+        const map = {};
+        data.forEach((row) => {
+          map[row.folder_id] = {
+            author: row.author,
+            at: row.at,
+          };
+        });
+        setFolderUpdates(map);
+      } catch (e) {
+        console.error("Unexpected error loading folder_updates", e);
+      }
+    }
+
+    // Notificaciones: tabla "notifications"
+    async function loadNotificationsFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from("notifications")
+          .select("*")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Error loading notifications", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          message: row.message,
+          createdAt: row.created_at,
+          read: row.read,
+        }));
+
+        setNotifications(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading notifications", e);
+      }
+    }
+
+    loadTodosFromSupabase();
+    loadTrainingRequestsFromSupabase();
+    loadMeetingRequestsFromSupabase();
+    loadAbsenceRequestsFromSupabase();
+    loadFolderUpdatesFromSupabase();
+    loadNotificationsFromSupabase();
+  }, [currentUser]);
+
+  // --- Notificaciones (Supabase) ---
+  async function addNotification(message, userIdOverride) {
+    const userId = userIdOverride || currentUser?.id;
+    if (!userId) return;
+
+    const now = new Date().toISOString();
+
+    try {
+      const { data, error } = await supabase
+        .from("notifications")
+        .insert({
+          user_id: userId,
+          message,
+          created_at: now,
+          read: false,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating notification in Supabase", error);
+        return;
+      }
+
+      const newNotif = {
+        id: data.id,
+        message: data.message,
+        createdAt: data.created_at,
+        read: data.read,
+      };
+
+      setNotifications((prev) => [newNotif, ...prev].slice(0, 100));
+    } catch (e) {
+      console.error("Unexpected error creating notification", e);
+    }
   }
 
-  async function handleLogout() {
+  async function markAllNotificationsRead() {
+    if (!currentUser) return;
+
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("user_id", currentUser.id)
+        .eq("read", false);
+
+      if (error) {
+        console.error("Error marking notifications as read in Supabase", error);
+      }
     } catch (e) {
-      console.error("Error closing Supabase session", e);
+      console.error("Unexpected error marking notifications read", e);
     }
-    setCurrentUser(null);
+
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }
 
   function updateRecord(date, userId, updater) {
@@ -2341,50 +2395,81 @@ function App() {
       };
     });
   }
-  
-    // --- Notificaciones simples (solo en este dispositivo) ---
-  function addNotification(message) {
-    const now = new Date();
-    const n = {
-      id: Date.now(),
-      message,
-      createdAt: now.toISOString(),
-      read: false,
-    };
-    setNotifications((prev) => [n, ...prev].slice(0, 100)); // máximo 100
+
+  function handleLogin(user) {
+    setCurrentUser(user);
+    setAdminMode(false);
+    const today = new Date();
+    setSelectedDate(today);
+    setMonthDate(new Date(today.getFullYear(), today.getMonth(), 1));
+
+    // Usamos user.id porque currentUser aún no está actualizado en este momento
+    addNotification(
+      `Has iniciado sesión como ${user.name}. ¡Buenos días! ☀️`,
+      user.id
+    );
   }
 
-  function markAllNotificationsRead() {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  async function handleLogout() {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("Error closing Supabase session", e);
+    }
+    setCurrentUser(null);
   }
 
-  // Formación: crear solicitud (para usuarios normales)
-  function handleCreateTrainingRequest() {
+  // Formación: crear solicitud (tabla training_requests)
+  async function handleCreateTrainingRequest() {
     if (!currentUser || !selectedDate) return;
     const dateKey = toDateKey(selectedDate);
 
-    setTrainingRequests((prev) => {
-      const already = prev.find(
-        (r) => r.userId === currentUser.id && r.scheduledDateKey === dateKey
-      );
-      if (already) return prev;
-      const newReq = {
-        id: Date.now(),
-        userId: currentUser.id,
-        requestedDateKey: dateKey,
-        scheduledDateKey: dateKey,
-        status: "pending",
-        comments: [],
+    // Evitar duplicados en el mismo día
+    const already = trainingRequests.find(
+      (r) => r.userId === currentUser.id && r.scheduledDateKey === dateKey
+    );
+    if (already) return;
+
+    const record = {
+      user_id: currentUser.id,
+      requested_date_key: dateKey,
+      scheduled_date_key: dateKey,
+      status: "pending",
+      comments: [],
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from("training_requests")
+        .insert(record)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating training_request", error);
+        return;
+      }
+
+      const mapped = {
+        id: data.id,
+        userId: data.user_id,
+        requestedDateKey: data.requested_date_key,
+        scheduledDateKey: data.scheduled_date_key,
+        status: data.status,
+        comments: data.comments || [],
       };
-            addNotification(
+
+      setTrainingRequests((prev) => [...prev, mapped]);
+      await addNotification(
         `Has solicitado formación para el día ${dateKey}.`
       );
-      return [...prev, newReq];
-    });
+    } catch (e) {
+      console.error("Unexpected error creating training_request", e);
+    }
   }
 
   // Formación: añadir comentario
-  function handleAddTrainingComment(requestId, text) {
+  async function handleAddTrainingComment(requestId, text) {
     if (!currentUser) return;
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -2395,34 +2480,58 @@ function App() {
       timeStyle: "short",
     });
 
-    setTrainingRequests((prev) =>
-      prev.map((req) =>
-        req.id === requestId
-          ? {
-              ...req,
-              comments: [
-                ...(req.comments || []),
-                {
-                  by: currentUser.id,
-                  text: trimmed,
-                  at: stamp,
-                },
-              ],
-            }
-          : req
-      )
-    );
+    const req = trainingRequests.find((r) => r.id === requestId);
+    if (!req) return;
+
+    const nextComments = [
+      ...(req.comments || []),
+      { by: currentUser.id, text: trimmed, at: stamp },
+    ];
+
+    try {
+      const { error } = await supabase
+        .from("training_requests")
+        .update({ comments: nextComments })
+        .eq("id", requestId);
+
+      if (error) {
+        console.error("Error updating training_request comments", error);
+        return;
+      }
+
+      setTrainingRequests((prev) =>
+        prev.map((r) =>
+          r.id === requestId ? { ...r, comments: nextComments } : r
+        )
+      );
+    } catch (e) {
+      console.error("Unexpected error updating training_request comments", e);
+    }
   }
 
   // Formación: aceptar (Esteban)
-  function handleAcceptTraining(id) {
-    setTrainingRequests((prev) =>
-      prev.map((req) => (req.id === id ? { ...req, status: "accepted" } : req))
-    );
+  async function handleAcceptTraining(id) {
+    try {
+      const { error } = await supabase
+        .from("training_requests")
+        .update({ status: "accepted" })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Error updating training_request status", error);
+        return;
+      }
+
+      setTrainingRequests((prev) =>
+        prev.map((req) => (req.id === id ? { ...req, status: "accepted" } : req))
+      );
+    } catch (e) {
+      console.error("Unexpected error updating training_request status", e);
+    }
   }
 
   // Formación: reprogramar (Esteban)
-  function handleRescheduleTraining(id) {
+  async function handleRescheduleTraining(id) {
     const req = trainingRequests.find((r) => r.id === id);
     if (!req) return;
     const current = req.scheduledDateKey || req.requestedDateKey;
@@ -2431,135 +2540,322 @@ function App() {
       current
     );
     if (!newDateStr) return;
-    setTrainingRequests((prev) =>
-      prev.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status: "rescheduled",
-              scheduledDateKey: newDateStr,
-            }
-          : r
-      )
-    );
+
+    try {
+      const { error } = await supabase
+        .from("training_requests")
+        .update({
+          status: "rescheduled",
+          scheduled_date_key: newDateStr,
+        })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Error rescheduling training_request", error);
+        return;
+      }
+
+      setTrainingRequests((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                status: "rescheduled",
+                scheduledDateKey: newDateStr,
+              }
+            : r
+        )
+      );
+    } catch (e) {
+      console.error("Unexpected error rescheduling training_request", e);
+    }
   }
 
-  // To-Do: crear tarea
-  function handleCreateTodo({ title, description, dueDateKey, assignedTo }) {
+  // To-Do: crear tarea (tabla todos)
+  async function handleCreateTodo({ title, description, dueDateKey, assignedTo }) {
     if (!currentUser) return;
-    const now = new Date();
-    const newTodo = {
-      id: Date.now(),
-      title,
-      description,
-      createdBy: currentUser.id,
-      assignedTo,
-      createdAt: now.toISOString(),
-      dueDateKey,
-      completedBy: [],
-    };
-    setTodos((prev) => [newTodo, ...prev]);
-  addNotification(`Has creado la tarea: "${title}".`);
+    const now = new Date().toISOString();
+
+    try {
+      const { data, error } = await supabase
+        .from("todos")
+        .insert({
+          title,
+          description,
+          created_by: currentUser.id,
+          assigned_to: assignedTo,
+          created_at: now,
+          due_date_key: dueDateKey,
+          completed_by: [],
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating todo in Supabase", error);
+        return;
+      }
+
+      const newTodo = {
+        id: data.id,
+        title: data.title,
+        description: data.description || "",
+        createdBy: data.created_by,
+        assignedTo: data.assigned_to || [],
+        createdAt: data.created_at,
+        dueDateKey: data.due_date_key || null,
+        completedBy: data.completed_by || [],
+      };
+
+      setTodos((prev) => [newTodo, ...prev]);
+      await addNotification(`Has creado la tarea: "${title}".`);
+    } catch (e) {
+      console.error("Unexpected error creating todo", e);
+    }
   }
-    
+
   // To-Do: marcar / desmarcar completado por la persona actual
-  function handleToggleTodoCompleted(todoId) {
+  async function handleToggleTodoCompleted(todoId) {
     if (!currentUser) return;
-    setTodos((prev) =>
-      prev.map((t) => {
-        if (t.id !== todoId) return t;
-        const isDone = t.completedBy.includes(currentUser.id);
-        const nextCompleted = isDone
-          ? t.completedBy.filter((id) => id !== currentUser.id)
-          : [...t.completedBy, currentUser.id];
-        return { ...t, completedBy: nextCompleted };
-      })
-    );
+
+    const todo = todos.find((t) => t.id === todoId);
+    if (!todo) return;
+
+    const isDone = todo.completedBy.includes(currentUser.id);
+    const nextCompleted = isDone
+      ? todo.completedBy.filter((id) => id !== currentUser.id)
+      : [...todo.completedBy, currentUser.id];
+
+    try {
+      const { error } = await supabase
+        .from("todos")
+        .update({ completed_by: nextCompleted })
+        .eq("id", todoId);
+
+      if (error) {
+        console.error("Error updating todo completion in Supabase", error);
+        return;
+      }
+
+      setTodos((prev) =>
+        prev.map((t) =>
+          t.id === todoId ? { ...t, completedBy: nextCompleted } : t
+        )
+      );
+    } catch (e) {
+      console.error("Unexpected error updating todo completion", e);
+    }
   }
 
-  // Reuniones: crear solicitud
-  function handleCreateMeetingRequest(payload) {
+  // Reuniones: crear solicitud (tabla meeting_requests)
+  async function handleCreateMeetingRequest(payload) {
     if (!currentUser) return;
-    const now = new Date();
-    const newReq = {
-      id: Date.now(),
-      createdBy: currentUser.id,
-      createdAt: now.toISOString(),
-      title: payload.title,
-      description: payload.description,
-      preferredDateKey: payload.preferredDateKey,
-      preferredSlot: payload.preferredSlot,
-      participants: payload.participants,
-      status: "pending",
-      scheduledDateKey: null,
-      scheduledTime: "",
-      responseMessage: "",
-    };
-    setMeetingRequests((prev) => [newReq, ...prev]);
+    const now = new Date().toISOString();
+
+    try {
+      const { data, error } = await supabase
+        .from("meeting_requests")
+        .insert({
+          created_by: currentUser.id,
+          created_at: now,
+          title: payload.title,
+          description: payload.description,
+          preferred_date_key: payload.preferredDateKey,
+          preferred_slot: payload.preferredSlot,
+          participants: payload.participants,
+          status: "pending",
+          scheduled_date_key: null,
+          scheduled_time: "",
+          response_message: "",
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating meeting_request", error);
+        return;
+      }
+
+      const mapped = {
+        id: data.id,
+        createdBy: data.created_by,
+        createdAt: data.created_at,
+        title: data.title,
+        description: data.description || "",
+        preferredDateKey: data.preferred_date_key,
+        preferredSlot: data.preferred_slot,
+        participants: data.participants || [],
+        status: data.status,
+        scheduledDateKey: data.scheduled_date_key || null,
+        scheduledTime: data.scheduled_time || "",
+        responseMessage: data.response_message || "",
+      };
+
+      setMeetingRequests((prev) => [mapped, ...prev]);
+    } catch (e) {
+      console.error("Unexpected error creating meeting_request", e);
+    }
   }
 
   // Reuniones: actualizar estado (Thalia)
-  function handleUpdateMeetingStatus(id, updates) {
-    setMeetingRequests((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...updates } : m))
-    );
+  async function handleUpdateMeetingStatus(id, updates) {
+    const dbUpdates = {};
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.scheduledDateKey !== undefined)
+      dbUpdates.scheduled_date_key = updates.scheduledDateKey;
+    if (updates.scheduledTime !== undefined)
+      dbUpdates.scheduled_time = updates.scheduledTime;
+    if (updates.responseMessage !== undefined)
+      dbUpdates.response_message = updates.responseMessage;
+
+    try {
+      const { error } = await supabase
+        .from("meeting_requests")
+        .update(dbUpdates)
+        .eq("id", id);
+
+      if (error) {
+        console.error("Error updating meeting_request", error);
+        return;
+      }
+
+      setMeetingRequests((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...updates } : m))
+      );
+    } catch (e) {
+      console.error("Unexpected error updating meeting_request", e);
+    }
   }
 
-  // Permisos especiales de ausencia: crear solicitud
-  function handleCreateAbsenceRequest(reason) {
-  if (!currentUser || !selectedDate) return;
-  const now = new Date();
-  const dateKey = toDateKey(selectedDate);
-  const newReq = {
-    id: Date.now(),
-    createdBy: currentUser.id,
-    createdAt: now.toISOString(),
-    dateKey,
-    reason,
-    status: "pending",
-    responseMessage: "",
-  };
-  setAbsenceRequests((prev) => [newReq, ...prev]);
+  // Permisos especiales de ausencia: crear solicitud (tabla absence_requests)
+  async function handleCreateAbsenceRequest(reason) {
+    if (!currentUser || !selectedDate) return;
+    const now = new Date().toISOString();
+    const dateKey = toDateKey(selectedDate);
 
-  // 👉 notificación DENTRO de la función, usando dateKey
-  addNotification(
-    `Has solicitado un permiso especial para el día ${dateKey}.`
-  );
-}
-  
+    try {
+      const { data, error } = await supabase
+        .from("absence_requests")
+        .insert({
+          created_by: currentUser.id,
+          created_at: now,
+          date_key: dateKey,
+          reason,
+          status: "pending",
+          response_message: "",
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating absence_request", error);
+        return;
+      }
+
+      const mapped = {
+        id: data.id,
+        createdBy: data.created_by,
+        createdAt: data.created_at,
+        dateKey: data.date_key,
+        reason: data.reason,
+        status: data.status,
+        responseMessage: data.response_message || "",
+      };
+
+      setAbsenceRequests((prev) => [mapped, ...prev]);
+
+      await addNotification(
+        `Has solicitado un permiso especial para el día ${dateKey}.`
+      );
+    } catch (e) {
+      console.error("Unexpected error creating absence_request", e);
+    }
+  }
+
   // Permisos especiales: actualizar estado (Thalia)
-  function handleUpdateAbsenceStatus(id, updates) {
-  setAbsenceRequests((prev) =>
-    prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
-  );
+  async function handleUpdateAbsenceStatus(id, updates) {
+    const dbUpdates = {};
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.responseMessage !== undefined)
+      dbUpdates.response_message = updates.responseMessage;
 
-  addNotification(`Has cambiado el estado de un permiso especial.`);
-}
+    try {
+      const { error } = await supabase
+        .from("absence_requests")
+        .update(dbUpdates)
+        .eq("id", id);
 
-  // Carpetas compartidas: abrir carpeta (marca como visto para la persona)
+      if (error) {
+        console.error("Error updating absence_request", error);
+        return;
+      }
+
+      setAbsenceRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+      );
+
+      await addNotification(`Has cambiado el estado de un permiso especial.`);
+    } catch (e) {
+      console.error("Unexpected error updating absence_request", e);
+    }
+  }
+
+  // Carpetas compartidas: abrir carpeta (simple)
   function handleOpenFolder(folder) {
     window.open(folder.url, "_blank");
   }
 
-  // Carpetas compartidas: Thalia marca / desmarca novedades globales
-  function handleMarkFolderUpdated(folderId) {
-    setFolderUpdates((prev) => {
-      const exists = prev[folderId];
-      if (exists) {
-        const { [folderId]: _, ...rest } = prev;
-        return rest;
+  // Carpetas compartidas: Thalia marca / desmarca novedades globales (tabla folder_updates)
+  async function handleMarkFolderUpdated(folderId) {
+    const hasUpdate = !!folderUpdates[folderId];
+
+    try {
+      if (hasUpdate) {
+        const { error } = await supabase
+          .from("folder_updates")
+          .delete()
+          .eq("folder_id", folderId);
+
+        if (error) {
+          console.error("Error deleting folder_update", error);
+          return;
+        }
+
+        setFolderUpdates((prev) => {
+          const { [folderId]: _, ...rest } = prev;
+          return rest;
+        });
+      } else {
+        const now = new Date().toISOString();
+        const { data, error } = await supabase
+          .from("folder_updates")
+          .insert({
+            folder_id: folderId,
+            author: currentUser?.name || "Thalia",
+            at: now,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error("Error inserting folder_update", error);
+          return;
+        }
+
+        setFolderUpdates((prev) => ({
+          ...prev,
+          [data.folder_id]: {
+            author: data.author,
+            at: data.at,
+          },
+        }));
       }
-      return {
-        ...prev,
-        [folderId]: {
-          author: "Thalia",
-          at: new Date().toISOString(),
-        },
-      };
-    });
+    } catch (e) {
+      console.error("Unexpected error handling folder_update", e);
+    }
   }
 
-    if (!currentUser) {
+  if (!currentUser) {
     return <LoginView onLogin={handleLogin} />;
   }
 
@@ -2633,10 +2929,10 @@ function App() {
 
         <div style={{ textAlign: "right" }}>
           <div className="current-user-tag">
-          <NotificationBell
-            notifications={notifications}
-            onMarkAllRead={markAllNotificationsRead}
-          />
+            <NotificationBell
+              notifications={notifications}
+              onMarkAllRead={markAllNotificationsRead}
+            />
             {currentUser.name}
             <br />
             <span className="small-muted">{currentUser.email}</span>
@@ -2729,7 +3025,7 @@ function App() {
             onCreateMeetingRequest={handleCreateMeetingRequest}
             absenceRequestsForDay={absenceRequestsForDay}
             onCreateAbsenceRequest={handleCreateAbsenceRequest}
-                        onMarkEntry={() => {
+            onMarkEntry={() => {
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
                 entry: formatTimeNow(),
@@ -2825,5 +3121,6 @@ function App() {
     </div>
   );
 }
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
