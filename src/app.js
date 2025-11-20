@@ -3240,6 +3240,15 @@ function App() {
               >
                 Permisos de ausencia
               </button>
+  <button
+    type="button"
+    className="btn btn-small btn-ghost"
+    style={{ marginTop: 4, width: "100%" }}
+    onClick={() => setShowAdminDashboard(true)}
+  >
+    Tareas de todo el equipo
+  </button>
+)}
             </>
           )}
           <button
