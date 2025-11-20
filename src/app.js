@@ -84,7 +84,7 @@ const DRIVE_FOLDERS = [
     label: "Carpeta de etiquetas",
     emoji: "🏷️",
     url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
-    users: ["anabella", "esteban"],
+    users: ["anabella", "esteban", "itzi"],
   },
   {
     id: "facturacion",
