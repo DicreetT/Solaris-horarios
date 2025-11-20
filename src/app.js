@@ -165,6 +165,18 @@ async function fetchTimeDataFromSupabase() {
   return result;
 }
 
+async function deleteTimeEntryFromSupabase(dateKey, userId) {
+  const { error } = await supabase
+    .from("time_entries")
+    .delete()
+    .eq("date_key", dateKey)
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Error deleting time entry:", error);
+  }
+}
+
 async function saveTimeEntryToSupabase(dateKey, userId, record) {
   const payload = {
     date_key: dateKey,
@@ -235,12 +247,24 @@ function LoginView({ onLogin }) {
         <div className="logo-title">
           <div className="fake-logo">S</div>
           <div>
-            <h1 style={{ fontSize: "1.4rem" }}>Solaris · Control horario</h1>
-            <p className="subtitle">
-              Inicia sesión con tu correo de empresa para fichar y gestionar el
-              día a día.
-            </p>
+            <h1 style={{ fontSize: "1.4rem" }}>Solaris</h1>
+            <div className="current-user-tag">
+              Hola, <strong>{currentUser.name}</strong>
+            </div>
           </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {currentUser.id === "thalia" && (
+            <button
+              className="btn btn-small"
+              onClick={() => setShowAdminDashboard(true)}
+            >
+              Admin Tareas
+            </button>
+          )}
+          <button className="btn btn-small btn-ghost" onClick={handleLogout}>
+            Salir
+          </button>
         </div>
       </div>
 
@@ -300,6 +324,128 @@ function LoginView({ onLogin }) {
   );
 }
 
+function AdminDashboard({ todos, onClose }) {
+  const [filterUser, setFilterUser] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  const filteredTodos = todos.filter((t) => {
+    if (filterUser !== "all") {
+      const isAssigned = t.assignedTo.includes(filterUser);
+      const isCreated = t.createdBy === filterUser;
+      if (!isAssigned && !isCreated) return false;
+    }
+    if (filterStatus === "completed") {
+      // Consideramos completada si TODOS los asignados la han completado
+      const allDone =
+        t.assignedTo.length > 0 &&
+        t.assignedTo.every((uid) => t.completedBy.includes(uid));
+      if (!allDone) return false;
+    }
+    if (filterStatus === "pending") {
+      const allDone =
+        t.assignedTo.length > 0 &&
+        t.assignedTo.every((uid) => t.completedBy.includes(uid));
+      if (allDone) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-paper" style={{ maxWidth: "800px" }}>
+        <div className="flex-row">
+          <h2 className="dialog-title">Panel de Administración de Tareas</h2>
+          <button className="btn btn-small btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <p className="dialog-text">
+          Visión global de todas las tareas creadas y su estado.
+        </p>
+
+        <div className="flex-row" style={{ marginBottom: 12 }}>
+          <select
+            className="input"
+            value={filterUser}
+            onChange={(e) => setFilterUser(e.target.value)}
+          >
+            <option value="all">Todos los usuarios</option>
+            {USERS.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className="input"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+          >
+            <option value="all">Todos los estados</option>
+            <option value="pending">Pendientes</option>
+            <option value="completed">Completadas</option>
+          </select>
+        </div>
+
+        <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+            <thead>
+              <tr style={{ borderBottom: "2px solid #eee", textAlign: "left" }}>
+                <th style={{ padding: 8 }}>Tarea</th>
+                <th style={{ padding: 8 }}>Creada por</th>
+                <th style={{ padding: 8 }}>Asignada a</th>
+                <th style={{ padding: 8 }}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTodos.map((t) => {
+                const creator = USERS.find((u) => u.id === t.createdBy)?.name || t.createdBy;
+                const assignees = t.assignedTo
+                  .map((uid) => USERS.find((u) => u.id === uid)?.name || uid)
+                  .join(", ");
+
+                const isCompleted =
+                  t.assignedTo.length > 0 &&
+                  t.assignedTo.every((uid) => t.completedBy.includes(uid));
+
+                return (
+                  <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: 8 }}>
+                      <strong>{t.title}</strong>
+                      {t.description && <div className="small-muted">{t.description}</div>}
+                      {t.dueDateKey && <div className="small-muted">Fecha: {t.dueDateKey}</div>}
+                    </td>
+                    <td style={{ padding: 8 }}>{creator}</td>
+                    <td style={{ padding: 8 }}>{assignees}</td>
+                    <td style={{ padding: 8 }}>
+                      {isCompleted ? (
+                        <span className="tag" style={{ background: "#dcfce7", color: "#166534" }}>
+                          Completada
+                        </span>
+                      ) : (
+                        <span className="tag" style={{ background: "#fff7ed", color: "#9a3412" }}>
+                          Pendiente
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredTodos.length === 0 && (
+                <tr>
+                  <td colSpan={4} style={{ padding: 16, textAlign: "center", color: "#666" }}>
+                    No hay tareas que coincidan con los filtros.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Calendario mensual
  */
@@ -344,41 +490,53 @@ function CalendarGrid({
 
   const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
 
-  const getDotForDay = (date) => {
+  const getDotsForDay = (date) => {
     const key = toDateKey(date);
     const byDay = data[key];
-    const isTrainingManager = currentUser?.isTrainingManager;
+    const dots = [];
 
-    // Thalia no ficha, solo podría ver formaciones propias si algún día las usa
+    // 1. Formación
+    let hasTraining = false;
     if (currentUser?.id === "thalia") {
-      const hasMyTrainingForDay = trainingRequests.some(
-        (r) => r.userId === currentUser.id && r.scheduledDateKey === key
-      );
-      if (hasMyTrainingForDay) return "training";
-      return null;
-    }
-
-    // Esteban: ve todas las formaciones
-    if (isTrainingManager) {
-      const hasTrainingForDay = trainingRequests.some(
-        (r) => r.scheduledDateKey === key
-      );
-      if (hasTrainingForDay) return "training";
+      // Thalia ve sus propias formaciones (si tuviera)
+      if (
+        trainingRequests.some(
+          (r) => r.userId === currentUser.id && r.scheduledDateKey === key
+        )
+      ) {
+        hasTraining = true;
+      }
+    } else if (currentUser?.isTrainingManager) {
+      // Esteban ve TODAS las formaciones
+      if (trainingRequests.some((r) => r.scheduledDateKey === key)) {
+        hasTraining = true;
+      }
     } else {
-      // Usuario normal: ve sus formaciones
-      const hasMyTrainingForDay = trainingRequests.some(
-        (r) => r.userId === userId && r.scheduledDateKey === key
-      );
-      if (hasMyTrainingForDay) return "training";
+      // Usuario normal ve sus formaciones
+      if (
+        trainingRequests.some(
+          (r) => r.userId === userId && r.scheduledDateKey === key
+        )
+      ) {
+        hasTraining = true;
+      }
+    }
+    if (hasTraining) dots.push("training");
+
+    // 2. Estado (Ausencia, Vacaciones, Presencia)
+    const record = byDay?.[userId];
+    if (record) {
+      if (record.status === "absent") dots.push("absent");
+      else if (
+        record.status === "vacation" ||
+        record.status === "vacation-request"
+      )
+        dots.push("vacation");
+      else if (record.entry || record.exit || record.status === "present")
+        dots.push("present");
     }
 
-    const record = byDay?.[userId];
-    if (!record) return null;
-    if (record.status === "absent") return "absent";
-    if (record.status === "vacation" || record.status === "vacation-request")
-      return "vacation";
-    if (record.entry || record.exit) return "present";
-    return null;
+    return dots;
   };
 
   return (
@@ -400,9 +558,6 @@ function CalendarGrid({
           </div>
           <div className="small-muted">
             Toca un día para ver o editar sus datos.
-          </div>
-          <div className="small-muted">
-            Días con formación → puntito morado en el calendario.
           </div>
         </div>
         <button
@@ -428,15 +583,7 @@ function CalendarGrid({
 
             const isToday = isSameDate(date, today);
             const isSelected = selectedDate && isSameDate(date, selectedDate);
-            const dot = getDotForDay(date);
-
-            let badgeClass = "";
-            if (dot === "present") badgeClass = "day-badge";
-            if (dot === "absent") badgeClass = "day-badge day-badge-absent";
-            if (dot === "vacation")
-              badgeClass = "day-badge day-badge-vacation";
-            if (dot === "training")
-              badgeClass = "day-badge day-badge-training";
+            const dots = getDotsForDay(date);
 
             return (
               <button
@@ -450,7 +597,16 @@ function CalendarGrid({
                 onClick={() => onSelectDate(date)}
               >
                 {date.getDate()}
-                {dot && <span className={badgeClass} />}
+                <div className="day-badges-container">
+                  {dots.map((dot, i) => {
+                    let badgeClass = "day-badge";
+                    if (dot === "absent") badgeClass += " day-badge-absent";
+                    if (dot === "vacation") badgeClass += " day-badge-vacation";
+                    if (dot === "training") badgeClass += " day-badge-training";
+                    // present is default green
+                    return <span key={i} className={badgeClass} />;
+                  })}
+                </div>
               </button>
             );
           })
@@ -485,6 +641,9 @@ function DayDetail({
   onCreateMeetingRequest,
   absenceRequestsForDay,
   onCreateAbsenceRequest,
+  onDeleteTrainingRequest,
+  onDeleteMeetingRequest,
+  onDeleteAbsenceRequest,
 }) {
   const [messageDrafts, setMessageDrafts] = useState({});
   const [meetingFormOpen, setMeetingFormOpen] = useState(false);
@@ -761,6 +920,15 @@ function DayDetail({
                     >
                       Reprogramar
                     </button>
+                    {req.userId === user.id && (
+                      <button
+                        type="button"
+                        className="btn btn-small btn-danger"
+                        onClick={() => onDeleteTrainingRequest(req.id)}
+                      >
+                        Eliminar
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -803,6 +971,14 @@ function DayDetail({
                           `Reprogramada para el día ${req.scheduledDateKey}`}
                       </strong>
                     </p>
+                    <button
+                      type="button"
+                      className="btn btn-small btn-danger"
+                      style={{ marginTop: 6 }}
+                      onClick={() => onDeleteTrainingRequest(req.id)}
+                    >
+                      Eliminar solicitud
+                    </button>
 
                     {/* Chat formación (persona solicitante) */}
                     <div className="training-chat">
@@ -958,9 +1134,18 @@ function DayDetail({
                 {m.status === "scheduled" &&
                   `Programada (fecha preferida: ${m.preferredDateKey})`}
                 {m.status === "rejected" &&
-                  `Rechazada${
-                    m.responseMessage ? `: ${m.responseMessage}` : ""
+                  `Rechazada${m.responseMessage ? `: ${m.responseMessage}` : ""
                   }`}
+                {m.createdBy === user.id && (
+                  <button
+                    type="button"
+                    className="btn btn-small btn-danger"
+                    style={{ marginLeft: 6 }}
+                    onClick={() => onDeleteMeetingRequest(m.id)}
+                  >
+                    Eliminar
+                  </button>
+                )}
               </div>
             ))}
           </>
@@ -1046,6 +1231,19 @@ function DayDetail({
                   </strong>
                   {r.responseMessage &&
                     ` · Mensaje de Thalia: ${r.responseMessage}`}
+                  <div className="small-muted">
+                    Motivo: {r.reason}
+                  </div>
+                  {r.createdBy === user.id && (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-danger"
+                      style={{ marginTop: 6 }}
+                      onClick={() => onDeleteAbsenceRequest(r.id)}
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1495,6 +1693,7 @@ function TodoModal({
   onClose,
   onCreateTodo,
   onToggleTodoCompleted,
+  onDeleteTodo,
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -1525,7 +1724,11 @@ function TodoModal({
     setAssignedIds([currentUser.id]);
   }
 
-  const tasksForMe = todos.filter((t) => t.assignedTo.includes(currentUser.id));
+  const tasksForMe = todos.filter(
+    (t) =>
+      t.assignedTo.includes(currentUser.id) &&
+      !t.completedBy.includes(currentUser.id)
+  );
   const tasksCreatedByMe = todos.filter(
     (t) => t.createdBy === currentUser.id && !t.assignedTo.includes(currentUser.id)
   );
@@ -1567,6 +1770,16 @@ function TodoModal({
               {todo.dueDateKey && <> · Fecha objetivo: {todo.dueDateKey}</>}
             </div>
           </div>
+          {todo.createdBy === currentUser.id && (
+            <button
+              type="button"
+              className="btn btn-small btn-danger"
+              onClick={() => onDeleteTodo(todo.id)}
+              title="Eliminar tarea"
+            >
+              ✕
+            </button>
+          )}
         </label>
       </div>
     );
@@ -1642,11 +1855,12 @@ function TodoModal({
         <div className="todo-section-title">Tareas para ti</div>
         {tasksForMe.length === 0 ? (
           <p className="todo-empty">
-            No tienes tareas asignadas todavía. Crea una o espera a que te
-            etiqueten. 💫
+            No tienes tareas pendientes. ¡Buen trabajo!
           </p>
         ) : (
-          <div className="todo-list">{tasksForMe.map((t) => renderTodoRow(t))}</div>
+          <div className="todo-list">
+            {tasksForMe.map((t) => renderTodoRow(t))}
+          </div>
         )}
 
         <div className="todo-section-title">Tareas que has creado</div>
@@ -2092,6 +2306,7 @@ function App() {
   const [showTodoModal, setShowTodoModal] = useState(false);
   const [showMeetingAdmin, setShowMeetingAdmin] = useState(false);
   const [showAbsenceAdmin, setShowAbsenceAdmin] = useState(false);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
 
   // 👉 Horarios: cargar desde Supabase al arrancar
   useEffect(() => {
@@ -2186,6 +2401,23 @@ function App() {
       }
     }
 
+    async function deleteTrainingRequest(id) {
+      try {
+        const { error } = await supabase
+          .from("training_requests")
+          .delete()
+          .eq("id", id);
+        if (error) {
+          console.error("Error deleting training request", error);
+          alert("Error al eliminar solicitud de formación");
+        } else {
+          setTrainingRequests((prev) => prev.filter((r) => r.id !== id));
+        }
+      } catch (e) {
+        console.error("Unexpected error deleting training request", e);
+      }
+    }
+
     // Reuniones: tabla "meeting_requests"
     async function loadMeetingRequestsFromSupabase() {
       try {
@@ -2220,6 +2452,23 @@ function App() {
       }
     }
 
+    async function deleteMeetingRequest(id) {
+      try {
+        const { error } = await supabase
+          .from("meeting_requests")
+          .delete()
+          .eq("id", id);
+        if (error) {
+          console.error("Error deleting meeting request", error);
+          alert("Error al eliminar solicitud de reunión");
+        } else {
+          setMeetingRequests((prev) => prev.filter((m) => m.id !== id));
+        }
+      } catch (e) {
+        console.error("Unexpected error deleting meeting request", e);
+      }
+    }
+
     // Permisos especiales: tabla "absence_requests"
     async function loadAbsenceRequestsFromSupabase() {
       try {
@@ -2246,6 +2495,23 @@ function App() {
         setAbsenceRequests(mapped);
       } catch (e) {
         console.error("Unexpected error loading absence_requests", e);
+      }
+    }
+
+    async function deleteAbsenceRequest(id) {
+      try {
+        const { error } = await supabase
+          .from("absence_requests")
+          .delete()
+          .eq("id", id);
+        if (error) {
+          console.error("Error deleting absence request", error);
+          alert("Error al eliminar solicitud de permiso especial");
+        } else {
+          setAbsenceRequests((prev) => prev.filter((r) => r.id !== id));
+        }
+      } catch (e) {
+        console.error("Unexpected error deleting absence request", e);
       }
     }
 
@@ -2550,10 +2816,10 @@ function App() {
         prev.map((r) =>
           r.id === id
             ? {
-                ...r,
-                status: "rescheduled",
-                scheduledDateKey: newDateStr,
-              }
+              ...r,
+              status: "rescheduled",
+              scheduledDateKey: newDateStr,
+            }
             : r
         )
       );
@@ -2635,6 +2901,20 @@ function App() {
       );
     } catch (e) {
       console.error("Unexpected error updating todo completion", e);
+    }
+  }
+
+  async function handleDeleteTodo(id) {
+    try {
+      const { error } = await supabase.from("todos").delete().eq("id", id);
+      if (error) {
+        console.error("Error deleting todo", error);
+        alert("Error al eliminar tarea");
+      } else {
+        setTodos((prev) => prev.filter((t) => t.id !== id));
+      }
+    } catch (e) {
+      console.error("Unexpected error deleting todo", e);
     }
   }
 
@@ -2866,8 +3146,8 @@ function App() {
 
   const absenceRequestsForDay = dateKey
     ? absenceRequests.filter(
-        (r) => r.createdBy === currentUser.id && r.dateKey === dateKey
-      )
+      (r) => r.createdBy === currentUser.id && r.dateKey === dateKey
+    )
     : [];
 
   const isThalia = currentUser.id === "thalia";
@@ -2891,20 +3171,20 @@ function App() {
                   background: isAdmin
                     ? "#fee2e2"
                     : currentUser.isTrainingManager
-                    ? "#e0f2fe"
-                    : isThalia
-                    ? "#fef3c7"
-                    : "#dcfce7",
+                      ? "#e0f2fe"
+                      : isThalia
+                        ? "#fef3c7"
+                        : "#dcfce7",
                   marginRight: 6,
                 }}
               >
                 {isAdmin
                   ? "Admin horario"
                   : currentUser.isTrainingManager
-                  ? "Responsable formación"
-                  : isThalia
-                  ? "Admin general"
-                  : "Usuario"}
+                    ? "Responsable formación"
+                    : isThalia
+                      ? "Admin general"
+                      : "Usuario"}
               </span>
               {currentUser.canAdminHours && !isAdmin && (
                 <>Puede administrar el registro horario</>
@@ -3016,6 +3296,9 @@ function App() {
             onCreateMeetingRequest={handleCreateMeetingRequest}
             absenceRequestsForDay={absenceRequestsForDay}
             onCreateAbsenceRequest={handleCreateAbsenceRequest}
+            onDeleteTrainingRequest={deleteTrainingRequest}
+            onDeleteMeetingRequest={deleteMeetingRequest}
+            onDeleteAbsenceRequest={deleteAbsenceRequest}
             onMarkEntry={() => {
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
@@ -3091,6 +3374,14 @@ function App() {
           onClose={() => setShowTodoModal(false)}
           onCreateTodo={handleCreateTodo}
           onToggleTodoCompleted={handleToggleTodoCompleted}
+          onDeleteTodo={handleDeleteTodo}
+        />
+      )}
+
+      {showAdminDashboard && (
+        <AdminDashboard
+          todos={todos}
+          onClose={() => setShowAdminDashboard(false)}
         />
       )}
 
