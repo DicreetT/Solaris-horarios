@@ -242,29 +242,14 @@ function LoginView({ onLogin }) {
   }
 
   return (
-    <div className="app-card">
-      <div className="app-header">
+    <div className="app-card" style={{ maxWidth: 400, margin: "40px auto" }}>
+      <div className="app-header" style={{ justifyContent: "center" }}>
         <div className="logo-title">
           <div className="fake-logo">S</div>
           <div>
             <h1 style={{ fontSize: "1.4rem" }}>Solaris</h1>
-            <div className="current-user-tag">
-              Hola, <strong>{currentUser.name}</strong>
-            </div>
+            <p className="subtitle">Control horario y tareas</p>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {currentUser.id === "thalia" && (
-            <button
-              className="btn btn-small"
-              onClick={() => setShowAdminDashboard(true)}
-            >
-              Admin Tareas
-            </button>
-          )}
-          <button className="btn btn-small btn-ghost" onClick={handleLogout}>
-            Salir
-          </button>
         </div>
       </div>
 
