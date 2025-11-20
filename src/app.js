@@ -2344,33 +2344,43 @@ function App() {
 
     // To-Do: tabla "todos"
     async function loadTodosFromSupabase() {
-      try {
-        const { data, error } = await supabase
-          .from("todos")
-          .select("*")
-          .order("created_at", { ascending: false });
+  try {
+    // Base query
+    let query = supabase
+      .from("todos")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-        if (error) {
-          console.error("Error loading todos from Supabase", error);
-          return;
-        }
-
-        const mapped = data.map((row) => ({
-          id: row.id,
-          title: row.title,
-          description: row.description || "",
-          createdBy: row.created_by,
-          assignedTo: row.assigned_to || [],
-          createdAt: row.created_at,
-          dueDateKey: row.due_date_key || null,
-          completedBy: row.completed_by || [],
-        }));
-
-        setTodos(mapped);
-      } catch (e) {
-        console.error("Unexpected error loading todos", e);
-      }
+    // Si NO eres Thalia → solo tus tareas (creadas por ti o asignadas a ti)
+    if (currentUser.id !== "thalia") {
+      query = query.or(
+        `created_by.eq.${currentUser.id},assigned_to.cs.{${currentUser.id}}`
+      );
     }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Error loading todos from Supabase", error);
+      return;
+    }
+
+    const mapped = data.map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description || "",
+      createdBy: row.created_by,
+      assignedTo: row.assigned_to || [],
+      createdAt: row.created_at,
+      dueDateKey: row.due_date_key || null,
+      completedBy: row.completed_by || [],
+    }));
+
+    setTodos(mapped);
+  } catch (e) {
+    console.error("Unexpected error loading todos", e);
+  }
+}
 
     // Formación: tabla "training_requests"
     async function loadTrainingRequestsFromSupabase() {
@@ -2402,67 +2412,86 @@ function App() {
 
     // Reuniones: tabla "meeting_requests"
     async function loadMeetingRequestsFromSupabase() {
-      try {
-        const { data, error } = await supabase
-          .from("meeting_requests")
-          .select("*")
-          .order("created_at", { ascending: false });
+  try {
+    // Query base
+    let query = supabase
+      .from("meeting_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-        if (error) {
-          console.error("Error loading meeting_requests", error);
-          return;
-        }
-
-        const mapped = data.map((row) => ({
-          id: row.id,
-          createdBy: row.created_by,
-          createdAt: row.created_at,
-          title: row.title,
-          description: row.description || "",
-          preferredDateKey: row.preferred_date_key,
-          preferredSlot: row.preferred_slot,
-          participants: row.participants || [],
-          status: row.status,
-          scheduledDateKey: row.scheduled_date_key || null,
-          scheduledTime: row.scheduled_time || "",
-          responseMessage: row.response_message || "",
-        }));
-
-        setMeetingRequests(mapped);
-      } catch (e) {
-        console.error("Unexpected error loading meeting_requests", e);
-      }
+    // Si NO eres Thalia → solo reuniones que has creado tú
+    // o donde estás en participants
+    if (currentUser.id !== "thalia") {
+      query = query.or(
+        `created_by.eq.${currentUser.id},participants.cs.{${currentUser.id}}`
+      );
     }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Error loading meeting_requests", error);
+      return;
+    }
+
+    const mapped = data.map((row) => ({
+      id: row.id,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      title: row.title,
+      description: row.description || "",
+      preferredDateKey: row.preferred_date_key,
+      preferredSlot: row.preferred_slot,
+      participants: row.participants || [],
+      status: row.status,
+      scheduledDateKey: row.scheduled_date_key || null,
+      scheduledTime: row.scheduled_time || "",
+      responseMessage: row.response_message || "",
+    }));
+
+    setMeetingRequests(mapped);
+  } catch (e) {
+    console.error("Unexpected error loading meeting_requests", e);
+  }
+}
 
 
     // Permisos especiales: tabla "absence_requests"
     async function loadAbsenceRequestsFromSupabase() {
-      try {
-        const { data, error } = await supabase
-          .from("absence_requests")
-          .select("*")
-          .order("created_at", { ascending: false });
+  try {
+    // Query base
+    let query = supabase
+      .from("absence_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-        if (error) {
-          console.error("Error loading absence_requests", error);
-          return;
-        }
-
-        const mapped = data.map((row) => ({
-          id: row.id,
-          createdBy: row.created_by,
-          createdAt: row.created_at,
-          dateKey: row.date_key,
-          reason: row.reason,
-          status: row.status,
-          responseMessage: row.response_message || "",
-        }));
-
-        setAbsenceRequests(mapped);
-      } catch (e) {
-        console.error("Unexpected error loading absence_requests", e);
-      }
+    // Si NO eres Thalia → solo tus propios permisos
+    if (currentUser.id !== "thalia") {
+      query = query.eq("created_by", currentUser.id);
     }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Error loading absence_requests", error);
+      return;
+    }
+
+    const mapped = data.map((row) => ({
+      id: row.id,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      dateKey: row.date_key,
+      reason: row.reason,
+      status: row.status,
+      responseMessage: row.response_message || "",
+    }));
+
+    setAbsenceRequests(mapped);
+  } catch (e) {
+    console.error("Unexpected error loading absence_requests", e);
+  }
+}
 
 
     // Carpetas actualizadas: tabla "folder_updates"
@@ -3143,8 +3172,10 @@ function App() {
     : [];
 
   const meetingRequestsForUser = meetingRequests.filter(
-    (m) => m.createdBy === currentUser.id
-  );
+  (m) =>
+    m.createdBy === currentUser.id ||
+    (m.participants || []).includes(currentUser.id)
+);
 
   const absenceRequestsForDay = dateKey
     ? absenceRequests.filter(
