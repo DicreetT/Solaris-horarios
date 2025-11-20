@@ -25,7 +25,7 @@ const USERS = [
   },
   {
     id: "contable",
-    name: "Contable",
+    name: "Heidy",
     role: "Contabilidad",
     email: "heidy.m.solaris@gmail.com",
     password: "heidy123",
@@ -77,6 +77,13 @@ const DRIVE_FOLDERS = [
     label: "Carpeta de inventario",
     emoji: "📦",
     url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
+    users: ["anabella", "itzi", "esteban", "contable"],
+  },
+  {
+    id: "conteo",
+    label: "Conteo Canet lunes",
+    emoji: "📦",
+    url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
     users: ["anabella", "itzi", "esteban"],
   },
   {
