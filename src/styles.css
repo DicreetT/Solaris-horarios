@@ -134,6 +134,16 @@ button {
   background: var(--primary-dark);
 }
 
+.btn-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+}
+
 .btn-ghost {
   background: transparent;
 }
@@ -224,10 +234,15 @@ button {
   border-color: var(--border);
 }
 
-.day-badge {
+.day-badges-container {
   position: absolute;
   bottom: 3px;
   right: 3px;
+  display: flex;
+  gap: 2px;
+}
+
+.day-badge {
   width: 6px;
   height: 6px;
   border-radius: 999px;
