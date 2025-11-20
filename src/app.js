@@ -3241,7 +3241,7 @@ function App() {
             <br />
             <span className="small-muted">{currentUser.email}</span>
           </div>
-          {currentUser.canAdminHours && (
+                    {currentUser.canAdminHours && (
             <button
               type="button"
               className="btn btn-small btn-ghost"
@@ -3253,43 +3253,45 @@ function App() {
                 : "Administrar registro horario"}
             </button>
           )}
+
           {isThalia && (
-  <>
-    <button
-      type="button"
-      className="btn btn-small btn-ghost"
-      style={{ marginTop: 4, width: "100%" }}
-      onClick={() => setShowMeetingAdmin(true)}
-    >
-      Solicitudes de reunión
-    </button>
-    <button
-      type="button"
-      className="btn btn-small btn-ghost"
-      style={{ marginTop: 4, width: "100%" }}
-      onClick={() => setShowAbsenceAdmin(true)}
-    >
-      Permisos de ausencia
-    </button>
-    <button
-      type="button"
-      className="btn btn-small btn-ghost"
-      style={{ marginTop: 4, width: "100%" }}
-      onClick={() => setShowAdminDashboard(true)}
-    >
-      Tareas de todo el equipo
-    </button>
-  </>
-)}
-          
-<button
-  type="button"
-  className="btn btn-small btn-ghost"
-  style={{ marginTop: 4, width: "100%" }}
-  onClick={() => setShowTodoModal(true)}
->
+            <>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 4, width: "100%" }}
+                onClick={() => setShowMeetingAdmin(true)}
+              >
+                Solicitudes de reunión
+              </button>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 4, width: "100%" }}
+                onClick={() => setShowAbsenceAdmin(true)}
+              >
+                Permisos de ausencia
+              </button>
+              <button
+                type="button"
+                className="btn btn-small btn-ghost"
+                style={{ marginTop: 4, width: "100%" }}
+                onClick={() => setShowAdminDashboard(true)}
+              >
+                Tareas de todo el equipo
+              </button>
+            </>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            style={{ marginTop: 4, width: "100%" }}
+            onClick={() => setShowTodoModal(true)}
+          >
             To-Do List
           </button>
+
           <button
             type="button"
             className="btn btn-small btn-ghost"
