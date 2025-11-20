@@ -2401,22 +2401,6 @@ function App() {
       }
     }
 
-    async function deleteTrainingRequest(id) {
-      try {
-        const { error } = await supabase
-          .from("training_requests")
-          .delete()
-          .eq("id", id);
-        if (error) {
-          console.error("Error deleting training request", error);
-          alert("Error al eliminar solicitud de formación");
-        } else {
-          setTrainingRequests((prev) => prev.filter((r) => r.id !== id));
-        }
-      } catch (e) {
-        console.error("Unexpected error deleting training request", e);
-      }
-    }
 
     // Reuniones: tabla "meeting_requests"
     async function loadMeetingRequestsFromSupabase() {
@@ -2452,22 +2436,6 @@ function App() {
       }
     }
 
-    async function deleteMeetingRequest(id) {
-      try {
-        const { error } = await supabase
-          .from("meeting_requests")
-          .delete()
-          .eq("id", id);
-        if (error) {
-          console.error("Error deleting meeting request", error);
-          alert("Error al eliminar solicitud de reunión");
-        } else {
-          setMeetingRequests((prev) => prev.filter((m) => m.id !== id));
-        }
-      } catch (e) {
-        console.error("Unexpected error deleting meeting request", e);
-      }
-    }
 
     // Permisos especiales: tabla "absence_requests"
     async function loadAbsenceRequestsFromSupabase() {
@@ -2498,22 +2466,6 @@ function App() {
       }
     }
 
-    async function deleteAbsenceRequest(id) {
-      try {
-        const { error } = await supabase
-          .from("absence_requests")
-          .delete()
-          .eq("id", id);
-        if (error) {
-          console.error("Error deleting absence request", error);
-          alert("Error al eliminar solicitud de permiso especial");
-        } else {
-          setAbsenceRequests((prev) => prev.filter((r) => r.id !== id));
-        }
-      } catch (e) {
-        console.error("Unexpected error deleting absence request", e);
-      }
-    }
 
     // Carpetas actualizadas: tabla "folder_updates"
     async function loadFolderUpdatesFromSupabase() {
@@ -2574,6 +2526,58 @@ function App() {
     loadFolderUpdatesFromSupabase();
     loadNotificationsFromSupabase();
   }, [currentUser]);
+
+  async function deleteTrainingRequest(id) {
+  try {
+    const { error } = await supabase
+      .from("training_requests")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.error("Error deleting training request", error);
+      alert("Error al eliminar solicitud de formación");
+    } else {
+      setTrainingRequests((prev) => prev.filter((r) => r.id !== id));
+    }
+  } catch (e) {
+    console.error("Unexpected error deleting training request", e);
+  }
+}
+
+  async function deleteMeetingRequest(id) {
+  try {
+    const { error } = await supabase
+      .from("meeting_requests")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.error("Error deleting meeting request", error);
+      alert("Error al eliminar solicitud de reunión");
+    } else {
+      setMeetingRequests((prev) => prev.filter((m) => m.id !== id));
+    }
+  } catch (e) {
+    console.error("Unexpected error deleting meeting request", e);
+  }
+}
+
+  async function deleteAbsenceRequest(id) {
+  try {
+    const { error } = await supabase
+      .from("absence_requests")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.error("Error deleting absence request", error);
+      alert("Error al eliminar solicitud de permiso especial");
+    } else {
+      setAbsenceRequests((prev) => prev.filter((r) => r.id !== id));
+    }
+  } catch (e) {
+    console.error("Unexpected error deleting absence request", e);
+  }
+}
+  
 
   // --- Notificaciones (Supabase) ---
   async function addNotification(message, userIdOverride) {
