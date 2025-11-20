@@ -629,6 +629,7 @@ function DayDetail({
   onDeleteTrainingRequest,
   onDeleteMeetingRequest,
   onDeleteAbsenceRequest,
+  onCancelVacationRequest,
 }) {
   const [messageDrafts, setMessageDrafts] = useState({});
   const [meetingFormOpen, setMeetingFormOpen] = useState(false);
@@ -1180,29 +1181,41 @@ function DayDetail({
             la nota.
           </p>
           <div className="flex-row">
-            <button
-              className="btn btn-small"
-              type="button"
-              onClick={onMarkAbsent}
-            >
-              Marcar ausencia
-            </button>
-            <button
-              className="btn btn-small"
-              type="button"
-              onClick={onRequestVacation}
-            >
-              Solicitar vacaciones
-            </button>
-          </div>
-          <button
-            type="button"
-            className="btn btn-small btn-ghost"
-            style={{ marginTop: 6, width: "100%" }}
-            onClick={handleSpecialAbsence}
-          >
-            Solicitar permiso especial a Thalia
-          </button>
+  <button
+    className="btn btn-small"
+    type="button"
+    onClick={onMarkAbsent}
+  >
+    Marcar ausencia
+  </button>
+  <button
+    className="btn btn-small"
+    type="button"
+    onClick={onRequestVacation}
+  >
+    Solicitar vacaciones
+  </button>
+</div>
+
+{record.status === "vacation-request" && (
+  <button
+    type="button"
+    className="btn btn-small btn-ghost"
+    style={{ marginTop: 6, width: "100%" }}
+    onClick={onCancelVacationRequest}
+  >
+    Cancelar solicitud de vacaciones
+  </button>
+)}
+
+<button
+  type="button"
+  className="btn btn-small btn-ghost"
+  style={{ marginTop: 6, width: "100%" }}
+  onClick={handleSpecialAbsence}
+>
+  Solicitar permiso especial a Thalia
+</button>
 
           {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
             <div className="small-muted" style={{ marginTop: 4 }}>
@@ -3330,6 +3343,12 @@ function App() {
               updateRecord(selectedDate, currentUser.id, (r) => ({
                 ...r,
                 note,
+              }))
+            }
+            onCancelVacationRequest={() =>
+              updateRecord(selectedDate, currentUser.id, (r) => ({
+                ...r,
+                status: null,   // 👈 quitamos la solicitud
               }))
             }
           />
