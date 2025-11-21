@@ -2345,26 +2345,17 @@ function App() {
     // To-Do: tabla "todos"
     async function loadTodosFromSupabase() {
   try {
-    // Base query
-    let query = supabase
+    const { data, error } = await supabase
       .from("todos")
       .select("*")
       .order("created_at", { ascending: false });
-
-    // Si NO eres Thalia → solo tus tareas (creadas por ti o asignadas a ti)
-    if (currentUser.id !== "thalia") {
-      query = query.or(
-        `created_by.eq.${currentUser.id},assigned_to.cs.{${currentUser.id}}`
-      );
-    }
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("Error loading todos from Supabase", error);
       return;
     }
 
+    // Mapeamos filas de Supabase → objeto JS
     const mapped = data.map((row) => ({
       id: row.id,
       title: row.title,
@@ -2376,7 +2367,23 @@ function App() {
       completedBy: row.completed_by || [],
     }));
 
-    setTodos(mapped);
+    // 🔎 Filtro por usuario en el FRONT
+    let visibleTodos;
+    if (currentUser.id === "thalia") {
+      // Thalia ve TODO
+      visibleTodos = mapped;
+    } else {
+      // El resto solo ve:
+      // - tareas que ha creado
+      // - tareas donde está en assignedTo
+      visibleTodos = mapped.filter(
+        (t) =>
+          t.createdBy === currentUser.id ||
+          (t.assignedTo || []).includes(currentUser.id)
+      );
+    }
+
+    setTodos(visibleTodos);
   } catch (e) {
     console.error("Unexpected error loading todos", e);
   }
