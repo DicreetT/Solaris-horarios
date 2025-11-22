@@ -2,37 +2,41 @@ import React, { useState, useEffect } from 'react';
 import { USERS } from '../constants';
 import { toDateKey, formatDatePretty, formatTimeNow } from '../utils/dateUtils';
 import { getStatusBadgeProps } from '../utils/statusUtils';
+import { useAuth } from '../context/AuthContext';
+import { useTimeData } from '../hooks/useTimeData';
+import { useTraining } from '../hooks/useTraining';
+import { useMeetings } from '../hooks/useMeetings';
+import { useAbsences } from '../hooks/useAbsences';
+import { useNotifications } from '../hooks/useNotifications';
 
 /**
  * Panel día: vista admin o vista usuario normal
  */
 export default function DayDetail({
-    user,
     date,
-    data,
-    onMarkEntry,
-    onMarkExit,
-    onMarkAbsent,
-    onRequestVacation,
-    onApproveVacation,
-    onUpdateNote,
     isAdminView,
-    isTrainingManager,
-    canRequestTraining,
-    trainingRequestsForDay,
-    onCreateTrainingRequest,
-    onAcceptTraining,
-    onRescheduleTraining,
-    onAddTrainingComment,
-    meetingRequestsForUser,
-    onCreateMeetingRequest,
-    absenceRequestsForDay,
-    onCreateAbsenceRequest,
-    onDeleteTrainingRequest,
-    onDeleteMeetingRequest,
-    onDeleteAbsenceRequest,
-    onCancelVacationRequest,
 }) {
+    const { currentUser: user } = useAuth();
+    const { timeData, updateTimeEntry } = useTimeData();
+    const {
+        trainingRequests,
+        createTrainingRequest,
+        addTrainingComment,
+        updateTrainingStatus,
+        deleteTrainingRequest
+    } = useTraining(user);
+    const {
+        meetingRequests,
+        createMeeting,
+        deleteMeeting
+    } = useMeetings(user);
+    const {
+        absenceRequests,
+        createAbsence,
+        deleteAbsence
+    } = useAbsences(user);
+    const { addNotification } = useNotifications(user);
+
     const [messageDrafts, setMessageDrafts] = useState({});
     const [meetingFormOpen, setMeetingFormOpen] = useState(false);
     const [meetingTitle, setMeetingTitle] = useState("");
@@ -40,16 +44,18 @@ export default function DayDetail({
     const [meetingPreferredSlot, setMeetingPreferredSlot] =
         useState("indiferente");
     const [meetingParticipants, setMeetingParticipants] = useState(() =>
-        user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+        user?.id === "thalia" ? ["thalia"] : [user?.id, "thalia"]
     );
 
     useEffect(() => {
-        setMeetingParticipants(
-            user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
-        );
-    }, [user.id]);
+        if (user) {
+            setMeetingParticipants(
+                user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+            );
+        }
+    }, [user?.id]);
 
-    if (!date) {
+    if (!date || !user) {
         return (
             <div className="rounded-2xl border-2 border-border bg-card p-3">
                 <h3>Sin día seleccionado</h3>
@@ -61,13 +67,138 @@ export default function DayDetail({
     }
 
     const key = toDateKey(date);
-    const byDay = data[key] || {};
+    const byDay = timeData[key] || {};
 
-    function sendMessage(requestId) {
+    // Derived state
+    const isTrainingManager = !!user.isTrainingManager;
+    const canRequestTraining = !isTrainingManager;
+
+    const trainingRequestsForDay = trainingRequests.filter(
+        (r) => r.scheduledDateKey === key
+    );
+
+    const meetingRequestsForUser = meetingRequests.filter(
+        (m) =>
+            m.createdBy === user.id ||
+            (m.participants || []).includes(user.id)
+    );
+
+    const absenceRequestsForDay = absenceRequests.filter(
+        (r) => r.createdBy === user.id && r.dateKey === key
+    );
+
+    // Handlers
+    function updateRecord(userId, updater) {
+        updateTimeEntry({ date, userId, updater });
+    }
+
+    function handleMarkEntry() {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            entry: formatTimeNow(),
+            status: "present",
+        }));
+        addNotification({ message: `Has fichado tu entrada (${formatTimeNow()}).` });
+    }
+
+    function handleMarkExit() {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            exit: formatTimeNow(),
+            status: r.status || "present",
+        }));
+        addNotification({ message: `Has fichado tu salida (${formatTimeNow()}). ¡Hasta luego! 🌙` });
+    }
+
+    function handleMarkAbsent() {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            status: "absent",
+        }));
+    }
+
+    function handleRequestVacation() {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            status: "vacation-request",
+        }));
+    }
+
+    function handleApproveVacation(userId) {
+        updateRecord(userId, (r) => ({
+            ...r,
+            status: "vacation",
+        }));
+    }
+
+    function handleUpdateNote(note) {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            note,
+        }));
+    }
+
+    function handleCancelVacationRequest() {
+        updateRecord(user.id, (r) => ({
+            ...r,
+            status: null,
+        }));
+    }
+
+    async function handleCreateTrainingRequest() {
+        // Evitar duplicados en el mismo día
+        const already = trainingRequests.find(
+            (r) => r.userId === user.id && r.scheduledDateKey === key
+        );
+        if (already) return;
+
+        try {
+            await createTrainingRequest({ dateKey: key });
+            await addNotification({ message: `Has solicitado formación para el día ${key}.` });
+        } catch (e) {
+            console.error("Unexpected error creating training_request", e);
+        }
+    }
+
+    async function handleAcceptTraining(id) {
+        try {
+            await updateTrainingStatus({ id, status: "accepted" });
+        } catch (e) {
+            console.error("Unexpected error updating training_request status", e);
+        }
+    }
+
+    async function handleRescheduleTraining(id) {
+        const req = trainingRequests.find((r) => r.id === id);
+        if (!req) return;
+        const current = req.scheduledDateKey || req.requestedDateKey;
+        const newDateStr = window.prompt(
+            "Escribe la nueva fecha en formato AAAA-MM-DD",
+            current
+        );
+        if (!newDateStr) return;
+
+        try {
+            await updateTrainingStatus({
+                id,
+                status: "rescheduled",
+                scheduledDateKey: newDateStr,
+            });
+        } catch (e) {
+            console.error("Unexpected error rescheduling training_request", e);
+        }
+    }
+
+    async function sendMessage(requestId) {
         const text = messageDrafts[requestId] || "";
         if (!text.trim()) return;
-        onAddTrainingComment(requestId, text);
-        setMessageDrafts((prev) => ({ ...prev, [requestId]: "" }));
+
+        try {
+            await addTrainingComment({ requestId, text: text.trim() });
+            setMessageDrafts((prev) => ({ ...prev, [requestId]: "" }));
+        } catch (e) {
+            console.error("Unexpected error updating training_request comments", e);
+        }
     }
 
     function handleToggleParticipant(id) {
@@ -76,33 +207,44 @@ export default function DayDetail({
         );
     }
 
-    function handleMeetingSubmit(e) {
+    async function handleMeetingSubmit(e) {
         e.preventDefault();
         const title = meetingTitle.trim();
         if (!title || meetingParticipants.length === 0) return;
-        const payload = {
-            title,
-            description: meetingDescription.trim(),
-            preferredDateKey: toDateKey(date),
-            preferredSlot: meetingPreferredSlot,
-            participants: meetingParticipants,
-        };
-        onCreateMeetingRequest(payload);
-        setMeetingTitle("");
-        setMeetingDescription("");
-        setMeetingPreferredSlot("indiferente");
-        setMeetingFormOpen(false);
-        setMeetingParticipants(
-            user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
-        );
+
+        try {
+            await createMeeting({
+                title,
+                description: meetingDescription.trim(),
+                preferredDateKey: key,
+                preferredSlot: meetingPreferredSlot,
+                participants: meetingParticipants,
+            });
+
+            setMeetingTitle("");
+            setMeetingDescription("");
+            setMeetingPreferredSlot("indiferente");
+            setMeetingFormOpen(false);
+            setMeetingParticipants(
+                user.id === "thalia" ? ["thalia"] : [user.id, "thalia"]
+            );
+        } catch (e) {
+            console.error("Unexpected error creating meeting_request", e);
+        }
     }
 
-    function handleSpecialAbsence() {
+    async function handleSpecialAbsence() {
         const motivo = window.prompt(
             "Describe brevemente el motivo del permiso especial para este día:"
         );
         if (!motivo || !motivo.trim()) return;
-        onCreateAbsenceRequest(motivo.trim());
+
+        try {
+            await createAbsence({ reason: motivo.trim(), dateKey: key });
+            await addNotification({ message: `Has solicitado un permiso especial para el día ${key}.` });
+        } catch (e) {
+            console.error("Unexpected error creating absence_request", e);
+        }
     }
 
     // Vista ADMIN (Anabella gestionando fichajes)
@@ -153,7 +295,7 @@ export default function DayDetail({
                                     <button
                                         type="button"
                                         className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                                        onClick={() => onApproveVacation(u.id)}
+                                        onClick={() => handleApproveVacation(u.id)}
                                     >
                                         Aprobar vacaciones
                                     </button>
@@ -286,14 +428,14 @@ export default function DayDetail({
                                         <button
                                             type="button"
                                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
-                                            onClick={() => onAcceptTraining(req.id)}
+                                            onClick={() => handleAcceptTraining(req.id)}
                                         >
                                             Aceptar
                                         </button>
                                         <button
                                             type="button"
                                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                                            onClick={() => onRescheduleTraining(req.id)}
+                                            onClick={() => handleRescheduleTraining(req.id)}
                                         >
                                             Reprogramar
                                         </button>
@@ -301,7 +443,7 @@ export default function DayDetail({
                                             <button
                                                 type="button"
                                                 className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca]"
-                                                onClick={() => onDeleteTrainingRequest(req.id)}
+                                                onClick={() => deleteTrainingRequest(req.id)}
                                             >
                                                 Eliminar
                                             </button>
@@ -325,7 +467,7 @@ export default function DayDetail({
                                 <button
                                     type="button"
                                     className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
-                                    onClick={onCreateTrainingRequest}
+                                    onClick={handleCreateTrainingRequest}
                                 >
                                     Solicitar formación
                                 </button>
@@ -351,7 +493,7 @@ export default function DayDetail({
                                         <button
                                             type="button"
                                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] mt-1.5"
-                                            onClick={() => onDeleteTrainingRequest(req.id)}
+                                            onClick={() => deleteTrainingRequest(req.id)}
                                         >
                                             Eliminar solicitud
                                         </button>
@@ -514,7 +656,7 @@ export default function DayDetail({
                                     <button
                                         type="button"
                                         className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] ml-1.5"
-                                        onClick={() => onDeleteMeetingRequest(m.id)}
+                                        onClick={() => deleteMeeting(m.id)}
                                     >
                                         Eliminar
                                     </button>
@@ -544,7 +686,7 @@ export default function DayDetail({
                 <textarea
                     className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-[0.85rem] font-inherit resize-y min-h-[40px] max-h-[120px]"
                     value={record.note || ""}
-                    onChange={(e) => onUpdateNote(e.target.value)}
+                    onChange={(e) => handleUpdateNote(e.target.value)}
                     placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
                 />
             </div>
@@ -553,11 +695,11 @@ export default function DayDetail({
                 <button
                     className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark w-full justify-center"
                     type="button"
-                    onClick={onMarkEntry}
+                    onClick={handleMarkEntry}
                 >
                     Fichar entrada ({formatTimeNow()})
                 </button>
-                <button className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5 w-full justify-center" type="button" onClick={onMarkExit}>
+                <button className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5 w-full justify-center" type="button" onClick={handleMarkExit}>
                     Fichar salida ({formatTimeNow()})
                 </button>
 
@@ -571,14 +713,14 @@ export default function DayDetail({
                         <button
                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                             type="button"
-                            onClick={onMarkAbsent}
+                            onClick={handleMarkAbsent}
                         >
                             Marcar ausencia
                         </button>
                         <button
                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                             type="button"
-                            onClick={onRequestVacation}
+                            onClick={handleRequestVacation}
                         >
                             Solicitar vacaciones
                         </button>
@@ -588,7 +730,7 @@ export default function DayDetail({
                         <button
                             type="button"
                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 w-full mt-1.5"
-                            onClick={onCancelVacationRequest}
+                            onClick={handleCancelVacationRequest}
                         >
                             Cancelar solicitud de vacaciones
                         </button>
@@ -621,7 +763,7 @@ export default function DayDetail({
                                         <button
                                             type="button"
                                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] mt-1.5"
-                                            onClick={() => onDeleteAbsenceRequest(r.id)}
+                                            onClick={() => deleteAbsence(r.id)}
                                         >
                                             Eliminar
                                         </button>

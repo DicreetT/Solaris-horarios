@@ -1,5 +1,8 @@
 import React from 'react';
 import { toDateKey } from '../utils/dateUtils';
+import { useTimeData } from '../hooks/useTimeData';
+import { useTraining } from '../hooks/useTraining';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * Calendario mensual
@@ -7,165 +10,146 @@ import { toDateKey } from '../utils/dateUtils';
 export default function CalendarGrid({
     monthDate,
     selectedDate,
-    userId,
-    data,
     onChangeMonth,
     onSelectDate,
     isAdminView,
-    trainingRequests,
-    currentUser,
 }) {
+    const { currentUser } = useAuth();
+    const { timeData } = useTimeData();
+    const { trainingRequests } = useTraining(currentUser);
+
     const year = monthDate.getFullYear();
     const month = monthDate.getMonth();
     const firstDay = new Date(year, month, 1);
-    const firstWeekday = (firstDay.getDay() + 6) % 7; // Lunes = 0
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Lunes=0
 
-    const today = new Date();
-    const isSameDate = (d1, d2) =>
-        d1.getFullYear() === d2.getFullYear() &&
-        d1.getMonth() === d2.getMonth() &&
-        d1.getDate() === d2.getDate();
+    const monthName = monthDate.toLocaleString("es-ES", { month: "long" });
+    const capitalizedMonth =
+        monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
-    const weeks = [];
-    let currentDay = 1 - firstWeekday;
-    while (currentDay <= daysInMonth) {
-        const row = [];
-        for (let i = 0; i < 7; i++) {
-            if (currentDay < 1 || currentDay > daysInMonth) {
-                row.push(null);
-            } else {
-                const date = new Date(year, month, currentDay);
-                row.push(date);
-            }
-            currentDay++;
-        }
-        weeks.push(row);
-    }
-
-    const dayNames = ["L", "M", "X", "J", "V", "S", "D"];
-
-    const getDotsForDay = (date) => {
-        const key = toDateKey(date);
-        const byDay = data[key];
-        const dots = [];
-
-        // 1. Formación
-        let hasTraining = false;
-        if (currentUser?.id === "thalia") {
-            // Thalia ve sus propias formaciones (si tuviera)
-            if (
-                trainingRequests.some(
-                    (r) => r.userId === currentUser.id && r.scheduledDateKey === key
-                )
-            ) {
-                hasTraining = true;
-            }
-        } else if (currentUser?.isTrainingManager) {
-            // Esteban ve TODAS las formaciones
-            if (trainingRequests.some((r) => r.scheduledDateKey === key)) {
-                hasTraining = true;
-            }
-        } else {
-            // Usuario normal ve sus formaciones
-            if (
-                trainingRequests.some(
-                    (r) => r.userId === userId && r.scheduledDateKey === key
-                )
-            ) {
-                hasTraining = true;
-            }
-        }
-        if (hasTraining) dots.push("training");
-
-        // 2. Estado (Ausencia, Vacaciones, Presencia)
-        const record = byDay?.[userId];
-        if (record) {
-            if (record.status === "absent") dots.push("absent");
-            else if (
-                record.status === "vacation" ||
-                record.status === "vacation-request"
-            )
-                dots.push("vacation");
-            else if (record.entry || record.exit || record.status === "present")
-                dots.push("present");
-        }
-
-        return dots;
+    const handlePrevMonth = () => {
+        onChangeMonth(new Date(year, month - 1, 1));
+    };
+    const handleNextMonth = () => {
+        onChangeMonth(new Date(year, month + 1, 1));
     };
 
+    const daysArray = [];
+    for (let i = 0; i < startDayOfWeek; i++) {
+        daysArray.push(null);
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+        daysArray.push(new Date(year, month, i));
+    }
+
     return (
-        <div className="rounded-2xl border-2 border-border bg-card p-3">
-            <div className="flex justify-between items-center gap-2 mb-2">
+        <div className="bg-white rounded-2xl border-2 border-border p-4 shadow-sm h-full flex flex-col">
+            <div className="flex items-center justify-between mb-4">
                 <button
-                    type="button"
-                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                    onClick={() => onChangeMonth(new Date(year, month - 1, 1))}
+                    className="w-8 h-8 rounded-full border border-border bg-white text-[#555] cursor-pointer hover:bg-bg flex items-center justify-center"
+                    onClick={handlePrevMonth}
                 >
-                    ←
+                    &lt;
                 </button>
-                <div style={{ textAlign: "center" }}>
-                    <div style={{ fontWeight: 700 }}>
-                        {monthDate.toLocaleDateString("es-ES", {
-                            month: "long",
-                            year: "numeric",
-                        })}
-                    </div>
-                    <div className="text-xs text-[#666]">
-                        Toca un día para ver o editar sus datos.
-                    </div>
-                </div>
+                <h2 className="text-lg font-bold text-primary-dark m-0">
+                    {capitalizedMonth} {year}
+                </h2>
                 <button
-                    type="button"
-                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                    onClick={() => onChangeMonth(new Date(year, month + 1, 1))}
+                    className="w-8 h-8 rounded-full border border-border bg-white text-[#555] cursor-pointer hover:bg-bg flex items-center justify-center"
+                    onClick={handleNextMonth}
                 >
-                    →
+                    &gt;
                 </button>
             </div>
 
-            <div className="grid grid-cols-7 gap-1 text-xs">
-                {dayNames.map((n) => (
-                    <div key={n} className="text-center font-semibold">
-                        {n}
+            <div className="grid grid-cols-7 gap-1 mb-2 text-center">
+                {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
+                    <div key={d} className="text-xs font-bold text-[#888] uppercase">
+                        {d}
                     </div>
                 ))}
-                {weeks.map((week, wi) =>
-                    week.map((date, di) => {
-                        if (!date) {
-                            return <div key={`${wi}-${di}`} className="h-[34px] rounded-[10px] bg-transparent border-none cursor-default flex items-center justify-center relative" />;
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 flex-1 auto-rows-fr">
+                {daysArray.map((d, idx) => {
+                    if (!d) return <div key={idx} />;
+                    const dKey = toDateKey(d);
+                    const isSelected =
+                        selectedDate && toDateKey(selectedDate) === dKey;
+                    const isToday = toDateKey(new Date()) === dKey;
+
+                    // Datos del día
+                    const dayData = timeData[dKey] || {};
+                    // Si es admin, vemos si ALGUIEN ha fichado
+                    // Si es usuario, vemos SU fichaje
+                    let hasEntry = false;
+                    let hasExit = false;
+                    let isAbsent = false;
+                    let isVacation = false;
+
+                    if (isAdminView) {
+                        // Admin ve "algo" si hay algún registro
+                        const userIds = Object.keys(dayData);
+                        if (userIds.length > 0) {
+                            // Podríamos refinar: pintar si TODOS han fichado, o si ALGUIEN...
+                            // De momento: si hay algún dato, marcamos
+                            hasEntry = userIds.some((uid) => dayData[uid].entry);
                         }
+                    } else if (currentUser) {
+                        const myRecord = dayData[currentUser.id];
+                        if (myRecord) {
+                            hasEntry = !!myRecord.entry;
+                            hasExit = !!myRecord.exit;
+                            if (myRecord.status === "absent") isAbsent = true;
+                            if (myRecord.status === "vacation") isVacation = true;
+                        }
+                    }
 
-                        const isToday = isSameDate(date, today);
-                        const isSelected = selectedDate && isSameDate(date, selectedDate);
-                        const dots = getDotsForDay(date);
+                    // Formación (punto azul)
+                    // Si es admin, ve todas. Si es usuario, ve las suyas.
+                    const hasTraining = trainingRequests.some(
+                        (r) =>
+                            r.scheduledDateKey === dKey &&
+                            r.status !== "cancelled" &&
+                            r.status !== "rejected" &&
+                            (isAdminView || r.userId === currentUser?.id)
+                    );
 
-                        return (
-                            <button
-                                key={`${wi}-${di}`}
-                                type="button"
-                                className={
-                                    "h-[34px] rounded-[10px] border border-[#ccc] bg-white flex items-center justify-center cursor-pointer relative" +
-                                    (isToday ? " border-primary-dark font-bold shadow-[0_0_0_2px_rgba(255,153,51,0.4)]" : "") +
-                                    (isSelected ? " bg-primary border-border" : "")
-                                }
-                                onClick={() => onSelectDate(date)}
-                            >
-                                {date.getDate()}
-                                <div className="absolute bottom-[3px] right-[3px] flex gap-[2px]">
-                                    {dots.map((dot, i) => {
-                                        let badgeClass = "w-1.5 h-1.5 rounded-full bg-[#22c55e]";
-                                        if (dot === "absent") badgeClass += " bg-[#ef4444]";
-                                        if (dot === "vacation") badgeClass += " bg-[#3b82f6]";
-                                        if (dot === "training") badgeClass += " bg-[#a855f7]";
-                                        // present is default green
-                                        return <span key={i} className={badgeClass} />;
-                                    })}
-                                </div>
-                            </button>
-                        );
-                    })
-                )}
+                    return (
+                        <div
+                            key={dKey}
+                            onClick={() => onSelectDate(d)}
+                            className={`
+                                relative flex flex-col items-center justify-center rounded-lg cursor-pointer text-sm min-h-[40px] transition-colors
+                                ${isSelected ? "bg-primary text-primary-dark font-bold border-2 border-primary-dark" : "bg-white text-[#333] border border-transparent hover:bg-bg"}
+                                ${isToday && !isSelected ? "font-bold text-primary-dark border border-primary" : ""}
+                            `}
+                        >
+                            <span>{d.getDate()}</span>
+
+                            {/* Indicadores (puntitos) */}
+                            <div className="flex gap-0.5 mt-0.5 justify-center">
+                                {isAbsent && (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-500" title="Ausente" />
+                                )}
+                                {isVacation && (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-purple-500" title="Vacaciones" />
+                                )}
+                                {hasTraining && (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Formación" />
+                                )}
+                                {!isAbsent && !isVacation && hasEntry && (
+                                    <div
+                                        className={`w-1.5 h-1.5 rounded-full ${hasExit ? "bg-green-500" : "bg-orange-400"}`}
+                                        title={hasExit ? "Jornada completa" : "En curso"}
+                                    />
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

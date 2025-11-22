@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import { USERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useTodos } from '../hooks/useTodos';
 
 /**
  * Modal To-Do List
  */
 export default function TodoModal({
-    currentUser,
-    todos,
     onClose,
-    onCreateTodo,
-    onToggleTodoCompleted,
-    onDeleteTodo,
 }) {
+    const { currentUser } = useAuth();
+    const { todos, createTodo, toggleTodoCompleted, deleteTodo } = useTodos(currentUser);
+
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
     const [dueDate, setDueDate] = useState("");
@@ -23,22 +23,26 @@ export default function TodoModal({
         );
     }
 
-    function handleSubmit(e) {
+    async function handleSubmit(e) {
         e.preventDefault();
         const trimmedTitle = title.trim();
         if (!trimmedTitle || assignedIds.length === 0) return;
 
-        onCreateTodo({
-            title: trimmedTitle,
-            description: description.trim(),
-            dueDateKey: dueDate || null,
-            assignedTo: assignedIds,
-        });
+        try {
+            await createTodo({
+                title: trimmedTitle,
+                description: description.trim(),
+                dueDateKey: dueDate || null,
+                assignedTo: assignedIds,
+            });
 
-        setTitle("");
-        setDescription("");
-        setDueDate("");
-        setAssignedIds([currentUser.id]);
+            setTitle("");
+            setDescription("");
+            setDueDate("");
+            setAssignedIds([currentUser.id]);
+        } catch (e) {
+            console.error("Unexpected error creating todo", e);
+        }
     }
 
     const tasksForMe = todos.filter(
@@ -66,7 +70,7 @@ export default function TodoModal({
                     <input
                         type="checkbox"
                         checked={isDoneForMe}
-                        onChange={() => onToggleTodoCompleted(todo.id)}
+                        onChange={() => toggleTodoCompleted(todo.id)}
                     />
                     <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-[#222]">
@@ -91,7 +95,7 @@ export default function TodoModal({
                         <button
                             type="button"
                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca]"
-                            onClick={() => onDeleteTodo(todo.id)}
+                            onClick={() => deleteTodo(todo.id)}
                             title="Eliminar tarea"
                         >
                             ✕

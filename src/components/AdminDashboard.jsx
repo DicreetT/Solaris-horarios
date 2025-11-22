@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { USERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useTodos } from '../hooks/useTodos';
 
-export default function AdminDashboard({ todos, onClose }) {
+export default function AdminDashboard({ onClose }) {
+    const { currentUser } = useAuth();
+    const { todos } = useTodos(currentUser);
+
     const [filterUser, setFilterUser] = useState("all");
     const [filterStatus, setFilterStatus] = useState("all");
 

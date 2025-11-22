@@ -1,22 +1,26 @@
 import React from 'react';
 import { DRIVE_FOLDERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useFolderUpdates } from '../hooks/useFolderUpdates';
 
 /**
  * Panel de carpetas compartidas (Drive) con notificaciones internas
  * Tabla: folder_updates
  * Campos: id, folder_id, author, at (timestamp)
  */
-export default function SharedFoldersPanel({
-    currentUser,
-    folderUpdates,
-    onOpenFolder,
-    onMarkFolderUpdated,
-}) {
+export default function SharedFoldersPanel() {
+    const { currentUser } = useAuth();
+    const { folderUpdates, toggleFolderUpdate } = useFolderUpdates(currentUser);
+
     const foldersForUser = DRIVE_FOLDERS.filter((f) =>
         f.users.includes(currentUser.id)
     );
 
     if (foldersForUser.length === 0) return null;
+
+    function handleOpenFolder(folder) {
+        window.open(folder.link, "_blank");
+    }
 
     return (
         <div className="rounded-xl border border-dashed border-[#bbb] p-2 mt-2 bg-[#fffdf6] text-xs">
@@ -37,7 +41,7 @@ export default function SharedFoldersPanel({
                             <button
                                 type="button"
                                 className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                                onClick={() => onOpenFolder(folder)}
+                                onClick={() => handleOpenFolder(folder)}
                             >
                                 <span className="mr-1">{folder.emoji}</span>
                                 {folder.label}
@@ -58,7 +62,7 @@ export default function SharedFoldersPanel({
                                     type="button"
                                     className="rounded-full border-2 border-border px-1.5 py-0.5 text-[0.65rem] font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1"
                                     title="Marcar / desmarcar novedades"
-                                    onClick={() => onMarkFolderUpdated(folder.id)}
+                                    onClick={() => toggleFolderUpdate(folder.id)}
                                 >
                                     {hasUpdate ? "✓" : "★"}
                                 </button>

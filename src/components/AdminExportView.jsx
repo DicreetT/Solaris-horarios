@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { USERS } from '../constants';
+import { useTimeData } from '../hooks/useTimeData';
 
 /**
  * Herramientas de Admin para exportar CSV (Anabella, registro horario)
  */
-export default function AdminExportView({ data }) {
+export default function AdminExportView() {
+    const { timeData: data } = useTimeData();
     const [showDialog, setShowDialog] = useState(false);
     const [csvGenerated, setCsvGenerated] = useState("");
 

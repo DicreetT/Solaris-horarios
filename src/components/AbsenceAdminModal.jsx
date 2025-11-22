@@ -1,18 +1,30 @@
 import React from 'react';
 import { USERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useAbsences } from '../hooks/useAbsences';
 
 /**
  * Modal admin de permisos de ausencia (solo Thalia)
  * Tabla: absence_requests
  */
 export default function AbsenceAdminModal({
-    absenceRequests,
     onClose,
     onUpdateAbsenceStatus,
 }) {
+    const { currentUser } = useAuth();
+    const { absenceRequests, updateAbsenceStatus } = useAbsences(currentUser);
+
     const sorted = [...absenceRequests].sort(
         (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
     );
+
+    async function handleUpdateStatus(id, updates) {
+        try {
+            await updateAbsenceStatus({ id, ...updates });
+        } catch (e) {
+            console.error("Unexpected error updating absence status", e);
+        }
+    }
 
     return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
@@ -66,7 +78,7 @@ export default function AbsenceAdminModal({
                                                     "Nota para la persona (opcional):",
                                                     ""
                                                 );
-                                                onUpdateAbsenceStatus(r.id, {
+                                                handleUpdateStatus(r.id, {
                                                     status: "approved",
                                                     responseMessage: msg || "",
                                                 });
@@ -82,7 +94,7 @@ export default function AbsenceAdminModal({
                                                     "Motivo del rechazo (opcional):",
                                                     ""
                                                 );
-                                                onUpdateAbsenceStatus(r.id, {
+                                                handleUpdateStatus(r.id, {
                                                     status: "rejected",
                                                     responseMessage: msg || "",
                                                 });

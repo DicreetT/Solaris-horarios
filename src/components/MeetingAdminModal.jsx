@@ -1,18 +1,29 @@
 import React from 'react';
 import { USERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useMeetings } from '../hooks/useMeetings';
 
 /**
  * Modal admin de solicitudes de reunión (solo Thalia)
  * Tabla: meeting_requests
  */
 export default function MeetingAdminModal({
-    meetingRequests,
     onClose,
-    onUpdateMeetingStatus,
 }) {
+    const { currentUser } = useAuth();
+    const { meetingRequests, updateMeetingStatus } = useMeetings(currentUser);
+
     const sorted = [...meetingRequests].sort(
         (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
     );
+
+    async function handleUpdateStatus(id, updates) {
+        try {
+            await updateMeetingStatus({ id, ...updates });
+        } catch (e) {
+            console.error("Unexpected error updating meeting status", e);
+        }
+    }
 
     return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
@@ -73,7 +84,7 @@ export default function MeetingAdminModal({
                                             type="button"
                                             className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-white hover:bg-[#f3f4f6]"
                                             onClick={() =>
-                                                onUpdateMeetingStatus(m.id, {
+                                                handleUpdateStatus(m.id, {
                                                     status: "scheduled",
                                                     scheduledDateKey: m.preferredDateKey,
                                                 })
@@ -89,7 +100,7 @@ export default function MeetingAdminModal({
                                                     "Motivo del rechazo (opcional):",
                                                     ""
                                                 );
-                                                onUpdateMeetingStatus(m.id, {
+                                                handleUpdateStatus(m.id, {
                                                     status: "rejected",
                                                     responseMessage: msg || "",
                                                 });

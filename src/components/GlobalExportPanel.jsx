@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
 import { USERS } from '../constants';
+import { useAuth } from '../context/AuthContext';
+import { useTimeData } from '../hooks/useTimeData';
+import { useTraining } from '../hooks/useTraining';
+import { useMeetings } from '../hooks/useMeetings';
+import { useAbsences } from '../hooks/useAbsences';
+import { useTodos } from '../hooks/useTodos';
 
 /**
  * Panel global de exportaciones (solo Thalia)
  */
-export default function GlobalExportPanel({
-    timeData,
-    trainingRequests,
-    meetingRequests,
-    absenceRequests,
-    todos,
-}) {
+export default function GlobalExportPanel() {
+    const { currentUser: user } = useAuth();
+    const { timeData } = useTimeData();
+    const { trainingRequests } = useTraining(user);
+    const { meetingRequests } = useMeetings(user);
+    const { absenceRequests } = useAbsences(user);
+    const { todos } = useTodos(user);
+
     const [showDialog, setShowDialog] = useState(false);
     const [csvGenerated, setCsvGenerated] = useState("");
     const [fileName, setFileName] = useState("export.csv");
