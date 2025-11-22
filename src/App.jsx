@@ -1,13 +1,13 @@
-// React hooks
-const { useState, useEffect } = React;
+import React, { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 // 🔐 Config Supabase
 const SUPABASE_URL = "https://geaspnqzexuoaarycrsi.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlYXNwbnF6ZXh1b2FhcnljcnNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NDUyNjksImV4cCI6MjA3OTAyMTI2OX0.ZMvJHVnvzv6B25hiurLL5x2vGb831rI0Qo881ovxkv4";
 
-// Cliente Supabase (UMD)
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Cliente Supabase
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
  * Usuarios "reales" simulados.
@@ -1181,41 +1181,41 @@ function DayDetail({
             la nota.
           </p>
           <div className="flex-row">
-  <button
-    className="btn btn-small"
-    type="button"
-    onClick={onMarkAbsent}
-  >
-    Marcar ausencia
-  </button>
-  <button
-    className="btn btn-small"
-    type="button"
-    onClick={onRequestVacation}
-  >
-    Solicitar vacaciones
-  </button>
-</div>
+            <button
+              className="btn btn-small"
+              type="button"
+              onClick={onMarkAbsent}
+            >
+              Marcar ausencia
+            </button>
+            <button
+              className="btn btn-small"
+              type="button"
+              onClick={onRequestVacation}
+            >
+              Solicitar vacaciones
+            </button>
+          </div>
 
-{record.status === "vacation-request" && (
-  <button
-    type="button"
-    className="btn btn-small btn-ghost"
-    style={{ marginTop: 6, width: "100%" }}
-    onClick={onCancelVacationRequest}
-  >
-    Cancelar solicitud de vacaciones
-  </button>
-)}
+          {record.status === "vacation-request" && (
+            <button
+              type="button"
+              className="btn btn-small btn-ghost"
+              style={{ marginTop: 6, width: "100%" }}
+              onClick={onCancelVacationRequest}
+            >
+              Cancelar solicitud de vacaciones
+            </button>
+          )}
 
-<button
-  type="button"
-  className="btn btn-small btn-ghost"
-  style={{ marginTop: 6, width: "100%" }}
-  onClick={handleSpecialAbsence}
->
-  Solicitar permiso especial a Thalia
-</button>
+          <button
+            type="button"
+            className="btn btn-small btn-ghost"
+            style={{ marginTop: 6, width: "100%" }}
+            onClick={handleSpecialAbsence}
+          >
+            Solicitar permiso especial a Thalia
+          </button>
 
           {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
             <div className="small-muted" style={{ marginTop: 4 }}>
@@ -2344,50 +2344,50 @@ function App() {
 
     // To-Do: tabla "todos"
     async function loadTodosFromSupabase() {
-  try {
-    const { data, error } = await supabase
-      .from("todos")
-      .select("*")
-      .order("created_at", { ascending: false });
+      try {
+        const { data, error } = await supabase
+          .from("todos")
+          .select("*")
+          .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("Error loading todos from Supabase", error);
-      return;
+        if (error) {
+          console.error("Error loading todos from Supabase", error);
+          return;
+        }
+
+        // Mapeamos filas de Supabase → objeto JS
+        const mapped = data.map((row) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description || "",
+          createdBy: row.created_by,
+          assignedTo: row.assigned_to || [],
+          createdAt: row.created_at,
+          dueDateKey: row.due_date_key || null,
+          completedBy: row.completed_by || [],
+        }));
+
+        // 🔎 Filtro por usuario en el FRONT
+        let visibleTodos;
+        if (currentUser.id === "thalia") {
+          // Thalia ve TODO
+          visibleTodos = mapped;
+        } else {
+          // El resto solo ve:
+          // - tareas que ha creado
+          // - tareas donde está en assignedTo
+          visibleTodos = mapped.filter(
+            (t) =>
+              t.createdBy === currentUser.id ||
+              (t.assignedTo || []).includes(currentUser.id)
+          );
+        }
+
+        setTodos(visibleTodos);
+      } catch (e) {
+        console.error("Unexpected error loading todos", e);
+      }
     }
-
-    // Mapeamos filas de Supabase → objeto JS
-    const mapped = data.map((row) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description || "",
-      createdBy: row.created_by,
-      assignedTo: row.assigned_to || [],
-      createdAt: row.created_at,
-      dueDateKey: row.due_date_key || null,
-      completedBy: row.completed_by || [],
-    }));
-
-    // 🔎 Filtro por usuario en el FRONT
-    let visibleTodos;
-    if (currentUser.id === "thalia") {
-      // Thalia ve TODO
-      visibleTodos = mapped;
-    } else {
-      // El resto solo ve:
-      // - tareas que ha creado
-      // - tareas donde está en assignedTo
-      visibleTodos = mapped.filter(
-        (t) =>
-          t.createdBy === currentUser.id ||
-          (t.assignedTo || []).includes(currentUser.id)
-      );
-    }
-
-    setTodos(visibleTodos);
-  } catch (e) {
-    console.error("Unexpected error loading todos", e);
-  }
-}
 
     // Formación: tabla "training_requests"
     async function loadTrainingRequestsFromSupabase() {
@@ -2419,86 +2419,86 @@ function App() {
 
     // Reuniones: tabla "meeting_requests"
     async function loadMeetingRequestsFromSupabase() {
-  try {
-    // Query base
-    let query = supabase
-      .from("meeting_requests")
-      .select("*")
-      .order("created_at", { ascending: false });
+      try {
+        // Query base
+        let query = supabase
+          .from("meeting_requests")
+          .select("*")
+          .order("created_at", { ascending: false });
 
-    // Si NO eres Thalia → solo reuniones que has creado tú
-    // o donde estás en participants
-    if (currentUser.id !== "thalia") {
-      query = query.or(
-        `created_by.eq.${currentUser.id},participants.cs.{${currentUser.id}}`
-      );
+        // Si NO eres Thalia → solo reuniones que has creado tú
+        // o donde estás en participants
+        if (currentUser.id !== "thalia") {
+          query = query.or(
+            `created_by.eq.${currentUser.id},participants.cs.{${currentUser.id}}`
+          );
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.error("Error loading meeting_requests", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          createdBy: row.created_by,
+          createdAt: row.created_at,
+          title: row.title,
+          description: row.description || "",
+          preferredDateKey: row.preferred_date_key,
+          preferredSlot: row.preferred_slot,
+          participants: row.participants || [],
+          status: row.status,
+          scheduledDateKey: row.scheduled_date_key || null,
+          scheduledTime: row.scheduled_time || "",
+          responseMessage: row.response_message || "",
+        }));
+
+        setMeetingRequests(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading meeting_requests", e);
+      }
     }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error("Error loading meeting_requests", error);
-      return;
-    }
-
-    const mapped = data.map((row) => ({
-      id: row.id,
-      createdBy: row.created_by,
-      createdAt: row.created_at,
-      title: row.title,
-      description: row.description || "",
-      preferredDateKey: row.preferred_date_key,
-      preferredSlot: row.preferred_slot,
-      participants: row.participants || [],
-      status: row.status,
-      scheduledDateKey: row.scheduled_date_key || null,
-      scheduledTime: row.scheduled_time || "",
-      responseMessage: row.response_message || "",
-    }));
-
-    setMeetingRequests(mapped);
-  } catch (e) {
-    console.error("Unexpected error loading meeting_requests", e);
-  }
-}
 
 
     // Permisos especiales: tabla "absence_requests"
     async function loadAbsenceRequestsFromSupabase() {
-  try {
-    // Query base
-    let query = supabase
-      .from("absence_requests")
-      .select("*")
-      .order("created_at", { ascending: false });
+      try {
+        // Query base
+        let query = supabase
+          .from("absence_requests")
+          .select("*")
+          .order("created_at", { ascending: false });
 
-    // Si NO eres Thalia → solo tus propios permisos
-    if (currentUser.id !== "thalia") {
-      query = query.eq("created_by", currentUser.id);
+        // Si NO eres Thalia → solo tus propios permisos
+        if (currentUser.id !== "thalia") {
+          query = query.eq("created_by", currentUser.id);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.error("Error loading absence_requests", error);
+          return;
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          createdBy: row.created_by,
+          createdAt: row.created_at,
+          dateKey: row.date_key,
+          reason: row.reason,
+          status: row.status,
+          responseMessage: row.response_message || "",
+        }));
+
+        setAbsenceRequests(mapped);
+      } catch (e) {
+        console.error("Unexpected error loading absence_requests", e);
+      }
     }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error("Error loading absence_requests", error);
-      return;
-    }
-
-    const mapped = data.map((row) => ({
-      id: row.id,
-      createdBy: row.created_by,
-      createdAt: row.created_at,
-      dateKey: row.date_key,
-      reason: row.reason,
-      status: row.status,
-      responseMessage: row.response_message || "",
-    }));
-
-    setAbsenceRequests(mapped);
-  } catch (e) {
-    console.error("Unexpected error loading absence_requests", e);
-  }
-}
 
 
     // Carpetas actualizadas: tabla "folder_updates"
@@ -2562,56 +2562,56 @@ function App() {
   }, [currentUser]);
 
   async function deleteTrainingRequest(id) {
-  try {
-    const { error } = await supabase
-      .from("training_requests")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      console.error("Error deleting training request", error);
-      alert("Error al eliminar solicitud de formación");
-    } else {
-      setTrainingRequests((prev) => prev.filter((r) => r.id !== id));
+    try {
+      const { error } = await supabase
+        .from("training_requests")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        console.error("Error deleting training request", error);
+        alert("Error al eliminar solicitud de formación");
+      } else {
+        setTrainingRequests((prev) => prev.filter((r) => r.id !== id));
+      }
+    } catch (e) {
+      console.error("Unexpected error deleting training request", e);
     }
-  } catch (e) {
-    console.error("Unexpected error deleting training request", e);
   }
-}
 
   async function deleteMeetingRequest(id) {
-  try {
-    const { error } = await supabase
-      .from("meeting_requests")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      console.error("Error deleting meeting request", error);
-      alert("Error al eliminar solicitud de reunión");
-    } else {
-      setMeetingRequests((prev) => prev.filter((m) => m.id !== id));
+    try {
+      const { error } = await supabase
+        .from("meeting_requests")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        console.error("Error deleting meeting request", error);
+        alert("Error al eliminar solicitud de reunión");
+      } else {
+        setMeetingRequests((prev) => prev.filter((m) => m.id !== id));
+      }
+    } catch (e) {
+      console.error("Unexpected error deleting meeting request", e);
     }
-  } catch (e) {
-    console.error("Unexpected error deleting meeting request", e);
   }
-}
 
   async function deleteAbsenceRequest(id) {
-  try {
-    const { error } = await supabase
-      .from("absence_requests")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      console.error("Error deleting absence request", error);
-      alert("Error al eliminar solicitud de permiso especial");
-    } else {
-      setAbsenceRequests((prev) => prev.filter((r) => r.id !== id));
+    try {
+      const { error } = await supabase
+        .from("absence_requests")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        console.error("Error deleting absence request", error);
+        alert("Error al eliminar solicitud de permiso especial");
+      } else {
+        setAbsenceRequests((prev) => prev.filter((r) => r.id !== id));
+      }
+    } catch (e) {
+      console.error("Unexpected error deleting absence request", e);
     }
-  } catch (e) {
-    console.error("Unexpected error deleting absence request", e);
   }
-}
-  
+
 
   // --- Notificaciones (Supabase) ---
   async function addNotification(message, userIdOverride) {
@@ -3179,10 +3179,10 @@ function App() {
     : [];
 
   const meetingRequestsForUser = meetingRequests.filter(
-  (m) =>
-    m.createdBy === currentUser.id ||
-    (m.participants || []).includes(currentUser.id)
-);
+    (m) =>
+      m.createdBy === currentUser.id ||
+      (m.participants || []).includes(currentUser.id)
+  );
 
   const absenceRequestsForDay = dateKey
     ? absenceRequests.filter(
@@ -3248,7 +3248,7 @@ function App() {
             <br />
             <span className="small-muted">{currentUser.email}</span>
           </div>
-                    {currentUser.canAdminHours && (
+          {currentUser.canAdminHours && (
             <button
               type="button"
               className="btn btn-small btn-ghost"
@@ -3461,5 +3461,4 @@ function App() {
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+export default App;
