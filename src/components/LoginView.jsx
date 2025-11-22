@@ -50,28 +50,28 @@ export default function LoginView({ onLogin }) {
     }
 
     return (
-        <div className="app-card" style={{ maxWidth: 400, margin: "40px auto" }}>
-            <div className="app-header" style={{ justifyContent: "center" }}>
-                <div className="logo-title">
-                    <div className="fake-logo">S</div>
+        <div className="bg-bg rounded-[20px] border-2 border-border shadow-[6px_6px_0_rgba(0,0,0,0.2)] p-4 md:p-6 md:px-7 max-w-[400px] mx-auto my-10">
+            <div className="flex items-center justify-center gap-3 mb-4">
+                <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)]">S</div>
                     <div>
-                        <h1 style={{ fontSize: "1.4rem" }}>Solaris</h1>
-                        <p className="subtitle">Control horario y tareas</p>
+                        <h1 className="text-[1.4rem]">Solaris</h1>
+                        <p className="text-sm text-[#555]">Control horario y tareas</p>
                     </div>
                 </div>
             </div>
 
-            <div className="separator" />
+            <div className="h-px bg-[#ddd] my-3" />
 
             <form onSubmit={handleSubmit}>
-                <p className="login-description">
+                <p className="text-[0.85rem] text-[#555] mb-2.5">
                     Escribe tu <strong>correo</strong> y <strong>contraseña</strong>.
                 </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="flex flex-col gap-2">
                     <div>
-                        <label className="field-label">Correo</label>
+                        <label className="text-xs font-semibold mt-1">Correo</label>
                         <input
-                            className="input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                             type="email"
                             placeholder="nombre@empresa.com"
                             value={email}
@@ -80,9 +80,9 @@ export default function LoginView({ onLogin }) {
                         />
                     </div>
                     <div>
-                        <label className="field-label">Contraseña</label>
+                        <label className="text-xs font-semibold mt-1">Contraseña</label>
                         <input
-                            className="input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                             type="password"
                             placeholder="••••••••"
                             value={password}
@@ -94,11 +94,7 @@ export default function LoginView({ onLogin }) {
 
                 {error && (
                     <p
-                        style={{
-                            color: "#b91c1c",
-                            fontSize: "0.8rem",
-                            marginTop: 6,
-                        }}
+                        className="text-[#b91c1c] text-xs mt-1.5"
                     >
                         {error}
                     </p>
@@ -106,8 +102,7 @@ export default function LoginView({ onLogin }) {
 
                 <button
                     type="submit"
-                    className="btn btn-primary btn-full"
-                    style={{ marginTop: 12 }}
+                    className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark w-full justify-center mt-3"
                     disabled={loading}
                 >
                     {loading ? "Entrando..." : "Entrar"}

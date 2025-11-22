@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "@tailwindcss/vite": "^4.1.17",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -22,6 +23,7 @@
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "tailwindcss": "^4.1.17",
     "vite": "^5.0.8",
     "vite-plugin-pwa": "^1.1.0"
   }

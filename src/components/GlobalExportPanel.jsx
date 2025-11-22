@@ -224,53 +224,46 @@ export default function GlobalExportPanel({
 
     return (
         <>
-            <div className="export-box" style={{ marginTop: 16 }}>
+            <div className="mt-4 p-4 bg-[#fff8ee] border border-dashed border-[#ffb347] rounded-2xl">
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                     Panel de descargas (Thalia)
                 </div>
-                <p className="small-muted">
+                <p className="text-xs text-[#666] mb-2">
                     Descarga en CSV todo lo que ocurre en Solaris: horarios, formaciones,
                     reuniones, permisos y tareas. Ideal para auditoría o informes. ✨
                 </p>
-                <div
-                    style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 6,
-                        marginTop: 6,
-                    }}
-                >
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
                     <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                         onClick={exportTimes}
                     >
                         Horarios
                     </button>
                     <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                         onClick={exportTrainings}
                     >
                         Formaciones
                     </button>
                     <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                         onClick={exportMeetings}
                     >
                         Reuniones
                     </button>
                     <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                         onClick={exportAbsences}
                     >
                         Permisos especiales
                     </button>
                     <button
                         type="button"
-                        className="btn btn-small btn-primary"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                         onClick={exportTodos}
                     >
                         Tareas (To-Do)
@@ -279,33 +272,32 @@ export default function GlobalExportPanel({
             </div>
 
             {showDialog && (
-                <div className="dialog-backdrop">
-                    <div className="dialog-paper">
-                        <div className="dialog-title">{title}</div>
-                        <div className="dialog-text">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
+                    <div className="bg-card p-6 rounded-[24px] w-[90%] max-w-[400px] shadow-lg border-2 border-border animate-[popIn_0.2s_ease-out]">
+                        <div className="text-lg font-bold mb-2">{title}</div>
+                        <div className="text-sm text-[#444] mb-4 leading-relaxed">
                             Toca “Descargar” para guardar el archivo. Si quieres verlo primero
                             o copiar/pegar datos, puedes usar el cuadro de abajo.
                         </div>
                         <textarea
                             readOnly
-                            className="note-input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-2 text-sm font-inherit resize-y min-h-[60px]"
                             style={{ maxHeight: 150 }}
                             value={csvGenerated}
                         />
                         <div
-                            className="flex-row"
-                            style={{ marginTop: 8, justifyContent: "flex-end" }}
+                            className="flex flex-row items-center gap-2 mt-2 justify-end"
                         >
                             <button
                                 type="button"
-                                className="btn btn-small btn-ghost"
+                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                 onClick={() => setShowDialog(false)}
                             >
                                 Cerrar
                             </button>
                             <button
                                 type="button"
-                                className="btn btn-small btn-primary"
+                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                                 onClick={downloadCsv}
                             >
                                 Descargar

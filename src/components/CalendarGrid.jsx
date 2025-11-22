@@ -95,11 +95,11 @@ export default function CalendarGrid({
     };
 
     return (
-        <div className="calendar-card">
-            <div className="calendar-header">
+        <div className="rounded-2xl border-2 border-border bg-card p-3">
+            <div className="flex justify-between items-center gap-2 mb-2">
                 <button
                     type="button"
-                    className="btn btn-small btn-ghost"
+                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                     onClick={() => onChangeMonth(new Date(year, month - 1, 1))}
                 >
                     ←
@@ -111,29 +111,29 @@ export default function CalendarGrid({
                             year: "numeric",
                         })}
                     </div>
-                    <div className="small-muted">
+                    <div className="text-xs text-[#666]">
                         Toca un día para ver o editar sus datos.
                     </div>
                 </div>
                 <button
                     type="button"
-                    className="btn btn-small btn-ghost"
+                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                     onClick={() => onChangeMonth(new Date(year, month + 1, 1))}
                 >
                     →
                 </button>
             </div>
 
-            <div className="calendar-grid">
+            <div className="grid grid-cols-7 gap-1 text-xs">
                 {dayNames.map((n) => (
-                    <div key={n} className="day-name">
+                    <div key={n} className="text-center font-semibold">
                         {n}
                     </div>
                 ))}
                 {weeks.map((week, wi) =>
                     week.map((date, di) => {
                         if (!date) {
-                            return <div key={`${wi}-${di}`} className="day-cell empty" />;
+                            return <div key={`${wi}-${di}`} className="h-[34px] rounded-[10px] bg-transparent border-none cursor-default flex items-center justify-center relative" />;
                         }
 
                         const isToday = isSameDate(date, today);
@@ -145,19 +145,19 @@ export default function CalendarGrid({
                                 key={`${wi}-${di}`}
                                 type="button"
                                 className={
-                                    "day-cell" +
-                                    (isToday ? " today" : "") +
-                                    (isSelected ? " selected" : "")
+                                    "h-[34px] rounded-[10px] border border-[#ccc] bg-white flex items-center justify-center cursor-pointer relative" +
+                                    (isToday ? " border-primary-dark font-bold shadow-[0_0_0_2px_rgba(255,153,51,0.4)]" : "") +
+                                    (isSelected ? " bg-primary border-border" : "")
                                 }
                                 onClick={() => onSelectDate(date)}
                             >
                                 {date.getDate()}
-                                <div className="day-badges-container">
+                                <div className="absolute bottom-[3px] right-[3px] flex gap-[2px]">
                                     {dots.map((dot, i) => {
-                                        let badgeClass = "day-badge";
-                                        if (dot === "absent") badgeClass += " day-badge-absent";
-                                        if (dot === "vacation") badgeClass += " day-badge-vacation";
-                                        if (dot === "training") badgeClass += " day-badge-training";
+                                        let badgeClass = "w-1.5 h-1.5 rounded-full bg-[#22c55e]";
+                                        if (dot === "absent") badgeClass += " bg-[#ef4444]";
+                                        if (dot === "vacation") badgeClass += " bg-[#3b82f6]";
+                                        if (dot === "training") badgeClass += " bg-[#a855f7]";
                                         // present is default green
                                         return <span key={i} className={badgeClass} />;
                                     })}

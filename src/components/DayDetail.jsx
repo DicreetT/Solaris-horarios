@@ -51,9 +51,9 @@ export default function DayDetail({
 
     if (!date) {
         return (
-            <div className="day-card">
+            <div className="rounded-2xl border-2 border-border bg-card p-3">
                 <h3>Sin día seleccionado</h3>
-                <p className="small-muted">
+                <p className="text-xs text-[#666]">
                     Elige un día del calendario para ver o registrar información.
                 </p>
             </div>
@@ -108,9 +108,9 @@ export default function DayDetail({
     // Vista ADMIN (Anabella gestionando fichajes)
     if (isAdminView) {
         return (
-            <div className="day-card">
+            <div className="rounded-2xl border-2 border-border bg-card p-3">
                 <h3>Resumen del día</h3>
-                <div className="day-date">{formatDatePretty(date)}</div>
+                <div className="text-xs text-[#666] mb-2">{formatDatePretty(date)}</div>
 
                 {USERS.map((u) => {
                     const record = byDay[u.id] || {};
@@ -118,49 +118,41 @@ export default function DayDetail({
                     return (
                         <div
                             key={u.id}
-                            style={{
-                                borderTop: "1px solid #eee",
-                                paddingTop: 6,
-                                marginTop: 6,
-                            }}
+                            className="border-t border-[#eee] pt-1.5 mt-1.5"
                         >
                             <div
-                                style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    alignItems: "center",
-                                }}
+                                className="flex justify-between items-center"
                             >
                                 <strong>{u.name}</strong>
                                 {statusProps && (
-                                    <div className={"status-tag " + statusProps.className}>
+                                    <div className={"inline-flex items-center gap-1 px-2 py-[3px] rounded-full text-xs border border-border mb-1.5 " + statusProps.className}>
                                         {statusProps.label}
                                     </div>
                                 )}
                             </div>
-                            <div className="field-label">Entrada</div>
-                            <div className="field-value">
+                            <div className="text-xs font-semibold mt-1">Entrada</div>
+                            <div className="text-sm mb-1">
                                 {record.entry || (
-                                    <span className="small-muted">No registrada</span>
+                                    <span className="text-xs text-[#666]">No registrada</span>
                                 )}
                             </div>
-                            <div className="field-label">Salida</div>
-                            <div className="field-value">
+                            <div className="text-xs font-semibold mt-1">Salida</div>
+                            <div className="text-sm mb-1">
                                 {record.exit || (
-                                    <span className="small-muted">No registrada</span>
+                                    <span className="text-xs text-[#666]">No registrada</span>
                                 )}
                             </div>
                             {record.note && (
                                 <>
-                                    <div className="field-label">Nota</div>
-                                    <div className="field-value">{record.note}</div>
+                                    <div className="text-xs font-semibold mt-1">Nota</div>
+                                    <div className="text-sm mb-1">{record.note}</div>
                                 </>
                             )}
                             {record.status === "vacation-request" && (
-                                <div style={{ marginTop: 4 }}>
+                                <div className="mt-1">
                                     <button
                                         type="button"
-                                        className="btn btn-small btn-primary"
+                                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                                         onClick={() => onApproveVacation(u.id)}
                                     >
                                         Aprobar vacaciones
@@ -171,7 +163,7 @@ export default function DayDetail({
                     );
                 })}
 
-                <p className="small-muted" style={{ marginTop: 8 }}>
+                <p className="text-xs text-[#666] mt-2">
                     Los cambios de entrada/salida, ausencias y notas los hace cada persona
                     desde su propio usuario. Aquí solo puedes aprobar vacaciones y
                     revisar.
@@ -190,22 +182,22 @@ export default function DayDetail({
     );
 
     return (
-        <div className="day-card">
+        <div className="rounded-2xl border-2 border-border bg-card p-3">
             <h3>{user.name}</h3>
-            <div className="day-date">{formatDatePretty(date)}</div>
+            <div className="text-xs text-[#666] mb-2">{formatDatePretty(date)}</div>
 
             {statusProps && (
-                <div className={"status-tag " + statusProps.className}>
+                <div className={"inline-flex items-center gap-1 px-2 py-[3px] rounded-full text-xs border border-border mb-1.5 " + statusProps.className}>
                     {statusProps.label}
                 </div>
             )}
 
             {/* Panel de formación */}
             {isTrainingManager ? (
-                <div className="training-panel">
+                <div className="mt-2 p-2 rounded-xl border border-dashed border-[#a855f7] bg-[#faf5ff] text-xs">
                     <strong>Solicitudes de formación</strong>
                     {trainingRequestsForDay.length === 0 ? (
-                        <p className="small-muted">
+                        <p className="text-xs text-[#666]">
                             No hay solicitudes de formación para este día.
                         </p>
                     ) : (
@@ -213,17 +205,14 @@ export default function DayDetail({
                             const person = USERS.find((u) => u.id === req.userId);
                             const comments = req.comments || [];
                             return (
-                                <div key={req.id} className="training-item">
+                                <div key={req.id} className="border-t border-[#e5e7eb] pt-1 mt-1">
                                     <div
-                                        style={{
-                                            display: "flex",
-                                            justifyContent: "space-between",
-                                        }}
+                                        className="flex justify-between"
                                     >
                                         <span>
                                             <strong>{person?.name || req.userId}</strong>
                                         </span>
-                                        <span className="badge-info">
+                                        <span className="inline-flex items-center px-2 py-[2px] rounded-full border border-border text-[0.7rem] bg-[#eef2ff] mt-1">
                                             {req.status === "pending" && "Pendiente"}
                                             {req.status === "accepted" && "Aceptada"}
                                             {req.status === "rescheduled" && "Reprogramada"}
@@ -232,16 +221,16 @@ export default function DayDetail({
 
                                     {req.status === "rescheduled" &&
                                         req.scheduledDateKey !== req.requestedDateKey && (
-                                            <p className="small-muted">
+                                            <p className="text-xs text-[#666]">
                                                 Reprogramada para el día {req.scheduledDateKey}.
                                             </p>
                                         )}
 
                                     {/* Chat formación (Esteban) */}
-                                    <div className="training-chat">
-                                        <div className="training-messages">
+                                    <div className="mt-1.5 rounded-[10px] border border-[#e5e7eb] bg-white p-1.5 max-h-[180px] flex flex-col gap-1">
+                                        <div className="flex-1 overflow-y-auto pr-1">
                                             {comments.length === 0 && (
-                                                <p className="small-muted">
+                                                <p className="text-xs text-[#666]">
                                                     Aún no hay mensajes. Puedes escribir para coordinar la
                                                     hora o el contenido de la formación.
                                                 </p>
@@ -253,27 +242,27 @@ export default function DayDetail({
                                                     <div
                                                         key={idx}
                                                         className={
-                                                            "training-message " + (isMe ? "me" : "other")
+                                                            "flex flex-col mb-1 " + (isMe ? "items-end" : "items-start")
                                                         }
                                                     >
                                                         <div
                                                             className={
-                                                                "training-bubble " + (isMe ? "me" : "other")
+                                                                "inline-block px-2 py-1.5 rounded-[10px] border border-border text-xs max-w-full " + (isMe ? "bg-[#dcfce7] self-end" : "bg-[#eef2ff]")
                                                             }
                                                         >
                                                             <strong>{author?.name || c.by}</strong>
                                                             <br />
                                                             {c.text}
                                                         </div>
-                                                        <div className="training-meta">{c.at}</div>
+                                                        <div className="text-[0.65rem] text-[#666] mt-[2px]">{c.at}</div>
                                                     </div>
                                                 );
                                             })}
                                         </div>
-                                        <div className="training-input-row">
+                                        <div className="flex gap-1 mt-1">
                                             <input
                                                 type="text"
-                                                className="input"
+                                                className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                                                 placeholder="Escribe un mensaje..."
                                                 value={messageDrafts[req.id] || ""}
                                                 onChange={(e) =>
@@ -285,7 +274,7 @@ export default function DayDetail({
                                             />
                                             <button
                                                 type="button"
-                                                className="btn btn-small"
+                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                                                 onClick={() => sendMessage(req.id)}
                                             >
                                                 Enviar
@@ -293,17 +282,17 @@ export default function DayDetail({
                                         </div>
                                     </div>
 
-                                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                                    <div className="flex gap-1.5 mt-1.5">
                                         <button
                                             type="button"
-                                            className="btn btn-small"
+                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                                             onClick={() => onAcceptTraining(req.id)}
                                         >
                                             Aceptar
                                         </button>
                                         <button
                                             type="button"
-                                            className="btn btn-small btn-ghost"
+                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                             onClick={() => onRescheduleTraining(req.id)}
                                         >
                                             Reprogramar
@@ -311,7 +300,7 @@ export default function DayDetail({
                                         {req.userId === user.id && (
                                             <button
                                                 type="button"
-                                                className="btn btn-small btn-danger"
+                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca]"
                                                 onClick={() => onDeleteTrainingRequest(req.id)}
                                             >
                                                 Eliminar
@@ -325,17 +314,17 @@ export default function DayDetail({
                 </div>
             ) : (
                 canRequestTraining && (
-                    <div className="training-panel">
+                    <div className="mt-2 p-2 rounded-xl border border-dashed border-[#a855f7] bg-[#faf5ff] text-xs">
                         <strong>Formación en servicios digitales</strong>
                         {myTrainingForDay.length === 0 ? (
                             <>
-                                <p className="small-muted">
+                                <p className="text-xs text-[#666]">
                                     Puedes solicitar una formación para este día. Esteban revisará
                                     y la aceptará o te propondrá otra fecha.
                                 </p>
                                 <button
                                     type="button"
-                                    className="btn btn-small"
+                                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                                     onClick={onCreateTrainingRequest}
                                 >
                                     Solicitar formación
@@ -345,11 +334,11 @@ export default function DayDetail({
                             myTrainingForDay.map((req) => {
                                 const comments = req.comments || [];
                                 return (
-                                    <div key={req.id} className="training-item">
-                                        <p className="small-muted">
+                                    <div key={req.id} className="border-t border-[#e5e7eb] pt-1 mt-1">
+                                        <p className="text-xs text-[#666]">
                                             Has solicitado formación para este día.
                                         </p>
-                                        <p className="small-muted">
+                                        <p className="text-xs text-[#666]">
                                             Estado:{" "}
                                             <strong>
                                                 {req.status === "pending" &&
@@ -361,18 +350,17 @@ export default function DayDetail({
                                         </p>
                                         <button
                                             type="button"
-                                            className="btn btn-small btn-danger"
-                                            style={{ marginTop: 6 }}
+                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] mt-1.5"
                                             onClick={() => onDeleteTrainingRequest(req.id)}
                                         >
                                             Eliminar solicitud
                                         </button>
 
                                         {/* Chat formación (persona solicitante) */}
-                                        <div className="training-chat">
-                                            <div className="training-messages">
+                                        <div className="mt-1.5 rounded-[10px] border border-[#e5e7eb] bg-white p-1.5 max-h-[180px] flex flex-col gap-1">
+                                            <div className="flex-1 overflow-y-auto pr-1">
                                                 {comments.length === 0 && (
-                                                    <p className="small-muted">
+                                                    <p className="text-xs text-[#666]">
                                                         Puedes escribir a Esteban para acordar la hora o
                                                         detalles de la formación.
                                                     </p>
@@ -384,28 +372,28 @@ export default function DayDetail({
                                                         <div
                                                             key={idx}
                                                             className={
-                                                                "training-message " + (isMe ? "me" : "other")
+                                                                "flex flex-col mb-1 " + (isMe ? "items-end" : "items-start")
                                                             }
                                                         >
                                                             <div
                                                                 className={
-                                                                    "training-bubble " +
-                                                                    (isMe ? "me" : "other")
+                                                                    "inline-block px-2 py-1.5 rounded-[10px] border border-border text-xs max-w-full " +
+                                                                    (isMe ? "bg-[#dcfce7] self-end" : "bg-[#eef2ff]")
                                                                 }
                                                             >
                                                                 <strong>{author?.name || c.by}</strong>
                                                                 <br />
                                                                 {c.text}
                                                             </div>
-                                                            <div className="training-meta">{c.at}</div>
+                                                            <div className="text-[0.65rem] text-[#666] mt-[2px]">{c.at}</div>
                                                         </div>
                                                     );
                                                 })}
                                             </div>
-                                            <div className="training-input-row">
+                                            <div className="flex gap-1 mt-1">
                                                 <input
                                                     type="text"
-                                                    className="input"
+                                                    className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                                                     placeholder="Escribe un mensaje..."
                                                     value={messageDrafts[req.id] || ""}
                                                     onChange={(e) =>
@@ -417,7 +405,7 @@ export default function DayDetail({
                                                 />
                                                 <button
                                                     type="button"
-                                                    className="btn btn-small"
+                                                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                                                     onClick={() => sendMessage(req.id)}
                                                 >
                                                     Enviar
@@ -433,9 +421,9 @@ export default function DayDetail({
             )}
 
             {/* Panel de reuniones generales */}
-            <div className="panel" style={{ marginTop: 8 }}>
+            <div className="rounded-xl border border-dashed border-[#bbb] p-2 mt-2 bg-[#fffdf6] text-xs">
                 <strong>Reuniones generales</strong>
-                <p className="field-note">
+                <p className="text-xs text-[#666]">
                     Solicita una reunión contigo, con Thalia o con varias personas del
                     equipo.
                 </p>
@@ -443,33 +431,33 @@ export default function DayDetail({
                 {!meetingFormOpen ? (
                     <button
                         type="button"
-                        className="btn btn-small"
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                         onClick={() => setMeetingFormOpen(true)}
                     >
                         Solicitar reunión
                     </button>
                 ) : (
-                    <form onSubmit={handleMeetingSubmit} style={{ marginTop: 6 }}>
-                        <div className="field-label">Título</div>
+                    <form onSubmit={handleMeetingSubmit} className="mt-1.5">
+                        <div className="text-xs font-semibold mt-1">Título</div>
                         <input
-                            className="input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                             value={meetingTitle}
                             onChange={(e) => setMeetingTitle(e.target.value)}
                             placeholder="Ej.: Reunión de seguimiento, dudas de proyecto..."
                             required
                         />
 
-                        <div className="field-label">Motivo / descripción</div>
+                        <div className="text-xs font-semibold mt-1">Motivo / descripción</div>
                         <textarea
-                            className="note-input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-[0.85rem] font-inherit resize-y min-h-[40px] max-h-[120px]"
                             value={meetingDescription}
                             onChange={(e) => setMeetingDescription(e.target.value)}
                             placeholder="¿Qué quieres tratar en la reunión?"
                         />
 
-                        <div className="field-label">Franja horaria preferida</div>
+                        <div className="text-xs font-semibold mt-1">Franja horaria preferida</div>
                         <select
-                            className="input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
                             value={meetingPreferredSlot}
                             onChange={(e) => setMeetingPreferredSlot(e.target.value)}
                         >
@@ -478,10 +466,10 @@ export default function DayDetail({
                             <option value="indiferente">Indiferente</option>
                         </select>
 
-                        <div className="field-label">Personas que deberían estar</div>
-                        <div className="todo-assignees">
+                        <div className="text-xs font-semibold mt-1">Personas que deberían estar</div>
+                        <div className="flex flex-wrap gap-1 mt-1">
                             {USERS.map((u) => (
-                                <label key={u.id} className="todo-assignee-pill">
+                                <label key={u.id} className="inline-flex items-center gap-1 px-2 py-[2px] rounded-full border border-[#e5e7eb] bg-white text-[0.75rem]">
                                     <input
                                         type="checkbox"
                                         checked={meetingParticipants.includes(u.id)}
@@ -494,15 +482,13 @@ export default function DayDetail({
 
                         <button
                             type="submit"
-                            className="btn btn-small btn-primary"
-                            style={{ marginTop: 6 }}
+                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark mt-1.5"
                         >
                             Enviar solicitud
                         </button>
                         <button
                             type="button"
-                            className="btn btn-small btn-ghost"
-                            style={{ marginTop: 6, marginLeft: 6 }}
+                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 mt-1.5 ml-1.5"
                             onClick={() => setMeetingFormOpen(false)}
                         >
                             Cancelar
@@ -512,11 +498,11 @@ export default function DayDetail({
 
                 {meetingRequestsForUser && meetingRequestsForUser.length > 0 && (
                     <>
-                        <div className="field-label" style={{ marginTop: 8 }}>
+                        <div className="text-xs font-semibold mt-1" style={{ marginTop: 8 }}>
                             Tus solicitudes de reunión
                         </div>
                         {meetingRequestsForUser.map((m) => (
-                            <div key={m.id} className="small-muted" style={{ marginTop: 2 }}>
+                            <div key={m.id} className="text-xs text-[#666]" style={{ marginTop: 2 }}>
                                 • {m.title} —{" "}
                                 {m.status === "pending" && "Pendiente de revisión"}
                                 {m.status === "scheduled" &&
@@ -527,8 +513,7 @@ export default function DayDetail({
                                 {m.createdBy === user.id && (
                                     <button
                                         type="button"
-                                        className="btn btn-small btn-danger"
-                                        style={{ marginLeft: 6 }}
+                                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] ml-1.5"
                                         onClick={() => onDeleteMeetingRequest(m.id)}
                                     >
                                         Eliminar
@@ -540,58 +525,58 @@ export default function DayDetail({
                 )}
             </div>
 
-            <div style={{ marginTop: 6 }}>
-                <div className="field-label">Entrada</div>
-                <div className="field-value">
+            <div className="mt-1.5">
+                <div className="text-xs font-semibold mt-1">Entrada</div>
+                <div className="text-sm mb-1">
                     {record.entry || (
-                        <span className="small-muted">No registrada</span>
+                        <span className="text-xs text-[#666]">No registrada</span>
                     )}
                 </div>
 
-                <div className="field-label">Salida</div>
-                <div className="field-value">
-                    {record.exit || <span className="small-muted">No registrada</span>}
+                <div className="text-xs font-semibold mt-1">Salida</div>
+                <div className="text-sm mb-1">
+                    {record.exit || <span className="text-xs text-[#666]">No registrada</span>}
                 </div>
             </div>
 
-            <div style={{ marginTop: 6 }}>
-                <div className="field-label">Nota / motivo (opcional)</div>
+            <div className="mt-1.5">
+                <div className="text-xs font-semibold mt-1">Nota / motivo (opcional)</div>
                 <textarea
-                    className="note-input"
+                    className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-[0.85rem] font-inherit resize-y min-h-[40px] max-h-[120px]"
                     value={record.note || ""}
                     onChange={(e) => onUpdateNote(e.target.value)}
                     placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
                 />
             </div>
 
-            <div className="buttons-column">
+            <div className="flex flex-col gap-1.5 mt-2">
                 <button
-                    className="btn btn-primary btn-full"
+                    className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark w-full justify-center"
                     type="button"
                     onClick={onMarkEntry}
                 >
                     Fichar entrada ({formatTimeNow()})
                 </button>
-                <button className="btn btn-full" type="button" onClick={onMarkExit}>
+                <button className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5 w-full justify-center" type="button" onClick={onMarkExit}>
                     Fichar salida ({formatTimeNow()})
                 </button>
 
-                <div className="panel">
+                <div className="rounded-xl border border-dashed border-[#bbb] p-2 mt-1.5 bg-[#fffdf6] text-xs">
                     <strong>Ausencias y vacaciones</strong>
-                    <p className="field-note">
+                    <p className="text-xs text-[#666]">
                         Úsalo para días completos. Si solo fue media jornada, explícalo en
                         la nota.
                     </p>
-                    <div className="flex-row">
+                    <div className="flex items-center justify-between gap-2.5">
                         <button
-                            className="btn btn-small"
+                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                             type="button"
                             onClick={onMarkAbsent}
                         >
                             Marcar ausencia
                         </button>
                         <button
-                            className="btn btn-small"
+                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                             type="button"
                             onClick={onRequestVacation}
                         >
@@ -602,8 +587,7 @@ export default function DayDetail({
                     {record.status === "vacation-request" && (
                         <button
                             type="button"
-                            className="btn btn-small btn-ghost"
-                            style={{ marginTop: 6, width: "100%" }}
+                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 w-full mt-1.5"
                             onClick={onCancelVacationRequest}
                         >
                             Cancelar solicitud de vacaciones
@@ -612,15 +596,14 @@ export default function DayDetail({
 
                     <button
                         type="button"
-                        className="btn btn-small btn-ghost"
-                        style={{ marginTop: 6, width: "100%" }}
+                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 w-full mt-1.5"
                         onClick={handleSpecialAbsence}
                     >
                         Solicitar permiso especial a Thalia
                     </button>
 
                     {absenceRequestsForDay && absenceRequestsForDay.length > 0 && (
-                        <div className="small-muted" style={{ marginTop: 4 }}>
+                        <div className="text-xs text-[#666]" style={{ marginTop: 4 }}>
                             {absenceRequestsForDay.map((r) => (
                                 <div key={r.id}>
                                     Has solicitado un permiso especial para este día. Estado:{" "}
@@ -631,14 +614,13 @@ export default function DayDetail({
                                     </strong>
                                     {r.responseMessage &&
                                         ` · Mensaje de Thalia: ${r.responseMessage}`}
-                                    <div className="small-muted">
+                                    <div className="text-xs text-[#666]">
                                         Motivo: {r.reason}
                                     </div>
                                     {r.createdBy === user.id && (
                                         <button
                                             type="button"
-                                            className="btn btn-small btn-danger"
-                                            style={{ marginTop: 6 }}
+                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca] mt-1.5"
                                             onClick={() => onDeleteAbsenceRequest(r.id)}
                                         >
                                             Eliminar

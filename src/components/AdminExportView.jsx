@@ -57,17 +57,17 @@ export default function AdminExportView({ data }) {
 
     return (
         <>
-            <div className="export-box">
+            <div className="mt-4 p-4 bg-[#fff8ee] border border-dashed border-[#ffb347] rounded-2xl">
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                     Herramientas de Admin
                 </div>
-                <p className="small-muted">
+                <p className="text-xs text-[#666] mb-2">
                     Aquí puedes descargar todo el historial en formato CSV (se abre en
                     Excel / Google Sheets).
                 </p>
                 <button
                     type="button"
-                    className="btn btn-small btn-primary"
+                    className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                     onClick={buildCsv}
                 >
                     Descargar CSV
@@ -75,33 +75,32 @@ export default function AdminExportView({ data }) {
             </div>
 
             {showDialog && (
-                <div className="dialog-backdrop">
-                    <div className="dialog-paper">
-                        <div className="dialog-title">Exportar CSV</div>
-                        <div className="dialog-text">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
+                    <div className="bg-card p-6 rounded-[24px] w-[90%] max-w-[400px] shadow-lg border-2 border-border animate-[popIn_0.2s_ease-out]">
+                        <div className="text-lg font-bold mb-2">Exportar CSV</div>
+                        <div className="text-sm text-[#444] mb-4 leading-relaxed">
                             Toca “Descargar” para guardar el archivo. Si quieres verlo
                             primero, puedes copiarlo desde el cuadro de abajo.
                         </div>
                         <textarea
                             readOnly
-                            className="note-input"
+                            className="w-full rounded-[10px] border border-[#ccc] p-2 text-sm font-inherit resize-y min-h-[60px]"
                             style={{ maxHeight: 150 }}
                             value={csvGenerated}
                         />
                         <div
-                            className="flex-row"
-                            style={{ marginTop: 8, justifyContent: "flex-end" }}
+                            className="flex flex-row items-center gap-2 mt-2 justify-end"
                         >
                             <button
                                 type="button"
-                                className="btn btn-small btn-ghost"
+                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                 onClick={() => setShowDialog(false)}
                             >
                                 Cerrar
                             </button>
                             <button
                                 type="button"
-                                className="btn btn-small btn-primary"
+                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                                 onClick={downloadCsv}
                             >
                                 Descargar

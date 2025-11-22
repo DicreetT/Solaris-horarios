@@ -19,10 +19,10 @@ export default function NotificationBell({ notifications, onMarkAllRead }) {
     }
 
     return (
-        <div style={{ position: "relative", display: "inline-block" }}>
+        <div className="relative inline-block">
             <button
                 type="button"
-                className="btn btn-small btn-ghost"
+                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                 onClick={toggleOpen}
             >
                 🔔 Notificaciones
@@ -30,16 +30,16 @@ export default function NotificationBell({ notifications, onMarkAllRead }) {
             </button>
 
             {open && (
-                <div className="notification-panel">
+                <div className="absolute top-[calc(100%+8px)] right-0 w-[300px] max-h-[300px] overflow-y-auto bg-card border-2 border-border rounded-2xl shadow-[6px_6px_0_rgba(0,0,0,0.2)] z-50 p-2">
                     {notifications.length === 0 ? (
-                        <div className="small-muted" style={{ padding: 6 }}>
+                        <div className="text-xs text-[#666] p-1.5">
                             No tienes notificaciones todavía.
                         </div>
                     ) : (
                         notifications.slice(0, 30).map((n) => (
-                            <div key={n.id} className="notification-row">
+                            <div key={n.id} className="border-b border-[#eee] py-2 last:border-b-0">
                                 <div>{n.message}</div>
-                                <div className="small-muted">
+                                <div className="text-xs text-[#666]">
                                     {new Date(n.createdAt).toLocaleString("es-ES", {
                                         dateStyle: "short",
                                         timeStyle: "short",

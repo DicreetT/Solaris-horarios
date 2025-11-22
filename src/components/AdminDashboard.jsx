@@ -28,21 +28,21 @@ export default function AdminDashboard({ todos, onClose }) {
     });
 
     return (
-        <div className="dialog-backdrop">
-            <div className="dialog-paper" style={{ maxWidth: "800px" }}>
-                <div className="flex-row">
-                    <h2 className="dialog-title">Panel de Administración de Tareas</h2>
-                    <button className="btn btn-small btn-ghost" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
+            <div className="bg-card p-6 rounded-[24px] w-[90%] max-w-[800px] shadow-lg border-2 border-border animate-[popIn_0.2s_ease-out]">
+                <div className="flex flex-row items-center gap-2 justify-between">
+                    <h2 className="text-lg font-bold mb-2">Panel de Administración de Tareas</h2>
+                    <button className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5" onClick={onClose}>
                         ✕
                     </button>
                 </div>
-                <p className="dialog-text">
+                <p className="text-sm text-[#444] mb-4 leading-relaxed">
                     Visión global de todas las tareas creadas y su estado.
                 </p>
 
-                <div className="flex-row" style={{ marginBottom: 12 }}>
+                <div className="flex flex-row items-center gap-2 mb-3">
                     <select
-                        className="input"
+                        className="w-full rounded-[10px] border border-[#ccc] p-2 text-sm font-inherit"
                         value={filterUser}
                         onChange={(e) => setFilterUser(e.target.value)}
                     >
@@ -54,7 +54,7 @@ export default function AdminDashboard({ todos, onClose }) {
                         ))}
                     </select>
                     <select
-                        className="input"
+                        className="w-full rounded-[10px] border border-[#ccc] p-2 text-sm font-inherit"
                         value={filterStatus}
                         onChange={(e) => setFilterStatus(e.target.value)}
                     >
@@ -89,18 +89,18 @@ export default function AdminDashboard({ todos, onClose }) {
                                     <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
                                         <td style={{ padding: 8 }}>
                                             <strong>{t.title}</strong>
-                                            {t.description && <div className="small-muted">{t.description}</div>}
-                                            {t.dueDateKey && <div className="small-muted">Fecha: {t.dueDateKey}</div>}
+                                            {t.description && <div className="text-xs text-[#666]">{t.description}</div>}
+                                            {t.dueDateKey && <div className="text-xs text-[#666]">Fecha: {t.dueDateKey}</div>}
                                         </td>
                                         <td style={{ padding: 8 }}>{creator}</td>
                                         <td style={{ padding: 8 }}>{assignees}</td>
                                         <td style={{ padding: 8 }}>
                                             {isCompleted ? (
-                                                <span className="tag" style={{ background: "#dcfce7", color: "#166534" }}>
+                                                <span className="inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[0.7rem] bg-[#dcfce7] text-[#166534]">
                                                     Completada
                                                 </span>
                                             ) : (
-                                                <span className="tag" style={{ background: "#fff7ed", color: "#9a3412" }}>
+                                                <span className="inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[0.7rem] bg-[#fff7ed] text-[#9a3412]">
                                                     Pendiente
                                                 </span>
                                             )}

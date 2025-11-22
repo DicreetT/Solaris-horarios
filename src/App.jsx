@@ -926,20 +926,20 @@ function App() {
   const isThalia = currentUser.id === "thalia";
 
   return (
-    <div className="app-card">
-      <div className="app-header">
-        <div className="logo-title">
-          <div className="fake-logo">S</div>
+    <div className="bg-bg rounded-[20px] border-2 border-border shadow-[6px_6px_0_rgba(0,0,0,0.2)] p-4 md:p-6 md:px-7">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-10 h-10 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)]">S</div>
           <div>
             <h1 style={{ fontSize: "1.3rem" }}>Solaris · Control horario</h1>
-            <p className="subtitle">
+            <p className="text-sm text-[#555]">
               {isAdmin
                 ? "Vista de administración (equipo completo)"
                 : "Registro diario de jornada, ausencias, formación, tareas y reuniones"}
             </p>
-            <div className="pill">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-[#fffbe6] text-xs mt-1">
               <span
-                className="tag"
+                className="inline-flex items-center justify-center px-2 py-0.5 rounded-full border border-border text-[0.7rem]"
                 style={{
                   background: isAdmin
                     ? "#fee2e2"
@@ -972,19 +972,19 @@ function App() {
         </div>
 
         <div style={{ textAlign: "right" }}>
-          <div className="current-user-tag">
+          <div className="px-2.5 py-1 rounded-full border border-border bg-white text-xs">
             <NotificationBell
               notifications={notifications}
               onMarkAllRead={markAllNotificationsRead}
             />
             {currentUser.name}
             <br />
-            <span className="small-muted">{currentUser.email}</span>
+            <span className="text-xs text-[#666]">{currentUser.email}</span>
           </div>
           {currentUser.canAdminHours && (
             <button
               type="button"
-              className="btn btn-small btn-ghost"
+              className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
               style={{ marginTop: 4, width: "100%" }}
               onClick={() => setAdminMode((prev) => !prev)}
             >
@@ -998,7 +998,7 @@ function App() {
             <>
               <button
                 type="button"
-                className="btn btn-small btn-ghost"
+                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                 style={{ marginTop: 4, width: "100%" }}
                 onClick={() => setShowMeetingAdmin(true)}
               >
@@ -1006,7 +1006,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn btn-small btn-ghost"
+                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                 style={{ marginTop: 4, width: "100%" }}
                 onClick={() => setShowAbsenceAdmin(true)}
               >
@@ -1014,7 +1014,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn btn-small btn-ghost"
+                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                 style={{ marginTop: 4, width: "100%" }}
                 onClick={() => setShowAdminDashboard(true)}
               >
@@ -1025,7 +1025,7 @@ function App() {
 
           <button
             type="button"
-            className="btn btn-small btn-ghost"
+            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
             style={{ marginTop: 4, width: "100%" }}
             onClick={() => setShowTodoModal(true)}
           >
@@ -1034,7 +1034,7 @@ function App() {
 
           <button
             type="button"
-            className="btn btn-small btn-ghost"
+            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
             onClick={handleLogout}
             style={{ marginTop: 4, width: "100%" }}
           >
@@ -1043,7 +1043,7 @@ function App() {
         </div>
       </div>
 
-      <div className="layout">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {/* Columna izquierda: calendario */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <CalendarGrid

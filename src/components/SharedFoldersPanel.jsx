@@ -19,54 +19,36 @@ export default function SharedFoldersPanel({
     if (foldersForUser.length === 0) return null;
 
     return (
-        <div className="panel" style={{ marginTop: 8 }}>
+        <div className="rounded-xl border border-dashed border-[#bbb] p-2 mt-2 bg-[#fffdf6] text-xs">
             <strong>Carpetas compartidas</strong>
-            <p className="field-note">
+            <p className="text-xs text-[#666]">
                 Accesos directos a las carpetas de Google Drive relacionadas con tu
                 trabajo. El puntito indica que alguien marcó que hay algo nuevo. 🔔
             </p>
-            <div
-                style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 6,
-                    marginTop: 6,
-                }}
-            >
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {foldersForUser.map((folder) => {
                     const auth = folderUpdates[folder.id]?.author || null;
                     const hasUpdate = !!folderUpdates[folder.id];
                     return (
                         <div
                             key={folder.id}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                            }}
+                            className="flex items-center gap-1"
                         >
                             <button
                                 type="button"
-                                className="btn btn-small btn-ghost"
+                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                 onClick={() => onOpenFolder(folder)}
                             >
-                                <span style={{ marginRight: 4 }}>{folder.emoji}</span>
+                                <span className="mr-1">{folder.emoji}</span>
                                 {folder.label}
                                 {hasUpdate && (
                                     <span
-                                        style={{
-                                            display: "inline-block",
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: "999px",
-                                            background: "#a855f7",
-                                            marginLeft: 6,
-                                        }}
+                                        className="inline-block w-2 h-2 rounded-full bg-[#a855f7] ml-1.5"
                                     />
                                 )}
                             </button>
                             {hasUpdate && (
-                                <span className="small-muted">
+                                <span className="text-xs text-[#666]">
                                     (Marcado como nuevo
                                     {auth ? ` por ${auth}` : ""})
                                 </span>
@@ -74,7 +56,7 @@ export default function SharedFoldersPanel({
                             {currentUser.id === "thalia" && (
                                 <button
                                     type="button"
-                                    className="btn btn-tiny btn-ghost"
+                                    className="rounded-full border-2 border-border px-1.5 py-0.5 text-[0.65rem] font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1"
                                     title="Marcar / desmarcar novedades"
                                     onClick={() => onMarkFolderUpdated(folder.id)}
                                 >
