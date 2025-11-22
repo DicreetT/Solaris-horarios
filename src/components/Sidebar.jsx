@@ -176,46 +176,46 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                 </nav>
 
                 {/* User Info, Notifications, Logout */}
-                <div className="p-3 border-t-2 border-border bg-card">
+                <div className="p-2 border-t-2 border-border bg-card">
                     {!isCollapsed ? (
-                        <div className="space-y-3">
+                        <div className="space-y-1">
                             {/* User Profile & Badges */}
-                            <div className="flex items-center gap-3 mb-3">
-                                <div className="w-10 h-10 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)] text-sm shrink-0 shadow-sm">
+                            <div className="flex items-center gap-2 mb-2 px-1">
+                                <div className="w-8 h-8 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)] text-xs shrink-0 shadow-sm">
                                     {currentUser?.name?.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="flex-1 min-w-0 overflow-hidden">
-                                    <div className="flex items-center gap-2">
-                                        <p className="text-sm font-bold truncate text-gray-800">{currentUser?.name}</p>
+                                    <div className="flex items-center gap-1.5">
+                                        <p className="text-xs font-bold truncate text-gray-800">{currentUser?.name}</p>
                                         {/* Role Badges */}
-                                        <div className="flex gap-1">
+                                        <div className="flex gap-0.5">
                                             {isAdmin && (
-                                                <span className="bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded-md border border-amber-200 font-bold tracking-wider">
+                                                <span className="bg-amber-100 text-amber-700 text-[8px] px-1 py-0 rounded-md border border-amber-200 font-bold tracking-wider">
                                                     ADMIN
                                                 </span>
                                             )}
                                             {currentUser?.isTrainingManager && (
-                                                <span className="bg-blue-100 text-blue-700 text-[9px] px-1.5 py-0.5 rounded-md border border-blue-200 font-bold tracking-wider">
-                                                    FORMACIÓN
+                                                <span className="bg-blue-100 text-blue-700 text-[8px] px-1 py-0 rounded-md border border-blue-200 font-bold tracking-wider">
+                                                    FORM
                                                 </span>
                                             )}
                                         </div>
                                     </div>
-                                    <p className="text-xs text-gray-500 truncate font-medium">{currentUser?.email}</p>
+                                    <p className="text-[10px] text-gray-500 truncate font-medium">{currentUser?.email}</p>
                                 </div>
                             </div>
 
                             {/* Actions Stack */}
-                            <div className="space-y-2 pt-2">
+                            <div className="space-y-1">
                                 <div className="w-full">
                                     <NotificationBell placement="top-right" fullWidth />
                                 </div>
                                 <button
                                     onClick={handleLogout}
-                                    className="w-full flex items-center justify-center gap-2 p-2 rounded-xl hover:bg-red-50 text-red-600 border-2 border-transparent hover:border-red-100 transition-all duration-200 group"
+                                    className="w-full flex items-center justify-center gap-2 py-1.5 px-2 rounded-xl hover:bg-red-50 text-red-600 border-2 border-transparent hover:border-red-100 transition-all duration-200 group"
                                     title="Cerrar sesión"
                                 >
-                                    <LogOut size={18} className="group-hover:scale-110 transition-transform" />
+                                    <LogOut size={16} className="group-hover:scale-110 transition-transform" />
                                     <span className="text-xs font-bold">Cerrar sesión</span>
                                 </button>
                             </div>
