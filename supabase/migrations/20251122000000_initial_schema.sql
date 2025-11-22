@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
 -- 7. folder_updates
-CREATE TABLE IF NOT EXISTS public.folder_updates (
+CREATE TABLE IF NOT EXISTS public.folder_updates (  
     folder_id text PRIMARY KEY,
     author text,
     updated_at timestamp with time zone DEFAULT now()

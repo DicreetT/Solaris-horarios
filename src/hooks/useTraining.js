@@ -19,6 +19,7 @@ export function useTraining(currentUser) {
                 scheduledDateKey: row.scheduled_date_key,
                 status: row.status,
                 comments: row.comments || [],
+                createdAt: row.created_at,
             }));
         },
         enabled: !!currentUser,

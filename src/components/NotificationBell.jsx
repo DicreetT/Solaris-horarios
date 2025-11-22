@@ -7,7 +7,7 @@ import { useNotifications } from '../hooks/useNotifications';
  * Tabla: notifications
  * Campos: id, user_id, message, created_at, read (bool)
  */
-export default function NotificationBell() {
+export default function NotificationBell({ placement = 'bottom-right', fullWidth = false }) {
     const { currentUser } = useAuth();
     const { notifications, markAllAsRead } = useNotifications(currentUser);
     const [open, setOpen] = useState(false);
@@ -22,37 +22,98 @@ export default function NotificationBell() {
         }
     }
 
+    // Determine dropdown position classes
+    const dropdownClasses = {
+        'bottom-right': 'top-[calc(100%+12px)] right-0 origin-top-right',
+        'top-right': 'bottom-[calc(100%+12px)] left-0 origin-bottom-left',
+        'top-left': 'bottom-[calc(100%+12px)] right-0 origin-bottom-right',
+    };
+
+    const positionClass = dropdownClasses[placement] || dropdownClasses['bottom-right'];
+
     return (
-        <div className="relative inline-block">
+        <div className={`relative ${fullWidth ? 'block' : 'inline-block'}`}>
             <button
                 type="button"
-                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
+                className={`
+                    group relative flex items-center justify-center gap-2.5 
+                    rounded-xl border-2 border-transparent 
+                    transition-all duration-200 ease-out
+                    ${open ? 'bg-primary/10 text-primary' : 'hover:bg-gray-100 text-gray-600'}
+                    ${fullWidth ? 'w-full py-2 px-3' : 'p-2'}
+                `}
                 onClick={toggleOpen}
             >
-                🔔 Notificaciones
-                {unreadCount > 0 && ` (${unreadCount})`}
+                <div className="relative">
+                    <span className="text-lg">🔔</span>
+                    {unreadCount > 0 && (
+                        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white ring-2 ring-white animate-pulse">
+                            {unreadCount}
+                        </span>
+                    )}
+                </div>
+
+                {fullWidth && (
+                    <span className={`text-xs font-bold ${open ? 'text-primary' : 'text-gray-700'}`}>
+                        Notificaciones
+                    </span>
+                )}
             </button>
 
             {open && (
-                <div className="absolute top-[calc(100%+8px)] right-0 w-[300px] max-h-[300px] overflow-y-auto bg-card border-2 border-border rounded-2xl shadow-[6px_6px_0_rgba(0,0,0,0.2)] z-50 p-2">
-                    {notifications.length === 0 ? (
-                        <div className="text-xs text-[#666] p-1.5">
-                            No tienes notificaciones todavía.
+                <>
+                    {/* Backdrop for mobile to close on click outside */}
+                    <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+
+                    <div className={`
+                        absolute ${positionClass} z-50 
+                        w-[320px] max-h-[400px] overflow-hidden
+                        bg-white/95 backdrop-blur-xl 
+                        border border-gray-200/50 
+                        rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]
+                        animate-in fade-in zoom-in-95 duration-200
+                        flex flex-col
+                    `}>
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50/50">
+                            <h3 className="text-sm font-bold text-gray-900">Notificaciones</h3>
+                            {unreadCount > 0 && (
+                                <span className="text-[10px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                    {unreadCount} nuevas
+                                </span>
+                            )}
                         </div>
-                    ) : (
-                        notifications.slice(0, 30).map((n) => (
-                            <div key={n.id} className="border-b border-[#eee] py-2 last:border-b-0">
-                                <div>{n.message}</div>
-                                <div className="text-xs text-[#666]">
-                                    {new Date(n.createdAt).toLocaleString("es-ES", {
-                                        dateStyle: "short",
-                                        timeStyle: "short",
-                                    })}
+
+                        <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                            {notifications.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-8 text-center">
+                                    <span className="text-2xl mb-2 opacity-50">🔕</span>
+                                    <p className="text-xs text-gray-500 font-medium">
+                                        No tienes notificaciones
+                                    </p>
                                 </div>
-                            </div>
-                        ))
-                    )}
-                </div>
+                            ) : (
+                                notifications.slice(0, 30).map((n) => (
+                                    <div
+                                        key={n.id}
+                                        className="group flex flex-col gap-1 p-3 rounded-xl hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-100"
+                                    >
+                                        <p className="text-xs text-gray-700 leading-relaxed font-medium">
+                                            {n.message}
+                                        </p>
+                                        <span className="text-[10px] text-gray-400 font-medium">
+                                            {new Date(n.createdAt).toLocaleString("es-ES", {
+                                                month: "short",
+                                                day: "numeric",
+                                                hour: "2-digit",
+                                                minute: "2-digit"
+                                            })}
+                                        </span>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </>
             )}
         </div>
     );

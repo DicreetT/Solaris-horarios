@@ -67,6 +67,6 @@ export function useNotifications(currentUser) {
         isLoading,
         error,
         addNotification: addNotificationMutation.mutateAsync,
-        markAllNotificationsRead: markAllReadMutation.mutateAsync,
+        markAllAsRead: markAllReadMutation.mutateAsync,
     };
 }

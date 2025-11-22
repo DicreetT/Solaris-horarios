@@ -6,16 +6,15 @@ export const USERS = [
     {
         id: "thalia",
         name: "Thalia",
-        role: "Admin general",
         email: "thaliaoliveros.solaris@gmail.com",
         password: "Thalia123",
         canAdminHours: true,
         isTrainingManager: false,
+        isAdmin: true,
     },
     {
         id: "contable",
         name: "Heidy",
-        role: "Contabilidad",
         email: "heidy.m.solaris@gmail.com",
         password: "heidy123",
         canAdminHours: false,
@@ -24,7 +23,7 @@ export const USERS = [
     {
         id: "anabella",
         name: "Anabella",
-        role: "Operativa",
+
         email: "anabellas.solaris@gmail.com",
         password: "anabella123",
         canAdminHours: false,
@@ -33,7 +32,7 @@ export const USERS = [
     {
         id: "esteban",
         name: "Esteban",
-        role: "Operativo",
+
         email: "contacto@solaris.global",
         password: "esteban123",
         canAdminHours: false,
@@ -42,7 +41,7 @@ export const USERS = [
     {
         id: "itzi",
         name: "Itzi",
-        role: "Operativa",
+
         email: "solarishuarte@gmail.com",
         password: "itziar123",
         canAdminHours: false,
@@ -51,7 +50,7 @@ export const USERS = [
     {
         id: "fer",
         name: "Fer",
-        role: "Operativo",
+
         email: "fadodami2503@gmail.com",
         password: "fer123",
         canAdminHours: false,
@@ -73,7 +72,7 @@ export const DRIVE_FOLDERS = [
         label: "Conteo Canet lunes",
         emoji: "📦",
         url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
-        users: ["anabella", "itzi", "esteban"],
+        users: ["anabella", "itzi", "esteban", "thalia"],
     },
     {
         id: "etiquetas",

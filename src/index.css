@@ -7,11 +7,23 @@
   --color-card: #ffffff;
   --color-border: #222222;
   --color-text: #222222;
+
+  /* Layout variables */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+  --header-height: 64px;
 }
 
 @layer base {
+
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
+
   body {
-    @apply min-h-screen flex justify-center p-4 text-text font-sans;
+    @apply text-text font-sans m-0 p-0;
     background: radial-gradient(circle at top, #fff3d9, #ffe7c7, #fdddc0);
   }
 
@@ -28,6 +40,11 @@
 
 @layer components {
   #root {
-    @apply w-full max-w-[960px];
+    @apply w-full h-full;
+  }
+
+  /* Ensure smooth scrolling */
+  * {
+    scroll-behavior: smooth;
   }
 }

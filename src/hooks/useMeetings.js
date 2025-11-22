@@ -13,7 +13,7 @@ export function useMeetings(currentUser) {
                 .select('*')
                 .order('created_at', { ascending: false });
 
-            if (currentUser.id !== 'thalia') {
+            if (!currentUser.isAdmin) {
                 query = query.or(
                     `created_by.eq.${currentUser.id},participants.cs.{${currentUser.id}}`
                 );

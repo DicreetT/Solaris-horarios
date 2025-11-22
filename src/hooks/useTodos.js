@@ -26,7 +26,7 @@ export function useTodos(currentUser) {
                 completedBy: row.completed_by || [],
             }));
 
-            if (currentUser.id === 'thalia') {
+            if (currentUser.isAdmin) {
                 return mapped;
             }
 

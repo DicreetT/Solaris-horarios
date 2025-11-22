@@ -13,7 +13,7 @@ export function useAbsences(currentUser) {
                 .select('*')
                 .order('created_at', { ascending: false });
 
-            if (currentUser.id !== 'thalia') {
+            if (!currentUser.isAdmin) {
                 query = query.eq('created_by', currentUser.id);
             }
 
