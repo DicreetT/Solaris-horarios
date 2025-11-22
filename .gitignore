@@ -119,3 +119,5 @@ dist
 
 # macOS
 .DS_Store
+
+supabase/.temp
