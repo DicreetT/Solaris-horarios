@@ -5,6 +5,7 @@ import { getStatusBadgeProps } from '../utils/statusUtils';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useNotifications } from '../hooks/useNotifications';
+import { UserAvatar } from './UserAvatar';
 
 /**
  * Panel día: vista admin o vista usuario normal
@@ -81,7 +82,10 @@ export default function DayDetail({
                             <div
                                 className="flex justify-between items-center"
                             >
-                                <strong>{u.name}</strong>
+                                <div className="flex items-center gap-2">
+                                    <UserAvatar name={u.name} size="xs" />
+                                    <strong>{u.name}</strong>
+                                </div>
                                 {statusProps && (
                                     <div className={"inline-flex items-center gap-1 px-2 py-[3px] rounded-full text-xs border border-border mb-1.5 " + statusProps.className}>
                                         {statusProps.label}
@@ -136,7 +140,10 @@ export default function DayDetail({
 
     return (
         <div className="rounded-2xl border-2 border-border bg-card p-3">
-            <h3>{user.name}</h3>
+            <div className="flex items-center gap-2 mb-1">
+                <UserAvatar name={user.name} size="sm" />
+                <h3 className="font-bold">{user.name}</h3>
+            </div>
             <div className="text-xs text-[#666] mb-2">{formatDatePretty(date)}</div>
 
             {statusProps && (

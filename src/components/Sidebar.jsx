@@ -14,6 +14,7 @@ import {
     ChevronLeft,
     ChevronRight
 } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './NotificationBell';
 import { DRIVE_FOLDERS } from '../constants';
@@ -150,10 +151,10 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                                     onClick={() => handleNavigation(item.path)}
                                     className={`
                     w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1
-                    transition-colors duration-200
+                    transition-all duration-200 border-2
                     ${isActive
-                                            ? 'bg-primary text-white border-2 border-border'
-                                            : 'hover:bg-[#fff8ee] border-2 border-transparent'
+                                            ? 'bg-primary text-white border-black shadow-[2px_2px_0_#000000]'
+                                            : 'hover:bg-primary/10 border-transparent hover:border-black/10'
                                         }
                                     ${isCollapsed ? 'justify-center' : ''}
                   `}
@@ -181,8 +182,9 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                         <div className="space-y-1">
                             {/* User Profile & Badges */}
                             <div className="flex items-center gap-2 mb-2 px-1">
-                                <div className="w-8 h-8 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)] text-xs shrink-0 shadow-sm">
-                                    {currentUser?.name?.charAt(0).toUpperCase()}
+                                <div className="relative">
+                                    <UserAvatar name={currentUser?.name} size="sm" />
+                                    <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
                                 </div>
                                 <div className="flex-1 min-w-0 overflow-hidden">
                                     <div className="flex items-center gap-1.5">
@@ -223,9 +225,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                     ) : (
                         <div className="flex flex-col items-center gap-4">
                             {/* Collapsed View */}
-                            <div className="w-8 h-8 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)] text-xs">
-                                {currentUser?.name?.charAt(0).toUpperCase()}
-                            </div>
+                            <UserAvatar name={currentUser?.name} size="sm" />
 
                             <div className="relative">
                                 {/* Simplified notification dot for collapsed state could be added here, 
@@ -251,16 +251,17 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                             </button>
                         </div>
                     )}
-                </div>
+                </div >
 
                 {/* Desktop collapse toggle */}
-                <button
+                < button
                     onClick={onToggleCollapse}
                     className="hidden md:flex absolute -right-3 top-20 w-6 h-6 bg-card border-2 border-border rounded-full items-center justify-center hover:bg-primary hover:text-white transition-colors duration-200"
                 >
-                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-                </button>
-            </aside>
+                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />
+                    }
+                </button >
+            </aside >
         </>
     );
 }

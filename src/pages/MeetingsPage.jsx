@@ -4,6 +4,7 @@ import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { Plus } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
 
 /**
  * Meetings page
@@ -207,12 +208,16 @@ function MeetingsPage() {
                                     className="border-t border-[#e5e7eb] pt-1.5 mt-1.5"
                                 >
                                     <strong>{m.title}</strong>
-                                    <div className="text-xs text-[#666]">
-                                        Solicitada por {creator?.name || m.createdBy} el{" "}
-                                        {new Date(m.createdAt).toLocaleString("es-ES", {
+                                    <div className="text-xs text-[#666] flex items-center gap-1 mt-1">
+                                        <span>Solicitada por</span>
+                                        <div className="flex items-center gap-1">
+                                            <UserAvatar name={creator?.name} size="xs" />
+                                            <strong>{creator?.name || m.createdBy}</strong>
+                                        </div>
+                                        <span>el {new Date(m.createdAt).toLocaleString("es-ES", {
                                             dateStyle: "short",
                                             timeStyle: "short",
-                                        })}
+                                        })}</span>
                                     </div>
                                     {m.description && (
                                         <div className="text-xs text-[#666] mt-0.5">

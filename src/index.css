@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #ffb347;
-  --color-primary-dark: #ff9933;
-  --color-bg: #fff8ee;
-  --color-card: #ffffff;
-  --color-border: #222222;
-  --color-text: #222222;
+  --color-primary: #A3C538;
+  --color-primary-dark: #82A320;
+  --color-bg: #DCE5A8;
+  --color-card: #F4F4E8;
+  --color-border: #000000;
+  --color-text: #000000;
 
   /* Layout variables */
   --sidebar-width: 240px;
@@ -24,7 +24,8 @@
 
   body {
     @apply text-text font-sans m-0 p-0;
-    background: radial-gradient(circle at top, #fff3d9, #ffe7c7, #fdddc0);
+    background-color: var(--color-bg);
+    font-family: 'Quicksand', sans-serif;
   }
 
   h1,

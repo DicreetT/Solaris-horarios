@@ -9,7 +9,7 @@ import { Clock, Play, Square, Edit2, Trash2 } from 'lucide-react';
  * Shared time tracker widget for clocking in/out
  * Modern, sleek, and compact design with inline editing
  */
-function TimeTrackerWidget({ date }) {
+function TimeTrackerWidget({ date, showEntries = true }) {
     const { currentUser } = useAuth();
     const { timeData, createTimeEntry, updateTimeEntry, deleteTimeEntry } = useTimeData();
     const { addNotification } = useNotifications();
@@ -119,9 +119,9 @@ function TimeTrackerWidget({ date }) {
     }
 
     return (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-card rounded-[20px] border-2 border-border shadow-[4px_4px_0_#000000] overflow-hidden">
             {/* Header & Main Action */}
-            <div className="p-5 flex items-center justify-between bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+            <div className="p-5 flex items-center justify-between border-b-2 border-border">
                 <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 ${isClocked ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'
                         }`}>
@@ -172,9 +172,9 @@ function TimeTrackerWidget({ date }) {
             </div>
 
             {/* Entries List */}
-            {userEntries.length > 0 && (
-                <div className="bg-white">
-                    <div className="px-5 py-3 border-b border-gray-50 flex justify-between items-center">
+            {showEntries && userEntries.length > 0 && (
+                <div>
+                    <div className="px-5 py-3 border-b-2 border-border flex justify-between items-center">
                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Fichajes de hoy</span>
                         <button
                             onClick={() => setIsEditing(!isEditing)}
@@ -185,9 +185,9 @@ function TimeTrackerWidget({ date }) {
                         </button>
                     </div>
 
-                    <div className="divide-y divide-gray-50">
+                    <div className="divide-y-2 divide-border">
                         {userEntries.map((entry, index) => (
-                            <div key={entry.id} className="px-5 py-3 hover:bg-gray-50/50 transition-colors group">
+                            <div key={entry.id} className="px-5 py-3 hover:bg-primary/5 transition-colors group">
                                 <div className="flex items-start gap-4">
                                     <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-gray-300 group-hover:bg-primary transition-colors" />
 
@@ -199,7 +199,7 @@ function TimeTrackerWidget({ date }) {
                                                 {isEditing ? (
                                                     <input
                                                         type="time"
-                                                        className="bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 text-xs font-medium focus:border-primary focus:outline-none w-20"
+                                                        className="bg-white border-2 border-border rounded-lg px-1.5 py-0.5 text-xs font-medium focus:border-primary focus:outline-none w-20"
                                                         value={entry.entry || ''}
                                                         onChange={(e) => handleUpdateTime(entry.id, 'entry', e.target.value)}
                                                     />
@@ -213,7 +213,7 @@ function TimeTrackerWidget({ date }) {
                                                 {isEditing ? (
                                                     <input
                                                         type="time"
-                                                        className="bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 text-xs font-medium focus:border-primary focus:outline-none w-20"
+                                                        className="bg-white border-2 border-border rounded-lg px-1.5 py-0.5 text-xs font-medium focus:border-primary focus:outline-none w-20"
                                                         value={entry.exit || ''}
                                                         onChange={(e) => handleUpdateTime(entry.id, 'exit', e.target.value)}
                                                     />

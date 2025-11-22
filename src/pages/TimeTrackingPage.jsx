@@ -7,6 +7,7 @@ import { getStatusBadgeProps } from '../utils/statusUtils';
 import { calculateHours, formatHours, calculateTotalHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { Trash2 } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
 
 /**
  * Time Tracking page
@@ -66,7 +67,7 @@ function TimeTrackingPage() {
 
             {/* Time tracker widget */}
             <div className="mb-6">
-                <TimeTrackerWidget />
+                <TimeTrackerWidget showEntries={true} />
             </div>
 
             {/* User view - own time tracking */}
@@ -211,7 +212,10 @@ function TimeTrackingPage() {
                                                 >
                                                     <div className="flex items-center justify-between mb-2">
                                                         <div>
-                                                            <strong className="text-sm">{user.name}</strong>
+                                                            <div className="flex items-center gap-2">
+                                                                <UserAvatar name={user.name} size="xs" />
+                                                                <strong className="text-sm">{user.name}</strong>
+                                                            </div>
                                                             <span className="text-sm text-[#666] ml-2">
                                                                 {formatHours(totalHours)}
                                                             </span>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { USERS } from '../constants';
+import { Mail, Lock, ArrowRight } from 'lucide-react';
 
 /**
  * Login por email y contraseña usando Supabase Auth.
@@ -50,64 +51,84 @@ export default function LoginView({ onLogin }) {
     }
 
     return (
-        <div className="bg-bg rounded-[20px] border-2 border-border shadow-[6px_6px_0_rgba(0,0,0,0.2)] p-4 md:p-6 md:px-7 max-w-[400px] mx-auto my-10">
-            <div className="flex items-center justify-center gap-3 mb-4">
-                <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-full border-2 border-border flex items-center justify-center font-extrabold bg-[radial-gradient(circle_at_top,#fff2cc,#ffb347)]">S</div>
-                    <div>
-                        <h1 className="text-[1.4rem]">Solaris</h1>
-                        <p className="text-sm text-[#555]">Control horario y tareas</p>
+        <div className="min-h-screen flex items-center justify-center p-4">
+            <div className="bg-card rounded-[32px] border-2 border-border shadow-[8px_8px_0_#000000] p-8 md:p-10 max-w-[420px] w-full mx-auto relative overflow-hidden">
+                {/* Decorative background element */}
+                <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
+
+                <div className="relative z-10 flex flex-col items-center text-center mb-2">
+                    <div className="w-48 h-48 relative flex items-center justify-center">
+                        <img
+                            src="/logo.png"
+                            alt="Solaris Logo"
+                            className="w-full h-full object-contain drop-shadow-sm hover:scale-105 transition-transform duration-300"
+                        />
                     </div>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+                    <div className="space-y-3">
+                        <div className="relative group">
+                            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black transition-colors">
+                                <Mail size={20} />
+                            </div>
+                            <input
+                                className="w-full bg-[#fafafa] rounded-xl border-2 border-gray-100 focus:border-black pl-12 pr-4 py-3.5 text-sm font-medium outline-none ring-0 transition-all shadow-sm group-hover:shadow-md placeholder:text-gray-400"
+                                type="email"
+                                placeholder="nombre@empresa.com"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="relative group">
+                            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-black transition-colors">
+                                <Lock size={20} />
+                            </div>
+                            <input
+                                className="w-full bg-[#fafafa] rounded-xl border-2 border-gray-100 focus:border-black pl-12 pr-4 py-3.5 text-sm font-medium outline-none ring-0 transition-all shadow-sm group-hover:shadow-md placeholder:text-gray-400"
+                                type="password"
+                                placeholder="••••••••"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    {error && (
+                        <div className="bg-red-50 text-red-600 text-xs font-bold px-4 py-3 rounded-xl border border-red-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                            {error}
+                        </div>
+                    )}
+
+                    <button
+                        type="submit"
+                        className="w-full bg-primary text-white font-bold text-base py-3.5 rounded-xl border-2 border-black shadow-[4px_4px_0_#000000] hover:translate-y-[2px] hover:shadow-[2px_2px_0_#000000] active:translate-y-[4px] active:shadow-none transition-all flex items-center justify-center gap-2 group"
+                        disabled={loading}
+                    >
+                        {loading ? (
+                            <span className="flex items-center gap-2">
+                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                Entrando...
+                            </span>
+                        ) : (
+                            <>
+                                Iniciar Sesión
+                                <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                            </>
+                        )}
+                    </button>
+                </form>
+
+                <div className="mt-8 text-center">
+                    <p className="text-xs text-gray-400 font-medium">
+                        © {new Date().getFullYear()} Solaris. Todos los derechos reservados.
+                    </p>
                 </div>
             </div>
-
-            <div className="h-px bg-[#ddd] my-3" />
-
-            <form onSubmit={handleSubmit}>
-                <p className="text-[0.85rem] text-[#555] mb-2.5">
-                    Escribe tu <strong>correo</strong> y <strong>contraseña</strong>.
-                </p>
-                <div className="flex flex-col gap-2">
-                    <div>
-                        <label className="text-xs font-semibold mt-1">Correo</label>
-                        <input
-                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
-                            type="email"
-                            placeholder="nombre@empresa.com"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label className="text-xs font-semibold mt-1">Contraseña</label>
-                        <input
-                            className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
-                            type="password"
-                            placeholder="••••••••"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                        />
-                    </div>
-                </div>
-
-                {error && (
-                    <p
-                        className="text-[#b91c1c] text-xs mt-1.5"
-                    >
-                        {error}
-                    </p>
-                )}
-
-                <button
-                    type="submit"
-                    className="rounded-full border-2 border-border px-3.5 py-2 text-sm font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark w-full justify-center mt-3"
-                    disabled={loading}
-                >
-                    {loading ? "Entrando..." : "Entrar"}
-                </button>
-            </form>
         </div>
     );
 }

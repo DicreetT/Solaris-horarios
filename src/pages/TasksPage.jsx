@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import { USERS } from '../constants';
 import TodoModal from '../components/TodoModal';
+import { UserAvatar } from '../components/UserAvatar';
 
 /**
  * Tasks page
@@ -81,11 +82,15 @@ function TasksPage() {
                         {todo.description && (
                             <div className="text-xs text-[#666] mt-1">{todo.description}</div>
                         )}
-                        <div className="text-[0.65rem] text-[#888] mt-1">
-                            Creada por {creator?.name || todo.createdBy}
-                            {" · Para: "}
-                            {assignees || "—"}
-                            {todo.dueDateKey && <> · 📅 {todo.dueDateKey}</>}
+                        <div className="text-[0.65rem] text-[#888] mt-1 flex items-center gap-1 flex-wrap">
+                            <span>Creada por</span>
+                            <div className="flex items-center gap-1">
+                                <UserAvatar name={creator?.name} size="xs" />
+                                <span>{creator?.name || todo.createdBy}</span>
+                            </div>
+                            <span>· Para:</span>
+                            <span>{assignees || "—"}</span>
+                            {todo.dueDateKey && <span>· 📅 {todo.dueDateKey}</span>}
                         </div>
                     </div>
                     {todo.createdBy === currentUser.id && (

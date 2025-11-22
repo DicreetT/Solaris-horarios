@@ -12,7 +12,7 @@ function CalendarPage() {
     const [selectedDate, setSelectedDate] = useState(() => new Date());
 
     return (
-        <div className="max-w-7xl">
+        <div className="h-full flex flex-col">
             {/* Calendar */}
             <CalendarGrid
                 monthDate={monthDate}

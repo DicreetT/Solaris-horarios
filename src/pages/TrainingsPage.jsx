@@ -5,6 +5,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { Plus } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
 
 /**
  * Trainings page
@@ -211,7 +212,10 @@ function TrainingsPage() {
                                                                         (isMe ? 'bg-[#dcfce7] self-end' : 'bg-[#eef2ff]')
                                                                     }
                                                                 >
-                                                                    <strong>{author?.name || c.by}</strong>
+                                                                    <div className="flex items-center gap-1 mb-0.5">
+                                                                        <UserAvatar name={author?.name} size="xs" />
+                                                                        <strong>{author?.name || c.by}</strong>
+                                                                    </div>
                                                                     <br />
                                                                     {c.text}
                                                                 </div>
@@ -273,7 +277,8 @@ function TrainingsPage() {
                             return (
                                 <div key={req.id} className="border-t border-[#e5e7eb] pt-1.5 mt-1.5">
                                     <div className="flex justify-between">
-                                        <span>
+                                        <span className="flex items-center gap-2">
+                                            <UserAvatar name={person?.name} size="sm" />
                                             <strong>{person?.name || req.userId}</strong>
                                         </span>
                                         <span className="inline-flex items-center px-2 py-[2px] rounded-full border border-border text-[0.7rem] bg-[#eef2ff] mt-1">
@@ -319,7 +324,10 @@ function TrainingsPage() {
                                                                 (isMe ? 'bg-[#dcfce7] self-end' : 'bg-[#eef2ff]')
                                                             }
                                                         >
-                                                            <strong>{author?.name || c.by}</strong>
+                                                            <div className="flex items-center gap-1 mb-0.5">
+                                                                <UserAvatar name={author?.name} size="xs" />
+                                                                <strong>{author?.name || c.by}</strong>
+                                                            </div>
                                                             <br />
                                                             {c.text}
                                                         </div>

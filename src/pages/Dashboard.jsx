@@ -5,6 +5,8 @@ import { CheckSquare, Calendar as CalendarIcon, Users, Clock, BookOpen, AlertCir
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { useTimeData } from '../hooks/useTimeData';
+import { useAbsences } from '../hooks/useAbsences';
+import { UserAvatar } from '../components/UserAvatar';
 import { useTraining } from '../hooks/useTraining';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { toDateKey, formatDatePretty } from '../utils/dateUtils';
@@ -82,10 +84,13 @@ function Dashboard() {
         <div className="max-w-6xl">
             {/* Welcome section */}
             <div className="mb-6">
-                <h1 className="text-3xl font-bold mb-2">
-                    ¡Hola, {currentUser?.name}! 👋
-                </h1>
-                <p className="text-[#666]">
+                <div className="flex items-center gap-3 mb-1">
+                    <UserAvatar name={currentUser?.name} size="md" />
+                    <h1 className="text-2xl font-bold">
+                        ¡Hola, {currentUser?.name}! 👋
+                    </h1>
+                </div>
+                <p className="text-black/70 font-medium">
                     {new Date().toLocaleDateString('es-ES', {
                         weekday: 'long',
                         year: 'numeric',
@@ -97,12 +102,12 @@ function Dashboard() {
 
             {/* Time tracker widget */}
             <div className="mb-6">
-                <TimeTrackerWidget />
+                <TimeTrackerWidget showEntries={false} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Left Column: Today's Status Summary */}
-                <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-6">
+                <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_#000000] p-6">
                     <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                         <Clock className="text-primary" />
                         Estado de hoy
@@ -117,8 +122,8 @@ function Dashboard() {
                         <div className="text-right">
                             <p className="text-sm text-[#666] mb-1">Estado</p>
                             <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${todayStats.isTrackingActive
-                                    ? 'bg-green-100 text-green-700 border border-green-200'
-                                    : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                ? 'bg-green-100 text-green-700 border border-green-200'
+                                : 'bg-gray-100 text-gray-600 border border-gray-200'
                                 }`}>
                                 <div className={`w-2 h-2 rounded-full ${todayStats.isTrackingActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
                                 {todayStats.isTrackingActive ? 'Activo' : 'Inactivo'}
@@ -197,7 +202,7 @@ function Dashboard() {
                 </div>
 
                 {/* Right Column: Due Today */}
-                <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-6">
+                <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_#000000] p-6">
                     <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-red-600">
                         <AlertCircle size={24} />
                         Para hoy

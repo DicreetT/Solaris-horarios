@@ -7,6 +7,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { Plus } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
 
 /**
  * Absences page
@@ -201,12 +202,16 @@ function AbsencesPage() {
                                     className="border-t border-[#e5e7eb] pt-1.5 mt-1.5"
                                 >
                                     <strong>Permiso para el día {r.dateKey}</strong>
-                                    <div className="text-xs text-[#666]">
-                                        Solicitado por {creator?.name || r.createdBy} el{" "}
-                                        {new Date(r.createdAt).toLocaleString("es-ES", {
+                                    <div className="text-xs text-[#666] flex items-center gap-1 mt-1">
+                                        <span>Solicitado por</span>
+                                        <div className="flex items-center gap-1">
+                                            <UserAvatar name={creator?.name} size="xs" />
+                                            <strong>{creator?.name || r.createdBy}</strong>
+                                        </div>
+                                        <span>el {new Date(r.createdAt).toLocaleString("es-ES", {
                                             dateStyle: "short",
                                             timeStyle: "short",
-                                        })}
+                                        })}</span>
                                     </div>
                                     <div className="text-xs text-[#666] mt-0.5">
                                         Motivo: {r.reason}
