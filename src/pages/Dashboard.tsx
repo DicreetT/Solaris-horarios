@@ -25,25 +25,16 @@ function Dashboard() {
     const { trainingRequests } = useTraining(currentUser);
     const { notifications } = useNotifications(currentUser);
 
-    const [todayStats, setTodayStats] = useState({
-        hoursLogged: 0,
-        isTrackingActive: false,
-        openTodosCount: 0,
-        upcomingMeetings: [],
-        upcomingTrainings: []
-    });
-
-    const [dueTodayTodos, setDueTodayTodos] = useState([]);
-
-    useEffect(() => {
-        if (!currentUser) return;
+    const todayStats = React.useMemo(() => {
+        if (!currentUser) return {
+            hoursLogged: 0,
+            isTrackingActive: false,
+            openTodosCount: 0,
+            upcomingMeetings: [],
+            upcomingTrainings: []
+        };
 
         const now = new Date();
-        // The following lines were inserted as requested.
-        // Note: 'i' is not defined in this scope. Assuming it's a placeholder for a number.
-        // For now, it's commented out to maintain syntactical correctness and avoid runtime errors.
-        // If 'i' is meant to be a defined variable, please ensure it's declared.
-        // now.setDate(now.getDate() - i); 
         const todayKey = toDateKey(now);
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today for comparison
 
@@ -61,21 +52,25 @@ function Dashboard() {
         ) || [];
         const openTodosCount = openTodos.length;
 
-        // The following lines were inserted as requested.
-        // Note: 'calculateHours' and 'lastEntry' are not defined in this scope,
-        // and the syntax `date: ...);` is incorrect.
-        // This insertion will cause a syntax error and runtime errors.
-        // Please ensure 'calculateHours' and 'lastEntry' are defined and the syntax is corrected if this is intended to be part of an object.
-        // For now, they are commented out to maintain syntactical correctness of the file.
-        // hours: calculateHours(lastEntry.entry, lastEntry.exit) || 0,
-        // date: new Date().getTime() - new Date(lastEntry.inserted_at).getTime() < 24 * 60 * 60 * 1000,);
-
-        // 4. Upcoming Meetings (Next 7 days, approved, excluding today)
+        // 4. Upcoming Meetings (Next 7 days, approved/scheduled, INCLUDING today)
         const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const weekFromNowKey = toDateKey(weekFromNow);
+
         const upcomingMeetings = meetings?.filter(m => {
-            const meetingDate = new Date(m.scheduled_date_key || m.preferred_date_key);
-            return meetingDate > today && meetingDate <= weekFromNow && m.status === 'approved';
-        }).sort((a, b) => new Date(a.scheduled_date_key || a.preferred_date_key).getTime() - new Date(b.scheduled_date_key || b.preferred_date_key).getTime()) || [];
+            const dateKey = m.scheduled_date_key || m.preferred_date_key;
+            if (!dateKey) return false;
+
+            // Include both 'approved' and 'scheduled' statuses
+            const isValidStatus = m.status === 'scheduled';
+            const isWithinRange = dateKey >= todayKey && dateKey <= weekFromNowKey;
+
+            // Compare strings (YYYY-MM-DD) to avoid timezone issues and include today
+            return isWithinRange && isValidStatus;
+        }).sort((a, b) => {
+            const dateA = a.scheduled_date_key || a.preferred_date_key || '';
+            const dateB = b.scheduled_date_key || b.preferred_date_key || '';
+            return dateA.localeCompare(dateB);
+        }) || [];
 
         // 5. Upcoming Trainings (Pending or Approved, future, excluding today)
         const upcomingTrainings = trainingRequests?.filter(t => {
@@ -87,20 +82,26 @@ function Dashboard() {
             return dateA.getTime() - dateB.getTime();
         }) || [];
 
-        // 6. Todos Due Today (assigned to current user)
-        const dueToday = openTodos.filter(t => t.due_date_key === todayKey);
-
-        setTodayStats({
+        return {
             hoursLogged,
             isTrackingActive,
             openTodosCount,
             upcomingMeetings,
             upcomingTrainings
-        });
-
-        setDueTodayTodos(dueToday);
-
+        };
     }, [currentUser, todos, meetings, timeData, trainingRequests]);
+
+    const dueTodayTodos = React.useMemo(() => {
+        if (!currentUser) return [];
+        const now = new Date();
+        const todayKey = toDateKey(now);
+
+        return todos?.filter(
+            t => t.assigned_to.includes(currentUser.id) &&
+                !t.completed_by.includes(currentUser.id) &&
+                t.due_date_key === todayKey
+        ) || [];
+    }, [currentUser, todos]);
 
     return (
         <div className="max-w-6xl mx-auto pb-20">

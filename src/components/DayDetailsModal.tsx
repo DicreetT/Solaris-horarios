@@ -147,8 +147,8 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                                     {events.absences.map((absence) => {
                                         const user = USERS.find(u => u.id === absence.created_by);
                                         const isOtherUser = events.isAdmin && absence.created_by !== currentUser?.id;
-                                        const isVacation = absence.reason?.includes('[Vacaciones]') || absence.reason?.toLowerCase().includes('vacaciones');
-                                        const displayReason = absence.reason?.replace(/^\[.*?\]\s*/, '') || absence.reason;
+                                        const isVacation = absence.type === 'vacation';
+                                        const displayReason = absence.reason;
 
                                         return (
                                             <div key={absence.id} className="p-4 rounded-xl bg-purple-50 border border-purple-200">

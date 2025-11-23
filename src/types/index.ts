@@ -54,7 +54,7 @@ export interface Meeting {
     preferred_date_key: string | null;
     preferred_slot: string | null;
     participants: string[]; // jsonb
-    status: 'pending' | 'approved' | 'rejected' | 'scheduled';
+    status: 'pending' | 'rejected' | 'scheduled';
     scheduled_date_key: string | null;
     scheduled_time: string | null;
     response_message: string | null;
@@ -67,6 +67,7 @@ export interface Absence {
     date_key: string;
     reason: string | null;
     status: 'pending' | 'approved' | 'rejected';
+    type: 'absence' | 'vacation';
     response_message: string | null;
     created_at: string;
 }

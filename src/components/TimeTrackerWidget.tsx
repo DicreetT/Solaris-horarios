@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
+import { useAbsences } from '../hooks/useAbsences';
 import { useNotifications } from '../hooks/useNotifications';
 import { formatTimeNow, toDateKey } from '../utils/dateUtils';
 import { Clock, Play, Square, Edit2, Trash2, Timer } from 'lucide-react';
@@ -14,6 +15,8 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
     const { timeData, createTimeEntry, updateTimeEntry, deleteTimeEntry } = useTimeData();
     const { addNotification } = useNotifications(currentUser);
 
+    const { absenceRequests } = useAbsences(currentUser);
+
     const targetDate = date;
     const dateKey = toDateKey(targetDate);
 
@@ -22,6 +25,13 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
 
     // Get today's time entries for current user
     const userEntries = timeData[dateKey]?.[currentUser?.id] || [];
+
+    // Check for approved absence for today
+    const activeAbsence = absenceRequests.find(
+        (r: any) => r.created_by === currentUser?.id &&
+            r.date_key === dateKey &&
+            r.status === 'approved'
+    );
 
     // Find the active entry (has entry but no exit)
     const activeEntry = userEntries.find(e => e.entry && !e.exit);
@@ -127,48 +137,68 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                             Registro de Jornada
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">
-                            {isClocked ? 'Jornada en curso' : 'Jornada pausada'}
+                            {activeAbsence
+                                ? (activeAbsence.type === 'vacation' ? 'Disfrutando de vacaciones' : 'Ausencia justificada')
+                                : (isClocked ? 'Jornada en curso' : 'Jornada pausada')
+                            }
                         </p>
                     </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-                    {/* Clock Display */}
-                    <div className="flex items-center gap-4">
-                        <div className={`text-5xl font-black tracking-tighter font-mono ${isClocked ? 'text-gray-900' : 'text-gray-300'
-                            }`}>
-                            {elapsedTime}
+                {activeAbsence ? (
+                    <div className={`flex flex-col items-center justify-center py-8 rounded-2xl border-2 border-dashed ${activeAbsence.type === 'vacation'
+                        ? 'bg-purple-50 border-purple-200 text-purple-700'
+                        : 'bg-amber-50 border-amber-200 text-amber-700'
+                        }`}>
+                        <div className="text-3xl mb-2">
+                            {activeAbsence.type === 'vacation' ? '🌴' : '🤒'}
                         </div>
-                        {isClocked && (
-                            <div className="flex flex-col">
-                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse mb-1" />
-                                <span className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Activo</span>
-                            </div>
-                        )}
+                        <h3 className="text-xl font-bold mb-1">
+                            {activeAbsence.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}
+                        </h3>
+                        <p className="text-sm font-medium opacity-80 max-w-md text-center px-4">
+                            {activeAbsence.reason || 'No se requiere fichaje para este día.'}
+                        </p>
                     </div>
+                ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+                        {/* Clock Display */}
+                        <div className="flex items-center gap-4">
+                            <div className={`text-5xl font-black tracking-tighter font-mono ${isClocked ? 'text-gray-900' : 'text-gray-300'
+                                }`}>
+                                {elapsedTime}
+                            </div>
+                            {isClocked && (
+                                <div className="flex flex-col">
+                                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse mb-1" />
+                                    <span className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Activo</span>
+                                </div>
+                            )}
+                        </div>
 
-                    <button
-                        onClick={isClocked ? handleMarkExit : handleMarkEntry}
-                        className={`
-                            group relative overflow-hidden rounded-2xl px-8 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center
-                            ${isClocked
-                                ? 'bg-white border-2 border-red-100 text-red-600 hover:border-red-200 hover:bg-red-50 shadow-red-100'
-                                : 'bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5'}
-                        `}
-                    >
-                        {isClocked ? (
-                            <>
-                                <Square size={18} fill="currentColor" />
-                                <span>Finalizar Jornada</span>
-                            </>
-                        ) : (
-                            <>
-                                <Play size={18} fill="currentColor" />
-                                <span>Iniciar Jornada</span>
-                            </>
-                        )}
-                    </button>
-                </div>
+                        <button
+                            onClick={isClocked ? handleMarkExit : handleMarkEntry}
+                            className={`
+                                group relative overflow-hidden rounded-2xl px-8 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center
+                                ${isClocked
+                                    ? 'bg-white border-2 border-red-100 text-red-600 hover:border-red-200 hover:bg-red-50 shadow-red-100'
+                                    : 'bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5'}
+                            `}
+                        >
+                            {isClocked ? (
+                                <>
+                                    <Square size={18} fill="currentColor" />
+                                    <span>Finalizar Jornada</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Play size={18} fill="currentColor" />
+                                    <span>Iniciar Jornada</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Entries List */}

@@ -1,8 +1,9 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
+import { useAbsences } from '../hooks/useAbsences';
 import { USERS } from '../constants';
-import { formatDatePretty } from '../utils/dateUtils';
+import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { getStatusBadgeProps } from '../utils/statusUtils';
 import { calculateHours, formatHours, calculateTotalHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
@@ -18,16 +19,30 @@ import { RoleBadge } from '../components/RoleBadge';
 function TimeTrackingPage() {
     const { currentUser } = useAuth();
     const { timeData } = useTimeData();
+    const { absenceRequests } = useAbsences(currentUser);
 
     const isAdmin = currentUser?.isAdmin;
 
-    // Get all dates with time data, sorted descending
-    const allDates = Object.keys(timeData).sort().reverse();
+    // Get all dates with time data or absences, sorted descending
+    const allDates = Array.from(new Set([
+        ...Object.keys(timeData),
+        ...absenceRequests.map(r => r.date_key)
+    ])).sort().reverse();
+
+    // Filter out absence-related statuses from time entries as they are now handled by absenceRequests
+    const ABSENCE_STATUSES = ['vacation', 'absent', 'vacation-request'];
+    const filterTimeEntries = (entries: any[]) => {
+        return entries.filter(e => !ABSENCE_STATUSES.includes(e.status));
+    };
 
     // User's own dates
     const userDates = allDates.filter(dateKey => {
         const dayData = timeData[dateKey];
-        return dayData[currentUser.id] && dayData[currentUser.id].length > 0;
+        const userEntries = dayData?.[currentUser.id] || [];
+        const validEntries = filterTimeEntries(userEntries);
+        const hasTimeEntries = validEntries.length > 0;
+        const hasAbsence = absenceRequests.some(r => r.created_by === currentUser.id && r.date_key === dateKey);
+        return hasTimeEntries || hasAbsence;
     });
 
     return (
@@ -75,7 +90,9 @@ function TimeTrackingPage() {
                         ) : (
                             <div className="grid gap-4">
                                 {userDates.map((dateKey) => {
-                                    const entries = timeData[dateKey][currentUser.id];
+                                    const rawEntries = timeData[dateKey]?.[currentUser.id] || [];
+                                    const entries = filterTimeEntries(rawEntries);
+                                    const absence = absenceRequests.find(r => r.created_by === currentUser.id && r.date_key === dateKey);
                                     const date = new Date(dateKey + 'T00:00:00');
                                     const totalHours = calculateTotalHours(entries);
 
@@ -89,17 +106,28 @@ function TimeTrackingPage() {
                                                     <div className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-lg font-bold text-sm">
                                                         {formatDatePretty(date)}
                                                     </div>
+                                                    {absence && (
+                                                        <span className={`px-2 py-0.5 rounded-md text-xs font-bold border ${absence.type === 'vacation'
+                                                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                            }`}>
+                                                            {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="text-sm font-medium text-gray-600">
-                                                    Total: <span className="text-indigo-600 font-bold text-lg ml-1">{formatHours(totalHours)}</span>
+                                                    {!absence && (
+                                                        <>Total: <span className="text-indigo-600 font-bold text-lg ml-1">{formatHours(totalHours)}</span></>
+                                                    )}
                                                 </div>
                                             </div>
 
                                             {/* Individual entries */}
                                             <div className="space-y-3">
-                                                {entries.map((entry, idx) => {
-                                                    const statusProps = getStatusBadgeProps(entry.status);
+                                                {entries.map((entry: any, idx: number) => {
                                                     const hours = calculateHours(entry.entry, entry.exit);
+                                                    const isToday = dateKey === toDateKey(new Date());
+                                                    const isIncomplete = !entry.exit;
 
                                                     return (
                                                         <div
@@ -110,9 +138,12 @@ function TimeTrackingPage() {
                                                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
                                                                     #{idx + 1}
                                                                 </span>
-                                                                {statusProps && (
-                                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${statusProps.className}`}>
-                                                                        {statusProps.label}
+                                                                {isIncomplete && (
+                                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${isToday
+                                                                        ? 'bg-green-50 text-green-700 border-green-200'
+                                                                        : 'bg-red-50 text-red-700 border-red-200'
+                                                                        }`}>
+                                                                        {isToday ? 'Activo' : 'Incompleto'}
                                                                     </span>
                                                                 )}
                                                             </div>
@@ -127,7 +158,7 @@ function TimeTrackingPage() {
                                                                 <div>
                                                                     <span className="text-[10px] uppercase font-bold text-gray-400 block mb-0.5">Salida</span>
                                                                     <span className="font-mono font-bold text-gray-700">
-                                                                        {entry.exit || <span className="text-green-600 italic">Activo</span>}
+                                                                        {entry.exit || (isToday ? <span className="text-green-600 italic">En curso...</span> : <span className="text-red-400">-</span>)}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -147,6 +178,11 @@ function TimeTrackingPage() {
                                                         </div>
                                                     );
                                                 })}
+                                                {entries.length === 0 && absence && (
+                                                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 text-center text-gray-500 italic text-sm">
+                                                        {absence.reason || (absence.type === 'vacation' ? 'Vacaciones registradas' : 'Ausencia registrada')}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );
@@ -180,11 +216,19 @@ function TimeTrackingPage() {
                         ) : (
                             <div className="space-y-6">
                                 {allDates.map((dateKey) => {
-                                    const dayData = timeData[dateKey];
+                                    const dayData = timeData[dateKey] || {};
                                     const date = new Date(dateKey + 'T00:00:00');
-                                    const usersWithData = USERS.filter(u => dayData[u.id] && dayData[u.id].length > 0);
 
-                                    if (usersWithData.length === 0) return null;
+                                    // Get users who have either time entries OR absences for this day
+                                    const usersWithActivity = USERS.filter(u => {
+                                        const userEntries = dayData[u.id] || [];
+                                        const validEntries = filterTimeEntries(userEntries);
+                                        const hasEntries = validEntries.length > 0;
+                                        const hasAbsence = absenceRequests.some(r => r.created_by === u.id && r.date_key === dateKey);
+                                        return hasEntries || hasAbsence;
+                                    });
+
+                                    if (usersWithActivity.length === 0) return null;
 
                                     return (
                                         <div key={dateKey} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
@@ -194,15 +238,11 @@ function TimeTrackingPage() {
                                             </div>
 
                                             <div className="divide-y divide-gray-100">
-                                                {usersWithData.map((user) => {
-                                                    const entries = dayData[user.id];
+                                                {usersWithActivity.map((user) => {
+                                                    const rawEntries = dayData[user.id] || [];
+                                                    const entries = filterTimeEntries(rawEntries);
+                                                    const absence = absenceRequests.find(r => r.created_by === user.id && r.date_key === dateKey);
                                                     const totalHours = calculateTotalHours(entries);
-
-                                                    // Build time spans string
-                                                    const timeSpans = entries
-                                                        .filter(e => e.entry && e.exit)
-                                                        .map(e => `${e.entry}-${e.exit}`)
-                                                        .join(', ');
 
                                                     return (
                                                         <div key={user.id} className="p-4 hover:bg-gray-50 transition-colors">
@@ -210,9 +250,21 @@ function TimeTrackingPage() {
                                                                 <div className="flex items-center gap-3">
                                                                     <UserAvatar name={user.name} size="sm" />
                                                                     <div>
-                                                                        <div className="font-bold text-gray-900">{user.name}</div>
+                                                                        <div className="font-bold text-gray-900 flex items-center gap-2">
+                                                                            {user.name}
+                                                                            {absence && (
+                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${absence.type === 'vacation'
+                                                                                    ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                                    }`}>
+                                                                                    {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                         <div className="text-xs text-gray-500 font-medium">
-                                                                            Total: <span className="text-indigo-600">{formatHours(totalHours)}</span>
+                                                                            {!absence && (
+                                                                                <>Total: <span className="text-indigo-600">{formatHours(totalHours)}</span></>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                 </div>
@@ -220,18 +272,22 @@ function TimeTrackingPage() {
 
                                                             {/* Show individual entries with notes */}
                                                             <div className="pl-11 space-y-1">
-                                                                {entries.map((entry, idx) => {
-                                                                    const statusProps = getStatusBadgeProps(entry.status);
+                                                                {entries.map((entry: any, idx: number) => {
+                                                                    const isToday = dateKey === toDateKey(new Date());
+                                                                    const isIncomplete = !entry.exit;
 
                                                                     return (
                                                                         <div key={entry.id} className="text-xs flex items-center gap-2 flex-wrap">
                                                                             <span className="text-gray-400 font-medium">#{idx + 1}</span>
                                                                             <span className="font-mono text-gray-700">
-                                                                                {entry.entry || '—'} → {entry.exit || <span className="text-green-600 italic">activo</span>}
+                                                                                {entry.entry || '—'} → {entry.exit || (isToday ? <span className="text-green-600 italic">activo</span> : <span className="text-red-400">-</span>)}
                                                                             </span>
-                                                                            {statusProps && (
-                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${statusProps.className}`}>
-                                                                                    {statusProps.label}
+                                                                            {isIncomplete && (
+                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${isToday
+                                                                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                                                                    : 'bg-red-50 text-red-700 border-red-200'
+                                                                                    }`}>
+                                                                                    {isToday ? 'Activo' : 'Incompleto'}
                                                                                 </span>
                                                                             )}
                                                                             {entry.note && (
@@ -242,6 +298,11 @@ function TimeTrackingPage() {
                                                                         </div>
                                                                     );
                                                                 })}
+                                                                {entries.length === 0 && absence && (
+                                                                    <div className="text-xs text-gray-500 italic">
+                                                                        {absence.reason || (absence.type === 'vacation' ? 'Vacaciones registradas' : 'Ausencia registrada')}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     );

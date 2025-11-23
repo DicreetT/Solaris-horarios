@@ -83,8 +83,7 @@ function CalendarPage() {
     };
 
     return (
-        <div className="max-w-6xl mx-auto h-full flex flex-col pb-6">
-            {/* Header */}
+        <div className="max-w-6xl mx-auto h-[calc(100vh-5rem)] flex flex-col">{/* Header */}
             <div className="mb-6 flex items-center gap-4">
                 <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-primary">
                     <CalendarIcon size={32} />
@@ -106,7 +105,6 @@ function CalendarPage() {
                     selectedDate={selectedDate}
                     onChangeMonth={setMonthDate}
                     onSelectDate={handleDateClick}
-                    isAdminView={false}
                 />
             </div>
 

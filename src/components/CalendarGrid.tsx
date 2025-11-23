@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toDateKey } from '../utils/dateUtils';
+import { USERS } from '../constants';
 import { useTimeData } from '../hooks/useTimeData';
 import { useTraining } from '../hooks/useTraining';
 import { useAuth } from '../context/AuthContext';
@@ -20,15 +21,14 @@ export default function CalendarGrid({
     selectedDate,
     onChangeMonth,
     onSelectDate,
-    isAdminView,
 }: {
     monthDate: Date;
     selectedDate: Date;
     onChangeMonth: (date: Date) => void;
     onSelectDate: (date: Date) => void;
-    isAdminView?: boolean;
 }) {
     const { currentUser } = useAuth();
+    const isAdminView = currentUser?.isAdmin;
     const { timeData } = useTimeData();
     const { trainingRequests } = useTraining(currentUser);
     const { absenceRequests } = useAbsences(currentUser);
@@ -97,9 +97,9 @@ export default function CalendarGrid({
             </div>
 
             {/* Calendar Grid */}
-            <div className="grid grid-cols-7 grid-rows-6 flex-1 min-h-0 bg-gray-50/30">
+            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-0 bg-gray-50/30 overflow-hidden">
                 {daysArray.map((d, idx) => {
-                    if (!d) return <div key={idx} className="bg-gray-50/30 border-b border-r border-gray-100" />;
+                    if (!d) return <div key={idx} className="bg-gray-50/30 border-b border-r border-gray-100 aspect-square" />;
 
                     const dKey = toDateKey(d);
                     const isSelected = selectedDate && toDateKey(selectedDate) === dKey;
@@ -108,27 +108,39 @@ export default function CalendarGrid({
 
                     // --- DATA GATHERING ---
                     const dayData = timeData[dKey] || {};
-                    let myRecord = null;
+                    let workEntries: { userId: string; record: any }[] = [];
 
                     if (isAdminView) {
-                        // En vista admin, podríamos mostrar resumen global
+                        // En vista admin, mostramos las entradas de todos los usuarios
+                        Object.entries(dayData).forEach(([userId, records]) => {
+                            if (records && records.length > 0) {
+                                workEntries.push({ userId, record: records[0] });
+                            }
+                        });
                     } else if (currentUser) {
-                        myRecord = dayData[currentUser.id]?.[0];
+                        const myRecord = dayData[currentUser.id]?.[0];
+                        if (myRecord) {
+                            workEntries.push({ userId: currentUser.id, record: myRecord });
+                        }
                     }
 
                     // Absences (Vacations / Special Permissions)
-                    const myAbsence = absenceRequests.find(
-                        r => r.date_key === dKey &&
-                            r.created_by === currentUser?.id &&
-                            r.status !== 'rejected'
-                    );
+                    // If admin, show all absences for this day. If user, show only theirs.
+                    const relevantAbsences = isAdminView
+                        ? absenceRequests.filter(r => r.date_key === dKey && r.status !== 'rejected')
+                        : absenceRequests.filter(r => r.date_key === dKey && r.created_by === currentUser?.id && r.status !== 'rejected');
 
                     // Trainings (including rescheduled)
-                    const myTraining = trainingRequests.find(
-                        r => (r.scheduled_date_key === dKey || (!r.scheduled_date_key && r.requested_date_key === dKey)) &&
-                            r.user_id === currentUser?.id &&
-                            r.status !== 'rejected'
-                    );
+                    const relevantTrainings = trainingRequests.filter(r => {
+                        // Check if this training belongs to this day
+                        const targetDate = r.scheduled_date_key || r.requested_date_key;
+                        const isDateMatch = targetDate === dKey;
+
+                        // Check if user should see it
+                        const isUserMatch = isAdminView || r.user_id === currentUser?.id;
+
+                        return isDateMatch && isUserMatch && r.status !== 'rejected';
+                    });
 
                     // Tasks (Todos) - Due Date
                     const myTasks = todos.filter(
@@ -137,64 +149,81 @@ export default function CalendarGrid({
 
                     // Meetings - Scheduled Date
                     const myMeetings = meetingRequests.filter(
-                        m => m.scheduled_date_key === dKey && m.status === 'approved'
+                        m => m.scheduled_date_key === dKey && m.status === 'scheduled'
                     );
 
                     // Determine badges to show
                     const badges = [];
 
                     // 1. Absence / Vacation
-                    if (myAbsence) {
-                        // Infer type from reason or default to absence since DB doesn't have type
-                        const isVacation = myAbsence.reason?.includes('[Vacaciones]') || myAbsence.reason?.toLowerCase().includes('vacaciones');
+                    relevantAbsences.forEach(absence => {
+                        const isVacation = absence.reason?.includes('[Vacaciones]') || absence.reason?.toLowerCase().includes('vacaciones') || absence.type === 'vacation';
+                        const user = USERS.find(u => u.id === absence.created_by);
+                        const labelPrefix = isAdminView && user ? `${user.name}: ` : '';
+
                         badges.push({
                             type: isVacation ? 'vacation' : 'absence',
-                            label: isVacation ? 'Vacaciones' : 'Ausencia',
-                            color: 'bg-purple-50 text-purple-700 border-purple-100',
-                            icon: <CalendarIcon size={10} />,
-                            detail: myAbsence.reason,
+                            label: `${labelPrefix}${isVacation ? 'Vacaciones' : 'Ausencia'}`,
+                            color: isVacation
+                                ? 'bg-purple-50 text-purple-700 border-purple-100'
+                                : 'bg-red-50 text-red-700 border-red-100',
+                            icon: isVacation ? <CalendarIcon size={10} /> : <AlertCircle size={10} />,
+                            detail: absence.reason,
                             link: '/absences'
                         });
-                    } else if (myRecord?.status === 'vacation') {
-                        badges.push({
-                            type: 'vacation',
-                            label: 'Vacaciones',
-                            color: 'bg-purple-50 text-purple-700 border-purple-100',
-                            icon: <CalendarIcon size={10} />,
-                            detail: 'Vacaciones registradas',
-                            link: '/absences'
-                        });
-                    } else if (myRecord?.status === 'absent') {
-                        badges.push({
-                            type: 'absence',
-                            label: 'Ausente',
-                            color: 'bg-red-50 text-red-700 border-red-100',
-                            icon: <AlertCircle size={10} />,
-                            detail: 'Ausencia registrada',
-                            link: '/absences'
-                        });
+                    });
+
+                    // Check for implicit absences (no request but status is absent/vacation)
+                    // Only for the current user in non-admin view, or we'd need to loop all users again
+                    if (!isAdminView && workEntries.length === 0) {
+                        const myRecord = dayData[currentUser?.id || '']?.[0];
+                        if (myRecord?.status === 'vacation') {
+                            badges.push({
+                                type: 'vacation',
+                                label: 'Vacaciones',
+                                color: 'bg-purple-50 text-purple-700 border-purple-100',
+                                icon: <CalendarIcon size={10} />,
+                                detail: 'Vacaciones registradas',
+                                link: '/absences'
+                            });
+                        } else if (myRecord?.status === 'absent') {
+                            badges.push({
+                                type: 'absence',
+                                label: 'Ausente',
+                                color: 'bg-red-50 text-red-700 border-red-100',
+                                icon: <AlertCircle size={10} />,
+                                detail: 'Ausencia registrada',
+                                link: '/absences'
+                            });
+                        }
                     }
 
                     // 2. Training
-                    if (myTraining) {
+                    relevantTrainings.forEach(training => {
+                        const user = USERS.find(u => u.id === training.user_id);
+                        const labelPrefix = isAdminView && user ? `${user.name}: ` : '';
+
                         badges.push({
                             type: 'training',
-                            label: 'Formación',
+                            label: `${labelPrefix}Formación`,
                             color: 'bg-blue-50 text-blue-700 border-blue-100',
                             icon: <BookOpen size={10} />,
-                            detail: myTraining.comments?.[0]?.text || 'Entrenamiento',
+                            detail: training.comments?.[0]?.text || 'Entrenamiento',
                             link: '/trainings'
                         });
-                    }
+                    });
 
                     // 3. Meetings
                     myMeetings.forEach(meeting => {
+                        const user = USERS.find(u => u.id === meeting.created_by);
+                        const labelPrefix = isAdminView && user ? `${user.name}: ` : '';
+
                         badges.push({
                             type: 'meeting',
-                            label: meeting.scheduled_time ? `${meeting.scheduled_time} Reunión` : 'Reunión',
+                            label: `${labelPrefix}${meeting.scheduled_time ? meeting.scheduled_time + ' ' : ''}${meeting.title}`,
                             color: 'bg-indigo-50 text-indigo-700 border-indigo-100',
                             icon: <Users size={10} />,
-                            detail: meeting.title,
+                            detail: meeting.description || meeting.title,
                             link: '/meetings'
                         });
                     });
@@ -212,24 +241,29 @@ export default function CalendarGrid({
                     }
 
                     // 5. Work Entry
-                    if (myRecord?.entry) {
-                        const exit = myRecord.exit;
-                        badges.push({
-                            type: 'work',
-                            label: exit ? `${myRecord.entry} - ${exit}` : `${myRecord.entry} - ...`,
-                            color: exit ? 'bg-green-50 text-green-700 border-green-100' : 'bg-orange-50 text-orange-700 border-orange-100',
-                            icon: <Clock size={10} />,
-                            detail: myRecord.note || (exit ? 'Jornada finalizada' : 'Jornada en curso'),
-                            link: '/time-tracking'
-                        });
-                    }
+                    workEntries.forEach(({ userId, record }) => {
+                        if (record?.entry) {
+                            const exit = record.exit;
+                            const user = USERS.find(u => u.id === userId);
+                            const labelPrefix = isAdminView && user ? `${user.name}: ` : '';
+
+                            badges.push({
+                                type: 'work',
+                                label: `${labelPrefix}${record.entry} - ${exit || '...'}`,
+                                color: exit ? 'bg-green-50 text-green-700 border-green-100' : 'bg-orange-50 text-orange-700 border-orange-100',
+                                icon: <Clock size={10} />,
+                                detail: record.note || (exit ? 'Jornada finalizada' : 'Jornada en curso'),
+                                link: '/time-tracking'
+                            });
+                        }
+                    });
 
                     return (
                         <div
                             key={dKey}
                             onClick={() => onSelectDate(d)}
                             className={`
-                                group relative flex flex-col p-2 border-b border-r border-gray-100 transition-all cursor-pointer overflow-hidden
+                                group relative flex flex-col p-2 border-b border-r border-gray-100 transition-all cursor-pointer overflow-hidden aspect-square
                                 ${isSelected
                                     ? "bg-primary/5 shadow-inner"
                                     : "bg-white hover:bg-gray-50"
@@ -237,7 +271,7 @@ export default function CalendarGrid({
                                 ${isToday && !isSelected ? "bg-blue-50/30" : ""}
                             `}
                         >
-                            <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center justify-between mb-1 shrink-0">
                                 <span className={`
                                     text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full transition-colors
                                     ${isToday
@@ -254,12 +288,12 @@ export default function CalendarGrid({
                             </div>
 
                             {/* Badges Container */}
-                            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar flex-1">
+                            <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar flex-1 min-h-0">
                                 {badges.map((badge, i) => (
                                     <div
                                         key={i}
                                         className={`
-                                            flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-bold truncate
+                                            flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-bold shrink-0
                                             ${badge.color}
                                         `}
                                     >

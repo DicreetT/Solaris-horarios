@@ -67,11 +67,11 @@ export function useMeetings(currentUser: User | null) {
         },
     });
 
-    const updateMeetingStatusMutation = useMutation<void, Error, { id: number; updates: Partial<Meeting> }>({
-        mutationFn: async ({ id, updates }: { id: number; updates: Partial<Meeting> }) => {
+    const updateMeetingStatusMutation = useMutation<void, Error, { id: number; status: Meeting['status']; scheduled_date_key?: string; response_message?: string }>({
+        mutationFn: async ({ id, status, scheduled_date_key, response_message }) => {
             const { error } = await supabase
                 .from('meeting_requests')
-                .update(updates)
+                .update({ status, scheduled_date_key, response_message })
                 .eq('id', id);
 
             if (error) throw error;

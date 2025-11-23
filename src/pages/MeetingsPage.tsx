@@ -75,22 +75,6 @@ function MeetingsPage() {
         }
     }
 
-    async function handleUpdateStatus(id: number, updates: any) {
-        try {
-            await updateMeetingStatus({ id, ...updates });
-        } catch (e) {
-            console.error("Unexpected error updating meeting status", e);
-        }
-    }
-
-    async function handleDeleteMeeting(id: number) {
-        try {
-            await deleteMeeting(id);
-        } catch (e) {
-            console.error("Unexpected error deleting meeting", e);
-        }
-    }
-
     return (
         <div className="max-w-6xl mx-auto pb-10">
             {/* Header */}
@@ -195,12 +179,12 @@ function MeetingsPage() {
                                                     <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
                                                     <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.response_message}</span>
                                                 </div>
-                                                
+
                                             </div>
 
                                             {m.status === 'pending' && m.created_by === currentUser.id && (
                                                 <button
-                                                    onClick={() => handleDeleteMeeting(m.id)}
+                                                    onClick={() => deleteMeeting(m.id)}
                                                     className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                                                     title="Eliminar solicitud"
                                                 >
@@ -291,7 +275,8 @@ function MeetingsPage() {
                                                         type="button"
                                                         className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
                                                         onClick={() =>
-                                                            handleUpdateStatus(m.id, {
+                                                            updateMeetingStatus({
+                                                                id: m.id,
                                                                 status: "scheduled",
                                                                 scheduled_date_key: m.preferred_date_key,
                                                             })
@@ -307,7 +292,8 @@ function MeetingsPage() {
                                                                 "Motivo del rechazo (opcional):",
                                                                 ""
                                                             );
-                                                            handleUpdateStatus(m.id, {
+                                                            updateMeetingStatus({
+                                                                id: m.id,
                                                                 status: "rejected",
                                                                 response_message: msg || "",
                                                             });

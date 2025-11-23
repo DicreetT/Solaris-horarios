@@ -54,10 +54,13 @@ function AbsencesPage() {
         if (!reason.trim()) return;
 
         try {
-            // Create the absence request with type prefix in reason
-            const reasonPrefix = absenceType === 'vacation' ? '[Vacaciones] ' : '[Ausencia] ';
-            const finalReason = reasonPrefix + reason.trim();
-            await createAbsence({ reason: finalReason, date_key: selectedDateKey });
+            // Create the absence request
+            const finalReason = reason.trim();
+            await createAbsence({
+                reason: finalReason,
+                date_key: selectedDateKey,
+                type: absenceType as 'vacation' | 'absence'
+            });
 
             // Update the time entry with the appropriate status
             // Create a time entry with the appropriate status
@@ -155,7 +158,7 @@ function AbsencesPage() {
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-3 mb-2">
                                                 <h3 className="text-lg font-bold text-gray-900">
-                                                    Permiso para el día {r.date_key}
+                                                    {r.type === 'vacation' ? 'Vacaciones' : 'Ausencia'} - {r.date_key}
                                                 </h3>
                                                 <span className={`
                                                     inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
@@ -257,7 +260,9 @@ function AbsencesPage() {
 
                                             <div className="flex items-center gap-2 mb-2">
                                                 <Calendar size={16} className="text-gray-400" />
-                                                <span className="font-bold text-gray-900">Día {r.date_key}</span>
+                                                <span className="font-bold text-gray-900">
+                                                    {r.type === 'vacation' ? 'Vacaciones' : 'Ausencia'} - {r.date_key}
+                                                </span>
                                             </div>
 
                                             <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
