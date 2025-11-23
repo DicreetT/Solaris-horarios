@@ -20,7 +20,7 @@ export default defineConfig({
         theme_color: '#ffffff',
         icons: [
           {
-            src: 'logo_text.png',
+            src: 'logo.png',
             sizes: '512x512',
             type: 'image/png'
           }
