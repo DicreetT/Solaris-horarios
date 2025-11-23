@@ -8,7 +8,7 @@ import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
 import { UserAvatar } from '../components/UserAvatar';
 import { useTraining } from '../hooks/useTraining';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { toDateKey, formatDatePretty } from '../utils/dateUtils';
 import { calculateTotalHours, formatHours } from '../utils/timeUtils';
@@ -23,7 +23,7 @@ function Dashboard() {
     const { meetingRequests: meetings } = useMeetings(currentUser);
     const { timeData } = useTimeData();
     const { trainingRequests } = useTraining(currentUser);
-    const { notifications } = useNotifications(currentUser);
+    const { notifications } = useNotificationsContext();
 
     const todayStats = React.useMemo(() => {
         if (!currentUser) return {

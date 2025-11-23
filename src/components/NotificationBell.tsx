@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 
 
 /**
@@ -14,8 +13,7 @@ interface NotificationBellProps {
 }
 
 export default function NotificationBell({ placement = 'bottom-right', fullWidth = false }: NotificationBellProps) {
-    const { currentUser } = useAuth();
-    const { notifications, markAllAsRead } = useNotifications(currentUser);
+    const { notifications, markAllAsRead } = useNotificationsContext();
     const [open, setOpen] = useState(false);
 
     const unreadCount = notifications.filter((n) => !n.read).length;

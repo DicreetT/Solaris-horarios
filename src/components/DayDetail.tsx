@@ -4,7 +4,7 @@ import { toDateKey, formatDatePretty, formatTimeNow } from '../utils/dateUtils';
 import { getStatusBadgeProps } from '../utils/statusUtils';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { UserAvatar } from './UserAvatar';
 import { TimeEntry } from '../types';
@@ -24,7 +24,7 @@ export default function DayDetail({
     const { currentUser: user } = useAuth();
     const { timeData, updateTimeEntry } = useTimeData();
     const { updateAbsenceStatus } = useAbsences(user);
-    const { addNotification } = useNotifications(user);
+    const { addNotification } = useNotificationsContext();
 
     const [messageDrafts, setMessageDrafts] = useState({});
 

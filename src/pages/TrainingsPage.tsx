@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTraining } from '../hooks/useTraining';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
@@ -21,7 +21,7 @@ function TrainingsPage() {
         updateTrainingStatus,
         deleteTrainingRequest
     } = useTraining(currentUser);
-    const { addNotification } = useNotifications(currentUser);
+    const { addNotification } = useNotificationsContext();
 
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [showModal, setShowModal] = useState(false);

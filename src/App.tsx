@@ -6,6 +6,7 @@ import { useAuth } from './context/AuthContext';
 import LoginView from './components/LoginView';
 import Layout from './components/Layout';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
+import { NotificationsProvider } from './context/NotificationsContext';
 
 // Pages
 import Dashboard from './pages/Dashboard';
@@ -31,7 +32,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return children;
 }
 
-import { usePushNotifications } from './hooks/usePushNotifications';
 import { User } from './types';
 
 /**
@@ -39,7 +39,6 @@ import { User } from './types';
  */
 function App() {
   const { currentUser, login } = useAuth();
-  usePushNotifications(currentUser); // Auto-subscribe logic runs here
 
   const handleLogin = (user: User) => {
     login(user);
@@ -71,7 +70,9 @@ function App() {
         {/* All authenticated routes use the Layout and ProtectedRoute */}
         <Route element={
           <ProtectedRoute>
-            <Layout />
+            <NotificationsProvider currentUser={currentUser}>
+              <Layout />
+            </NotificationsProvider>
           </ProtectedRoute>
         }>
           <Route path="/dashboard" element={<Dashboard />} />

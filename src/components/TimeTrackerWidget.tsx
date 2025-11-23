@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { formatTimeNow, toDateKey } from '../utils/dateUtils';
 import { Clock, Play, Square, Edit2, Trash2, Timer, Info } from 'lucide-react';
 
@@ -13,7 +13,7 @@ import { Clock, Play, Square, Edit2, Trash2, Timer, Info } from 'lucide-react';
 export default function TimeTrackerWidget({ date = new Date(), showEntries = false }) {
     const { currentUser } = useAuth();
     const { timeData, createTimeEntry, updateTimeEntry, deleteTimeEntry } = useTimeData();
-    const { addNotification } = useNotifications(currentUser);
+    const { addNotification } = useNotificationsContext();
 
     const { absenceRequests } = useAbsences(currentUser);
 

@@ -21,7 +21,7 @@ import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
 import NotificationBell from './NotificationBell';
 import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { DRIVE_FOLDERS } from '../constants';
 
 /**
@@ -41,7 +41,7 @@ interface SidebarProps {
 
 function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswordModal, onOpenNotificationsModal }: SidebarProps) {
     const { currentUser, logout } = useAuth();
-    const { notifications } = useNotifications(currentUser);
+    const { notifications } = useNotificationsContext();
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);

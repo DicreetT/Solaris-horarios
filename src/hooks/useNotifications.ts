@@ -29,32 +29,6 @@ export function useNotifications(currentUser: User | null) {
         enabled: !!currentUser,
     });
 
-    // Realtime subscription
-    React.useEffect(() => {
-        if (!currentUser) return;
-
-        const channel = supabase
-            .channel('notifications-changes')
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'notifications',
-                    filter: `user_id=eq.${currentUser.id}`,
-                },
-                (payload: any) => {
-                    // Invalidate query to refetch notifications
-                    queryClient.invalidateQueries({ queryKey: ['notifications', currentUser.id] });
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [currentUser, queryClient]);
-
     const addNotificationMutation = useMutation({
         mutationFn: async ({ message, userId, type }: { message: string; userId?: string; type?: string }) => {
             const targetUserId = userId || currentUser?.id;

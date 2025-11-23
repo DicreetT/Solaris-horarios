@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTimeData } from '../hooks/useTimeData';
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clock } from 'lucide-react';
@@ -18,7 +18,7 @@ function AbsencesPage() {
     const { currentUser } = useAuth();
     const { absenceRequests, createAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
     const { createTimeEntry } = useTimeData();
-    const { addNotification } = useNotifications(currentUser);
+    const { addNotification } = useNotificationsContext();
     const [showModal, setShowModal] = useState(false);
     const [absenceType, setAbsenceType] = useState('vacation');
     const [selectedDate, setSelectedDate] = useState(new Date());

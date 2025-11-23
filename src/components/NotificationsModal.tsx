@@ -1,7 +1,7 @@
 import React from 'react';
-import { X, Bell, Check } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../hooks/useNotifications';
+import { X, Bell, Check, BellRing, BellOff } from 'lucide-react';
+import { Notification as NotificationType } from '../types';
+import { useNotificationsContext } from '../context/NotificationsContext';
 
 /**
  * NotificationsModal component
@@ -12,15 +12,12 @@ interface NotificationsModalProps {
     onClose: () => void;
 }
 
-import { Notification } from '../types';
-
 export default function NotificationsModal({ isOpen, onClose }: NotificationsModalProps) {
-    const { currentUser } = useAuth();
-    const { notifications, markAsRead } = useNotifications(currentUser);
+    const { notifications, markAsRead, isPushSubscribed, subscribeToPush, pushError } = useNotificationsContext();
 
     const unreadCount = notifications.filter((n) => !n.read).length;
 
-    const handleNotificationClick = async (notification: Notification) => {
+    const handleNotificationClick = async (notification: NotificationType) => {
         if (!notification.read) {
             await markAsRead(notification.id);
         }
@@ -32,7 +29,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
     const unreadNotifications = notifications.filter((n) => !n.read);
     const readNotifications = notifications.filter((n) => n.read);
 
-    const renderNotification = (n: Notification, isUnread: boolean) => {
+    const renderNotification = (n: NotificationType, isUnread: boolean) => {
         const createdDate = new Date(n.created_at);
         const now = new Date();
         const diffMs = now.getTime() - createdDate.getTime();
@@ -117,13 +114,31 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
                                 </p>
                             </div>
                         </div>
-                        <button
-                            onClick={onClose}
-                            className="p-2 hover:bg-gray-100 rounded-xl transition-colors text-gray-400 hover:text-gray-600"
-                        >
-                            <X size={20} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {!isPushSubscribed && (
+                                <button
+                                    onClick={subscribeToPush}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium transition-colors"
+                                    title="Activar notificaciones push"
+                                >
+                                    <BellRing size={14} />
+                                    <span>Activar Push</span>
+                                </button>
+                            )}
+                            <button
+                                onClick={onClose}
+                                className="p-2 hover:bg-gray-100 rounded-xl transition-colors text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
                     </div>
+                    {pushError && (
+                        <div className="mt-2 p-2 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2">
+                            <BellOff size={14} />
+                            <span>Error al activar notificaciones: {pushError}</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Notifications List */}
