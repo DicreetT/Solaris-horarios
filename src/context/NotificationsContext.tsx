@@ -54,8 +54,8 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
                             navigator.serviceWorker.ready.then(registration => {
                                 registration.showNotification('Nueva notificación', {
                                     body: payload.new.message,
-                                    icon: '/pwa-192x192.png', // Ensure this matches your PWA icon path
-                                    badge: '/pwa-192x192.png',
+                                    icon: '/logo.png', // Ensure this matches your PWA icon path
+                                    badge: '/logo.png',
                                     data: { url: '/dashboard' }, // Action when clicked
                                 });
                             });
