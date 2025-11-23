@@ -331,11 +331,6 @@ function Dashboard() {
                                                 <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full border border-red-100">
                                                     VENCE HOY
                                                 </span>
-                                                {todo.priority === 'high' && (
-                                                    <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded-full border border-orange-100">
-                                                        ALTA PRIORIDAD
-                                                    </span>
-                                                )}
                                             </div>
                                         </div>
                                     </div>

@@ -42,9 +42,11 @@ function TasksPage() {
             t.completed_by.includes(currentUser.id)
     );
 
-    const tasksCreatedByMe = todos.filter(
-        (t) => t.created_by === currentUser.id && !t.assigned_to.includes(currentUser.id)
-    );
+    const tasksCreatedByMe = todos.filter((t) => {
+        const isCompleted = t.assigned_to.length > 0 &&
+            t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
+        return t.created_by === currentUser.id && !isCompleted;
+    });
 
 
 

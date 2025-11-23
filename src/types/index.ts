@@ -78,7 +78,6 @@ export interface Todo {
     description: string | null;
     created_by: string;
     assigned_to: string[]; // jsonb
-    status: 'pending' | 'in_progress' | 'completed';
     due_date_key: string | null;
     completed_by: string[]; // jsonb
     created_at: string;

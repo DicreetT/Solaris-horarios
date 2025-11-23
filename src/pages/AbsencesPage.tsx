@@ -73,7 +73,7 @@ function AbsencesPage() {
                     status: 'vacation-request',
                     note: 'Solicitud de vacaciones'
                 });
-            } else if (absenceType === 'absent') {
+            } else if (absenceType === 'absence') {
                 createTimeEntry({
                     date: selectedDate,
                     userId: currentUser.id,
@@ -363,7 +363,7 @@ function AbsencesPage() {
                                     className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
                                 >
                                     <option value="vacation">Vacaciones</option>
-                                    <option value="absent">Ausencia / Permiso especial</option>
+                                    <option value="absence">Ausencia / Permiso especial</option>
                                 </select>
                             </div>
 

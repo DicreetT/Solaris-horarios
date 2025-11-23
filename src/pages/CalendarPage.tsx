@@ -67,7 +67,7 @@ function CalendarPage() {
         // Get meetings
         const meetings = meetingRequests.filter(
             m => m.scheduled_date_key === dKey &&
-                m.status === 'approved' &&
+                m.status === 'scheduled' &&
                 (isAdmin || m.participants?.includes(currentUser.id) || m.created_by === currentUser.id)
         );
 

@@ -4,7 +4,7 @@ import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
 import { useNotifications } from '../hooks/useNotifications';
 import { formatTimeNow, toDateKey } from '../utils/dateUtils';
-import { Clock, Play, Square, Edit2, Trash2, Timer } from 'lucide-react';
+import { Clock, Play, Square, Edit2, Trash2, Timer, Info } from 'lucide-react';
 
 /**
  * Shared time tracker widget for clocking in/out
@@ -129,12 +129,27 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
     }
 
     return (
-        <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-visible">
             <div className="p-6 border-b border-gray-100 bg-gray-50/50">
                 <div className="flex items-center justify-between mb-6">
                     <div>
                         <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                             Registro de Jornada
+                            <div className="relative group">
+                                <Info
+                                    size={18}
+                                    className="text-gray-400 hover:text-primary cursor-help transition-colors"
+                                />
+                                <div className="absolute left-0 top-full mt-2 w-80 bg-gray-900 text-white text-xs rounded-xl p-4 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[9999] pointer-events-none">
+                                    <div className="space-y-2">
+                                        <p className="font-bold text-sm mb-2">¿Cómo funciona el registro de tiempo?</p>
+                                        <p>Para rastrear el tiempo puedes iniciar el seguimiento haciendo clic en <span className="font-bold text-primary-light">este botón aquí</span>. A partir de ese momento, el seguimiento del tiempo está en marcha.</p>
+                                        <p>Si quieres hacer una pausa (para almorzar, por ejemplo) puedes detenerlo y volverlo a iniciar más tarde.</p>
+                                        <p>Durante el día también es posible modificar o eliminar entradas de tiempo y agregar notas en la página <span className="font-bold text-primary-light">Registra Horario</span>.</p>
+                                    </div>
+                                    <div className="absolute -top-2 left-4 w-4 h-4 bg-gray-900 transform rotate-45"></div>
+                                </div>
+                            </div>
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">
                             {activeAbsence
