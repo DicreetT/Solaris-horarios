@@ -48,12 +48,24 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
                     // Invalidate query to refetch notifications
                     queryClient.invalidateQueries({ queryKey: ['notifications', currentUser.id] });
 
-                    // Also try to show a browser notification if we have permission but not focused
-                    if (document.hidden && Notification.permission === 'granted') {
-                        new Notification('Nueva notificación', {
-                            body: payload.new.message,
-                            icon: '/logo.png'
-                        });
+                    // Show system notification via Service Worker if available (PWA style)
+                    if (Notification.permission === 'granted') {
+                        if ('serviceWorker' in navigator) {
+                            navigator.serviceWorker.ready.then(registration => {
+                                registration.showNotification('Nueva notificación', {
+                                    body: payload.new.message,
+                                    icon: '/pwa-192x192.png', // Ensure this matches your PWA icon path
+                                    badge: '/pwa-192x192.png',
+                                    data: { url: '/dashboard' }, // Action when clicked
+                                });
+                            });
+                        } else {
+                            // Fallback for non-SW environments
+                            new Notification('Nueva notificación', {
+                                body: payload.new.message,
+                                icon: '/logo.png'
+                            });
+                        }
                     }
                 }
             )
