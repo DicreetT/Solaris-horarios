@@ -1,0 +1,459 @@
+import React, { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useMeetings } from '../hooks/useMeetings';
+import { USERS } from '../constants';
+import { toDateKey } from '../utils/dateUtils';
+import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
+import { RoleBadge } from '../components/RoleBadge';
+
+/**
+ * Meetings page
+ * Shows user's meeting requests and allows creating new ones via modal
+ * Admin panel to manage all requests
+ */
+function MeetingsPage() {
+    const { currentUser } = useAuth();
+    const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
+
+    const [showModal, setShowModal] = useState(false);
+    const [selectedDate, setSelectedDate] = useState(new Date());
+    const [meetingTitle, setMeetingTitle] = useState('');
+    const [meetingDescription, setMeetingDescription] = useState('');
+    const [meetingPreferredSlot, setMeetingPreferredSlot] = useState('indiferente');
+    const [meetingParticipants, setMeetingParticipants] = useState(() =>
+        currentUser?.isAdmin ? [currentUser.id] : [currentUser?.id, 'thalia']
+    );
+
+    const isAdmin = currentUser?.isAdmin;
+    const selectedDateKey = toDateKey(selectedDate);
+
+    // User's meetings sorted by creation date
+    const userMeetings = meetingRequests
+        .filter((m) => m.created_by === currentUser.id || (m.participants || []).includes(currentUser.id))
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    // All meetings for admin view
+    const sortedRequests = [...meetingRequests].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
+        setSelectedDate(new Date(e.target.value + 'T00:00:00'));
+    }
+
+    function handleToggleParticipant(id: string) {
+        setMeetingParticipants((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+        );
+    }
+
+    async function handleCreateMeeting(e: React.FormEvent) {
+        e.preventDefault();
+        const title = meetingTitle.trim();
+        if (!title || meetingParticipants.length === 0) return;
+
+        try {
+            await createMeeting({
+                title,
+                description: meetingDescription.trim(),
+                preferred_date_key: selectedDateKey,
+                preferred_slot: meetingPreferredSlot,
+                participants: meetingParticipants,
+            });
+
+            setMeetingTitle('');
+            setMeetingDescription('');
+            setMeetingPreferredSlot('indiferente');
+            setMeetingParticipants(
+                currentUser.isAdmin ? [currentUser.id] : [currentUser.id, 'thalia']
+            );
+            setSelectedDate(new Date());
+            setShowModal(false);
+        } catch (e) {
+            console.error('Unexpected error creating meeting_request', e);
+        }
+    }
+
+    async function handleUpdateStatus(id: number, updates: any) {
+        try {
+            await updateMeetingStatus({ id, ...updates });
+        } catch (e) {
+            console.error("Unexpected error updating meeting status", e);
+        }
+    }
+
+    async function handleDeleteMeeting(id: number) {
+        try {
+            await deleteMeeting(id);
+        } catch (e) {
+            console.error("Unexpected error deleting meeting", e);
+        }
+    }
+
+    return (
+        <div className="max-w-6xl mx-auto pb-10">
+            {/* Header */}
+            <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-indigo-600">
+                        <Users size={32} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                            Reuniones
+                        </h1>
+                        <p className="text-gray-500 font-medium">
+                            {isAdmin
+                                ? 'Gestiona las solicitudes de reunión del equipo'
+                                : 'Gestiona tus solicitudes de reunión'}
+                        </p>
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShowModal(true)}
+                    className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                >
+                    <Plus size={20} />
+                    Solicitar reunión
+                </button>
+            </div>
+
+            {/* User view - meetings list */}
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
+                <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <h2 className="text-xl font-bold text-gray-900">Tus solicitudes</h2>
+                    <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-lg border border-gray-200 shadow-sm">
+                        {userMeetings.length} {userMeetings.length === 1 ? 'solicitud' : 'solicitudes'}
+                    </span>
+                </div>
+
+                <div className="p-6">
+                    {userMeetings.length === 0 ? (
+                        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <Users size={48} className="mx-auto text-gray-300 mb-3" />
+                            <p className="text-gray-500 font-medium">No tienes solicitudes de reunión.</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-4">
+                            {userMeetings.map((m) => {
+                                const participantsNames = (m.participants || [])
+                                    .map((id: string) => USERS.find((u) => u.id === id)?.name || id)
+                                    .join(", ");
+
+                                return (
+                                    <div
+                                        key={m.id}
+                                        className="group bg-white border border-gray-100 rounded-2xl p-5 hover:border-indigo-200 hover:shadow-md transition-all duration-200"
+                                    >
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <h3 className="text-lg font-bold text-gray-900 truncate">{m.title}</h3>
+                                                    <span className={`
+                                                        inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                        ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                        ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                        ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                    `}>
+                                                        {m.status === 'pending' && <Clock size={12} />}
+                                                        {m.status === 'scheduled' && <CheckCircle size={12} />}
+                                                        {m.status === 'rejected' && <XCircle size={12} />}
+                                                        {m.status === 'pending' && "Pendiente"}
+                                                        {m.status === 'scheduled' && "Programada"}
+                                                        {m.status === 'rejected' && "Rechazada"}
+                                                    </span>
+                                                </div>
+
+                                                {m.description && (
+                                                    <p className="text-gray-600 text-sm mb-3 line-clamp-2">
+                                                        {m.description}
+                                                    </p>
+                                                )}
+
+                                                <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                                                    <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                                        <Calendar size={14} className="text-gray-400" />
+                                                        <span className="font-medium">Pref: {m.preferred_date_key} ({m.preferred_slot})</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                                        <Users size={14} className="text-gray-400" />
+                                                        <div className="flex items-center gap-1">
+                                                            {(m.participants || []).map((pid: string) => {
+                                                                const p = USERS.find(u => u.id === pid);
+                                                                return (
+                                                                    <div key={pid} className="flex items-center gap-1" title={p?.name || pid}>
+                                                                        <UserAvatar name={p?.name || pid} size="xs" />
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                                    <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.response_message}</span>
+                                                </div>
+                                                
+                                            </div>
+
+                                            {m.status === 'pending' && m.created_by === currentUser.id && (
+                                                <button
+                                                    onClick={() => handleDeleteMeeting(m.id)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                    title="Eliminar solicitud"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Admin view - all requests (Admin only) */}
+            {isAdmin && (
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 bg-amber-50/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold text-gray-900">Panel de administración</h2>
+                            <RoleBadge role="admin" size="sm" />
+                        </div>
+                    </div>
+
+                    <div className="p-6">
+                        {sortedRequests.length === 0 ? (
+                            <p className="text-center text-gray-500 py-8">No hay solicitudes de reunión por ahora.</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {sortedRequests.map((m) => {
+                                    const creator = USERS.find((u) => u.id === m.created_by);
+                                    const participantsNames = (m.participants || [])
+                                        .map((id: string) => USERS.find((u) => u.id === id)?.name || id)
+                                        .join(", ");
+
+                                    return (
+                                        <div
+                                            key={m.id}
+                                            className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
+                                        >
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="flex items-center gap-3">
+                                                    <UserAvatar name={creator?.name} size="sm" />
+                                                    <div>
+                                                        <p className="font-bold text-gray-900">{creator?.name || m.created_by}</p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {new Date(m.created_at).toLocaleString("es-ES", {
+                                                                dateStyle: "short",
+                                                                timeStyle: "short",
+                                                            })}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`
+                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                    ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                    ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                    ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                `}>
+                                                    {m.status === 'pending' && "Pendiente"}
+                                                    {m.status === 'scheduled' && "Programada"}
+                                                    {m.status === 'rejected' && "Rechazada"}
+                                                </span>
+                                            </div>
+
+                                            <h3 className="font-bold text-gray-900 mb-1">{m.title}</h3>
+                                            {m.description && (
+                                                <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                                    {m.description}
+                                                </p>
+                                            )}
+
+                                            <div className="grid grid-cols-2 gap-4 text-xs text-gray-500 mb-4">
+                                                <div>
+                                                    <span className="font-bold text-gray-700 block mb-0.5">Fecha preferida</span>
+                                                    {m.preferred_date_key} ({m.preferred_slot})
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold text-gray-700 block mb-0.5">Participantes</span>
+                                                    {participantsNames || "—"}
+                                                </div>
+                                            </div>
+
+                                            {m.status === "pending" && (
+                                                <div className="flex gap-2 pt-3 border-t border-gray-100">
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
+                                                        onClick={() =>
+                                                            handleUpdateStatus(m.id, {
+                                                                status: "scheduled",
+                                                                scheduled_date_key: m.preferred_date_key,
+                                                            })
+                                                        }
+                                                    >
+                                                        Aceptar y Programar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
+                                                        onClick={() => {
+                                                            const msg = window.prompt(
+                                                                "Motivo del rechazo (opcional):",
+                                                                ""
+                                                            );
+                                                            handleUpdateStatus(m.id, {
+                                                                status: "rejected",
+                                                                response_message: msg || "",
+                                                            });
+                                                        }}
+                                                    >
+                                                        Rechazar
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Meeting creation modal */}
+            {showModal && (
+                <div
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+                    onClick={() => setShowModal(false)}
+                >
+                    <div
+                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar reunión</h2>
+                            <button
+                                type="button"
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
+                                onClick={() => setShowModal(false)}
+                            >
+                                <XCircle size={24} />
+                            </button>
+                        </div>
+
+                        <p className="text-gray-500 mb-6 font-medium">
+                            Solicita una reunión con personas del equipo.
+                        </p>
+
+                        <form onSubmit={handleCreateMeeting} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Fecha preferida
+                                </label>
+                                <input
+                                    type="date"
+                                    value={selectedDateKey}
+                                    onChange={handleDateChange}
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Título *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={meetingTitle}
+                                    onChange={(e) => setMeetingTitle(e.target.value)}
+                                    placeholder="Ej.: Reunión de seguimiento..."
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Motivo / Descripción
+                                </label>
+                                <textarea
+                                    value={meetingDescription}
+                                    onChange={(e) => setMeetingDescription(e.target.value)}
+                                    placeholder="¿Qué quieres tratar en la reunión?"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Franja horaria preferida
+                                </label>
+                                <select
+                                    value={meetingPreferredSlot}
+                                    onChange={(e) => setMeetingPreferredSlot(e.target.value)}
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
+                                >
+                                    <option value="mañana">Mañana</option>
+                                    <option value="tarde">Tarde</option>
+                                    <option value="indiferente">Indiferente</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Personas que deberían estar *
+                                </label>
+                                <div className="flex flex-wrap gap-2">
+                                    {USERS.map((u) => (
+                                        <label
+                                            key={u.id}
+                                            className={`
+                                                inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border-2 cursor-pointer transition-all
+                                                ${meetingParticipants.includes(u.id)
+                                                    ? 'bg-primary/10 border-primary text-primary'
+                                                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                                                }
+                                            `}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                className="hidden"
+                                                checked={meetingParticipants.includes(u.id)}
+                                                onChange={() => handleToggleParticipant(u.id)}
+                                            />
+                                            {u.name}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowModal(false)}
+                                    className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                                >
+                                    Solicitar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default MeetingsPage;
