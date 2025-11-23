@@ -2,7 +2,6 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
-import type { VitePWAOptions } from 'vite-plugin-pwa'
 
 export default defineConfig({
   plugins: [
@@ -15,13 +14,13 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
-        name: 'Solaris Horarios',
-        short_name: 'Solaris',
+        name: 'Lunaris',
+        short_name: 'Lunaris',
         description: 'Aplicación de control horario y gestión de tareas',
         theme_color: '#ffffff',
         icons: [
           {
-            src: 'pwa_logo.png',
+            src: 'logo_text.png',
             sizes: '512x512',
             type: 'image/png'
           }

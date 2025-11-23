@@ -18,10 +18,10 @@ function Header({ onMenuToggle }: { onMenuToggle: () => void }) {
             </button>
 
             {/* Logo - only on mobile */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center">
                 <div className="relative">
                     <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full" />
-                    <img src="/logo.png" alt="Solaris Logo" className="h-8 w-auto object-contain relative z-10" />
+                    <img src="/text_trans.png" alt="Lunaris Logo" className="h-10 w-auto object-contain relative z-10" />
                 </div>
             </div>
 

@@ -78,7 +78,7 @@ export default function GlobalExportPanel() {
                     .join(",")
             )
             .join("\n");
-        showCsv(csv, "solaris-horarios.csv", "Exportar horarios");
+        showCsv(csv, "lunaris-horarios.csv", "Exportar horarios");
     }
 
     function exportTrainings() {
@@ -110,7 +110,7 @@ export default function GlobalExportPanel() {
                     .join(",")
             )
             .join("\n");
-        showCsv(csv, "solaris-formaciones.csv", "Exportar formaciones");
+        showCsv(csv, "lunaris-formaciones.csv", "Exportar formaciones");
     }
 
     function exportMeetings() {
@@ -155,7 +155,7 @@ export default function GlobalExportPanel() {
                     .join(",")
             )
             .join("\n");
-        showCsv(csv, "solaris-reuniones.csv", "Exportar reuniones");
+        showCsv(csv, "lunaris-reuniones.csv", "Exportar reuniones");
     }
 
     function exportAbsences() {
@@ -191,7 +191,7 @@ export default function GlobalExportPanel() {
             .join("\n");
         showCsv(
             csv,
-            "solaris-permisos-especiales.csv",
+            "lunaris-permisos-especiales.csv",
             "Exportar permisos especiales"
         );
     }
@@ -235,7 +235,7 @@ export default function GlobalExportPanel() {
                     .join(",")
             )
             .join("\n");
-        showCsv(csv, "solaris-tareas.csv", "Exportar tareas (To-Do)");
+        showCsv(csv, "lunaris-tareas.csv", "Exportar tareas (To-Do)");
     }
 
     return (
@@ -258,7 +258,7 @@ export default function GlobalExportPanel() {
                                 Descarga de datos en CSV
                             </h3>
                             <p className="text-gray-500 leading-relaxed">
-                                Descarga en formato CSV todo lo que ocurre en Solaris: horarios, formaciones,
+                                Descarga en formato CSV todo lo que ocurre en Lunaris: horarios, formaciones,
                                 reuniones, permisos y tareas. Estos archivos son ideales para auditorías,
                                 informes externos o análisis de datos.
                             </p>

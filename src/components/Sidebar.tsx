@@ -157,13 +157,13 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             >
                 {/* Logo area */}
                 <div className="h-20 flex items-center justify-center border-b border-gray-100">
-                    <div className={`flex items-center gap-3 transition-all duration-300 ${isCollapsed ? 'scale-90' : ''}`}>
+                    <div className={`flex items-center transition-all duration-300 ${isCollapsed ? 'scale-90' : ''}`}>
                         <div className="relative">
                             <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full" />
                             <img
-                                src="/logo.png"
-                                alt="Solaris Logo"
-                                className="h-10 w-auto relative z-10 object-contain"
+                                src="/logo_text_trans.png"
+                                alt="Lunaris Logo"
+                                className="h-20 w-auto relative z-10 object-contain"
                             />
                         </div>
                     </div>

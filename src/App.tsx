@@ -5,6 +5,7 @@ import { useAuth } from './context/AuthContext';
 // Components
 import LoginView from './components/LoginView';
 import Layout from './components/Layout';
+import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 
 // Pages
 import Dashboard from './pages/Dashboard';
@@ -92,6 +93,9 @@ function App() {
           }
         />
       </Routes>
+
+      {/* PWA Install Prompt */}
+      <InstallPWAPrompt />
     </BrowserRouter>
   );
 }

@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
         }
 
         const notificationPayload = JSON.stringify({
-            title: 'Solaris Horarios',
+            title: 'Lunaris',
             body: record.message,
             url: '/', // Or specific URL based on notification type
         })

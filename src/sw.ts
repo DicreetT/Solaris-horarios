@@ -15,7 +15,7 @@ clientsClaim();
 // Handle push notifications
 self.addEventListener('push', (event: PushEvent) => {
     const data = event.data ? event.data.json() : {};
-    const title = data.title || 'Solaris Horarios';
+    const title = data.title || 'Lunaris';
     const options = {
         body: data.body || '',
         icon: '/pwa_logo.png',

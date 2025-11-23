@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { USERS } from '../constants';
-import { Mail, Lock, ArrowRight, Snowflake } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Snowflake, Download, Smartphone } from 'lucide-react';
 
 /**
  * Snowflake animation component
@@ -86,6 +86,21 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+    // Listen for the beforeinstallprompt event
+    useEffect(() => {
+        const handler = (e: Event) => {
+            e.preventDefault();
+            setDeferredPrompt(e);
+        };
+
+        window.addEventListener('beforeinstallprompt', handler);
+
+        return () => {
+            window.removeEventListener('beforeinstallprompt', handler);
+        };
+    }, []);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -125,6 +140,15 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
         onLogin(finalUser);
     }
 
+    const handleInstallClick = async () => {
+        if (!deferredPrompt) return;
+
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`User response to install prompt: ${outcome}`);
+        setDeferredPrompt(null);
+    }
+
     return (
         <div className="min-h-screen flex items-center justify-center p-4 relative bg-gradient-to-b from-slate-900 to-slate-800">
             {/* Seasonal Background Animation */}
@@ -136,12 +160,12 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
                 <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
 
                 <div className="relative z-10 flex flex-col items-center text-center mb-8 w-full">
-                    <div className="w-full px-12 relative flex items-center justify-center">
+                    <div className="w-full px-4 relative flex items-center justify-center">
                         <div className="absolute inset-0 bg-primary/20 blur-2xl rounded-full opacity-50" />
                         <img
-                            src="/logo.png"
-                            alt="Solaris Logo"
-                            className="w-full h-auto object-contain relative z-10 drop-shadow-sm hover:scale-105 transition-transform duration-300"
+                            src="/logo_text_trans.png"
+                            alt="Lunaris Logo"
+                            className="w-1/2 h-auto object-contain relative z-10 drop-shadow-sm hover:scale-105 transition-transform duration-300"
                         />
                     </div>
                     {/* Removed text as requested in previous steps, keeping it clean */}
@@ -203,9 +227,37 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
                     </button>
                 </form>
 
+                {/* PWA Install Info Box */}
+                {deferredPrompt && (
+                    <div className="mt-6 relative z-10 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20 rounded-2xl p-4">
+                            <div className="flex items-start gap-3">
+                                <div className="p-2 bg-primary/10 rounded-lg shrink-0">
+                                    <Smartphone size={20} className="text-primary" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h4 className="text-sm font-bold text-gray-900 mb-1">
+                                        Instalar aplicación
+                                    </h4>
+                                    <p className="text-xs text-gray-600 mb-3">
+                                        Instala Lunaris en tu dispositivo para acceder más rápido y trabajar sin conexión.
+                                    </p>
+                                    <button
+                                        onClick={handleInstallClick}
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary-dark transition-all shadow-md shadow-primary/20 hover:scale-105 active:scale-95"
+                                    >
+                                        <Download size={14} />
+                                        Instalar ahora
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="mt-8 text-center">
                     <p className="text-xs text-gray-400 font-medium">
-                        © {new Date().getFullYear()} Solaris. Todos los derechos reservados.
+                        © {new Date().getFullYear()} Lunaris. Todos los derechos reservados.
                     </p>
                 </div>
             </div>
