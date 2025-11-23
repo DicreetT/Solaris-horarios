@@ -29,10 +29,12 @@ async function fetchTimeDataFromSupabase() {
     return organized;
 }
 
+const EMPTY_OBJECT = {};
+
 export function useTimeData() {
     const queryClient = useQueryClient();
 
-    const { data: timeData = {}, isLoading, error } = useQuery({
+    const { data: timeData = EMPTY_OBJECT, isLoading, error } = useQuery({
         queryKey: ['timeData'],
         queryFn: fetchTimeDataFromSupabase,
     });

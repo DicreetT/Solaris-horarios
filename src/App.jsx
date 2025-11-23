@@ -30,11 +30,14 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+import { usePushNotifications } from './hooks/usePushNotifications';
+
 /**
  * App principal with routing
  */
 function App() {
   const { currentUser, login } = useAuth();
+  usePushNotifications(currentUser); // Auto-subscribe logic runs here
 
   const handleLogin = (user) => {
     login(user);

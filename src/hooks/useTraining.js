@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
+const EMPTY_ARRAY = [];
+
 export function useTraining(currentUser) {
     const queryClient = useQueryClient();
 
-    const { data: trainingRequests = [], isLoading, error } = useQuery({
+    const { data: trainingRequests = EMPTY_ARRAY, isLoading, error } = useQuery({
         queryKey: ['training', currentUser?.id],
         queryFn: async () => {
             if (!currentUser) return [];

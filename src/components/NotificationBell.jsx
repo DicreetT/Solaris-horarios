@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../hooks/useNotifications';
 
+
 /**
  * Notificaciones con Supabase
  * Tabla: notifications
@@ -112,9 +113,13 @@ export default function NotificationBell({ placement = 'bottom-right', fullWidth
                                 ))
                             )}
                         </div>
+
+
                     </div>
                 </>
             )}
         </div>
     );
 }
+
+

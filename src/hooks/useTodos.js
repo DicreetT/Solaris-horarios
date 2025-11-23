@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
+const EMPTY_ARRAY = [];
+
 export function useTodos(currentUser) {
     const queryClient = useQueryClient();
 
-    const { data: todos = [], isLoading, error } = useQuery({
+    const { data: todos = EMPTY_ARRAY, isLoading, error } = useQuery({
         queryKey: ['todos', currentUser?.id],
         queryFn: async () => {
             if (!currentUser) return [];

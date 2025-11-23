@@ -1,3 +1,4 @@
+import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
@@ -25,6 +26,32 @@ export function useNotifications(currentUser) {
         },
         enabled: !!currentUser,
     });
+
+    // Realtime subscription
+    React.useEffect(() => {
+        if (!currentUser) return;
+
+        const channel = supabase
+            .channel('notifications-changes')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'notifications',
+                    filter: `user_id=eq.${currentUser.id}`,
+                },
+                (payload) => {
+                    // Invalidate query to refetch notifications
+                    queryClient.invalidateQueries(['notifications', currentUser.id]);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentUser, queryClient]);
 
     const addNotificationMutation = useMutation({
         mutationFn: async ({ message, userId }) => {
