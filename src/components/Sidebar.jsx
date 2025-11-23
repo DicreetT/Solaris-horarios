@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard,
@@ -11,12 +11,16 @@ import {
     FileText,
     Folder,
     LogOut,
+    Lock,
+    Bell,
+    ChevronDown,
     ChevronLeft,
     ChevronRight
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
+import { RoleBadge } from './RoleBadge';
 import { useAuth } from '../context/AuthContext';
-import NotificationBell from './NotificationBell';
+import { useNotifications } from '../hooks/useNotifications';
 import { DRIVE_FOLDERS } from '../constants';
 
 /**
@@ -25,14 +29,27 @@ import { DRIVE_FOLDERS } from '../constants';
  * Mobile: Overlay mode with backdrop
  * Desktop: Persistent sidebar with collapse toggle
  */
-function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
+function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswordModal, onOpenNotificationsModal }) {
     const { currentUser, logout } = useAuth();
+    const { notifications } = useNotifications(currentUser);
     const navigate = useNavigate();
     const location = useLocation();
+    const [showUserMenu, setShowUserMenu] = useState(false);
+    const userMenuRef = useRef(null);
 
-    const isThalia = currentUser?.id === 'thalia';
     const isAdmin = currentUser?.isAdmin;
-    const canAdminHours = currentUser?.canAdminHours;
+    const unreadCount = notifications.filter((n) => !n.read).length;
+
+    // Close user menu when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+                setShowUserMenu(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // Check if user has any shared folders
     const hasSharedFolders = DRIVE_FOLDERS.some(f => f.users.includes(currentUser?.id));
@@ -113,7 +130,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
             {/* Mobile backdrop */}
             {isOpen && (
                 <div
-                    className="fixed inset-0 bg-black/50 z-40 md:hidden"
+                    className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm"
                     onClick={onClose}
                 />
             )}
@@ -121,24 +138,29 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
             {/* Sidebar */}
             <aside
                 className={`
-          fixed top-0 left-0 h-full bg-card border-r-2 border-border z-50
-          transition-all duration-300 ease-in-out flex flex-col
+          fixed top-0 left-0 h-full bg-white border-r border-gray-200 z-50
+          transition-all duration-300 ease-in-out flex flex-col shadow-2xl md:shadow-none
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-          ${isCollapsed ? 'md:w-16' : 'md:w-60'}
-          w-60
+          ${isCollapsed ? 'md:w-20' : 'md:w-64'}
+          w-64
         `}
             >
                 {/* Logo area */}
-                <div className="p-4 flex items-center justify-center border-b-2 border-border h-16">
-                    <img
-                        src="/logo.png"
-                        alt="Solaris Logo"
-                        className={`${isCollapsed ? 'h-8 w-8' : 'h-10 w-auto'} object-contain transition-all duration-300`}
-                    />
+                <div className="h-20 flex items-center justify-center border-b border-gray-100">
+                    <div className={`flex items-center gap-3 transition-all duration-300 ${isCollapsed ? 'scale-90' : ''}`}>
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full" />
+                            <img
+                                src="/logo.png"
+                                alt="Solaris Logo"
+                                className="h-10 w-auto relative z-10 object-contain"
+                            />
+                        </div>
+                    </div>
                 </div>
 
                 {/* Navigation items */}
-                <nav className="flex-1 p-2 overflow-y-auto">
+                <nav className="flex-1 p-4 overflow-y-auto space-y-1">
                     {navigationItems
                         .filter(item => item.show)
                         .map(item => {
@@ -150,26 +172,25 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                                     key={item.path}
                                     onClick={() => handleNavigation(item.path)}
                                     className={`
-                    w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1
-                    transition-all duration-200 border-2
+                    w-full flex items-center gap-3 px-4 py-3 rounded-xl
+                    transition-all duration-200 group relative overflow-hidden
                     ${isActive
-                                            ? 'bg-primary text-white border-black shadow-[2px_2px_0_#000000]'
-                                            : 'hover:bg-primary/10 border-transparent hover:border-black/10'
+                                            ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                                            : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
                                         }
-                                    ${isCollapsed ? 'justify-center' : ''}
+                                    ${isCollapsed ? 'justify-center px-2' : ''}
                   `}
                                     title={isCollapsed ? item.label : ''}
                                 >
-                                    <Icon size={20} />
+                                    <Icon size={20} strokeWidth={isActive ? 2.5 : 2} className={`transition-transform duration-200 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
                                     {!isCollapsed && (
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium">{item.label}</span>
-                                            {item.isAdminItem && (
-                                                <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded border border-amber-200 font-bold flex items-center gap-1">
-                                                    ADMIN
-                                                </span>
-                                            )}
+                                        <div className="flex items-center gap-2 flex-1">
+                                            <span className={`text-sm ${isActive ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
+                                            {item.isAdminItem && <RoleBadge role="admin" size="xs" />}
                                         </div>
+                                    )}
+                                    {isActive && !isCollapsed && (
+                                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white/20 rounded-l-full" />
                                     )}
                                 </button>
                             );
@@ -177,91 +198,112 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse }) {
                 </nav>
 
                 {/* User Info, Notifications, Logout */}
-                <div className="p-2 border-t-2 border-border bg-card">
+                <div className="p-4 border-t border-gray-100 bg-gray-50/50">
                     {!isCollapsed ? (
-                        <div className="space-y-1">
-                            {/* User Profile & Badges */}
-                            <div className="flex items-center gap-2 mb-2 px-1">
-                                <div className="relative">
-                                    <UserAvatar name={currentUser?.name} size="sm" />
-                                    <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
-                                </div>
-                                <div className="flex-1 min-w-0 overflow-hidden">
-                                    <div className="flex items-center gap-1.5">
-                                        <p className="text-xs font-bold truncate text-gray-800">{currentUser?.name}</p>
-                                        {/* Role Badges */}
-                                        <div className="flex gap-0.5">
-                                            {isAdmin && (
-                                                <span className="bg-amber-100 text-amber-700 text-[8px] px-1 py-0 rounded-md border border-amber-200 font-bold tracking-wider">
-                                                    ADMIN
-                                                </span>
-                                            )}
-                                            {currentUser?.isTrainingManager && (
-                                                <span className="bg-blue-100 text-blue-700 text-[8px] px-1 py-0 rounded-md border border-blue-200 font-bold tracking-wider">
-                                                    FORM
-                                                </span>
-                                            )}
-                                        </div>
+                        <div className="relative" ref={userMenuRef}>
+                            {/* User Profile Button */}
+                            <button
+                                onClick={() => setShowUserMenu(!showUserMenu)}
+                                className="w-full bg-white rounded-2xl p-3 border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all group"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="relative shrink-0">
+                                        <UserAvatar name={currentUser?.name} size="sm" />
+                                        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
+                                        {unreadCount > 0 && (
+                                            <div className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white ring-2 ring-white">
+                                                {unreadCount}
+                                            </div>
+                                        )}
                                     </div>
-                                    <p className="text-[10px] text-gray-500 truncate font-medium">{currentUser?.email}</p>
+                                    <div className="flex-1 min-w-0 overflow-hidden text-left">
+                                        <div className="flex items-center gap-1.5 mb-0.5">
+                                            <p className="text-sm font-bold truncate text-gray-900">{currentUser?.name}</p>
+                                            {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
+                                            {currentUser?.isTrainingManager && <RoleBadge role="trainingManager" size="xs" />}
+                                        </div>
+                                        <p className="text-xs text-gray-500 truncate font-medium">{currentUser?.email}</p>
+                                    </div>
+                                    <ChevronDown size={16} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
                                 </div>
-                            </div>
+                            </button>
 
-                            {/* Actions Stack */}
-                            <div className="space-y-1">
-                                <div className="w-full">
-                                    <NotificationBell placement="top-right" fullWidth />
+                            {/* Dropdown Menu */}
+                            {showUserMenu && (
+                                <div className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <div className="p-2">
+                                        <button
+                                            onClick={() => {
+                                                setShowUserMenu(false);
+                                                onOpenNotificationsModal();
+                                            }}
+                                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-50 text-gray-700 hover:text-gray-900 transition-all group"
+                                        >
+                                            <div className="relative">
+                                                <Bell size={18} className="text-gray-400 group-hover:text-primary" />
+                                                {unreadCount > 0 && (
+                                                    <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white ring-2 ring-white">
+                                                        {unreadCount}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <span className="text-sm font-medium flex-1">Notificaciones</span>
+                                            {unreadCount > 0 && (
+                                                <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                                    {unreadCount}
+                                                </span>
+                                            )}
+                                        </button>
+                                        <div className="h-px bg-gray-100 my-1"></div>
+                                        <button
+                                            onClick={() => {
+                                                setShowUserMenu(false);
+                                                onOpenPasswordModal();
+                                            }}
+                                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-50 text-gray-700 hover:text-gray-900 transition-all group"
+                                        >
+                                            <Lock size={18} className="text-gray-400 group-hover:text-primary" />
+                                            <span className="text-sm font-medium">Cambiar contraseña</span>
+                                        </button>
+                                        <div className="h-px bg-gray-100 my-1"></div>
+                                        <button
+                                            onClick={() => {
+                                                setShowUserMenu(false);
+                                                handleLogout();
+                                            }}
+                                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50 text-gray-700 hover:text-red-600 transition-all group"
+                                        >
+                                            <LogOut size={18} className="text-gray-400 group-hover:text-red-600" />
+                                            <span className="text-sm font-medium">Cerrar sesión</span>
+                                        </button>
+                                    </div>
                                 </div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="w-full flex items-center justify-center gap-2 py-1.5 px-2 rounded-xl hover:bg-red-50 text-red-600 border-2 border-transparent hover:border-red-100 transition-all duration-200 group"
-                                    title="Cerrar sesión"
-                                >
-                                    <LogOut size={16} className="group-hover:scale-110 transition-transform" />
-                                    <span className="text-xs font-bold">Cerrar sesión</span>
-                                </button>
-                            </div>
+                            )}
                         </div>
                     ) : (
                         <div className="flex flex-col items-center gap-4">
-                            {/* Collapsed View */}
                             <UserAvatar name={currentUser?.name} size="sm" />
-
-                            <div className="relative">
-                                {/* Simplified notification dot for collapsed state could be added here, 
-                                    but for now just the bell icon if we want, or rely on the expanded view. 
-                                    Actually, let's show the bell icon. */}
-                                <NotificationBell placement="top-right" />
-                                {/* Note: NotificationBell text might be too wide for collapsed sidebar. 
-                                    We might need to adjust NotificationBell to be icon-only if collapsed, 
-                                    but I didn't add that prop. Let's just show the avatar and logout for now 
-                                    to keep it simple, or maybe just the avatar. 
-                                    The user asked to "move logout and user info together and add notifications".
-                                    In collapsed mode, space is tight. 
-                                    Let's just show the logout button.
-                                */}
-                            </div>
-
+                            <div className="w-8 h-px bg-gray-200" />
+                            <NotificationBell placement="right" />
                             <button
                                 onClick={handleLogout}
-                                className="p-2 rounded-lg hover:bg-red-50 text-red-600 transition-colors duration-200"
+                                className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors duration-200"
                                 title="Cerrar sesión"
                             >
                                 <LogOut size={20} />
                             </button>
                         </div>
                     )}
-                </div >
+                </div>
 
                 {/* Desktop collapse toggle */}
-                < button
+                <button
                     onClick={onToggleCollapse}
-                    className="hidden md:flex absolute -right-3 top-20 w-6 h-6 bg-card border-2 border-border rounded-full items-center justify-center hover:bg-primary hover:text-white transition-colors duration-200"
+                    className="hidden md:flex absolute -right-3 top-24 w-6 h-6 bg-white border border-gray-200 rounded-full items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-all duration-200 shadow-sm z-50"
                 >
-                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />
-                    }
-                </button >
-            </aside >
+                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+                </button>
+            </aside>
         </>
     );
 }

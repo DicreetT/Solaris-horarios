@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import ChangePasswordModal from './ChangePasswordModal';
+import NotificationsModal from './NotificationsModal';
 
 /**
  * Main layout component
@@ -10,6 +12,8 @@ import Header from './Header';
 function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
+    const [showNotificationsModal, setShowNotificationsModal] = useState(false);
 
     const handleMenuToggle = () => {
         setSidebarOpen(!sidebarOpen);
@@ -31,6 +35,8 @@ function Layout() {
                 onClose={handleCloseSidebar}
                 isCollapsed={sidebarCollapsed}
                 onToggleCollapse={handleToggleCollapse}
+                onOpenPasswordModal={() => setShowPasswordModal(true)}
+                onOpenNotificationsModal={() => setShowNotificationsModal(true)}
             />
 
             {/* Main content area */}
@@ -38,16 +44,26 @@ function Layout() {
                 className={`
           flex-1 flex flex-col
           transition-all duration-300
-          ${sidebarCollapsed ? 'md:ml-16' : 'md:ml-60'}
+          ${sidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}
         `}
             >
                 <Header onMenuToggle={handleMenuToggle} />
 
                 {/* Page content */}
-                <main className="flex-1 p-4 md:p-6 overflow-auto">
+                <main className="flex-1 p-6 md:p-10 overflow-auto">
                     <Outlet />
                 </main>
             </div>
+
+            {/* Modals */}
+            <ChangePasswordModal
+                isOpen={showPasswordModal}
+                onClose={() => setShowPasswordModal(false)}
+            />
+            <NotificationsModal
+                isOpen={showNotificationsModal}
+                onClose={() => setShowNotificationsModal(false)}
+            />
         </div>
     );
 }

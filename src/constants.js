@@ -63,6 +63,7 @@ export const DRIVE_FOLDERS = [
     {
         id: "inventario",
         label: "Carpeta de inventario",
+        description: "Gestión y control de stock y existencias.",
         emoji: "📦",
         url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
         users: ["anabella", "itzi", "esteban", "contable"],
@@ -70,13 +71,15 @@ export const DRIVE_FOLDERS = [
     {
         id: "conteo",
         label: "Conteo Canet lunes",
-        emoji: "📦",
+        description: "Registro semanal de conteo en la sede Canet.",
+        emoji: "📊",
         url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
         users: ["anabella", "itzi", "esteban", "thalia"],
     },
     {
         id: "etiquetas",
         label: "Carpeta de etiquetas",
+        description: "Archivos de impresión y diseño de etiquetas.",
         emoji: "🏷️",
         url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
         users: ["anabella", "esteban", "itzi", "fer"],
@@ -84,6 +87,7 @@ export const DRIVE_FOLDERS = [
     {
         id: "facturacion",
         label: "Carpeta de facturación",
+        description: "Documentos, facturas y registros contables.",
         emoji: "📑",
         url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
         users: ["esteban", "itzi", "contable"],

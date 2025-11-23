@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
+import { XCircle, CheckSquare } from 'lucide-react';
 
 /**
  * Modal To-Do Creation
@@ -48,32 +49,37 @@ export default function TodoModal({ onClose }) {
     }
 
     return (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]" onClick={onClose}>
+        <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+            onClick={onClose}
+        >
             <div
-                className="bg-card p-6 rounded-[24px] w-[90%] max-w-[500px] shadow-lg border-2 border-border animate-[popIn_0.2s_ease-out]"
+                className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold">Crear nueva tarea</h2>
+                <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-black text-gray-900 tracking-tight">Crear nueva tarea</h2>
                     <button
                         type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 hover:bg-[#fff8ee] transition-colors"
+                        className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
                         onClick={onClose}
                     >
-                        ✕
+                        <XCircle size={24} />
                     </button>
                 </div>
 
-                <p className="text-sm text-[#444] mb-4 leading-relaxed">
+                <p className="text-gray-500 mb-6 font-medium">
                     Crea tareas, asígnalas a tus compañeros y marca cada una cuando esté hecha.
                     Cuando todas las personas asignadas la marcan, la tarea se considera completada por el equipo. ✨
                 </p>
 
-                <form onSubmit={handleSubmit}>
-                    <div className="mb-3">
-                        <label className="block text-xs font-semibold mb-1">Título de la tarea</label>
+                <form onSubmit={handleSubmit} className="space-y-5">
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                            Título de la tarea *
+                        </label>
                         <input
-                            className="w-full rounded-[10px] border-2 border-border p-2 text-sm font-inherit focus:border-primary focus:outline-none"
+                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
                             placeholder="Ej.: Revisar manual de acogida, preparar informe, etc."
@@ -81,53 +87,72 @@ export default function TodoModal({ onClose }) {
                         />
                     </div>
 
-                    <div className="mb-3">
-                        <label className="block text-xs font-semibold mb-1">Descripción (opcional)</label>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                            Descripción (opcional)
+                        </label>
                         <textarea
-                            className="w-full rounded-[10px] border-2 border-border p-2 text-sm font-inherit resize-y min-h-[60px] focus:border-primary focus:outline-none"
+                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             placeholder="Detalles, pasos, enlaces…"
                         />
                     </div>
 
-                    <div className="mb-3">
-                        <label className="block text-xs font-semibold mb-1">Fecha objetivo (opcional)</label>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                            Fecha objetivo (opcional)
+                        </label>
                         <input
-                            className="w-full rounded-[10px] border-2 border-border p-2 text-sm font-inherit focus:border-primary focus:outline-none"
+                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                             type="date"
                             value={dueDate}
                             onChange={(e) => setDueDate(e.target.value)}
                         />
                     </div>
 
-                    <div className="mb-4">
-                        <label className="block text-xs font-semibold mb-2">Asignar a</label>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                            Asignar a
+                        </label>
                         <div className="flex flex-wrap gap-2">
                             {USERS.map((u) => (
-                                <label key={u.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 border-border bg-white text-xs cursor-pointer hover:bg-[#fff8ee] transition-colors">
+                                <label
+                                    key={u.id}
+                                    className={`
+                                        inline-flex items-center gap-2 px-3 py-2 rounded-xl
+                                        text-xs font-medium cursor-pointer
+                                        transition-all
+                                        ${assignedIds.includes(u.id)
+                                            ? 'bg-primary/10 text-primary border-2 border-primary'
+                                            : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
+                                        }
+                                    `}
+                                >
                                     <input
                                         type="checkbox"
                                         checked={assignedIds.includes(u.id)}
                                         onChange={() => handleToggleAssigned(u.id)}
+                                        className="sr-only"
                                     />
+                                    {assignedIds.includes(u.id) && <CheckSquare size={14} />}
                                     {u.name}
                                 </label>
                             ))}
                         </div>
                     </div>
 
-                    <div className="flex gap-2 justify-end">
+                    <div className="flex gap-3 pt-4">
                         <button
                             type="button"
-                            className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-transparent hover:bg-[#fff8ee] transition-colors"
                             onClick={onClose}
+                            className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
                         >
                             Cancelar
                         </button>
                         <button
                             type="submit"
-                            className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
+                            className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                         >
                             ✨ Crear tarea
                         </button>

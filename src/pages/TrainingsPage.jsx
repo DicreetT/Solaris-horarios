@@ -4,7 +4,7 @@ import { useTraining } from '../hooks/useTraining';
 import { useNotifications } from '../hooks/useNotifications';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
-import { Plus } from 'lucide-react';
+import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
 /**
@@ -120,79 +120,103 @@ function TrainingsPage() {
     }
 
     return (
-        <div className="max-w-6xl">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold mb-2">Formación en Servicios Digitales</h1>
-                <p className="text-[#666]">
-                    {isTrainingManager
-                        ? 'Gestiona las solicitudes de formación del equipo'
-                        : 'Solicita sesiones de formación con Esteban'}
-                </p>
+        <div className="max-w-6xl mx-auto pb-10">
+            {/* Header */}
+            <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-blue-600">
+                        <GraduationCap size={32} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                            Formaciones
+                        </h1>
+                        <p className="text-gray-500 font-medium">
+                            {isTrainingManager
+                                ? 'Gestiona las solicitudes de formación del equipo'
+                                : 'Solicita sesiones de formación con Esteban'}
+                        </p>
+                    </div>
+                </div>
+                {!isTrainingManager && (
+                    <button
+                        onClick={() => setShowModal(true)}
+                        className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                    >
+                        <Plus size={20} />
+                        Solicitar formación
+                    </button>
+                )}
             </div>
 
             {/* User view - training requests and create button */}
             {!isTrainingManager && (
-                <>
-                    {/* Training requests list */}
-                    <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-6 mb-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold">Tus solicitudes de formación</h2>
-                            <button
-                                onClick={() => setShowModal(true)}
-                                className="rounded-full border-2 border-border px-4 py-2.5 text-sm font-semibold cursor-pointer inline-flex items-center gap-2 bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
-                            >
-                                <Plus size={16} />
-                                Solicitar formación
-                            </button>
-                        </div>
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
+                    <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                        <h2 className="text-xl font-bold text-gray-900">Tus solicitudes</h2>
+                        <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-lg border border-gray-200 shadow-sm">
+                            {userRequests.length} {userRequests.length === 1 ? 'solicitud' : 'solicitudes'}
+                        </span>
+                    </div>
 
+                    <div className="p-6">
                         {userRequests.length === 0 ? (
-                            <p className="text-sm text-[#666] italic">
-                                No tienes solicitudes de formación.
-                            </p>
+                            <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                                <GraduationCap size={48} className="mx-auto text-gray-300 mb-3" />
+                                <p className="text-gray-500 font-medium">No tienes solicitudes de formación.</p>
+                            </div>
                         ) : (
-                            <div className="flex flex-col gap-3">
+                            <div className="grid gap-4">
                                 {userRequests.map((req) => {
                                     const comments = req.comments || [];
                                     return (
                                         <div
                                             key={req.id}
-                                            className="bg-[#faf5ff] border-2 border-border rounded-xl p-3"
+                                            className="bg-white border border-gray-100 rounded-2xl p-5 hover:border-blue-200 hover:shadow-md transition-all duration-200"
                                         >
-                                            <div className="flex items-start justify-between mb-2">
-                                                <div className="flex-1">
-                                                    <strong className="text-sm">
-                                                        Formación para el día {req.scheduledDateKey}
-                                                    </strong>
-                                                    <div className="text-xs text-[#666] mt-1">
-                                                        Estado:{' '}
-                                                        <strong>
-                                                            {req.status === 'pending' && 'Pendiente de respuesta'}
+                                            <div className="flex items-start justify-between mb-4">
+                                                <div>
+                                                    <div className="flex items-center gap-3 mb-2">
+                                                        <h3 className="text-lg font-bold text-gray-900">
+                                                            Formación para el día {req.scheduledDateKey}
+                                                        </h3>
+                                                        <span className={`
+                                                            inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                            ${req.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                            ${req.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                            ${req.status === 'rescheduled' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}
+                                                        `}>
+                                                            {req.status === 'pending' && <Clock size={12} />}
+                                                            {req.status === 'accepted' && <CheckCircle size={12} />}
+                                                            {req.status === 'rescheduled' && <RefreshCw size={12} />}
+                                                            {req.status === 'pending' && 'Pendiente'}
                                                             {req.status === 'accepted' && 'Aceptada'}
-                                                            {req.status === 'rescheduled' &&
-                                                                `Reprogramada para el día ${req.scheduledDateKey}`}
-                                                        </strong>
+                                                            {req.status === 'rescheduled' && 'Reprogramada'}
+                                                        </span>
                                                     </div>
                                                 </div>
                                                 {req.status === 'pending' && (
                                                     <button
-                                                        type="button"
-                                                        className="rounded-full border-2 border-[#fecaca] px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] hover:bg-[#fecaca] transition-colors"
                                                         onClick={() => handleDeleteTraining(req.id)}
+                                                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                                                         title="Eliminar solicitud"
                                                     >
-                                                        ✕
+                                                        <Trash2 size={18} />
                                                     </button>
                                                 )}
                                             </div>
 
-                                            {/* Chat */}
-                                            <div className="mt-1.5 rounded-[10px] border border-[#e5e7eb] bg-white p-1.5 max-h-[180px] flex flex-col gap-1">
-                                                <div className="flex-1 overflow-y-auto pr-1">
+                                            {/* Chat Section */}
+                                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                                                <div className="flex items-center gap-2 mb-3 text-sm font-bold text-gray-700">
+                                                    <MessageCircle size={16} />
+                                                    Chat con Esteban
+                                                </div>
+
+                                                <div className="space-y-3 mb-4 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                                                     {comments.length === 0 && (
-                                                        <p className="text-xs text-[#666]">
-                                                            Puedes escribir a Esteban para acordar la hora o detalles de
-                                                            la formación.
+                                                        <p className="text-sm text-gray-400 italic text-center py-2">
+                                                            No hay mensajes. Escribe para coordinar detalles.
                                                         </p>
                                                     )}
                                                     {comments.map((c, idx) => {
@@ -201,35 +225,39 @@ function TrainingsPage() {
                                                         return (
                                                             <div
                                                                 key={idx}
-                                                                className={
-                                                                    'flex flex-col mb-1 ' +
-                                                                    (isMe ? 'items-end' : 'items-start')
-                                                                }
+                                                                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
                                                             >
-                                                                <div
-                                                                    className={
-                                                                        'inline-block px-2 py-1.5 rounded-[10px] border border-border text-xs max-w-full ' +
-                                                                        (isMe ? 'bg-[#dcfce7] self-end' : 'bg-[#eef2ff]')
-                                                                    }
-                                                                >
-                                                                    <div className="flex items-center gap-1 mb-0.5">
-                                                                        <UserAvatar name={author?.name} size="xs" />
-                                                                        <strong>{author?.name || c.by}</strong>
+                                                                <div className={`flex items-end gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                                                                    {!isMe && <UserAvatar name={author?.name || c.by} size="xs" />}
+                                                                    <div
+                                                                        className={`
+                                                                            px-3 py-2 rounded-2xl text-sm max-w-[85%]
+                                                                            ${isMe
+                                                                                ? 'bg-blue-100 text-blue-900 rounded-tr-none'
+                                                                                : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none shadow-sm'
+                                                                            }
+                                                                        `}
+                                                                    >
+                                                                        {!isMe && (
+                                                                            <div className="text-xs font-bold text-gray-500 mb-1">
+                                                                                {author?.name || c.by}
+                                                                            </div>
+                                                                        )}
+                                                                        {c.text}
                                                                     </div>
-                                                                    <br />
-                                                                    {c.text}
                                                                 </div>
-                                                                <div className="text-[0.65rem] text-[#666] mt-[2px]">
+                                                                <span className="text-[10px] text-gray-400 mt-1 px-1">
                                                                     {c.at}
-                                                                </div>
+                                                                </span>
                                                             </div>
                                                         );
                                                     })}
                                                 </div>
-                                                <div className="flex gap-1 mt-1">
+
+                                                <div className="flex gap-2">
                                                     <input
                                                         type="text"
-                                                        className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
+                                                        className="flex-1 rounded-xl border border-gray-200 p-2.5 text-sm focus:border-primary focus:outline-none transition-colors"
                                                         placeholder="Escribe un mensaje..."
                                                         value={messageDrafts[req.id] || ''}
                                                         onChange={(e) =>
@@ -238,11 +266,13 @@ function TrainingsPage() {
                                                                 [req.id]: e.target.value,
                                                             }))
                                                         }
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') sendMessage(req.id);
+                                                        }}
                                                     />
                                                     <button
-                                                        type="button"
-                                                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
                                                         onClick={() => sendMessage(req.id)}
+                                                        className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm"
                                                     >
                                                         Enviar
                                                     </button>
@@ -254,196 +284,217 @@ function TrainingsPage() {
                             </div>
                         )}
                     </div>
-                </>
+                </div>
             )}
 
             {/* Training Manager view (Esteban only) */}
             {isTrainingManager && (
-                <div className="bg-card p-6 rounded-[24px] shadow-lg border-2 border-border">
-                    <div className="text-lg font-bold mb-2">Solicitudes de formación</div>
-                    <div className="text-sm text-[#444] mb-4 leading-relaxed">
-                        Aquí ves las solicitudes de formación del equipo. Puedes aceptar, reprogramar
-                        o coordinar detalles mediante el chat.
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 bg-blue-50/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold text-gray-900">Panel de administración</h2>
+                            <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded border border-blue-200 font-bold">
+                                MANAGER
+                            </span>
+                        </div>
                     </div>
 
-                    {sortedRequests.length === 0 ? (
-                        <p className="text-xs text-[#666]">
-                            No hay solicitudes de formación por ahora.
-                        </p>
-                    ) : (
-                        sortedRequests.map((req) => {
-                            const person = USERS.find((u) => u.id === req.userId);
-                            const comments = req.comments || [];
-                            return (
-                                <div key={req.id} className="border-t border-[#e5e7eb] pt-1.5 mt-1.5">
-                                    <div className="flex justify-between">
-                                        <span className="flex items-center gap-2">
-                                            <UserAvatar name={person?.name} size="sm" />
-                                            <strong>{person?.name || req.userId}</strong>
-                                        </span>
-                                        <span className="inline-flex items-center px-2 py-[2px] rounded-full border border-border text-[0.7rem] bg-[#eef2ff] mt-1">
-                                            {req.status === 'pending' && 'Pendiente'}
-                                            {req.status === 'accepted' && 'Aceptada'}
-                                            {req.status === 'rescheduled' && 'Reprogramada'}
-                                        </span>
-                                    </div>
-
-                                    <div className="text-xs text-[#666] mt-0.5">
-                                        Fecha solicitada: {req.requestedDateKey}
-                                    </div>
-
-                                    {req.status === 'rescheduled' &&
-                                        req.scheduledDateKey !== req.requestedDateKey && (
-                                            <p className="text-xs text-[#666]">
-                                                Reprogramada para el día {req.scheduledDateKey}
-                                            </p>
-                                        )}
-
-                                    {/* Chat */}
-                                    <div className="mt-1.5 rounded-[10px] border border-[#e5e7eb] bg-white p-1.5 max-h-[180px] flex flex-col gap-1">
-                                        <div className="flex-1 overflow-y-auto pr-1">
-                                            {comments.length === 0 && (
-                                                <p className="text-xs text-[#666]">
-                                                    Aún no hay mensajes. Puedes escribir para coordinar la hora o el
-                                                    contenido de la formación.
-                                                </p>
-                                            )}
-                                            {comments.map((c, idx) => {
-                                                const isMe = c.by === currentUser.id;
-                                                const author = USERS.find((u) => u.id === c.by);
-                                                return (
-                                                    <div
-                                                        key={idx}
-                                                        className={
-                                                            'flex flex-col mb-1 ' + (isMe ? 'items-end' : 'items-start')
-                                                        }
-                                                    >
-                                                        <div
-                                                            className={
-                                                                'inline-block px-2 py-1.5 rounded-[10px] border border-border text-xs max-w-full ' +
-                                                                (isMe ? 'bg-[#dcfce7] self-end' : 'bg-[#eef2ff]')
-                                                            }
-                                                        >
-                                                            <div className="flex items-center gap-1 mb-0.5">
-                                                                <UserAvatar name={author?.name} size="xs" />
-                                                                <strong>{author?.name || c.by}</strong>
-                                                            </div>
-                                                            <br />
-                                                            {c.text}
+                    <div className="p-6">
+                        {sortedRequests.length === 0 ? (
+                            <p className="text-center text-gray-500 py-8">No hay solicitudes de formación por ahora.</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {sortedRequests.map((req) => {
+                                    const person = USERS.find((u) => u.id === req.userId);
+                                    const comments = req.comments || [];
+                                    return (
+                                        <div key={req.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                                            <div className="flex items-start justify-between mb-4">
+                                                <div className="flex items-center gap-3">
+                                                    <UserAvatar name={person?.name} size="md" />
+                                                    <div>
+                                                        <h3 className="font-bold text-gray-900 text-lg">{person?.name || req.userId}</h3>
+                                                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                                                            <Calendar size={14} />
+                                                            <span>Solicita: <strong>{req.requestedDateKey}</strong></span>
                                                         </div>
-                                                        <div className="text-[0.65rem] text-[#666] mt-[2px]">{c.at}</div>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
-                                        <div className="flex gap-1 mt-1">
-                                            <input
-                                                type="text"
-                                                className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-sm font-inherit"
-                                                placeholder="Escribe un mensaje..."
-                                                value={messageDrafts[req.id] || ''}
-                                                onChange={(e) =>
-                                                    setMessageDrafts((prev) => ({
-                                                        ...prev,
-                                                        [req.id]: e.target.value,
-                                                    }))
-                                                }
-                                            />
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
-                                                onClick={() => sendMessage(req.id)}
-                                            >
-                                                Enviar
-                                            </button>
-                                        </div>
-                                    </div>
+                                                </div>
+                                                <span className={`
+                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                    ${req.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                    ${req.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                    ${req.status === 'rescheduled' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}
+                                                `}>
+                                                    {req.status === 'pending' && 'Pendiente'}
+                                                    {req.status === 'accepted' && 'Aceptada'}
+                                                    {req.status === 'rescheduled' && 'Reprogramada'}
+                                                </span>
+                                            </div>
 
-                                    <div className="flex gap-1.5 mt-1.5">
-                                        <button
-                                            type="button"
-                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-white inline-flex items-center gap-1.5"
-                                            onClick={() => handleAcceptTraining(req.id)}
-                                        >
-                                            Aceptar
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                                            onClick={() => handleRescheduleTraining(req.id)}
-                                        >
-                                            Reprogramar
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] border-[#fecaca] hover:bg-[#fecaca]"
-                                            onClick={() => handleDeleteTraining(req.id)}
-                                        >
-                                            Eliminar
-                                        </button>
-                                    </div>
-                                </div>
-                            );
-                        })
-                    )}
+                                            {req.status === 'rescheduled' &&
+                                                req.scheduledDateKey !== req.requestedDateKey && (
+                                                    <div className="mb-4 bg-blue-50 text-blue-800 text-sm px-3 py-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                                                        <RefreshCw size={14} />
+                                                        Reprogramada para el día <strong>{req.scheduledDateKey}</strong>
+                                                    </div>
+                                                )}
+
+                                            {/* Chat Section */}
+                                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 mb-4">
+                                                <div className="space-y-3 mb-4 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                                    {comments.length === 0 && (
+                                                        <p className="text-sm text-gray-400 italic text-center py-2">
+                                                            No hay mensajes.
+                                                        </p>
+                                                    )}
+                                                    {comments.map((c, idx) => {
+                                                        const isMe = c.by === currentUser.id;
+                                                        const author = USERS.find((u) => u.id === c.by);
+                                                        return (
+                                                            <div
+                                                                key={idx}
+                                                                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                                                            >
+                                                                <div className={`flex items-end gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                                                                    {!isMe && <UserAvatar name={author?.name || c.by} size="xs" />}
+                                                                    <div
+                                                                        className={`
+                                                                            px-3 py-2 rounded-2xl text-sm max-w-[85%]
+                                                                            ${isMe
+                                                                                ? 'bg-blue-100 text-blue-900 rounded-tr-none'
+                                                                                : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none shadow-sm'
+                                                                            }
+                                                                        `}
+                                                                    >
+                                                                        {!isMe && (
+                                                                            <div className="text-xs font-bold text-gray-500 mb-1">
+                                                                                {author?.name || c.by}
+                                                                            </div>
+                                                                        )}
+                                                                        {c.text}
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-[10px] text-gray-400 mt-1 px-1">
+                                                                    {c.at}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        className="flex-1 rounded-xl border border-gray-200 p-2.5 text-sm focus:border-primary focus:outline-none transition-colors"
+                                                        placeholder="Escribe un mensaje..."
+                                                        value={messageDrafts[req.id] || ''}
+                                                        onChange={(e) =>
+                                                            setMessageDrafts((prev) => ({
+                                                                ...prev,
+                                                                [req.id]: e.target.value,
+                                                            }))
+                                                        }
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') sendMessage(req.id);
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={() => sendMessage(req.id)}
+                                                        className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm"
+                                                    >
+                                                        Enviar
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex gap-2 pt-2 border-t border-gray-100">
+                                                <button
+                                                    onClick={() => handleAcceptTraining(req.id)}
+                                                    className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
+                                                >
+                                                    Aceptar
+                                                </button>
+                                                <button
+                                                    onClick={() => handleRescheduleTraining(req.id)}
+                                                    className="flex-1 py-2 px-3 rounded-xl bg-blue-50 text-blue-700 font-bold text-xs hover:bg-blue-100 transition-colors border border-blue-200"
+                                                >
+                                                    Reprogramar
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteTraining(req.id)}
+                                                    className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
+                                                >
+                                                    Eliminar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
             {/* Training creation modal */}
             {showModal && (
                 <div
-                    className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] p-4"
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
                     onClick={() => setShowModal(false)}
                 >
                     <div
-                        className="bg-card border-2 border-border rounded-[20px] shadow-lg p-6 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold">Solicitar sesión de formación</h2>
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar formación</h2>
                             <button
                                 type="button"
-                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 hover:bg-[#fff8ee] transition-colors"
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
                                 onClick={() => setShowModal(false)}
                             >
-                                ✕
+                                <XCircle size={24} />
                             </button>
                         </div>
 
-                        <p className="text-sm text-[#666] mb-4 leading-relaxed">
-                            Solicita una formación con Esteban. Él revisará tu solicitud y la aceptará o te propondrá otra fecha.
+                        <p className="text-gray-500 mb-6 font-medium">
+                            Solicita una formación con Esteban. Él revisará tu solicitud.
                         </p>
 
-                        <div className="mb-4">
-                            <label className="block text-sm font-semibold mb-2">Fecha</label>
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-gray-900 mb-2">Fecha deseada</label>
                             <input
                                 type="date"
                                 value={selectedDateKey}
                                 onChange={handleDateChange}
-                                className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                             />
                         </div>
 
-                        <div className="mb-4">
-                            <p className="text-sm text-[#666]">
-                                💡 La hora exacta se coordinará con Esteban mediante el chat una vez aceptada la solicitud.
+                        <div className="mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3">
+                            <div className="text-blue-500 shrink-0 mt-0.5">
+                                <Clock size={20} />
+                            </div>
+                            <p className="text-sm text-blue-800 font-medium">
+                                La hora exacta se coordinará con Esteban mediante el chat una vez aceptada la solicitud.
                             </p>
                         </div>
 
-                        <div className="flex gap-2 justify-end">
+                        <div className="flex gap-3">
                             <button
                                 type="button"
                                 onClick={() => setShowModal(false)}
-                                className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-white hover:bg-gray-50 transition-colors"
+                                className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
                             >
                                 Cancelar
                             </button>
                             <button
                                 type="button"
                                 onClick={handleCreateTrainingRequest}
-                                className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
+                                className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                             >
-                                ✨ Solicitar formación
+                                Solicitar
                             </button>
                         </div>
                     </div>

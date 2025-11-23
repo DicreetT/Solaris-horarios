@@ -89,11 +89,28 @@ export function useNotifications(currentUser) {
         },
     });
 
+    const markAsReadMutation = useMutation({
+        mutationFn: async (notificationId) => {
+            if (!currentUser || !notificationId) return;
+            const { error } = await supabase
+                .from('notifications')
+                .update({ read: true })
+                .eq('id', notificationId)
+                .eq('user_id', currentUser.id);
+
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries(['notifications', currentUser?.id]);
+        },
+    });
+
     return {
         notifications,
         isLoading,
         error,
         addNotification: addNotificationMutation.mutateAsync,
         markAllAsRead: markAllReadMutation.mutateAsync,
+        markAsRead: markAsReadMutation.mutateAsync,
     };
 }

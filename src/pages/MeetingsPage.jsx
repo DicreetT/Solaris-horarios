@@ -3,13 +3,14 @@ import { useAuth } from '../context/AuthContext';
 import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
-import { Plus } from 'lucide-react';
+import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
+import { RoleBadge } from '../components/RoleBadge';
 
 /**
  * Meetings page
  * Shows user's meeting requests and allows creating new ones via modal
- * Admin panel for Thalia to manage all requests
+ * Admin panel to manage all requests
  */
 function MeetingsPage() {
     const { currentUser } = useAuth();
@@ -91,267 +92,313 @@ function MeetingsPage() {
     }
 
     return (
-        <div className="max-w-6xl">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold mb-2">Reuniones</h1>
-                <p className="text-[#666]">
-                    {isAdmin
-                        ? 'Gestiona las solicitudes de reunión del equipo'
-                        : 'Gestiona tus solicitudes de reunión'}
-                </p>
+        <div className="max-w-6xl mx-auto pb-10">
+            {/* Header */}
+            <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-indigo-600">
+                        <Users size={32} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                            Reuniones
+                        </h1>
+                        <p className="text-gray-500 font-medium">
+                            {isAdmin
+                                ? 'Gestiona las solicitudes de reunión del equipo'
+                                : 'Gestiona tus solicitudes de reunión'}
+                        </p>
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShowModal(true)}
+                    className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                >
+                    <Plus size={20} />
+                    Solicitar reunión
+                </button>
             </div>
 
             {/* User view - meetings list */}
-            <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-6 mb-6">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold">Tus solicitudes de reunión</h2>
-                    <button
-                        onClick={() => setShowModal(true)}
-                        className="rounded-full border-2 border-border px-4 py-2.5 text-sm font-semibold cursor-pointer inline-flex items-center gap-2 bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
-                    >
-                        <Plus size={16} />
-                        Solicitar reunión
-                    </button>
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
+                <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <h2 className="text-xl font-bold text-gray-900">Tus solicitudes</h2>
+                    <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-lg border border-gray-200 shadow-sm">
+                        {userMeetings.length} {userMeetings.length === 1 ? 'solicitud' : 'solicitudes'}
+                    </span>
                 </div>
 
-                {userMeetings.length === 0 ? (
-                    <p className="text-sm text-[#666] italic">
-                        No tienes solicitudes de reunión.
-                    </p>
-                ) : (
-                    <div className="flex flex-col gap-3">
-                        {userMeetings.map((m) => {
-                            const participantsNames = (m.participants || [])
-                                .map((id) => USERS.find((u) => u.id === id)?.name || id)
-                                .join(", ");
+                <div className="p-6">
+                    {userMeetings.length === 0 ? (
+                        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <Users size={48} className="mx-auto text-gray-300 mb-3" />
+                            <p className="text-gray-500 font-medium">No tienes solicitudes de reunión.</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-4">
+                            {userMeetings.map((m) => {
+                                const participantsNames = (m.participants || [])
+                                    .map((id) => USERS.find((u) => u.id === id)?.name || id)
+                                    .join(", ");
 
-                            return (
-                                <div
-                                    key={m.id}
-                                    className="bg-[#fafaf9] border-2 border-border rounded-xl p-3"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                            <strong className="text-sm">{m.title}</strong>
-                                            {m.description && (
-                                                <div className="text-xs text-[#666] mt-1">
-                                                    Motivo: {m.description}
+                                return (
+                                    <div
+                                        key={m.id}
+                                        className="group bg-white border border-gray-100 rounded-2xl p-5 hover:border-indigo-200 hover:shadow-md transition-all duration-200"
+                                    >
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <h3 className="text-lg font-bold text-gray-900 truncate">{m.title}</h3>
+                                                    <span className={`
+                                                        inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                        ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                        ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                        ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                    `}>
+                                                        {m.status === 'pending' && <Clock size={12} />}
+                                                        {m.status === 'scheduled' && <CheckCircle size={12} />}
+                                                        {m.status === 'rejected' && <XCircle size={12} />}
+                                                        {m.status === 'pending' && "Pendiente"}
+                                                        {m.status === 'scheduled' && "Programada"}
+                                                        {m.status === 'rejected' && "Rechazada"}
+                                                    </span>
                                                 </div>
+
+                                                {m.description && (
+                                                    <p className="text-gray-600 text-sm mb-3 line-clamp-2">
+                                                        {m.description}
+                                                    </p>
+                                                )}
+
+                                                <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                                                    <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                                        <Calendar size={14} className="text-gray-400" />
+                                                        <span className="font-medium">Pref: {m.preferredDateKey} ({m.preferredSlot})</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                                        <Users size={14} className="text-gray-400" />
+                                                        <div className="flex items-center gap-1">
+                                                            {(m.participants || []).map(pid => {
+                                                                const p = USERS.find(u => u.id === pid);
+                                                                return (
+                                                                    <div key={pid} className="flex items-center gap-1" title={p?.name || pid}>
+                                                                        <UserAvatar name={p?.name || pid} size="xs" />
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {m.responseMessage && (
+                                                    <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                                        <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                                                        <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.responseMessage}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {m.status === 'pending' && m.createdBy === currentUser.id && (
+                                                <button
+                                                    onClick={() => handleDeleteMeeting(m.id)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                    title="Eliminar solicitud"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
                                             )}
-                                            <div className="text-xs text-[#666] mt-1">
-                                                Fecha preferida: {m.preferredDateKey} · Franja: {m.preferredSlot}
-                                            </div>
-                                            <div className="text-xs text-[#666] mt-1">
-                                                Participantes: {participantsNames || "—"}
-                                            </div>
-                                            <div className="text-xs text-[#666] mt-1">
-                                                Estado:{" "}
-                                                <strong>
-                                                    {m.status === "pending" && "Pendiente"}
-                                                    {m.status === "scheduled" && "Programada"}
-                                                    {m.status === "rejected" && "Rechazada"}
-                                                </strong>
-                                                {m.responseMessage && ` · Nota: ${m.responseMessage}`}
-                                            </div>
-                                            <div className="text-xs text-[#888] mt-1">
-                                                Solicitado el{" "}
-                                                {new Date(m.createdAt).toLocaleString("es-ES", {
-                                                    dateStyle: "short",
-                                                    timeStyle: "short",
-                                                })}
-                                            </div>
                                         </div>
-                                        {m.status === 'pending' && m.createdBy === currentUser.id && (
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-[#fecaca] px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] hover:bg-[#fecaca] transition-colors"
-                                                onClick={() => handleDeleteMeeting(m.id)}
-                                                title="Eliminar solicitud"
-                                            >
-                                                ✕
-                                            </button>
-                                        )}
                                     </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Admin view - all requests (Admin only) */}
             {isAdmin && (
-                <div className="bg-card p-6 rounded-[24px] shadow-lg border-2 border-border">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="text-lg font-bold">Panel de administración</div>
-                        <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded border border-amber-200 font-bold">
-                            ADMIN
-                        </span>
-                    </div>
-                    <div className="text-sm text-[#444] mb-4 leading-relaxed">
-                        Aquí ves todas las solicitudes de reunión del equipo. Puedes marcarlas
-                        como programadas o rechazarlas dejando un comentario.
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 bg-amber-50/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold text-gray-900">Panel de administración</h2>
+                            <RoleBadge role="admin" size="sm" />
+                        </div>
                     </div>
 
-                    {sortedRequests.length === 0 ? (
-                        <p className="text-xs text-[#666]">No hay solicitudes de reunión por ahora.</p>
-                    ) : (
-                        sortedRequests.map((m) => {
-                            const creator = USERS.find((u) => u.id === m.createdBy);
-                            const participantsNames = (m.participants || [])
-                                .map((id) => USERS.find((u) => u.id === id)?.name || id)
-                                .join(", ");
+                    <div className="p-6">
+                        {sortedRequests.length === 0 ? (
+                            <p className="text-center text-gray-500 py-8">No hay solicitudes de reunión por ahora.</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {sortedRequests.map((m) => {
+                                    const creator = USERS.find((u) => u.id === m.createdBy);
+                                    const participantsNames = (m.participants || [])
+                                        .map((id) => USERS.find((u) => u.id === id)?.name || id)
+                                        .join(", ");
 
-                            return (
-                                <div
-                                    key={m.id}
-                                    className="border-t border-[#e5e7eb] pt-1.5 mt-1.5"
-                                >
-                                    <strong>{m.title}</strong>
-                                    <div className="text-xs text-[#666] flex items-center gap-1 mt-1">
-                                        <span>Solicitada por</span>
-                                        <div className="flex items-center gap-1">
-                                            <UserAvatar name={creator?.name} size="xs" />
-                                            <strong>{creator?.name || m.createdBy}</strong>
-                                        </div>
-                                        <span>el {new Date(m.createdAt).toLocaleString("es-ES", {
-                                            dateStyle: "short",
-                                            timeStyle: "short",
-                                        })}</span>
-                                    </div>
-                                    {m.description && (
-                                        <div className="text-xs text-[#666] mt-0.5">
-                                            Motivo: {m.description}
-                                        </div>
-                                    )}
-                                    <div className="text-xs text-[#666]">
-                                        Fecha preferida: {m.preferredDateKey} · Franja:{" "}
-                                        {m.preferredSlot}
-                                    </div>
-                                    <div className="text-xs text-[#666]">
-                                        Participantes: {participantsNames || "—"}
-                                    </div>
-                                    <div className="text-xs text-[#666] mt-0.5">
-                                        Estado:{" "}
-                                        <strong>
-                                            {m.status === "pending" && "Pendiente"}
-                                            {m.status === "scheduled" && "Programada"}
-                                            {m.status === "rejected" && "Rechazada"}
-                                        </strong>
-                                        {m.responseMessage && ` · Nota: ${m.responseMessage}`}
-                                    </div>
+                                    return (
+                                        <div
+                                            key={m.id}
+                                            className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
+                                        >
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="flex items-center gap-3">
+                                                    <UserAvatar name={creator?.name} size="sm" />
+                                                    <div>
+                                                        <p className="font-bold text-gray-900">{creator?.name || m.createdBy}</p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {new Date(m.createdAt).toLocaleString("es-ES", {
+                                                                dateStyle: "short",
+                                                                timeStyle: "short",
+                                                            })}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`
+                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                    ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                    ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                    ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                `}>
+                                                    {m.status === 'pending' && "Pendiente"}
+                                                    {m.status === 'scheduled' && "Programada"}
+                                                    {m.status === 'rejected' && "Rechazada"}
+                                                </span>
+                                            </div>
 
-                                    {m.status === "pending" && (
-                                        <div className="flex gap-1.5 mt-1">
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-white hover:bg-[#f3f4f6]"
-                                                onClick={() =>
-                                                    handleUpdateStatus(m.id, {
-                                                        status: "scheduled",
-                                                        scheduledDateKey: m.preferredDateKey,
-                                                    })
-                                                }
-                                            >
-                                                Marcar como programada
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                                                onClick={() => {
-                                                    const msg = window.prompt(
-                                                        "Motivo del rechazo (opcional):",
-                                                        ""
-                                                    );
-                                                    handleUpdateStatus(m.id, {
-                                                        status: "rejected",
-                                                        responseMessage: msg || "",
-                                                    });
-                                                }}
-                                            >
-                                                Rechazar
-                                            </button>
+                                            <h3 className="font-bold text-gray-900 mb-1">{m.title}</h3>
+                                            {m.description && (
+                                                <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                                    {m.description}
+                                                </p>
+                                            )}
+
+                                            <div className="grid grid-cols-2 gap-4 text-xs text-gray-500 mb-4">
+                                                <div>
+                                                    <span className="font-bold text-gray-700 block mb-0.5">Fecha preferida</span>
+                                                    {m.preferredDateKey} ({m.preferredSlot})
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold text-gray-700 block mb-0.5">Participantes</span>
+                                                    {participantsNames || "—"}
+                                                </div>
+                                            </div>
+
+                                            {m.status === "pending" && (
+                                                <div className="flex gap-2 pt-3 border-t border-gray-100">
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
+                                                        onClick={() =>
+                                                            handleUpdateStatus(m.id, {
+                                                                status: "scheduled",
+                                                                scheduledDateKey: m.preferredDateKey,
+                                                            })
+                                                        }
+                                                    >
+                                                        Aceptar y Programar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
+                                                        onClick={() => {
+                                                            const msg = window.prompt(
+                                                                "Motivo del rechazo (opcional):",
+                                                                ""
+                                                            );
+                                                            handleUpdateStatus(m.id, {
+                                                                status: "rejected",
+                                                                responseMessage: msg || "",
+                                                            });
+                                                        }}
+                                                    >
+                                                        Rechazar
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })
-                    )}
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
             {/* Meeting creation modal */}
             {showModal && (
                 <div
-                    className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] p-4"
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
                     onClick={() => setShowModal(false)}
                 >
                     <div
-                        className="bg-card border-2 border-border rounded-[20px] shadow-lg p-6 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold">Solicitar reunión</h2>
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar reunión</h2>
                             <button
                                 type="button"
-                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 hover:bg-[#fff8ee] transition-colors"
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
                                 onClick={() => setShowModal(false)}
                             >
-                                ✕
+                                <XCircle size={24} />
                             </button>
                         </div>
 
-                        <p className="text-sm text-[#666] mb-4 leading-relaxed">
-                            Solicita una reunión con personas del equipo. Selecciona la fecha preferida, franja horaria y participantes.
+                        <p className="text-gray-500 mb-6 font-medium">
+                            Solicita una reunión con personas del equipo.
                         </p>
 
-                        <form onSubmit={handleCreateMeeting}>
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                        <form onSubmit={handleCreateMeeting} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Fecha preferida
                                 </label>
                                 <input
                                     type="date"
                                     value={selectedDateKey}
                                     onChange={handleDateChange}
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                                 />
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Título *
                                 </label>
                                 <input
                                     type="text"
                                     value={meetingTitle}
                                     onChange={(e) => setMeetingTitle(e.target.value)}
-                                    placeholder="Ej.: Reunión de seguimiento, dudas de proyecto..."
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                    placeholder="Ej.: Reunión de seguimiento..."
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                                     required
                                 />
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Motivo / Descripción
                                 </label>
                                 <textarea
                                     value={meetingDescription}
                                     onChange={(e) => setMeetingDescription(e.target.value)}
                                     placeholder="¿Qué quieres tratar en la reunión?"
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit resize-y min-h-[60px] focus:border-primary focus:outline-none"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
                                 />
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Franja horaria preferida
                                 </label>
                                 <select
                                     value={meetingPreferredSlot}
                                     onChange={(e) => setMeetingPreferredSlot(e.target.value)}
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
                                 >
                                     <option value="mañana">Mañana</option>
                                     <option value="tarde">Tarde</option>
@@ -359,15 +406,25 @@ function MeetingsPage() {
                                 </select>
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Personas que deberían estar *
                                 </label>
-                                <div className="flex flex-wrap gap-2 mt-2">
+                                <div className="flex flex-wrap gap-2">
                                     {USERS.map((u) => (
-                                        <label key={u.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 border-border bg-white text-xs cursor-pointer hover:bg-[#f3f4f6]">
+                                        <label
+                                            key={u.id}
+                                            className={`
+                                                inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border-2 cursor-pointer transition-all
+                                                ${meetingParticipants.includes(u.id)
+                                                    ? 'bg-primary/10 border-primary text-primary'
+                                                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                                                }
+                                            `}
+                                        >
                                             <input
                                                 type="checkbox"
+                                                className="hidden"
                                                 checked={meetingParticipants.includes(u.id)}
                                                 onChange={() => handleToggleParticipant(u.id)}
                                             />
@@ -377,19 +434,19 @@ function MeetingsPage() {
                                 </div>
                             </div>
 
-                            <div className="flex gap-2 justify-end">
+                            <div className="flex gap-3 pt-4">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
-                                    className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-white hover:bg-gray-50 transition-colors"
+                                    className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
+                                    className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                                 >
-                                    ✨ Solicitar reunión
+                                    Solicitar
                                 </button>
                             </div>
                         </form>
@@ -401,4 +458,3 @@ function MeetingsPage() {
 }
 
 export default MeetingsPage;
-

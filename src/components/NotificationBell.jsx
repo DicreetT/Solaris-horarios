@@ -48,7 +48,7 @@ export default function NotificationBell({ placement = 'bottom-right', fullWidth
                 <div className="relative">
                     <span className="text-lg">🔔</span>
                     {unreadCount > 0 && (
-                        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white ring-2 ring-white animate-pulse">
+                        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white ring-2 ring-white">
                             {unreadCount}
                         </span>
                     )}

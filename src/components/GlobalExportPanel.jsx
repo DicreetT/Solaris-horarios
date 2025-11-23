@@ -6,9 +6,11 @@ import { useTraining } from '../hooks/useTraining';
 import { useMeetings } from '../hooks/useMeetings';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTodos } from '../hooks/useTodos';
+import { Download, FileText, XCircle, Copy, Check } from 'lucide-react';
+import { RoleBadge } from './RoleBadge';
 
 /**
- * Panel global de exportaciones (solo Thalia)
+ * Panel global de exportaciones (solo Admin)
  */
 export default function GlobalExportPanel() {
     const { currentUser: user } = useAuth();
@@ -22,6 +24,7 @@ export default function GlobalExportPanel() {
     const [csvGenerated, setCsvGenerated] = useState("");
     const [fileName, setFileName] = useState("export.csv");
     const [title, setTitle] = useState("Exportar CSV");
+    const [copied, setCopied] = useState(false);
 
     function downloadCsv() {
         const blob = new Blob([csvGenerated], {
@@ -37,11 +40,18 @@ export default function GlobalExportPanel() {
         URL.revokeObjectURL(url);
     }
 
+    function copyToClipboard() {
+        navigator.clipboard.writeText(csvGenerated);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    }
+
     function showCsv(csv, name, dialogTitle) {
         setCsvGenerated(csv);
         setFileName(name);
         setTitle(dialogTitle);
         setShowDialog(true);
+        setCopied(false);
     }
 
     function exportTimes() {
@@ -231,83 +241,134 @@ export default function GlobalExportPanel() {
 
     return (
         <>
-            <div className="mt-4 p-4 bg-[#fff8ee] border border-dashed border-[#ffb347] rounded-2xl">
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                    Panel de descargas (Thalia)
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                <div className="p-6 border-b border-gray-100 bg-amber-50/50 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-xl font-bold text-gray-900">Panel de descargas</h2>
+                        <RoleBadge role="admin" size="sm" />
+                    </div>
                 </div>
-                <p className="text-xs text-[#666] mb-2">
-                    Descarga en CSV todo lo que ocurre en Solaris: horarios, formaciones,
-                    reuniones, permisos y tareas. Ideal para auditoría o informes. ✨
-                </p>
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                    <button
-                        type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                        onClick={exportTimes}
-                    >
-                        Horarios
-                    </button>
-                    <button
-                        type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                        onClick={exportTrainings}
-                    >
-                        Formaciones
-                    </button>
-                    <button
-                        type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                        onClick={exportMeetings}
-                    >
-                        Reuniones
-                    </button>
-                    <button
-                        type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                        onClick={exportAbsences}
-                    >
-                        Permisos especiales
-                    </button>
-                    <button
-                        type="button"
-                        className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
-                        onClick={exportTodos}
-                    >
-                        Tareas (To-Do)
-                    </button>
+
+                <div className="p-8">
+                    <div className="flex items-start gap-4 mb-8">
+                        <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
+                            <FileText size={24} />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900 mb-1">
+                                Descarga de datos en CSV
+                            </h3>
+                            <p className="text-gray-500 leading-relaxed">
+                                Descarga en formato CSV todo lo que ocurre en Solaris: horarios, formaciones,
+                                reuniones, permisos y tareas. Estos archivos son ideales para auditorías,
+                                informes externos o análisis de datos.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTimes}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Horarios</span>
+                            <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTrainings}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Formaciones</span>
+                            <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportMeetings}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Reuniones</span>
+                            <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportAbsences}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Permisos especiales</span>
+                            <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTodos}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Tareas (To-Do)</span>
+                            <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {showDialog && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999]">
-                    <div className="bg-card p-6 rounded-[24px] w-[90%] max-w-[400px] shadow-lg border-2 border-border animate-[popIn_0.2s_ease-out]">
-                        <div className="text-lg font-bold mb-2">{title}</div>
-                        <div className="text-sm text-[#444] mb-4 leading-relaxed">
-                            Toca “Descargar” para guardar el archivo. Si quieres verlo primero
-                            o copiar/pegar datos, puedes usar el cuadro de abajo.
-                        </div>
-                        <textarea
-                            readOnly
-                            className="w-full rounded-[10px] border border-[#ccc] p-2 text-sm font-inherit resize-y min-h-[60px]"
-                            style={{ maxHeight: 150 }}
-                            value={csvGenerated}
-                        />
-                        <div
-                            className="flex flex-row items-center gap-2 mt-2 justify-end"
-                        >
+                <div
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+                    onClick={() => setShowDialog(false)}
+                >
+                    <div
+                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full animate-[popIn_0.2s_ease-out]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">{title}</h2>
                             <button
                                 type="button"
-                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
                                 onClick={() => setShowDialog(false)}
+                            >
+                                <XCircle size={24} />
+                            </button>
+                        </div>
+
+                        <p className="text-gray-500 mb-4 font-medium">
+                            Vista previa del archivo CSV. Puedes copiar el contenido o descargarlo directamente.
+                        </p>
+
+                        <div className="relative mb-6">
+                            <textarea
+                                readOnly
+                                className="w-full rounded-xl border-2 border-gray-100 p-4 text-xs font-mono text-gray-600 bg-gray-50 resize-y min-h-[150px] focus:outline-none"
+                                value={csvGenerated}
+                            />
+                            <button
+                                onClick={copyToClipboard}
+                                className="absolute top-2 right-2 p-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-colors text-gray-500"
+                                title="Copiar al portapapeles"
+                            >
+                                {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
+                            </button>
+                        </div>
+
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowDialog(false)}
+                                className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
                             >
                                 Cerrar
                             </button>
                             <button
                                 type="button"
-                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark"
                                 onClick={downloadCsv}
+                                className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
                             >
-                                Descargar
+                                <Download size={18} />
+                                Descargar archivo
                             </button>
                         </div>
                     </div>

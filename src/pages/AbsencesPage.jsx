@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
-import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTimeData } from '../hooks/useTimeData';
 import { useNotifications } from '../hooks/useNotifications';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
-import { Plus } from 'lucide-react';
+import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clock } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
+import { RoleBadge } from '../components/RoleBadge';
 
 /**
  * Absences page
  * Allows users to create and manage their own absence requests
- * Admin view for Thalia to approve/reject absence requests
+ * Admin view to approve/reject absence requests
  */
 function AbsencesPage() {
     const { currentUser } = useAuth();
@@ -55,7 +55,7 @@ function AbsencesPage() {
 
         try {
             // Create the absence request
-            await createAbsence({ reason: reason.trim(), dateKey: selectedDateKey });
+            await createAbsence({ reason: reason.trim(), dateKey: selectedDateKey, type: absenceType });
 
             // Update the time entry with the appropriate status
             if (absenceType === 'vacation') {
@@ -98,255 +98,293 @@ function AbsencesPage() {
         }
     }
 
-
-
     return (
-        <div className="max-w-6xl">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold mb-2">Permisos y Ausencias</h1>
-                <p className="text-[#666]">
-                    {isAdmin
-                        ? 'Gestiona todas las solicitudes de permisos y ausencias del equipo'
-                        : 'Gestiona tus solicitudes de vacaciones y permisos especiales'}
-                </p>
+        <div className="max-w-6xl mx-auto pb-10">
+            {/* Header */}
+            <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-purple-600">
+                        <UserX size={32} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                            Ausencias
+                        </h1>
+                        <p className="text-gray-500 font-medium">
+                            {isAdmin
+                                ? 'Gestiona las solicitudes de permisos y ausencias del equipo'
+                                : 'Gestiona tus solicitudes de vacaciones y permisos'}
+                        </p>
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShowModal(true)}
+                    className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                >
+                    <Plus size={20} />
+                    Solicitar permiso
+                </button>
             </div>
 
             {/* User view - absence requests (shown for all users) */}
-            <div className="bg-card border-2 border-border rounded-[20px] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-6 mb-6">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold">Tus solicitudes</h2>
-                    <button
-                        onClick={() => setShowModal(true)}
-                        className="rounded-full border-2 border-border px-4 py-2.5 text-sm font-semibold cursor-pointer inline-flex items-center gap-2 bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
-                    >
-                        <Plus size={16} />
-                        Solicitar permiso
-                    </button>
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
+                <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <h2 className="text-xl font-bold text-gray-900">Tus solicitudes</h2>
+                    <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded-lg border border-gray-200 shadow-sm">
+                        {userAbsences.length} {userAbsences.length === 1 ? 'solicitud' : 'solicitudes'}
+                    </span>
                 </div>
 
-                {userAbsences.length === 0 ? (
-                    <p className="text-sm text-[#666] italic">
-                        No tienes solicitudes de permisos o ausencias.
-                    </p>
-                ) : (
-                    <div className="flex flex-col gap-3">
-                        {userAbsences.map((r) => (
-                            <div
-                                key={r.id}
-                                className="bg-[#fafaf9] border-2 border-border rounded-xl p-3"
-                            >
-                                <div className="flex items-start justify-between">
-                                    <div className="flex-1">
-                                        <strong className="text-sm">Permiso para el día {r.dateKey}</strong>
-                                        <div className="text-xs text-[#666] mt-1">
-                                            Motivo: {r.reason}
+                <div className="p-6">
+                    {userAbsences.length === 0 ? (
+                        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <UserX size={48} className="mx-auto text-gray-300 mb-3" />
+                            <p className="text-gray-500 font-medium">No tienes solicitudes de permisos o ausencias.</p>
+                        </div>
+                    ) : (
+                        <div className="grid gap-4">
+                            {userAbsences.map((r) => (
+                                <div
+                                    key={r.id}
+                                    className="group bg-white border border-gray-100 rounded-2xl p-5 hover:border-purple-200 hover:shadow-md transition-all duration-200"
+                                >
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <h3 className="text-lg font-bold text-gray-900">
+                                                    Permiso para el día {r.dateKey}
+                                                </h3>
+                                                <span className={`
+                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                    ${r.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                    ${r.status === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                    ${r.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                `}>
+                                                    {r.status === 'pending' && <Clock size={12} />}
+                                                    {r.status === 'approved' && <CheckCircle size={12} />}
+                                                    {r.status === 'rejected' && <XCircle size={12} />}
+                                                    {r.status === 'pending' && "Pendiente"}
+                                                    {r.status === 'approved' && "Aprobado"}
+                                                    {r.status === 'rejected' && "Rechazado"}
+                                                </span>
+                                            </div>
+
+                                            <p className="text-gray-600 text-sm mb-3">
+                                                <span className="font-bold text-gray-700">Motivo:</span> {r.reason}
+                                            </p>
+
+                                            {r.responseMessage && (
+                                                <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                                    <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {r.responseMessage}</span>
+                                                </div>
+                                            )}
+
+                                            <div className="text-xs text-gray-400 mt-3">
+                                                Solicitado el {new Date(r.createdAt).toLocaleString("es-ES", {
+                                                    dateStyle: "short",
+                                                    timeStyle: "short",
+                                                })}
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-[#666] mt-1">
-                                            Estado:{" "}
-                                            <strong>
-                                                {r.status === "pending" && "Pendiente"}
-                                                {r.status === "approved" && "Aprobado"}
-                                                {r.status === "rejected" && "Rechazado"}
-                                            </strong>
-                                            {r.responseMessage && ` · Nota: ${r.responseMessage}`}
-                                        </div>
-                                        <div className="text-xs text-[#888] mt-1">
-                                            Solicitado el{" "}
-                                            {new Date(r.createdAt).toLocaleString("es-ES", {
-                                                dateStyle: "short",
-                                                timeStyle: "short",
-                                            })}
-                                        </div>
+
+                                        {r.status === 'pending' && (
+                                            <button
+                                                onClick={() => handleDeleteAbsence(r.id)}
+                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                title="Eliminar solicitud"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        )}
                                     </div>
-                                    {r.status === 'pending' && (
-                                        <button
-                                            type="button"
-                                            className="rounded-full border-2 border-[#fecaca] px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-[#fee2e2] text-[#b91c1c] hover:bg-[#fecaca] transition-colors"
-                                            onClick={() => handleDeleteAbsence(r.id)}
-                                            title="Eliminar solicitud"
-                                        >
-                                            ✕
-                                        </button>
-                                    )}
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Admin view - all requests (Admin only) */}
             {isAdmin && (
-                <div className="bg-card p-6 rounded-[24px] shadow-lg border-2 border-border">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="text-lg font-bold">Permisos de ausencia</div>
-                        <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded border border-amber-200 font-bold">
-                            ADMIN
-                        </span>
-                    </div>
-                    <div className="text-sm text-[#444] mb-4 leading-relaxed">
-                        Aquí ves las solicitudes de permisos especiales (más allá de las
-                        vacaciones). Puedes aprobar o rechazar dejando un comentario.
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 bg-purple-50/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold text-gray-900">Panel de administración</h2>
+                            <RoleBadge role="admin" size="sm" />
+                        </div>
                     </div>
 
-                    {sortedRequests.length === 0 ? (
-                        <p className="text-xs text-[#666]">
-                            No hay solicitudes de permisos especiales por ahora.
-                        </p>
-                    ) : (
-                        sortedRequests.map((r) => {
-                            const creator = USERS.find((u) => u.id === r.createdBy);
-                            return (
-                                <div
-                                    key={r.id}
-                                    className="border-t border-[#e5e7eb] pt-1.5 mt-1.5"
-                                >
-                                    <strong>Permiso para el día {r.dateKey}</strong>
-                                    <div className="text-xs text-[#666] flex items-center gap-1 mt-1">
-                                        <span>Solicitado por</span>
-                                        <div className="flex items-center gap-1">
-                                            <UserAvatar name={creator?.name} size="xs" />
-                                            <strong>{creator?.name || r.createdBy}</strong>
-                                        </div>
-                                        <span>el {new Date(r.createdAt).toLocaleString("es-ES", {
-                                            dateStyle: "short",
-                                            timeStyle: "short",
-                                        })}</span>
-                                    </div>
-                                    <div className="text-xs text-[#666] mt-0.5">
-                                        Motivo: {r.reason}
-                                    </div>
-                                    <div className="text-xs text-[#666] mt-0.5">
-                                        Estado:{" "}
-                                        <strong>
-                                            {r.status === "pending" && "Pendiente"}
-                                            {r.status === "approved" && "Aprobado"}
-                                            {r.status === "rejected" && "Rechazado"}
-                                        </strong>
-                                        {r.responseMessage && ` · Nota: ${r.responseMessage}`}
-                                    </div>
+                    <div className="p-6">
+                        {sortedRequests.length === 0 ? (
+                            <p className="text-center text-gray-500 py-8">No hay solicitudes de permisos especiales por ahora.</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {sortedRequests.map((r) => {
+                                    const creator = USERS.find((u) => u.id === r.createdBy);
+                                    return (
+                                        <div
+                                            key={r.id}
+                                            className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
+                                        >
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="flex items-center gap-3">
+                                                    <UserAvatar name={creator?.name} size="sm" />
+                                                    <div>
+                                                        <p className="font-bold text-gray-900">{creator?.name || r.createdBy}</p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {new Date(r.createdAt).toLocaleString("es-ES", {
+                                                                dateStyle: "short",
+                                                                timeStyle: "short",
+                                                            })}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`
+                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                    ${r.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                    ${r.status === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                    ${r.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                `}>
+                                                    {r.status === 'pending' && "Pendiente"}
+                                                    {r.status === 'approved' && "Aprobado"}
+                                                    {r.status === 'rejected' && "Rechazado"}
+                                                </span>
+                                            </div>
 
-                                    {r.status === "pending" && (
-                                        <div className="flex gap-1.5 mt-1">
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-white hover:bg-[#f3f4f6]"
-                                                onClick={() => {
-                                                    const msg = window.prompt(
-                                                        "Nota para la persona (opcional):",
-                                                        ""
-                                                    );
-                                                    handleUpdateStatus(r.id, {
-                                                        status: "approved",
-                                                        responseMessage: msg || "",
-                                                    });
-                                                }}
-                                            >
-                                                Aprobar
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5"
-                                                onClick={() => {
-                                                    const msg = window.prompt(
-                                                        "Motivo del rechazo (opcional):",
-                                                        ""
-                                                    );
-                                                    handleUpdateStatus(r.id, {
-                                                        status: "rejected",
-                                                        responseMessage: msg || "",
-                                                    });
-                                                }}
-                                            >
-                                                Rechazar
-                                            </button>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Calendar size={16} className="text-gray-400" />
+                                                <span className="font-bold text-gray-900">Día {r.dateKey}</span>
+                                            </div>
+
+                                            <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                                <span className="font-bold text-gray-700 block mb-1">Motivo:</span>
+                                                {r.reason}
+                                            </p>
+
+                                            {r.status === "pending" && (
+                                                <div className="flex gap-2 pt-3 border-t border-gray-100">
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
+                                                        onClick={() => {
+                                                            const msg = window.prompt(
+                                                                "Nota para la persona (opcional):",
+                                                                ""
+                                                            );
+                                                            handleUpdateStatus(r.id, {
+                                                                status: "approved",
+                                                                responseMessage: msg || "",
+                                                            });
+                                                        }}
+                                                    >
+                                                        Aprobar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
+                                                        onClick={() => {
+                                                            const msg = window.prompt(
+                                                                "Motivo del rechazo (opcional):",
+                                                                ""
+                                                            );
+                                                            handleUpdateStatus(r.id, {
+                                                                status: "rejected",
+                                                                responseMessage: msg || "",
+                                                            });
+                                                        }}
+                                                    >
+                                                        Rechazar
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })
-                    )}
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
             {/* Absence creation modal */}
             {showModal && (
                 <div
-                    className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] p-4"
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
                     onClick={() => setShowModal(false)}
                 >
                     <div
-                        className="bg-card border-2 border-border rounded-[20px] shadow-lg p-6 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold">Solicitar permiso o ausencia</h2>
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar ausencia</h2>
                             <button
                                 type="button"
-                                className="rounded-full border-2 border-border px-2.5 py-1.5 text-xs font-semibold cursor-pointer bg-transparent inline-flex items-center gap-1.5 hover:bg-[#fff8ee] transition-colors"
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
                                 onClick={() => setShowModal(false)}
                             >
-                                ✕
+                                <XCircle size={24} />
                             </button>
                         </div>
 
-                        <p className="text-sm text-[#666] mb-4 leading-relaxed">
-                            Solicita vacaciones o un permiso especial. Selecciona la fecha, el tipo y describe el motivo.
+                        <p className="text-gray-500 mb-6 font-medium">
+                            Solicita vacaciones o un permiso especial.
                         </p>
 
-                        <form onSubmit={handleCreateAbsence}>
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                        <form onSubmit={handleCreateAbsence} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Fecha
                                 </label>
                                 <input
                                     type="date"
                                     value={selectedDateKey}
                                     onChange={handleDateChange}
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                                 />
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Tipo de ausencia
                                 </label>
                                 <select
                                     value={absenceType}
                                     onChange={(e) => setAbsenceType(e.target.value)}
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit bg-white focus:border-primary focus:outline-none"
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
                                 >
                                     <option value="vacation">Vacaciones</option>
                                     <option value="absent">Ausencia / Permiso especial</option>
                                 </select>
                             </div>
 
-                            <div className="mb-4">
-                                <label className="block text-sm font-semibold mb-2">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
                                     Motivo / Descripción *
                                 </label>
                                 <textarea
                                     value={reason}
                                     onChange={(e) => setReason(e.target.value)}
-                                    placeholder="Describe brevemente el motivo de tu ausencia..."
-                                    className="w-full rounded-[10px] border-2 border-border p-2.5 text-sm font-inherit resize-y min-h-[80px] focus:border-primary focus:outline-none"
+                                    placeholder="Describe brevemente el motivo..."
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
                                     required
                                 />
                             </div>
 
-                            <div className="flex gap-2 justify-end">
+                            <div className="flex gap-3 pt-4">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
-                                    className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-white hover:bg-gray-50 transition-colors"
+                                    className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    className="rounded-full border-2 border-border px-4 py-2 text-sm font-semibold cursor-pointer bg-primary text-white hover:bg-primary-dark transition-colors shadow-[2px_2px_0_rgba(0,0,0,0.2)]"
+                                    className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                                 >
-                                    ✨ Solicitar
+                                    Solicitar
                                 </button>
                             </div>
                         </form>
@@ -358,5 +396,3 @@ function AbsencesPage() {
 }
 
 export default AbsencesPage;
-
-

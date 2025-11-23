@@ -63,8 +63,26 @@ export function AuthProvider({ children }) {
         }
     };
 
+    const updatePassword = async (newPassword) => {
+        try {
+            const { error } = await supabase.auth.updateUser({
+                password: newPassword
+            });
+            if (error) throw error;
+
+            // Update local user data
+            if (currentUser) {
+                const updatedUser = { ...currentUser, password: newPassword };
+                setCurrentUser(updatedUser);
+            }
+        } catch (error) {
+            console.error('Error updating password:', error);
+            throw error;
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ currentUser, loading, login, logout }}>
+        <AuthContext.Provider value={{ currentUser, loading, login, logout, updatePassword }}>
             {!loading && children}
         </AuthContext.Provider>
     );

@@ -2,92 +2,89 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useFolderUpdates } from '../hooks/useFolderUpdates';
 import { DRIVE_FOLDERS } from '../constants';
-import { Folder, ExternalLink, Bell } from 'lucide-react';
+import { Folder, ExternalLink } from 'lucide-react';
 
+/**
+ * Folders page
+ * Shows shared Google Drive folders
+ */
 function FoldersPage() {
     const { currentUser } = useAuth();
-    const { folderUpdates } = useFolderUpdates(currentUser);
+    const { folderUpdates, clearFolderUpdate } = useFolderUpdates();
 
     // Filter folders for current user
     const foldersForUser = DRIVE_FOLDERS.filter((f) =>
         f.users.includes(currentUser?.id)
     );
 
-    function handleOpenFolder(folder) {
-        window.open(folder.link, "_blank");
-    }
-
-
-
     return (
-        <div className="max-w-6xl">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2">Carpetas Compartidas</h1>
-                <p className="text-[#666]">
-                    Acceso directo a las carpetas de Google Drive compartidas contigo.
-                </p>
+        <div className="max-w-6xl mx-auto pb-10">
+            {/* Header */}
+            <div className="mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-primary">
+                        <Folder size={32} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                            Carpetas Compartidas
+                        </h1>
+                        <p className="text-gray-500 font-medium">
+                            Acceso directo a la documentación y recursos del equipo
+                        </p>
+                    </div>
+                </div>
             </div>
 
-            {foldersForUser.length === 0 ? (
-                <div className="bg-card border-2 border-border rounded-[20px] p-12 text-center">
-                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Folder size={32} className="text-gray-400" />
-                    </div>
-                    <h3 className="text-lg font-bold mb-2">No tienes carpetas compartidas</h3>
-                    <p className="text-[#666]">
-                        Actualmente no tienes acceso a ninguna carpeta compartida.
-                        <br />
-                        Si crees que esto es un error, contacta con administración.
-                    </p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {foldersForUser.map((folder) => {
-                        const updateInfo = folderUpdates[folder.id];
-                        const hasUpdate = !!updateInfo;
-                        const author = updateInfo?.author;
+            {/* Folders Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {foldersForUser.map((folder) => {
+                    const hasUpdate = folderUpdates[folder.id];
 
-                        return (
-                            <div
-                                key={folder.id}
-                                className="bg-card border-2 border-border rounded-[20px] p-6 shadow-[4px_4px_0_rgba(0,0,0,0.2)] hover:translate-y-[-2px] transition-transform relative group"
-                            >
-                                {/* Update Indicator Badge */}
-                                {hasUpdate && (
-                                    <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full text-xs font-medium border border-purple-200 animate-pulse">
-                                        <Bell size={12} fill="currentColor" />
-                                        <span>Novedades</span>
-                                    </div>
-                                )}
+                    return (
+                        <a
+                            key={folder.id}
+                            href={folder.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group relative bg-white rounded-3xl border-2 border-gray-100 shadow-lg overflow-hidden hover:border-primary/30 hover:shadow-xl transition-all duration-200 flex flex-col"
+                            onClick={() => {
+                                if (hasUpdate) clearFolderUpdate(folder.id);
+                            }}
+                        >
+                            {/* Notification Badge */}
+                            {hasUpdate && (
+                                <div className="absolute top-4 right-4 z-10">
+                                    <div className="flex h-3 w-3 rounded-full bg-red-500 shadow-sm"></div>
+                                </div>
+                            )}
 
-                                <div className="flex items-start justify-between mb-4">
-                                    <div className="w-12 h-12 bg-[#fff8ee] rounded-xl flex items-center justify-center text-2xl border-2 border-[#ffe0b2]">
-                                        {folder.emoji}
-                                    </div>
-
-                                    {/* Admin Toggle Action - REMOVED as per request */}
+                            <div className="p-6 flex-1 flex flex-col items-center text-center">
+                                <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
+                                    <span className="text-3xl">{folder.emoji}</span>
                                 </div>
 
-                                <h3 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors">
+                                <h3 className="text-xl font-bold text-gray-900 mb-2">
                                     {folder.label}
                                 </h3>
 
-                                {hasUpdate && author && (
-                                    <p className="text-xs text-purple-600 mb-4 font-medium">
-                                        Marcado por {author}
-                                    </p>
-                                )}
+                                <p className="text-gray-500 text-sm leading-relaxed mb-6 font-medium">
+                                    {folder.description}
+                                </p>
 
-                                <button
-                                    onClick={() => handleOpenFolder(folder)}
-                                    className="w-full mt-2 bg-white border-2 border-border text-gray-700 font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 hover:bg-gray-50 hover:border-gray-300 transition-all active:scale-95"
-                                >
-                                    <span>Abrir en Drive</span>
-                                    <ExternalLink size={16} />
-                                </button>
+                                <div className="mt-auto flex items-center gap-2 text-sm font-bold text-primary bg-primary/10 px-4 py-2.5 rounded-xl group-hover:bg-primary group-hover:text-white transition-all">
+                                    Abrir carpeta <ExternalLink size={16} />
+                                </div>
                             </div>
-                        );
-                    })}
+                        </a>
+                    );
+                })}
+            </div>
+
+            {foldersForUser.length === 0 && (
+                <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200">
+                    <Folder size={48} className="mx-auto text-gray-300 mb-3" />
+                    <p className="text-gray-500 font-medium">No tienes carpetas compartidas asignadas.</p>
                 </div>
             )}
         </div>
