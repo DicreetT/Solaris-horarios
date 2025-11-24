@@ -21,3 +21,8 @@ export function formatTimeNow(): string {
     const m = String(now.getMinutes()).padStart(2, "0");
     return `${h}:${m}`;
 }
+
+export function isWeekend(date: Date): boolean {
+    const day = date.getDay();
+    return day === 0 || day === 6;
+}

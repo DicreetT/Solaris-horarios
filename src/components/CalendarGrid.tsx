@@ -261,12 +261,14 @@ export default function CalendarGrid({
                     return (
                         <div
                             key={dKey}
-                            onClick={() => onSelectDate(d)}
+                            onClick={() => !isWeekend && onSelectDate(d)}
                             className={`
-                                group relative flex flex-col p-2 border-b border-r border-gray-100 transition-all cursor-pointer overflow-hidden aspect-square
+                                group relative flex flex-col p-2 border-b border-r border-gray-100 transition-all overflow-hidden aspect-square
                                 ${isSelected
-                                    ? "bg-primary/5 shadow-inner"
-                                    : "bg-white hover:bg-gray-50"
+                                    ? "bg-primary/5 shadow-inner cursor-pointer"
+                                    : isWeekend
+                                        ? "bg-gray-100/50 cursor-not-allowed"
+                                        : "bg-white hover:bg-gray-50 cursor-pointer"
                                 }
                                 ${isToday && !isSelected ? "bg-blue-50/30" : ""}
                             `}

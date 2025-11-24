@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
-import { toDateKey } from '../utils/dateUtils';
+import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
@@ -39,7 +39,12 @@ function MeetingsPage() {
     );
 
     function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
-        setSelectedDate(new Date(e.target.value + 'T00:00:00'));
+        const date = new Date(e.target.value + 'T00:00:00');
+        if (isWeekend(date)) {
+            alert('No se pueden programar reuniones los fines de semana.');
+            return;
+        }
+        setSelectedDate(date);
     }
 
     function handleToggleParticipant(id: string) {

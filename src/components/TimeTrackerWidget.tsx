@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { formatTimeNow, toDateKey } from '../utils/dateUtils';
+import { formatTimeNow, toDateKey, isWeekend } from '../utils/dateUtils';
 import { Clock, Play, Square, Edit2, Trash2, Timer, Info } from 'lucide-react';
 
 /**
@@ -174,6 +174,12 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                         <p className="text-sm font-medium opacity-80 max-w-md text-center px-4">
                             {activeAbsence.reason || 'No se requiere fichaje para este día.'}
                         </p>
+                    </div>
+                ) : isWeekend(targetDate) ? (
+                    <div className="flex flex-col items-center justify-center py-8 rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 text-gray-400">
+                        <div className="text-3xl mb-2">🏖️</div>
+                        <h3 className="text-xl font-bold mb-1">Fin de semana</h3>
+                        <p className="text-sm font-medium opacity-80">No se trabaja hoy.</p>
                     </div>
                 ) : (
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-6">

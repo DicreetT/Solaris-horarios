@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
-import { toDateKey } from '../utils/dateUtils';
+import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
@@ -41,7 +41,12 @@ function TrainingsPage() {
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
-        setSelectedDate(new Date(e.target.value + 'T00:00:00'));
+        const date = new Date(e.target.value + 'T00:00:00');
+        if (isWeekend(date)) {
+            alert('No se pueden programar formaciones los fines de semana.');
+            return;
+        }
+        setSelectedDate(date);
     }
 
     async function handleCreateTrainingRequest() {
