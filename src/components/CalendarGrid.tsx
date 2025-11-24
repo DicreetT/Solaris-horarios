@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
+import DayHoverCard from './DayHoverCard';
 import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users } from 'lucide-react';
 
 /**
@@ -304,6 +305,9 @@ export default function CalendarGrid({
                                     </div>
                                 ))}
                             </div>
+
+                            {/* Hover Card */}
+                            <DayHoverCard date={d} badges={badges} />
                         </div>
                     );
                 })}
