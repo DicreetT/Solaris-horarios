@@ -26,41 +26,14 @@ export function useMeetings(currentUser: User | null) {
                 created_at: row.created_at,
             });
 
-            if (currentUser.isAdmin) {
-                const { data, error } = await supabase
-                    .from('meeting_requests')
-                    .select('*')
-                    .order('created_at', { ascending: false });
+            // Fetch ALL meetings and filter client-side to avoid DB filter issues
+            const { data, error } = await supabase
+                .from('meeting_requests')
+                .select('*')
+                .order('created_at', { ascending: false });
 
-                if (error) throw error;
-                return (data || []).map(mapRow);
-            }
-
-            // For non-admins, fetch both created by user AND where user is participant
-            // This avoids issues with complex OR filters on array columns
-            const [createdRes, participantRes] = await Promise.all([
-                supabase
-                    .from('meeting_requests')
-                    .select('*')
-                    .eq('created_by', currentUser.id),
-                supabase
-                    .from('meeting_requests')
-                    .select('*')
-                    .contains('participants', [currentUser.id])
-            ]);
-
-            if (createdRes.error) throw createdRes.error;
-            if (participantRes.error) throw participantRes.error;
-
-            // Merge and deduplicate by ID
-            const allRaw = [...(createdRes.data || []), ...(participantRes.data || [])];
-            const uniqueMap = new Map();
-            allRaw.forEach(item => uniqueMap.set(item.id, item));
-
-            const uniqueSorted = Array.from(uniqueMap.values())
-                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-            return uniqueSorted.map(mapRow);
+            if (error) throw error;
+            return (data || []).map(mapRow);
         },
         enabled: !!currentUser,
     });
