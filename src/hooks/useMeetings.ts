@@ -9,21 +9,9 @@ export function useMeetings(currentUser: User | null) {
         queryKey: ['meetings', currentUser?.id],
         queryFn: async () => {
             if (!currentUser) return [];
-            let query = supabase
-                .from('meeting_requests')
-                .select('*')
-                .order('created_at', { ascending: false });
 
-            if (!currentUser.isAdmin) {
-                query = query.or(
-                    `created_by.eq.${currentUser.id},participants.ov.{${currentUser.id}}`
-                );
-            }
-
-            const { data, error } = await query;
-            if (error) throw error;
-
-            return (data || []).map((row: any) => ({
+            // Helper to map DB row to Meeting type
+            const mapRow = (row: any) => ({
                 id: row.id,
                 created_by: row.created_by,
                 title: row.title,
@@ -36,7 +24,43 @@ export function useMeetings(currentUser: User | null) {
                 scheduled_time: row.scheduled_time,
                 response_message: row.response_message,
                 created_at: row.created_at,
-            }));
+            });
+
+            if (currentUser.isAdmin) {
+                const { data, error } = await supabase
+                    .from('meeting_requests')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                return (data || []).map(mapRow);
+            }
+
+            // For non-admins, fetch both created by user AND where user is participant
+            // This avoids issues with complex OR filters on array columns
+            const [createdRes, participantRes] = await Promise.all([
+                supabase
+                    .from('meeting_requests')
+                    .select('*')
+                    .eq('created_by', currentUser.id),
+                supabase
+                    .from('meeting_requests')
+                    .select('*')
+                    .contains('participants', [currentUser.id])
+            ]);
+
+            if (createdRes.error) throw createdRes.error;
+            if (participantRes.error) throw participantRes.error;
+
+            // Merge and deduplicate by ID
+            const allRaw = [...(createdRes.data || []), ...(participantRes.data || [])];
+            const uniqueMap = new Map();
+            allRaw.forEach(item => uniqueMap.set(item.id, item));
+
+            const uniqueSorted = Array.from(uniqueMap.values())
+                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+            return uniqueSorted.map(mapRow);
         },
         enabled: !!currentUser,
     });
