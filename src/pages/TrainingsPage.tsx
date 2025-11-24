@@ -196,15 +196,13 @@ function TrainingsPage() {
                                                         </span>
                                                     </div>
                                                 </div>
-                                                {req.status === 'pending' && (
-                                                    <button
-                                                        onClick={() => handleDeleteTraining(req.id)}
-                                                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                                        title="Eliminar solicitud"
-                                                    >
-                                                        <Trash2 size={18} />
-                                                    </button>
-                                                )}
+                                                <button
+                                                    onClick={() => handleDeleteTraining(req.id)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                    title="Eliminar solicitud"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
                                             </div>
 
                                             {/* Chat Section */}

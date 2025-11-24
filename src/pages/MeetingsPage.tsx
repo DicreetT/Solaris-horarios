@@ -182,7 +182,7 @@ function MeetingsPage() {
 
                                             </div>
 
-                                            {m.status === 'pending' && m.created_by === currentUser.id && (
+                                            {m.created_by === currentUser.id && (
                                                 <button
                                                     onClick={() => deleteMeeting(m.id)}
                                                     className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
