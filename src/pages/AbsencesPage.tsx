@@ -194,15 +194,13 @@ function AbsencesPage() {
                                             </div>
                                         </div>
 
-                                        {r.status === 'pending' && (
-                                            <button
-                                                onClick={() => handleDeleteAbsence(r.id)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                                title="Eliminar solicitud"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={() => handleDeleteAbsence(r.id)}
+                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                            title="Eliminar solicitud"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
                                     </div>
                                 </div>
                             ))}
