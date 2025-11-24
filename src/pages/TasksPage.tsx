@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import { USERS } from '../constants';
 import TodoModal from '../components/TodoModal';
+import TaskDetailModal from '../components/TaskDetailModal';
+import { Todo } from '../types';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
 import {
@@ -26,7 +28,8 @@ function TasksPage() {
     const { currentUser } = useAuth();
     const { todos, toggleTodo, deleteTodo } = useTodos(currentUser);
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const [filterUser, setFilterUser] = useState("all");
+    const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
+    const [filterUser, setFilterUser] = useState<string>("all");
     const [filterStatus, setFilterStatus] = useState("all");
 
     const isAdmin = currentUser?.isAdmin;
@@ -86,11 +89,17 @@ function TasksPage() {
             .join(", ");
 
         return (
-            <div className={`group relative bg-white border border-gray-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 ${isDoneForMe ? 'opacity-75 bg-gray-50' : ''}`}>
+            <div
+                className={`group relative bg-white border border-gray-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 ${isDoneForMe ? 'opacity-75 bg-gray-50' : ''}`}
+                onClick={() => setSelectedTask(todo)}
+            >
                 <div className="flex items-start gap-3">
                     {/* Checkbox */}
                     <button
-                        onClick={() => toggleTodo(todo)}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            toggleTodo(todo);
+                        }}
                         className={`
                             mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0
                             ${isDoneForMe
@@ -345,7 +354,11 @@ function TasksPage() {
                             const isCompleted = t.assigned_to.length > 0 && t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
 
                             return (
-                                <div key={t.id} className="p-4 hover:bg-gray-50 transition-colors flex items-center justify-between group">
+                                <div
+                                    key={t.id}
+                                    className="p-4 hover:bg-gray-50 transition-colors flex items-center justify-between group cursor-pointer"
+                                    onClick={() => setSelectedTask(t)}
+                                >
                                     <div className="flex items-start gap-4">
                                         <div className={`mt-1 w-2 h-2 rounded-full ${isCompleted ? 'bg-green-500' : 'bg-orange-400'}`} />
                                         <div>
@@ -406,7 +419,10 @@ function TasksPage() {
                                         )}
 
                                         <button
-                                            onClick={() => deleteTodo(t.id)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                deleteTodo(t.id);
+                                            }}
                                             className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                                             title="Eliminar tarea"
                                         >
@@ -434,6 +450,14 @@ function TasksPage() {
                     <TodoModal onClose={() => setShowCreateModal(false)} />
                 )
             }
+
+            {/* Task Detail Modal */}
+            {selectedTask && (
+                <TaskDetailModal
+                    task={selectedTask}
+                    onClose={() => setSelectedTask(null)}
+                />
+            )}
         </div >
     );
 }
