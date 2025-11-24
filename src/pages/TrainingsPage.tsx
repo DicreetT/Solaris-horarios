@@ -6,6 +6,8 @@ import { USERS } from '../constants';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
+import { FileUploader, Attachment } from '../components/FileUploader';
+import { Paperclip } from 'lucide-react';
 
 /**
  * Trainings page
@@ -26,6 +28,7 @@ function TrainingsPage() {
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [showModal, setShowModal] = useState(false);
     const [messageDrafts, setMessageDrafts] = useState<Record<number, string>>({});
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
 
     const isTrainingManager = !!currentUser?.isTrainingManager;
     const selectedDateKey = toDateKey(selectedDate);
@@ -62,12 +65,14 @@ function TrainingsPage() {
         try {
             await createTrainingRequest({
                 requested_date_key: selectedDateKey,
-                comments: ''
+                comments: '',
+                attachments: attachments
             });
             await addNotification({
                 message: `Has solicitado formación para el día ${selectedDateKey}.`
             });
             setShowModal(false);
+            setAttachments([]);
         } catch (e) {
             console.error('Unexpected error creating training_request', e);
         }
@@ -210,6 +215,24 @@ function TrainingsPage() {
                                                 </button>
                                             </div>
 
+                                            {req.attachments && req.attachments.length > 0 && (
+                                                <div className="mb-3 flex flex-wrap gap-2">
+                                                    {req.attachments.map((file: Attachment, idx: number) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={file.url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary hover:underline bg-gray-50 px-2 py-1 rounded border border-gray-100"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Paperclip size={10} />
+                                                            {file.name}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+
                                             {/* Chat Section */}
                                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
                                                 <div className="flex items-center gap-2 mb-3 text-sm font-bold text-gray-700">
@@ -343,6 +366,24 @@ function TrainingsPage() {
                                                         Reprogramada para el día <strong>{req.scheduled_date_key}</strong>
                                                     </div>
                                                 )}
+
+                                            {req.attachments && req.attachments.length > 0 && (
+                                                <div className="mb-4 flex flex-wrap gap-2">
+                                                    {req.attachments.map((file: Attachment, idx: number) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={file.url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary hover:underline bg-gray-50 px-2 py-1 rounded border border-gray-100"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Paperclip size={10} />
+                                                            {file.name}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
 
                                             {/* Chat Section */}
                                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 mb-4">
@@ -483,6 +524,17 @@ function TrainingsPage() {
                             <p className="text-sm text-blue-800 font-medium">
                                 La hora exacta se coordinará con Esteban mediante el chat una vez aceptada la solicitud.
                             </p>
+                        </div>
+
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-gray-900 mb-2">
+                                Adjuntar archivos (opcional)
+                            </label>
+                            <FileUploader
+                                onUploadComplete={setAttachments}
+                                existingFiles={attachments}
+                                folderPath="trainings"
+                            />
                         </div>
 
                         <div className="flex gap-3">

@@ -30,13 +30,14 @@ export function useAbsences(currentUser: User | null) {
                 status: row.status,
                 type: row.type || 'absence', // Default to absence if null (though DB default is absence)
                 response_message: row.response_message || '',
+                attachments: row.attachments || [],
             }));
         },
         enabled: !!currentUser,
     });
 
     const createAbsenceMutation = useMutation({
-        mutationFn: async ({ reason, date_key, type }: { reason: string; date_key: string; type: 'absence' | 'vacation' }) => {
+        mutationFn: async ({ reason, date_key, type, attachments }: { reason: string; date_key: string; type: 'absence' | 'vacation', attachments?: any[] }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('absence_requests')
@@ -47,6 +48,7 @@ export function useAbsences(currentUser: User | null) {
                     reason,
                     type,
                     status: 'pending',
+                    attachments: attachments || []
                 })
                 .select()
                 .single();

@@ -20,14 +20,15 @@ export function useTraining(currentUser: User | null) {
                 scheduled_date_key: row.scheduled_date_key,
                 status: row.status,
                 comments: row.comments || [],
+                attachments: row.attachments || [],
                 created_at: row.created_at,
             }));
         },
         enabled: !!currentUser,
     });
 
-    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; comments: string }>({
-        mutationFn: async ({ requested_date_key, comments }: { requested_date_key: string; comments: string }) => {
+    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; comments: string; attachments?: any[] }>({
+        mutationFn: async ({ requested_date_key, comments, attachments }: { requested_date_key: string; comments: string; attachments?: any[] }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('training_requests')
@@ -37,6 +38,7 @@ export function useTraining(currentUser: User | null) {
                     requested_date_key: requested_date_key,
                     comments: comments ? [{ text: comments, by: currentUser.id, at: now }] : [],
                     status: 'pending',
+                    attachments: attachments || [],
                     created_at: now,
                 });
 

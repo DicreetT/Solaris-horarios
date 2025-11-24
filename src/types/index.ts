@@ -50,6 +50,7 @@ export interface Training {
     scheduled_date_key: string | null;
     status: 'rescheduled' | 'accepted' | 'pending' | 'rejected';
     comments: TrainingComment[]; // jsonb
+    attachments?: Attachment[]; // jsonb
     created_at: string;
 }
 
@@ -77,6 +78,7 @@ export interface Absence {
     status: 'pending' | 'approved' | 'rejected';
     type: 'absence' | 'vacation';
     response_message: string | null;
+    attachments?: Attachment[]; // jsonb
     created_at: string;
 }
 

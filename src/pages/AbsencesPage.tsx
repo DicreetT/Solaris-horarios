@@ -8,6 +8,8 @@ import { toDateKey } from '../utils/dateUtils';
 import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clock } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
+import { FileUploader, Attachment } from '../components/FileUploader';
+import { Paperclip } from 'lucide-react';
 
 /**
  * Absences page
@@ -23,6 +25,7 @@ function AbsencesPage() {
     const [absenceType, setAbsenceType] = useState('vacation');
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [reason, setReason] = useState('');
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
@@ -59,7 +62,8 @@ function AbsencesPage() {
             await createAbsence({
                 reason: finalReason,
                 date_key: selectedDateKey,
-                type: absenceType as 'vacation' | 'absence'
+                type: absenceType as 'vacation' | 'absence',
+                attachments: attachments
             });
 
             // Update the time entry with the appropriate status
@@ -90,6 +94,7 @@ function AbsencesPage() {
             setReason('');
             setAbsenceType('vacation');
             setSelectedDate(new Date());
+            setAttachments([]);
         } catch (e) {
             console.error('Unexpected error creating absence_request', e);
         }
@@ -179,6 +184,24 @@ function AbsencesPage() {
                                                 <span className="font-bold text-gray-700">Motivo:</span> {r.reason}
                                             </p>
 
+                                            {r.attachments && r.attachments.length > 0 && (
+                                                <div className="mb-3 flex flex-wrap gap-2">
+                                                    {r.attachments.map((file: Attachment, idx: number) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={file.url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary hover:underline bg-gray-50 px-2 py-1 rounded border border-gray-100"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Paperclip size={10} />
+                                                            {file.name}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+
                                             {r.response_message && (
                                                 <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
                                                     <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
@@ -267,6 +290,24 @@ function AbsencesPage() {
                                                 <span className="font-bold text-gray-700 block mb-1">Motivo:</span>
                                                 {r.reason}
                                             </p>
+
+                                            {r.attachments && r.attachments.length > 0 && (
+                                                <div className="mb-3 flex flex-wrap gap-2">
+                                                    {r.attachments.map((file: Attachment, idx: number) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={file.url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary hover:underline bg-gray-50 px-2 py-1 rounded border border-gray-100"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Paperclip size={10} />
+                                                            {file.name}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
 
                                             {r.status === "pending" && (
                                                 <div className="flex gap-2 pt-3 border-t border-gray-100">
@@ -375,6 +416,17 @@ function AbsencesPage() {
                                     placeholder="Describe brevemente el motivo..."
                                     className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
                                     required
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Adjuntar archivos (opcional)
+                                </label>
+                                <FileUploader
+                                    onUploadComplete={setAttachments}
+                                    existingFiles={attachments}
+                                    folderPath="absences"
                                 />
                             </div>
 
