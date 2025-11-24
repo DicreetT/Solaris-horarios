@@ -88,4 +88,12 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
         users: ["esteban", "itzi", "contable"],
     },
+    {
+        id: "facturas_pagos",
+        label: "Facturas pagos proveedores",
+        description: "Gestión de facturas y pagos a proveedores.",
+        emoji: "🧾",
+        url: "https://drive.google.com/drive/folders/1u6-SpskTqHBiJPysivumlPwJVpJPDDDz?usp=sharing",
+        users: ["contable", "thalia"],
+    },
 ];
