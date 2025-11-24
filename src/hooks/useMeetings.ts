@@ -16,7 +16,7 @@ export function useMeetings(currentUser: User | null) {
 
             if (!currentUser.isAdmin) {
                 query = query.or(
-                    `created_by.eq.${currentUser.id},participants.cs.{${currentUser.id}}`
+                    `created_by.eq.${currentUser.id},participants.ov.{${currentUser.id}}`
                 );
             }
 
