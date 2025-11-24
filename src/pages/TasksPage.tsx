@@ -14,7 +14,6 @@ import {
     CheckCircle2,
     Circle,
     LayoutGrid,
-    LayoutGrid,
     List,
     Paperclip
 } from 'lucide-react';
@@ -394,48 +393,47 @@ function TasksPage() {
                                             ))}
                                         </div>
                                     )}
-                                </div>
+
+                                    <div className="flex items-center gap-4">
+                                        {isCompleted ? (
+                                            <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold border border-green-200">
+                                                Completada
+                                            </span>
+                                        ) : (
+                                            <span className="px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200">
+                                                Pendiente
+                                            </span>
+                                        )}
+
+                                        <button
+                                            onClick={() => deleteTodo(t.id)}
+                                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                            title="Eliminar tarea"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
                                     </div>
+                                </div>
 
-                    <div className="flex items-center gap-4">
-                        {isCompleted ? (
-                            <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold border border-green-200">
-                                Completada
-                            </span>
-                        ) : (
-                            <span className="px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200">
-                                Pendiente
-                            </span>
-                        )}
-
-                        <button
-                            onClick={() => deleteTodo(t.id)}
-                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                            title="Eliminar tarea"
-                        >
-                            <Trash2 size={14} />
-                        </button>
-                    </div>
-                </div>
-            );
+                            );
                         })}
 
-            {filteredTodos.length === 0 && (
-                <div className="p-12 text-center text-gray-400">
-                    <p>No se encontraron tareas con los filtros actuales.</p>
-                </div>
-            )}
-        </div>
+                        {filteredTodos.length === 0 && (
+                            <div className="p-12 text-center text-gray-400">
+                                <p>No se encontraron tareas con los filtros actuales.</p>
+                            </div>
+                        )}
+                    </div>
                 </div >
             )
-}
+            }
 
-{/* Create Task Modal */ }
-{
-    showCreateModal && (
-        <TodoModal onClose={() => setShowCreateModal(false)} />
-    )
-}
+            {/* Create Task Modal */}
+            {
+                showCreateModal && (
+                    <TodoModal onClose={() => setShowCreateModal(false)} />
+                )
+            }
         </div >
     );
 }
