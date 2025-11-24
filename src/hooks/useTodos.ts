@@ -26,6 +26,7 @@ export function useTodos(currentUser: User | null) {
                 assigned_to: row.assigned_to || [],
                 due_date_key: row.due_date_key,
                 completed_by: row.completed_by || [],
+                attachments: row.attachments || [],
                 created_at: row.created_at,
             }));
 
@@ -43,11 +44,12 @@ export function useTodos(currentUser: User | null) {
     });
 
     const createTodoMutation = useMutation({
-        mutationFn: async ({ title, description, assignedTo, dueDateKey }: {
+        mutationFn: async ({ title, description, assignedTo, dueDateKey, attachments }: {
             title: string;
             description: string;
             assignedTo: string[];
             dueDateKey: string | null;
+            attachments?: any[];
         }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
@@ -58,6 +60,7 @@ export function useTodos(currentUser: User | null) {
                     created_by: currentUser.id,
                     assigned_to: assignedTo,
                     due_date_key: dueDateKey,
+                    attachments,
                     created_at: now,
                     completed_by: [],
                 })

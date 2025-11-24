@@ -3,9 +3,11 @@ import { useAuth } from '../context/AuthContext';
 import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
-import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare } from 'lucide-react';
+import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare, Paperclip } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
+import { FileUploader, Attachment } from '../components/FileUploader';
+import { useNotificationsContext } from '../context/NotificationsContext';
 
 /**
  * Meetings page
@@ -15,15 +17,15 @@ import { RoleBadge } from '../components/RoleBadge';
 function MeetingsPage() {
     const { currentUser } = useAuth();
     const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
+    const { addNotification } = useNotificationsContext();
 
     const [showModal, setShowModal] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [meetingTitle, setMeetingTitle] = useState('');
     const [meetingDescription, setMeetingDescription] = useState('');
     const [meetingPreferredSlot, setMeetingPreferredSlot] = useState('indiferente');
-    const [meetingParticipants, setMeetingParticipants] = useState(() =>
-        currentUser?.isAdmin ? [currentUser.id] : [currentUser?.id, 'thalia']
-    );
+    const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
+    const [meetingAttachments, setMeetingAttachments] = useState<Attachment[]>([]);
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
@@ -48,7 +50,7 @@ function MeetingsPage() {
     }
 
     function handleToggleParticipant(id: string) {
-        setMeetingParticipants((prev) =>
+        setSelectedParticipants((prev) =>
             prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
         );
     }
@@ -56,7 +58,7 @@ function MeetingsPage() {
     async function handleCreateMeeting(e: React.FormEvent) {
         e.preventDefault();
         const title = meetingTitle.trim();
-        if (!title || meetingParticipants.length === 0) return;
+        if (!title || selectedParticipants.length === 0) return;
 
         try {
             await createMeeting({
@@ -64,15 +66,16 @@ function MeetingsPage() {
                 description: meetingDescription.trim(),
                 preferred_date_key: selectedDateKey,
                 preferred_slot: meetingPreferredSlot,
-                participants: meetingParticipants,
+                participants: selectedParticipants,
+                attachments: meetingAttachments,
             });
+            await addNotification({ message: `Has solicitado una reunión: ${title}` });
 
             setMeetingTitle('');
             setMeetingDescription('');
             setMeetingPreferredSlot('indiferente');
-            setMeetingParticipants(
-                currentUser.isAdmin ? [currentUser.id] : [currentUser.id, 'thalia']
-            );
+            setSelectedParticipants([]);
+            setMeetingAttachments([]);
             setSelectedDate(new Date());
             setShowModal(false);
         } catch (e) {
@@ -180,10 +183,29 @@ function MeetingsPage() {
                                                     </div>
                                                 </div>
 
-                                                <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                                    <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
-                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.response_message}</span>
-                                                </div>
+                                                {m.response_message && (
+                                                    <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                                        <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
+                                                        <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.response_message}</span>
+                                                    </div>
+                                                )}
+
+                                                {m.attachments && m.attachments.length > 0 && (
+                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                        {m.attachments.map((file, idx) => (
+                                                            <a
+                                                                key={idx}
+                                                                href={file.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                                                            >
+                                                                <Paperclip size={12} />
+                                                                <span className="truncate max-w-[150px]">{file.name}</span>
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                )}
 
                                             </div>
 
@@ -258,9 +280,27 @@ function MeetingsPage() {
 
                                             <h3 className="font-bold text-gray-900 mb-1">{m.title}</h3>
                                             {m.description && (
-                                                <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                                    {m.description}
+                                                <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                                    <span className="font-bold text-gray-700 block mb-1">Descripción:</span>
+                                                    {m.description || 'Sin descripción'}
                                                 </p>
+                                            )}
+
+                                            {m.attachments && m.attachments.length > 0 && (
+                                                <div className="mb-3 flex flex-wrap gap-2">
+                                                    {m.attachments.map((file, idx) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={file.url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                                                        >
+                                                            <Paperclip size={12} />
+                                                            <span className="truncate max-w-[150px]">{file.name}</span>
+                                                        </a>
+                                                    ))}
+                                                </div>
                                             )}
 
                                             <div className="grid grid-cols-2 gap-4 text-xs text-gray-500 mb-4">
@@ -398,30 +438,32 @@ function MeetingsPage() {
 
                             <div>
                                 <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Personas que deberían estar *
+                                    Participantes
                                 </label>
-                                <div className="flex flex-wrap gap-2">
-                                    {USERS.map((u) => (
-                                        <label
-                                            key={u.id}
-                                            className={`
-                                                inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border-2 cursor-pointer transition-all
-                                                ${meetingParticipants.includes(u.id)
-                                                    ? 'bg-primary/10 border-primary text-primary'
-                                                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
-                                                }
-                                            `}
-                                        >
+                                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border-2 border-gray-100 rounded-xl">
+                                    {USERS.filter(u => u.id !== currentUser.id).map(user => (
+                                        <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
                                             <input
                                                 type="checkbox"
-                                                className="hidden"
-                                                checked={meetingParticipants.includes(u.id)}
-                                                onChange={() => handleToggleParticipant(u.id)}
+                                                checked={selectedParticipants.includes(user.id)}
+                                                onChange={() => handleToggleParticipant(user.id)}
+                                                className="rounded border-gray-300 text-primary focus:ring-primary"
                                             />
-                                            {u.name}
+                                            <span className="text-sm font-medium text-gray-700">{user.name}</span>
                                         </label>
                                     ))}
                                 </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">
+                                    Adjuntar archivos
+                                </label>
+                                <FileUploader
+                                    onUploadComplete={setMeetingAttachments}
+                                    existingFiles={meetingAttachments}
+                                    folderPath="meetings"
+                                />
                             </div>
 
                             <div className="flex gap-3 pt-4">

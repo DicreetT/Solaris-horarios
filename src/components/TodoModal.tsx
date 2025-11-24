@@ -3,6 +3,7 @@ import { USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import { XCircle, CheckSquare } from 'lucide-react';
+import { FileUploader, Attachment } from './FileUploader';
 
 /**
  * Modal To-Do Creation
@@ -16,6 +17,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
     const [description, setDescription] = useState("");
     const [dueDate, setDueDate] = useState("");
     const [assignedIds, setAssignedIds] = useState([currentUser.id]);
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
 
     const handleToggleAssignee = (id: string) => {
         setAssignedIds((prev) =>
@@ -34,12 +36,14 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                 description: description.trim(),
                 dueDateKey: dueDate || null,
                 assignedTo: assignedIds,
+                attachments,
             });
 
             setTitle("");
             setDescription("");
             setDueDate("");
             setAssignedIds([currentUser.id]);
+            setAttachments([]);
 
             // Close modal after successful creation
             onClose();
@@ -140,6 +144,17 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                 </label>
                             ))}
                         </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                            Adjuntar archivos
+                        </label>
+                        <FileUploader
+                            onUploadComplete={setAttachments}
+                            existingFiles={attachments}
+                            folderPath="todos"
+                        />
                     </div>
 
                     <div className="flex gap-3 pt-4">

@@ -14,7 +14,9 @@ import {
     CheckCircle2,
     Circle,
     LayoutGrid,
-    List
+    LayoutGrid,
+    List,
+    Paperclip
 } from 'lucide-react';
 
 /**
@@ -110,6 +112,24 @@ function TasksPage() {
                             <p className="text-sm text-gray-500 mb-3 line-clamp-2">
                                 {todo.description}
                             </p>
+                        )}
+
+                        {todo.attachments && todo.attachments.length > 0 && (
+                            <div className="mb-3 flex flex-wrap gap-2">
+                                {todo.attachments.map((file: any, idx: number) => (
+                                    <a
+                                        key={idx}
+                                        href={file.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <Paperclip size={12} />
+                                        <span className="truncate max-w-[120px]">{file.name}</span>
+                                    </a>
+                                ))}
+                            </div>
                         )}
 
                         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
@@ -357,44 +377,66 @@ function TasksPage() {
                                             </div>
                                         </div>
                                     </div>
-
-                                    <div className="flex items-center gap-4">
-                                        {isCompleted ? (
-                                            <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold border border-green-200">
-                                                Completada
-                                            </span>
-                                        ) : (
-                                            <span className="px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200">
-                                                Pendiente
-                                            </span>
-                                        )}
-
-                                        <button
-                                            onClick={() => deleteTodo(t.id)}
-                                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                            title="Eliminar tarea"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
+                                    {t.attachments && t.attachments.length > 0 && (
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            {t.attachments.map((file: any, idx: number) => (
+                                                <a
+                                                    key={idx}
+                                                    href={file.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary hover:underline"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <Paperclip size={10} />
+                                                    {file.name}
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
-                            );
-                        })}
+                                    </div>
 
-                        {filteredTodos.length === 0 && (
-                            <div className="p-12 text-center text-gray-400">
-                                <p>No se encontraron tareas con los filtros actuales.</p>
-                            </div>
+                    <div className="flex items-center gap-4">
+                        {isCompleted ? (
+                            <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold border border-green-200">
+                                Completada
+                            </span>
+                        ) : (
+                            <span className="px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200">
+                                Pendiente
+                            </span>
                         )}
+
+                        <button
+                            onClick={() => deleteTodo(t.id)}
+                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                            title="Eliminar tarea"
+                        >
+                            <Trash2 size={14} />
+                        </button>
                     </div>
                 </div>
-            )}
+            );
+                        })}
 
-            {/* Create Task Modal */}
-            {showCreateModal && (
-                <TodoModal onClose={() => setShowCreateModal(false)} />
+            {filteredTodos.length === 0 && (
+                <div className="p-12 text-center text-gray-400">
+                    <p>No se encontraron tareas con los filtros actuales.</p>
+                </div>
             )}
         </div>
+                </div >
+            )
+}
+
+{/* Create Task Modal */ }
+{
+    showCreateModal && (
+        <TodoModal onClose={() => setShowCreateModal(false)} />
+    )
+}
+        </div >
     );
 }
 

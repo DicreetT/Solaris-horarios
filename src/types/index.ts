@@ -36,6 +36,13 @@ export interface TrainingComment {
     at: string;
 }
 
+export interface Attachment {
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+}
+
 export interface Training {
     id: number;
     user_id: string;
@@ -58,6 +65,7 @@ export interface Meeting {
     scheduled_date_key: string | null;
     scheduled_time: string | null;
     response_message: string | null;
+    attachments?: Attachment[]; // jsonb
     created_at: string;
 }
 
@@ -80,6 +88,7 @@ export interface Todo {
     assigned_to: string[]; // jsonb
     due_date_key: string | null;
     completed_by: string[]; // jsonb
+    attachments?: Attachment[]; // jsonb
     created_at: string;
 }
 

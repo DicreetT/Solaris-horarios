@@ -23,6 +23,7 @@ export function useMeetings(currentUser: User | null) {
                 scheduled_date_key: row.scheduled_date_key,
                 scheduled_time: row.scheduled_time,
                 response_message: row.response_message,
+                attachments: row.attachments || [],
                 created_at: row.created_at,
             });
 
@@ -50,6 +51,7 @@ export function useMeetings(currentUser: User | null) {
                     preferred_date_key: payload.preferred_date_key,
                     preferred_slot: payload.preferred_slot,
                     participants: payload.participants,
+                    attachments: payload.attachments,
                     status: 'pending',
                     created_at: now,
                 })
