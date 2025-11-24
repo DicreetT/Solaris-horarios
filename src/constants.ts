@@ -93,7 +93,15 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         label: "Facturas pagos proveedores",
         description: "Gestión de facturas y pagos a proveedores.",
         emoji: "🧾",
-        url: "https://drive.google.com/drive/folders/1u6-SpskTqHBiJPysivumlPwJVpJPDDDz?usp=sharing",
+        url: "https://drive.google.com/drive/folders/1NWhx6o-Kqbd6m9xMXgbzVBtm0ny8e6zY?usp=sharing",
         users: ["contable", "thalia"],
+    },
+    {
+        id: "protocolos",
+        label: "PROTOCOLOS",
+        description: "Protocolos y procedimientos operativos.",
+        emoji: "📋",
+        url: "https://drive.google.com/drive/folders/1JoWr3w-anNkyrqGVTzZovTqK44ixm5c2?usp=sharing",
+        users: ["thalia", "contable", "anabella", "esteban", "itzi", "fer"],
     },
 ];
