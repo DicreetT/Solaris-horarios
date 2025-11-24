@@ -63,7 +63,7 @@ export default function CalendarGrid({
     }
 
     return (
-        <div className="bg-white rounded-3xl border border-gray-200 shadow-xl h-full flex flex-col overflow-hidden">
+        <div className="bg-white rounded-3xl border border-gray-200 shadow-xl h-full flex flex-col overflow-hidden ring-1 ring-gray-100">
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50/50 shrink-0">
                 <div className="flex items-center gap-4">
@@ -89,18 +89,18 @@ export default function CalendarGrid({
             </div>
 
             {/* Days Header */}
-            <div className="grid grid-cols-7 border-b border-gray-100 bg-white shrink-0">
+            <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50 shrink-0">
                 {["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"].map((d) => (
-                    <div key={d} className="py-3 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    <div key={d} className="py-4 text-center text-xs font-black text-gray-500 uppercase tracking-widest">
                         {d.substring(0, 3)}
                     </div>
                 ))}
             </div>
 
             {/* Calendar Grid */}
-            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-0 bg-gray-50/30 overflow-hidden">
+            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-0 bg-gray-200 gap-px overflow-hidden border-b border-gray-200">
                 {daysArray.map((d, idx) => {
-                    if (!d) return <div key={idx} className="bg-gray-50/30 border-b border-r border-gray-100 aspect-square" />;
+                    if (!d) return <div key={idx} className="bg-gray-50/30 aspect-square" />;
 
                     const dKey = toDateKey(d);
                     const isSelected = selectedDate && toDateKey(selectedDate) === dKey;
@@ -264,25 +264,25 @@ export default function CalendarGrid({
                             key={dKey}
                             onClick={() => !isWeekend && onSelectDate(d)}
                             className={`
-                                group relative flex flex-col p-2 border-b border-r border-gray-100 transition-all overflow-hidden aspect-square
+                                group relative flex flex-col p-3 transition-all overflow-hidden min-h-[120px]
                                 ${isSelected
-                                    ? "bg-primary/5 shadow-inner cursor-pointer"
+                                    ? "bg-primary/5 shadow-[inset_0_0_0_2px_rgba(147,51,234,0.5)] z-10 cursor-pointer"
                                     : isWeekend
-                                        ? "bg-gray-100/50 cursor-not-allowed"
+                                        ? "bg-gray-50/80 hover:bg-gray-100/80 cursor-not-allowed"
                                         : "bg-white hover:bg-gray-50 cursor-pointer"
                                 }
-                                ${isToday && !isSelected ? "bg-blue-50/30" : ""}
+                                ${isToday && !isSelected ? "bg-blue-50/40" : ""}
                             `}
                         >
                             <div className="flex items-center justify-between mb-1 shrink-0">
                                 <span className={`
-                                    text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full transition-colors
+                                    text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full transition-colors
                                     ${isToday
-                                        ? "bg-primary text-white shadow-md shadow-primary/30"
+                                        ? "bg-primary text-white shadow-lg shadow-primary/30 scale-110"
                                         : isSelected
-                                            ? "text-primary bg-primary/10"
+                                            ? "text-primary bg-primary/10 font-black"
                                             : isWeekend
-                                                ? "text-red-400"
+                                                ? "text-red-400/70"
                                                 : "text-gray-700"
                                     }
                                 `}>
@@ -296,7 +296,7 @@ export default function CalendarGrid({
                                     <div
                                         key={i}
                                         className={`
-                                            flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-bold shrink-0
+                                            flex items-center gap-1.5 px-2 py-1.5 rounded-md border text-[10px] font-bold shrink-0 shadow-sm
                                             ${badge.color}
                                         `}
                                     >
