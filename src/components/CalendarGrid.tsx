@@ -149,9 +149,19 @@ export default function CalendarGrid({
                     );
 
                     // Meetings - Scheduled Date
-                    const myMeetings = meetingRequests.filter(
-                        m => m.scheduled_date_key === dKey && m.status === 'scheduled'
-                    );
+                    const myMeetings = meetingRequests.filter(m => {
+                        const isDateMatch = m.scheduled_date_key === dKey && m.status === 'scheduled';
+                        if (!isDateMatch) return false;
+
+                        // Admin sees all
+                        if (isAdminView) return true;
+
+                        // User sees if created by them OR if they are a participant
+                        const isCreator = m.created_by === currentUser?.id;
+                        const isParticipant = m.participants?.includes(currentUser?.id || '');
+
+                        return isCreator || isParticipant;
+                    });
 
                     // Determine badges to show
                     const badges = [];
