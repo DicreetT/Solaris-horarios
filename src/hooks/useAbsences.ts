@@ -15,7 +15,8 @@ export function useAbsences(currentUser: User | null) {
                 .order('created_at', { ascending: false });
 
             if (!currentUser.isAdmin) {
-                query = query.eq('created_by', currentUser.id);
+                // Users see their own requests OR any approved request
+                query = query.or(`created_by.eq.${currentUser.id},status.eq.approved`);
             }
 
             const { data, error } = await query;
