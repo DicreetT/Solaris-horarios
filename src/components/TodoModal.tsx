@@ -25,32 +25,39 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
         );
     }
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const trimmedTitle = title.trim();
-        if (!trimmedTitle || assignedIds.length === 0) return;
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+        if (e) e.preventDefault();
+        console.log("handleSubmit called");
+
+        if (!title.trim()) {
+            alert('Por favor, escribe un título para la tarea.');
+            return;
+        }
+
+        setIsSubmitting(true);
         try {
             await createTodo({
-                title: trimmedTitle,
+                title: title.trim(),
                 description: description.trim(),
                 dueDateKey: dueDate || null,
                 assignedTo: assignedIds,
                 attachments,
             });
-
+            onClose();
             setTitle("");
             setDescription("");
             setDueDate("");
             setAssignedIds([currentUser.id]);
             setAttachments([]);
-
-            // Close modal after successful creation
-            onClose();
-        } catch (e) {
-            console.error("Unexpected error creating todo", e);
+        } catch (error: any) {
+            console.error('Error creating todo:', error);
+            alert(`Error al crear la tarea: ${error.message || 'Error desconocido'}`);
+        } finally {
+            setIsSubmitting(false);
         }
-    }
+    };
 
     return (
         <div
@@ -169,10 +176,14 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                             Cancelar
                         </button>
                         <button
-                            type="submit"
-                            className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                            type="button"
+                            onClick={handleSubmit}
+                            disabled={isSubmitting}
+                            className={`flex-1 py-3 rounded-xl bg-primary text-white font-bold transition-all shadow-lg shadow-primary/25 cursor-pointer
+                            ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary-dark hover:scale-105 active:scale-95'}
+                        `}
                         >
-                            ✨ Crear tarea
+                            {isSubmitting ? 'Creando...' : '✨ Crear tarea'}
                         </button>
                     </div>
                 </form>
