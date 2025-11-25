@@ -14,6 +14,7 @@ export function useTodos(currentUser: User | null) {
             const { data, error } = await supabase
                 .from('todos')
                 .select('*')
+                .order('due_date_key', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: false });
 
             if (error) throw error;
