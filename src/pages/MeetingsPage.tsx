@@ -364,10 +364,10 @@ function MeetingsPage() {
                     onClick={() => setShowModal(false)}
                 >
                     <div
-                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] flex flex-col overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center justify-between p-6 pb-0 shrink-0">
                             <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar reunión</h2>
                             <button
                                 type="button"
@@ -378,95 +378,98 @@ function MeetingsPage() {
                             </button>
                         </div>
 
-                        <p className="text-gray-500 mb-6 font-medium">
+                        <p className="text-gray-500 px-6 mb-6 font-medium shrink-0">
                             Solicita una reunión con personas del equipo.
                         </p>
 
-                        <form onSubmit={handleCreateMeeting} className="space-y-5">
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Fecha preferida
-                                </label>
-                                <input
-                                    type="date"
-                                    value={selectedDateKey}
-                                    onChange={handleDateChange}
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Título *
-                                </label>
-                                <input
-                                    type="text"
-                                    value={meetingTitle}
-                                    onChange={(e) => setMeetingTitle(e.target.value)}
-                                    placeholder="Ej.: Reunión de seguimiento..."
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
-                                    required
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Motivo / Descripción
-                                </label>
-                                <textarea
-                                    value={meetingDescription}
-                                    onChange={(e) => setMeetingDescription(e.target.value)}
-                                    placeholder="¿Qué quieres tratar en la reunión?"
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Franja horaria preferida
-                                </label>
-                                <select
-                                    value={meetingPreferredSlot}
-                                    onChange={(e) => setMeetingPreferredSlot(e.target.value)}
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
-                                >
-                                    <option value="mañana">Mañana</option>
-                                    <option value="tarde">Tarde</option>
-                                    <option value="indiferente">Indiferente</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Participantes
-                                </label>
-                                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border-2 border-gray-100 rounded-xl">
-                                    {USERS.filter(u => u.id !== currentUser.id).map(user => (
-                                        <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedParticipants.includes(user.id)}
-                                                onChange={() => handleToggleParticipant(user.id)}
-                                                className="rounded border-gray-300 text-primary focus:ring-primary"
-                                            />
-                                            <span className="text-sm font-medium text-gray-700">{user.name}</span>
-                                        </label>
-                                    ))}
+                        <form onSubmit={handleCreateMeeting} className="flex flex-col flex-1 min-h-0">
+                            <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-5 custom-scrollbar">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Fecha preferida
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={selectedDateKey}
+                                        onChange={handleDateChange}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                    />
                                 </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Título *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={meetingTitle}
+                                        onChange={(e) => setMeetingTitle(e.target.value)}
+                                        placeholder="Ej.: Reunión de seguimiento..."
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Motivo / Descripción
+                                    </label>
+                                    <textarea
+                                        value={meetingDescription}
+                                        onChange={(e) => setMeetingDescription(e.target.value)}
+                                        placeholder="¿Qué quieres tratar en la reunión?"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Franja horaria preferida
+                                    </label>
+                                    <select
+                                        value={meetingPreferredSlot}
+                                        onChange={(e) => setMeetingPreferredSlot(e.target.value)}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
+                                    >
+                                        <option value="mañana">Mañana</option>
+                                        <option value="tarde">Tarde</option>
+                                        <option value="indiferente">Indiferente</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Participantes
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border-2 border-gray-100 rounded-xl">
+                                        {USERS.filter(u => u.id !== currentUser.id).map(user => (
+                                            <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedParticipants.includes(user.id)}
+                                                    onChange={() => handleToggleParticipant(user.id)}
+                                                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                                                />
+                                                <span className="text-sm font-medium text-gray-700">{user.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Adjuntar archivos
+                                    </label>
+                                    <FileUploader
+                                        onUploadComplete={setMeetingAttachments}
+                                        existingFiles={meetingAttachments}
+                                        folderPath="meetings"
+                                    />
+                                </div>
+
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Adjuntar archivos
-                                </label>
-                                <FileUploader
-                                    onUploadComplete={setMeetingAttachments}
-                                    existingFiles={meetingAttachments}
-                                    folderPath="meetings"
-                                />
-                            </div>
-
-                            <div className="flex gap-3 pt-4">
+                            <div className="flex gap-3 p-6 border-t border-gray-100 bg-white shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
