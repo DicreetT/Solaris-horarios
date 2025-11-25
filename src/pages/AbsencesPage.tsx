@@ -52,10 +52,16 @@ function AbsencesPage() {
         setSelectedDate(new Date(e.target.value + 'T00:00:00'));
     }
 
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
     async function handleCreateAbsence(e: React.FormEvent) {
         e.preventDefault();
-        if (!reason.trim()) return;
+        if (!reason.trim()) {
+            alert('Por favor, indica el motivo de la ausencia.');
+            return;
+        }
 
+        setIsSubmitting(true);
         try {
             // Create the absence request
             const finalReason = reason.trim();
@@ -95,8 +101,11 @@ function AbsencesPage() {
             setAbsenceType('vacation');
             setSelectedDate(new Date());
             setAttachments([]);
-        } catch (e) {
+        } catch (e: any) {
             console.error('Unexpected error creating absence_request', e);
+            alert(`Error al crear la solicitud: ${e.message || 'Error desconocido'}`);
+        } finally {
+            setIsSubmitting(false);
         }
     }
 
@@ -443,9 +452,12 @@ function AbsencesPage() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
+                                    disabled={isSubmitting}
+                                    className={`flex-1 py-3 rounded-xl bg-primary text-white font-bold transition-all shadow-lg shadow-primary/25 
+                                        ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary-dark hover:scale-105 active:scale-95'}
+                                    `}
                                 >
-                                    Solicitar
+                                    {isSubmitting ? 'Solicitando...' : 'Solicitar'}
                                 </button>
                             </div>
                         </form>
