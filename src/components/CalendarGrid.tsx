@@ -127,9 +127,21 @@ export default function CalendarGrid({
 
                     // Absences (Vacations / Special Permissions)
                     // If admin, show all absences for this day. If user, show only theirs.
-                    const relevantAbsences = isAdminView
-                        ? absenceRequests.filter(r => r.date_key === dKey && r.status !== 'rejected')
-                        : absenceRequests.filter(r => r.date_key === dKey && r.created_by === currentUser?.id && r.status !== 'rejected');
+                    const relevantAbsences = absenceRequests.filter(r => {
+                        const isRejected = r.status === 'rejected';
+                        if (isRejected) return false;
+
+                        // Admin sees all
+                        if (isAdminView) return true;
+
+                        // User sees their own
+                        if (r.created_by === currentUser?.id) return true;
+
+                        // User sees APPROVED absences of others
+                        if (r.status === 'approved') return true;
+
+                        return false;
+                    });
 
                     // Trainings (including rescheduled)
                     const relevantTrainings = trainingRequests.filter(r => {
@@ -170,7 +182,9 @@ export default function CalendarGrid({
                     relevantAbsences.forEach(absence => {
                         const isVacation = absence.reason?.includes('[Vacaciones]') || absence.reason?.toLowerCase().includes('vacaciones') || absence.type === 'vacation';
                         const user = USERS.find(u => u.id === absence.created_by);
-                        const labelPrefix = isAdminView && user ? `${user.name}: ` : '';
+                        // Show name if admin OR if it's someone else's approved absence
+                        const showName = isAdminView || (absence.created_by !== currentUser?.id);
+                        const labelPrefix = showName && user ? `${user.name}: ` : '';
 
                         badges.push({
                             type: isVacation ? 'vacation' : 'absence',

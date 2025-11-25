@@ -361,10 +361,10 @@ function AbsencesPage() {
                     onClick={() => setShowModal(false)}
                 >
                     <div
-                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full animate-[popIn_0.2s_ease-out]"
+                        className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] flex flex-col overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center justify-between p-6 pb-0 shrink-0">
                             <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar ausencia</h2>
                             <button
                                 type="button"
@@ -375,62 +375,65 @@ function AbsencesPage() {
                             </button>
                         </div>
 
-                        <p className="text-gray-500 mb-6 font-medium">
+                        <p className="text-gray-500 px-6 mb-6 font-medium shrink-0 pt-4">
                             Solicita vacaciones o un permiso especial.
                         </p>
 
-                        <form onSubmit={handleCreateAbsence} className="space-y-5">
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Fecha
-                                </label>
-                                <input
-                                    type="date"
-                                    value={selectedDateKey}
-                                    onChange={handleDateChange}
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
-                                />
+                        <form onSubmit={handleCreateAbsence} className="flex flex-col flex-1 min-h-0">
+                            <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-5 custom-scrollbar">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Fecha
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={selectedDateKey}
+                                        onChange={handleDateChange}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Tipo de ausencia
+                                    </label>
+                                    <select
+                                        value={absenceType}
+                                        onChange={(e) => setAbsenceType(e.target.value)}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
+                                    >
+                                        <option value="vacation">Vacaciones</option>
+                                        <option value="absence">Ausencia / Permiso especial</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Motivo / Descripción *
+                                    </label>
+                                    <textarea
+                                        value={reason}
+                                        onChange={(e) => setReason(e.target.value)}
+                                        placeholder="Describe brevemente el motivo..."
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        Adjuntar archivos (opcional)
+                                    </label>
+                                    <FileUploader
+                                        onUploadComplete={setAttachments}
+                                        existingFiles={attachments}
+                                        folderPath="absences"
+                                    />
+                                </div>
+
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Tipo de ausencia
-                                </label>
-                                <select
-                                    value={absenceType}
-                                    onChange={(e) => setAbsenceType(e.target.value)}
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
-                                >
-                                    <option value="vacation">Vacaciones</option>
-                                    <option value="absence">Ausencia / Permiso especial</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Motivo / Descripción *
-                                </label>
-                                <textarea
-                                    value={reason}
-                                    onChange={(e) => setReason(e.target.value)}
-                                    placeholder="Describe brevemente el motivo..."
-                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
-                                    required
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">
-                                    Adjuntar archivos (opcional)
-                                </label>
-                                <FileUploader
-                                    onUploadComplete={setAttachments}
-                                    existingFiles={attachments}
-                                    folderPath="absences"
-                                />
-                            </div>
-
-                            <div className="flex gap-3 pt-4">
+                            <div className="flex gap-3 p-6 border-t border-gray-100 bg-white shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
