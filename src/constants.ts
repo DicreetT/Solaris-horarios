@@ -62,7 +62,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Gestión y control de stock y existencias.",
         emoji: "📦",
         url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
-        users: ["anabella", "itzi", "esteban", "contable"],
+        users: ["anabella", "itzi", "esteban", "contable", "thalia"],
     },
     {
         id: "conteo",
@@ -78,7 +78,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Archivos de impresión y diseño de etiquetas.",
         emoji: "🏷️",
         url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
-        users: ["anabella", "esteban", "itzi", "fer"],
+        users: ["anabella", "esteban", "itzi", "fer", "thalia"],
     },
     {
         id: "facturacion",
@@ -86,7 +86,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Documentos, facturas y registros contables.",
         emoji: "📑",
         url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
-        users: ["esteban", "itzi", "contable"],
+        users: ["esteban", "itzi", "contable", "thalia"],
     },
     {
         id: "facturas_pagos",
