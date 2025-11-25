@@ -130,6 +130,7 @@ export default function CalendarGrid({
                     const relevantAbsences = absenceRequests.filter(r => {
                         const isRejected = r.status === 'rejected';
                         if (isRejected) return false;
+                        if (r.date_key !== dKey) return false;
 
                         // Admin sees all
                         if (isAdminView) return true;
