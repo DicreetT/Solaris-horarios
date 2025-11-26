@@ -1,8 +1,11 @@
-import React from 'react';
-import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle } from 'lucide-react';
-import { Todo, Attachment } from '../types';
+import React, { useState } from 'react';
+import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send } from 'lucide-react';
+import { Todo, Attachment, Comment } from '../types';
 import { USERS } from '../constants';
 import { UserAvatar } from './UserAvatar';
+import { useAuth } from '../context/AuthContext';
+import { useTodos } from '../hooks/useTodos';
+import { FileUploader } from './FileUploader';
 
 interface TaskDetailModalProps {
     task: Todo;
@@ -10,9 +13,35 @@ interface TaskDetailModalProps {
 }
 
 export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
-    const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
+    const { currentUser } = useAuth();
+    const { addComment } = useTodos(currentUser);
+    const [newComment, setNewComment] = useState('');
+    const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
     const isCompleted = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
+
+    const handleAddComment = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newComment.trim() && newAttachments.length === 0) return;
+
+        setIsSubmitting(true);
+        try {
+            await addComment({
+                todoId: task.id,
+                text: newComment,
+                attachments: newAttachments
+            });
+            setNewComment('');
+            setNewAttachments([]);
+        } catch (error) {
+            console.error('Error adding comment:', error);
+            alert('Error al enviar el comentario');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     return (
         <div
@@ -134,6 +163,108 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                                 })}
                             </div>
                         </div>
+                    </div>
+
+                    {/* Comments Section */}
+                    <div className="pt-6 border-t border-gray-100">
+                        <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider flex items-center gap-2">
+                            <MessageSquare size={16} />
+                            Comentarios ({task.comments?.length || 0})
+                        </h3>
+
+                        {/* Comments List */}
+                        <div className="space-y-4 mb-6">
+                            {task.comments && task.comments.length > 0 ? (
+                                task.comments.map((comment: Comment) => {
+                                    const commentUser = USERS.find(u => u.id === comment.user_id);
+                                    const isMe = comment.user_id === currentUser?.id;
+
+                                    return (
+                                        <div key={comment.id} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : ''}`}>
+                                            <UserAvatar name={commentUser?.name || comment.user_id} size="sm" className="mt-1" />
+                                            <div className={`flex flex-col max-w-[80%] ${isMe ? 'items-end' : 'items-start'}`}>
+                                                <div className={`
+                                                    p-4 rounded-2xl text-sm
+                                                    ${isMe
+                                                        ? 'bg-primary text-white rounded-tr-none'
+                                                        : 'bg-gray-100 text-gray-800 rounded-tl-none'}
+                                                `}>
+                                                    <p className="whitespace-pre-wrap">{comment.text}</p>
+
+                                                    {/* Comment Attachments */}
+                                                    {comment.attachments && comment.attachments.length > 0 && (
+                                                        <div className="mt-3 space-y-2">
+                                                            {comment.attachments.map((att, idx) => (
+                                                                <a
+                                                                    key={idx}
+                                                                    href={att.url}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className={`
+                                                                        flex items-center gap-2 p-2 rounded-lg text-xs font-medium transition-colors
+                                                                        ${isMe
+                                                                            ? 'bg-white/20 hover:bg-white/30 text-white'
+                                                                            : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200'}
+                                                                    `}
+                                                                >
+                                                                    <Paperclip size={12} />
+                                                                    <span className="truncate max-w-[150px]">{att.name}</span>
+                                                                </a>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <span className="text-xs text-gray-400 mt-1 px-1">
+                                                    {new Date(comment.created_at).toLocaleString()}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                                    <p className="text-gray-400 text-sm">No hay comentarios aún. ¡Sé el primero!</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Add Comment Form */}
+                        <form onSubmit={handleAddComment} className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                            <div className="mb-3">
+                                <textarea
+                                    value={newComment}
+                                    onChange={(e) => setNewComment(e.target.value)}
+                                    placeholder="Escribe un comentario..."
+                                    className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+                                    rows={3}
+                                />
+                            </div>
+
+                            <div className="mb-4">
+                                <FileUploader
+                                    onUploadComplete={setNewAttachments}
+                                    existingFiles={newAttachments}
+                                    maxSizeMB={5}
+                                />
+                            </div>
+
+                            <div className="flex justify-end">
+                                <button
+                                    type="submit"
+                                    disabled={isSubmitting || (!newComment.trim() && newAttachments.length === 0)}
+                                    className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isSubmitting ? (
+                                        <span className="animate-pulse">Enviando...</span>
+                                    ) : (
+                                        <>
+                                            <Send size={16} />
+                                            Enviar respuesta
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 

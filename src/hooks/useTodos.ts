@@ -28,6 +28,7 @@ export function useTodos(currentUser: User | null) {
                 due_date_key: row.due_date_key,
                 completed_by: row.completed_by || [],
                 attachments: row.attachments || [],
+                comments: row.comments || [],
                 created_at: row.created_at,
             }));
 
@@ -64,6 +65,7 @@ export function useTodos(currentUser: User | null) {
                     attachments,
                     created_at: now,
                     completed_by: [],
+                    comments: []
                 })
                 .select()
                 .single();
@@ -106,6 +108,40 @@ export function useTodos(currentUser: User | null) {
         },
     });
 
+    const addCommentMutation = useMutation({
+        mutationFn: async ({ todoId, text, attachments }: { todoId: number; text: string; attachments: any[] }) => {
+            // 1. Get current comments
+            const { data: currentTodo, error: fetchError } = await supabase
+                .from('todos')
+                .select('comments')
+                .eq('id', todoId)
+                .single();
+
+            if (fetchError) throw fetchError;
+
+            const newComment = {
+                id: crypto.randomUUID(),
+                user_id: currentUser.id,
+                text,
+                attachments,
+                created_at: new Date().toISOString(),
+            };
+
+            const nextComments = [...(currentTodo.comments || []), newComment];
+
+            const { error: updateError } = await supabase
+                .from('todos')
+                .update({ comments: nextComments })
+                .eq('id', todoId);
+
+            if (updateError) throw updateError;
+            return nextComments;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
+        },
+    });
+
     return {
         todos,
         isLoading,
@@ -113,5 +149,6 @@ export function useTodos(currentUser: User | null) {
         createTodo: createTodoMutation.mutateAsync,
         toggleTodo: toggleTodoMutation.mutateAsync,
         deleteTodo: deleteTodoMutation.mutateAsync,
+        addComment: addCommentMutation.mutateAsync,
     };
 }

@@ -82,6 +82,14 @@ export interface Absence {
     created_at: string;
 }
 
+export interface Comment {
+    id: string;
+    user_id: string;
+    text: string;
+    attachments: Attachment[];
+    created_at: string;
+}
+
 export interface Todo {
     id: number;
     title: string;
@@ -91,6 +99,7 @@ export interface Todo {
     due_date_key: string | null;
     completed_by: string[]; // jsonb
     attachments?: Attachment[]; // jsonb
+    comments?: Comment[]; // jsonb
     created_at: string;
 }
 
