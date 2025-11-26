@@ -67,6 +67,7 @@ export interface Meeting {
     scheduled_time: string | null;
     response_message: string | null;
     attachments?: Attachment[]; // jsonb
+    comments?: Comment[]; // jsonb
     created_at: string;
 }
 

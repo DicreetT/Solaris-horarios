@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { XCircle, Clock, Calendar, BookOpen, CheckSquare, Users, AlertCircle, ExternalLink, ArrowRight, Shield } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { USERS } from '../constants';
+import MeetingDetailModal from './MeetingDetailModal';
 
 /**
  * Modal that shows detailed information about a specific day
@@ -28,6 +29,7 @@ interface DayDetailsModalProps {
 export default function DayDetailsModal({ date, events, onClose }: DayDetailsModalProps) {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
+    const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
 
     if (!date || !events) return null;
 
@@ -260,7 +262,11 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                                         const user = USERS.find(u => u.id === meeting.created_by);
                                         const isOtherUser = events.isAdmin && meeting.created_by !== currentUser?.id;
                                         return (
-                                            <div key={meeting.id} className="p-4 rounded-xl bg-indigo-50 border border-indigo-200">
+                                            <div
+                                                key={meeting.id}
+                                                className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                                                onClick={() => setSelectedMeeting(meeting)}
+                                            >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <div className="flex items-center gap-2 flex-1 min-w-0">
                                                         <span className="text-sm font-bold text-gray-900 truncate">{meeting.title}</span>
@@ -335,6 +341,12 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                     )}
                 </div>
             </div>
+            {selectedMeeting && (
+                <MeetingDetailModal
+                    meeting={selectedMeeting}
+                    onClose={() => setSelectedMeeting(null)}
+                />
+            )}
         </div>
     );
 }

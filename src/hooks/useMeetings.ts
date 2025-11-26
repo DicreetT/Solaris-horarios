@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { User, Meeting } from '../types';
+import { User, Meeting, Comment, Attachment } from '../types';
 
 export function useMeetings(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -24,6 +24,7 @@ export function useMeetings(currentUser: User | null) {
                 scheduled_time: row.scheduled_time,
                 response_message: row.response_message,
                 attachments: row.attachments || [],
+                comments: row.comments || [],
                 created_at: row.created_at,
             });
 
@@ -93,6 +94,45 @@ export function useMeetings(currentUser: User | null) {
         },
     });
 
+    const addCommentMutation = useMutation<void, Error, { meetingId: number; text: string; attachments: Attachment[] }>({
+        mutationFn: async ({ meetingId, text, attachments }) => {
+            if (!currentUser) throw new Error('User not authenticated');
+
+            // 1. Get current comments
+            const { data: meeting, error: fetchError } = await supabase
+                .from('meeting_requests')
+                .select('comments')
+                .eq('id', meetingId)
+                .single();
+
+            if (fetchError) throw fetchError;
+
+            const currentComments: Comment[] = meeting.comments || [];
+
+            // 2. Create new comment
+            const newComment: Comment = {
+                id: crypto.randomUUID(),
+                user_id: currentUser.id,
+                text,
+                attachments,
+                created_at: new Date().toISOString(),
+            };
+
+            // 3. Update database
+            const { error: updateError } = await supabase
+                .from('meeting_requests')
+                .update({
+                    comments: [...currentComments, newComment]
+                })
+                .eq('id', meetingId);
+
+            if (updateError) throw updateError;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['meetings'] });
+        },
+    });
+
     return {
         meetingRequests,
         isLoading,
@@ -100,5 +140,6 @@ export function useMeetings(currentUser: User | null) {
         createMeeting: createMeetingMutation.mutateAsync,
         updateMeetingStatus: updateMeetingStatusMutation.mutateAsync,
         deleteMeeting: deleteMeetingMutation.mutateAsync,
+        addComment: addCommentMutation.mutateAsync,
     };
 }

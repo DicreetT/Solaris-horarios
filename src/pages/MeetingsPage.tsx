@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
+import { Meeting } from '../types';
+import MeetingDetailModal from '../components/MeetingDetailModal';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare, Paperclip } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
@@ -26,6 +28,7 @@ function MeetingsPage() {
     const [meetingPreferredSlot, setMeetingPreferredSlot] = useState('indiferente');
     const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
     const [meetingAttachments, setMeetingAttachments] = useState<Attachment[]>([]);
+    const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
@@ -148,7 +151,8 @@ function MeetingsPage() {
                                 return (
                                     <div
                                         key={m.id}
-                                        className="group bg-white border border-gray-100 rounded-2xl p-5 hover:border-indigo-200 hover:shadow-md transition-all duration-200"
+                                        className="group bg-white border border-gray-100 rounded-2xl p-5 hover:border-indigo-200 hover:shadow-md transition-all duration-200 cursor-pointer"
+                                        onClick={() => setSelectedMeeting(m)}
                                     >
                                         <div className="flex items-start justify-between gap-4">
                                             <div className="flex-1 min-w-0">
@@ -223,7 +227,7 @@ function MeetingsPage() {
 
                                             {m.created_by === currentUser.id && (
                                                 <button
-                                                    onClick={() => deleteMeeting(m.id)}
+                                                    onClick={(e) => { e.stopPropagation(); deleteMeeting(m.id); }}
                                                     className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                                                     title="Eliminar solicitud"
                                                 >
@@ -263,7 +267,8 @@ function MeetingsPage() {
                                     return (
                                         <div
                                             key={m.id}
-                                            className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
+                                            className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm cursor-pointer hover:border-indigo-300 transition-colors"
+                                            onClick={() => setSelectedMeeting(m)}
                                         >
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex items-center gap-3">
@@ -331,20 +336,22 @@ function MeetingsPage() {
                                                     <button
                                                         type="button"
                                                         className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
-                                                        onClick={() =>
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
                                                             updateMeetingStatus({
                                                                 id: m.id,
                                                                 status: "scheduled",
                                                                 scheduled_date_key: m.preferred_date_key,
-                                                            })
-                                                        }
+                                                            });
+                                                        }}
                                                     >
                                                         Aceptar y Programar
                                                     </button>
                                                     <button
                                                         type="button"
                                                         className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
-                                                        onClick={() => {
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
                                                             const msg = window.prompt(
                                                                 "Motivo del rechazo (opcional):",
                                                                 ""
@@ -503,6 +510,14 @@ function MeetingsPage() {
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* Meeting Details Modal */}
+            {selectedMeeting && (
+                <MeetingDetailModal
+                    meeting={selectedMeeting}
+                    onClose={() => setSelectedMeeting(null)}
+                />
             )}
         </div>
     );
