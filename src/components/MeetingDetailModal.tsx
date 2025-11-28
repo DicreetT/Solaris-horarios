@@ -64,7 +64,7 @@ export default function MeetingDetailModal({ meeting, onClose }: MeetingDetailMo
             onClick={onClose}
         >
             <div
-                className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] overflow-y-auto custom-scrollbar"
+                className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-2xl w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] overflow-y-auto custom-scrollbar"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

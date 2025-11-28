@@ -215,6 +215,7 @@ function MeetingsPage() {
                                                                 target="_blank"
                                                                 rel="noopener noreferrer"
                                                                 className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                                                                onClick={(e) => e.stopPropagation()}
                                                             >
                                                                 <Paperclip size={12} />
                                                                 <span className="truncate max-w-[150px]">{file.name}</span>
@@ -312,6 +313,7 @@ function MeetingsPage() {
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                                                            onClick={(e) => e.stopPropagation()}
                                                         >
                                                             <Paperclip size={12} />
                                                             <span className="truncate max-w-[150px]">{file.name}</span>

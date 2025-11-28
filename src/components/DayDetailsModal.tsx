@@ -4,6 +4,7 @@ import { XCircle, Clock, Calendar, BookOpen, CheckSquare, Users, AlertCircle, Ex
 import { useAuth } from '../context/AuthContext';
 import { USERS } from '../constants';
 import MeetingDetailModal from './MeetingDetailModal';
+import TaskDetailModal from './TaskDetailModal';
 
 /**
  * Modal that shows detailed information about a specific day
@@ -30,6 +31,7 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
     const navigate = useNavigate();
     const { currentUser } = useAuth();
     const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
+    const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
 
     if (!date || !events) return null;
 
@@ -313,7 +315,11 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                                             const creator = USERS.find(u => u.id === task.created_by);
                                             const isOtherUser = events.isAdmin && task.created_by !== currentUser?.id;
                                             return (
-                                                <div key={task.id} className="p-3 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors">
+                                                <div
+                                                    key={task.id}
+                                                    className="p-3 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                                                    onClick={() => setSelectedTask(task)}
+                                                >
                                                     <div className="flex items-start gap-2">
                                                         <CheckSquare size={14} className="text-amber-600 mt-0.5 shrink-0" />
                                                         <div className="flex-1 min-w-0">
@@ -345,6 +351,12 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                 <MeetingDetailModal
                     meeting={selectedMeeting}
                     onClose={() => setSelectedMeeting(null)}
+                />
+            )}
+            {selectedTask && (
+                <TaskDetailModal
+                    task={selectedTask}
+                    onClose={() => setSelectedTask(null)}
                 />
             )}
         </div>

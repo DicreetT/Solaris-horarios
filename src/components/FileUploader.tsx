@@ -56,7 +56,7 @@ export function FileUploader({
 
                 if (uploadError) {
                     console.error('Error uploading file:', uploadError);
-                    alert(`Error al subir ${file.name}`);
+                    alert(`Error al subir ${file.name}: ${uploadError.message}`);
                     continue;
                 }
 
