@@ -18,6 +18,7 @@ import TrainingsPage from './pages/TrainingsPage';
 import ExportsPage from './pages/ExportsPage';
 import TimeTrackingPage from './pages/TimeTrackingPage';
 import FoldersPage from './pages/FoldersPage';
+import ShoppingListPage from './pages/ShoppingListPage';
 
 /**
  * Protected Route wrapper
@@ -84,6 +85,7 @@ function App() {
           <Route path="/time-tracking" element={<TimeTrackingPage />} />
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/folders" element={<FoldersPage />} />
+          <Route path="/shopping" element={<ShoppingListPage />} />
         </Route>
 
         {/* Catch all - redirect to dashboard or login */}

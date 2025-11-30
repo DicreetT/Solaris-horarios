@@ -154,3 +154,15 @@ export interface DailyStatus {
     status: 'in_person' | 'remote';
     created_at: string;
 }
+
+export interface ShoppingItem {
+    id: number;
+    created_at: string;
+    location: 'canet' | 'huarte';
+    name: string;
+    description: string | null;
+    is_purchased: boolean;
+    created_by: string;
+    purchased_by: string | null;
+    attachments: Attachment[];
+}

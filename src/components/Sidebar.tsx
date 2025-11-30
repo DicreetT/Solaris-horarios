@@ -15,7 +15,8 @@ import {
     Bell,
     ChevronDown,
     ChevronLeft,
-    ChevronRight
+    ChevronRight,
+    ShoppingBag
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -105,6 +106,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/time-tracking',
             label: 'Registro Horario',
             icon: Clock,
+            show: true
+        },
+        {
+            path: '/shopping',
+            label: 'Lista de Compras',
+            icon: ShoppingBag,
             show: true
         },
         {
