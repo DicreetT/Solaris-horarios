@@ -146,3 +146,11 @@ export interface ExportConfig {
     userId?: string;
     format: 'csv' | 'excel' | 'pdf';
 }
+
+export interface DailyStatus {
+    id: number;
+    user_id: string;
+    date_key: string;
+    status: 'in_person' | 'remote';
+    created_at: string;
+}

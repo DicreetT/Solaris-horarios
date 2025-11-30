@@ -8,8 +8,9 @@ import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
+import { useDailyStatus } from '../hooks/useDailyStatus';
 import DayHoverCard from './DayHoverCard';
-import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users, XCircle } from 'lucide-react';
 
 /**
  * Calendario mensual rediseñado
@@ -35,6 +36,7 @@ export default function CalendarGrid({
     const { absenceRequests } = useAbsences(currentUser);
     const { todos } = useTodos(currentUser);
     const { meetingRequests } = useMeetings(currentUser);
+    const { dailyStatuses } = useDailyStatus(currentUser);
     const navigate = useNavigate();
 
     const year = monthDate.getFullYear();
@@ -283,6 +285,22 @@ export default function CalendarGrid({
                             });
                         }
                     });
+
+                    // 6. Esteban's Daily Status
+                    const estebanStatus = dailyStatuses.find(s => s.date_key === dKey && s.user_id === 'esteban');
+                    if (estebanStatus) {
+                        const isPresencial = estebanStatus.status === 'in_person';
+                        badges.push({
+                            type: 'status',
+                            label: isPresencial ? 'Esteban: Presencial' : 'Esteban: No presencial',
+                            color: isPresencial
+                                ? 'bg-teal-50 text-teal-700 border-teal-100'
+                                : 'bg-gray-100 text-gray-600 border-gray-200',
+                            icon: isPresencial ? <Users size={10} /> : <XCircle size={10} />,
+                            detail: isPresencial ? 'Esteban asistirá a la nave' : 'Esteban no asistirá a la nave',
+                            link: '#' // No link needed really
+                        });
+                    }
 
                     return (
                         <div

@@ -11,7 +11,8 @@ import TaskDetailModal from './TaskDetailModal';
  * Displays all events, tasks, meetings, absences, and time entries for that day
  * Includes quick action links to navigate to relevant pages
  */
-import { Absence, Training, Meeting, Todo, TimeEntry } from '../types';
+import { useDailyStatus } from '../hooks/useDailyStatus';
+import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus } from '../types';
 
 interface DayDetailsModalProps {
     date: Date;
@@ -32,6 +33,20 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
     const { currentUser } = useAuth();
     const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
+
+    // Daily Status Logic
+    const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
+    const dateKey = date ? date.toISOString().split('T')[0] : '';
+    const currentStatus = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === dateKey);
+
+    const onSetStatus = async (status: 'in_person' | 'remote') => {
+        try {
+            await setDailyStatus({ dateKey, status });
+        } catch (error) {
+            console.error("Error setting status:", error);
+            alert("Error al actualizar el estado");
+        }
+    };
 
     if (!date || !events) return null;
 
@@ -343,6 +358,42 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    )}
+                    {/* Esteban's Presence Control */}
+                    {currentUser?.id === 'esteban' && (
+                        <div className="space-y-3 pt-4 border-t border-gray-100">
+                            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+                                <Users size={16} className="text-teal-600" />
+                                Mi Presencia
+                            </h3>
+                            <div className="p-4 rounded-xl bg-teal-50 border border-teal-200">
+                                <p className="text-sm text-gray-700 mb-3 font-medium">
+                                    ¿Vas a ir presencialmente a la nave hoy?
+                                </p>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => onSetStatus('in_person')}
+                                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${currentStatus?.status === 'in_person'
+                                            ? 'bg-teal-600 text-white shadow-md'
+                                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                                            }`}
+                                    >
+                                        <CheckSquare size={16} />
+                                        Sí, iré
+                                    </button>
+                                    <button
+                                        onClick={() => onSetStatus('remote')}
+                                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${currentStatus?.status === 'remote'
+                                            ? 'bg-gray-600 text-white shadow-md'
+                                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                                            }`}
+                                    >
+                                        <XCircle size={16} />
+                                        No iré
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>
