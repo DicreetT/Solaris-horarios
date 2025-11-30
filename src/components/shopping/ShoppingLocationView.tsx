@@ -42,6 +42,12 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
         }
     };
 
+    const handleDirectDelete = async (item: ShoppingItem) => {
+        if (window.confirm('¿Seguro que quieres eliminar este ítem?')) {
+            await deleteItem(item.id);
+        }
+    };
+
     const handleTogglePurchased = async (item: ShoppingItem) => {
         try {
             await togglePurchased({ id: item.id, isPurchased: !item.is_purchased });
@@ -101,8 +107,8 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                 <button
                     onClick={() => setActiveTab('pending')}
                     className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'pending'
-                            ? 'bg-white text-indigo-600 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
                         }`}
                 >
                     <ShoppingBag size={16} />
@@ -114,8 +120,8 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                 <button
                     onClick={() => setActiveTab('purchased')}
                     className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'purchased'
-                            ? 'bg-white text-green-600 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                        ? 'bg-white text-green-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
                         }`}
                 >
                     <CheckCircle2 size={16} />
@@ -145,8 +151,8 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                         <div
                             key={item.id}
                             className={`bg-white border rounded-2xl p-5 transition-all group ${item.is_purchased
-                                    ? 'border-green-100 bg-green-50/30'
-                                    : 'border-gray-200 hover:border-indigo-200 hover:shadow-md'
+                                ? 'border-green-100 bg-green-50/30'
+                                : 'border-gray-200 hover:border-indigo-200 hover:shadow-md'
                                 }`}
                         >
                             <div className="flex items-start gap-4">
@@ -155,10 +161,10 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                                     onClick={() => handleTogglePurchased(item)}
                                     disabled={!canToggle}
                                     className={`mt-1 p-1 rounded-full transition-colors ${item.is_purchased
-                                            ? 'text-green-500 hover:text-green-600'
-                                            : canToggle
-                                                ? 'text-gray-300 hover:text-indigo-500'
-                                                : 'text-gray-200 cursor-not-allowed'
+                                        ? 'text-green-500 hover:text-green-600'
+                                        : canToggle
+                                            ? 'text-gray-300 hover:text-indigo-500'
+                                            : 'text-gray-200 cursor-not-allowed'
                                         }`}
                                     title={!canToggle ? "Solo Esteban puede marcar como comprado" : "Marcar como comprado"}
                                 >
@@ -207,6 +213,20 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                                                         </a>
                                                     ))}
                                                 </div>
+                                            )}
+
+                                            {/* Delete Button (Visible for Creator) */}
+                                            {canDelete(item) && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDirectDelete(item);
+                                                    }}
+                                                    className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                                                    title="Eliminar ítem"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
                                             )}
                                         </div>
                                     </div>
