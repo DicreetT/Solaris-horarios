@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
+import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { formatTimeNow, toDateKey, isWeekend } from '../utils/dateUtils';
-import { Clock, Play, Square, Edit2, Trash2, Timer, Info } from 'lucide-react';
+import { Clock, Play, Square, Edit2, Trash2, Timer, Info, Users, CheckSquare, XCircle } from 'lucide-react';
 
 /**
  * Shared time tracker widget for clocking in/out
@@ -16,12 +17,25 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
     const { addNotification } = useNotificationsContext();
 
     const { absenceRequests } = useAbsences(currentUser);
+    const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
 
     const targetDate = date;
     const dateKey = toDateKey(targetDate);
 
     const [elapsedTime, setElapsedTime] = useState('00:00:00');
     const [isEditing, setIsEditing] = useState(false);
+
+    // Daily Status Logic for Esteban
+    const currentStatus = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === dateKey);
+    const onSetStatus = async (status: 'in_person' | 'remote') => {
+        try {
+            await setDailyStatus({ dateKey, status });
+            addNotification({ message: status === 'in_person' ? 'Has confirmado tu asistencia presencial.' : 'Has confirmado que no asistirás presencialmente.' });
+        } catch (error) {
+            console.error("Error setting status:", error);
+            alert("Error al actualizar el estado");
+        }
+    };
 
     // Get today's time entries for current user
     const userEntries = timeData[dateKey]?.[currentUser?.id] || [];
@@ -221,6 +235,45 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                     </div>
                 )}
             </div>
+
+            {/* Esteban's Presence Control */}
+            {currentUser?.id === 'esteban' && (
+                <div className="px-6 py-4 bg-teal-50/50 border-t border-gray-100">
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-teal-100 text-teal-700 rounded-lg">
+                                <Users size={18} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-gray-900">Mi Presencia</h3>
+                                <p className="text-xs text-gray-500">¿Vas a ir presencialmente a la nave hoy?</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => onSetStatus('in_person')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${currentStatus?.status === 'in_person'
+                                    ? 'bg-teal-600 text-white shadow-md'
+                                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                                    }`}
+                            >
+                                <CheckSquare size={14} />
+                                Sí, iré
+                            </button>
+                            <button
+                                onClick={() => onSetStatus('remote')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${currentStatus?.status === 'remote'
+                                    ? 'bg-gray-600 text-white shadow-md'
+                                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                                    }`}
+                            >
+                                <XCircle size={14} />
+                                No iré
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Entries List */}
             {showEntries && userEntries.length > 0 && (
