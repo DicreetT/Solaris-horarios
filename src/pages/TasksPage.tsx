@@ -34,23 +34,32 @@ function TasksPage() {
 
     const isAdmin = currentUser?.isAdmin;
 
+    // Sorting helper
+    const sortTasksByDate = (taskList: Todo[]) => {
+        return [...taskList].sort((a, b) => {
+            if (!a.due_date_key) return 1; // No date goes last
+            if (!b.due_date_key) return -1;
+            return a.due_date_key.localeCompare(b.due_date_key);
+        });
+    };
+
     // Tasks for current user
-    const tasksForMe = todos.filter(
+    const tasksForMe = sortTasksByDate(todos.filter(
         (t) =>
             t.assigned_to.includes(currentUser.id) &&
             !t.completed_by.includes(currentUser.id)
-    );
-    const completedTasksForMe = todos.filter(
+    ));
+    const completedTasksForMe = sortTasksByDate(todos.filter(
         (t) =>
             t.assigned_to.includes(currentUser.id) &&
             t.completed_by.includes(currentUser.id)
-    );
+    ));
 
-    const tasksCreatedByMe = todos.filter((t) => {
+    const tasksCreatedByMe = sortTasksByDate(todos.filter((t) => {
         const isCompleted = t.assigned_to.length > 0 &&
             t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
         return t.created_by === currentUser.id && !isCompleted;
-    });
+    }));
 
 
 
@@ -78,22 +87,19 @@ function TasksPage() {
 
     const [showCompleted, setShowCompleted] = useState(false);
 
-    function TaskCard({ todo, isMyTask }: { todo: any; isMyTask: boolean }) {
+    function TaskRow({ todo, isMyTask }: { todo: any; isMyTask: boolean }) {
         const isDoneForMe = todo.completed_by.includes(currentUser.id);
         const allDone =
             todo.assigned_to.length > 0 &&
             todo.assigned_to.every((uid: string) => todo.completed_by.includes(uid));
         const creator = USERS.find((u) => u.id === todo.created_by);
-        const assignees = todo.assigned_to
-            .map((id: string) => USERS.find((u) => u.id === id)?.name || id)
-            .join(", ");
 
         return (
             <div
-                className={`group relative bg-white border border-gray-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 ${isDoneForMe ? 'opacity-75 bg-gray-50' : ''}`}
+                className={`group relative bg-white border border-gray-100 rounded-xl p-3 shadow-sm hover:shadow-md transition-all hover:bg-gray-50 cursor-pointer ${isDoneForMe ? 'opacity-75 bg-gray-50' : ''}`}
                 onClick={() => setSelectedTask(todo)}
             >
-                <div className="flex items-start gap-3">
+                <div className="flex items-center gap-4">
                     {/* Checkbox */}
                     <button
                         onClick={(e) => {
@@ -101,107 +107,91 @@ function TasksPage() {
                             toggleTodo(todo);
                         }}
                         className={`
-                            mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0
+                            w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all shrink-0
                             ${isDoneForMe
                                 ? 'bg-green-500 border-green-500 text-white'
                                 : 'border-gray-300 text-transparent hover:border-green-400'
                             }
                         `}
                     >
-                        <CheckCircle2 size={14} fill="currentColor" className={isDoneForMe ? 'opacity-100' : 'opacity-0'} />
+                        <CheckCircle2 size={12} fill="currentColor" className={isDoneForMe ? 'opacity-100' : 'opacity-0'} />
                     </button>
 
-                    <div className="flex-1 min-w-0">
-                        <h3 className={`font-bold text-gray-900 mb-1 ${isDoneForMe ? 'line-through text-gray-400' : ''}`}>
-                            {todo.title}
-                        </h3>
+                    {/* Main Content */}
+                    <div className="flex-1 min-w-0 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                            <h3 className={`font-bold text-gray-900 text-sm truncate ${isDoneForMe ? 'line-through text-gray-400' : ''}`}>
+                                {todo.title}
+                            </h3>
+                            {todo.description && (
+                                <p className="text-xs text-gray-500 truncate max-w-md">
+                                    {todo.description}
+                                </p>
+                            )}
+                        </div>
 
-                        {todo.description && (
-                            <p className="text-sm text-gray-500 mb-3 line-clamp-2">
-                                {todo.description}
-                            </p>
-                        )}
+                        {/* Metadata */}
+                        <div className="flex items-center gap-3 shrink-0">
+                            {/* Attachments Indicator */}
+                            {todo.attachments && todo.attachments.length > 0 && (
+                                <div className="flex items-center text-gray-400" title={`${todo.attachments.length} adjuntos`}>
+                                    <Paperclip size={14} />
+                                    <span className="text-xs ml-1">{todo.attachments.length}</span>
+                                </div>
+                            )}
 
-                        {todo.attachments && todo.attachments.length > 0 && (
-                            <div className="mb-3 flex flex-wrap gap-2">
-                                {todo.attachments.map((file: any, idx: number) => (
-                                    <a
-                                        key={idx}
-                                        href={file.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <Paperclip size={12} />
-                                        <span className="truncate max-w-[120px]">{file.name}</span>
-                                    </a>
-                                ))}
-                            </div>
-                        )}
+                            {/* Creator (only if not my task or created by me view) */}
+                            {!isMyTask && (
+                                <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-md">
+                                    <UserAvatar name={creator?.name} size="xs" className="w-5 h-5" />
+                                    <span className="text-xs font-medium text-gray-600 hidden sm:inline">{creator?.name}</span>
+                                </div>
+                            )}
 
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
-                            {/* Creator */}
-                            <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-md">
-                                <UserAvatar name={creator?.name} size="xs" />
-                                <span className="font-medium text-gray-600">{creator?.name}</span>
-                            </div>
-
-                            {/* Assignees */}
-                            <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-md">
+                            {/* Assignees (only if created by me view) */}
+                            {!isMyTask && (
                                 <div className="flex -space-x-2">
                                     {todo.assigned_to.map((uid: string) => {
                                         const u = USERS.find(user => user.id === uid);
                                         return (
                                             <div key={uid} title={u?.name || uid}>
-                                                <UserAvatar name={u?.name || uid} size="xs" className="border-2 border-white w-5 h-5" />
+                                                <UserAvatar name={u?.name || uid} size="xs" className="border-2 border-white w-6 h-6" />
                                             </div>
                                         );
                                     })}
                                 </div>
-                                <span className="font-medium text-gray-600">
-                                    {todo.assigned_to.length === 1 ? 'Asignado' : 'Asignados'}
-                                </span>
-                            </div>
+                            )}
 
                             {/* Due Date */}
                             {todo.due_date_key && (
-                                <div className="flex items-center gap-1 text-orange-600 bg-orange-50 px-2 py-1 rounded-md font-medium">
+                                <div className="flex items-center gap-1 text-orange-600 bg-orange-50 px-2 py-1 rounded-md text-xs font-medium">
                                     <Calendar size={12} />
                                     <span>{todo.due_date_key}</span>
                                 </div>
                             )}
 
-                            {/* All Done Badge */}
-                            {allDone && (
-                                <span className="bg-green-100 text-green-700 px-2 py-1 rounded-md font-bold">
-                                    ✓ Completada
-                                </span>
+                            {/* Delete Button */}
+                            {todo.created_by === currentUser.id && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        deleteTodo(todo.id);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                    title="Eliminar tarea"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
                             )}
                         </div>
                     </div>
-
-                    {/* Delete Button */}
-                    {todo.created_by === currentUser.id && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                deleteTodo(todo.id);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                            title="Eliminar tarea"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    )}
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="max-w-6xl mx-auto pb-20">
-            {/* Header Section */}
+        <div className="max-w-5xl mx-auto pb-20">
             {/* Header Section */}
             <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="flex items-center gap-4">
@@ -246,8 +236,8 @@ function TasksPage() {
                             <p className="text-gray-500 text-sm">No tienes tareas pendientes por ahora.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {tasksForMe.map((t) => <TaskCard key={t.id} todo={t} isMyTask={true} />)}
+                        <div className="flex flex-col gap-2">
+                            {tasksForMe.map((t) => <TaskRow key={t.id} todo={t} isMyTask={true} />)}
                         </div>
                     )}
 
@@ -265,8 +255,8 @@ function TasksPage() {
                             </button>
 
                             {showCompleted && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                                    {completedTasksForMe.map((t) => <TaskCard key={t.id} todo={t} isMyTask={true} />)}
+                                <div className="flex flex-col gap-2 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    {completedTasksForMe.map((t) => <TaskRow key={t.id} todo={t} isMyTask={true} />)}
                                 </div>
                             )}
                         </div>
@@ -290,8 +280,8 @@ function TasksPage() {
                             <p className="text-gray-500 font-medium">No has asignado tareas a otros.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {tasksCreatedByMe.map((t) => <TaskCard key={t.id} todo={t} isMyTask={false} />)}
+                        <div className="flex flex-col gap-2">
+                            {tasksCreatedByMe.map((t) => <TaskRow key={t.id} todo={t} isMyTask={false} />)}
                         </div>
                     )}
                 </div>
