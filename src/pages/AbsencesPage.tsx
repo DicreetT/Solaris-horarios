@@ -366,16 +366,36 @@ function AbsencesPage() {
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <span className={`
-                                                    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
-                                                    ${r.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
-                                                    ${r.status === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : ''}
-                                                    ${r.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
-                                                `}>
-                                                    {r.status === 'pending' && "Pendiente"}
-                                                    {r.status === 'approved' && "Aprobado"}
-                                                    {r.status === 'rejected' && "Rechazado"}
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`
+                                                        inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
+                                                        ${r.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
+                                                        ${r.status === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : ''}
+                                                        ${r.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                    `}>
+                                                        {r.status === 'pending' && "Pendiente"}
+                                                        {r.status === 'approved' && "Aprobado"}
+                                                        {r.status === 'rejected' && "Rechazado"}
+                                                    </span>
+
+                                                    {/* Admin Edit/Delete Actions */}
+                                                    <div className="flex items-center gap-1 ml-2">
+                                                        <button
+                                                            onClick={() => handleEdit(r)}
+                                                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                            title="Editar solicitud"
+                                                        >
+                                                            <MessageSquare size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteAbsence(r.id)}
+                                                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                            title="Eliminar solicitud"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
 
                                             <div className="flex items-center gap-2 mb-2">
