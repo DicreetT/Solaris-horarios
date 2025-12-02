@@ -180,6 +180,16 @@ function AbsencesPage() {
         if (!replyText.trim()) return;
         try {
             await updateAbsence({ id, response_message: replyText });
+
+            // Notify the user
+            const request = absenceRequests.find(r => r.id === id);
+            if (request && request.created_by) {
+                await addNotification({
+                    message: `Tienes una nueva respuesta en tu solicitud de ausencia: "${replyText}"`,
+                    userId: request.created_by
+                });
+            }
+
             setReplyingId(null);
             setReplyText('');
             await addNotification({ message: 'Respuesta enviada.' });

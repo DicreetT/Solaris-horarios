@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Todo } from '../types';
 
@@ -6,6 +7,7 @@ const EMPTY_ARRAY: Todo[] = [];
 
 export function useTodos(currentUser: User | null) {
     const queryClient = useQueryClient();
+    const { addNotification } = useNotifications(currentUser);
 
     const { data: todos = EMPTY_ARRAY, isLoading, error } = useQuery({
         queryKey: ['todos', currentUser?.id],
@@ -73,8 +75,20 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
             return data;
         },
-        onSuccess: () => {
+        onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+
+            // Notify assigned users
+            if (variables.assignedTo && variables.assignedTo.length > 0) {
+                for (const userId of variables.assignedTo) {
+                    if (userId !== currentUser.id) {
+                        await addNotification({
+                            message: `Se te ha asignado una nueva tarea: "${variables.title}"`,
+                            userId
+                        });
+                    }
+                }
+            }
         },
     });
 

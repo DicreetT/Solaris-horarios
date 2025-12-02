@@ -1,9 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Meeting, Comment, Attachment } from '../types';
 
 export function useMeetings(currentUser: User | null) {
     const queryClient = useQueryClient();
+    const { addNotification } = useNotifications(currentUser);
 
     const { data: meetingRequests = [], isLoading, error } = useQuery<Meeting[]>({
         queryKey: ['meetings', currentUser?.id],
@@ -62,8 +64,20 @@ export function useMeetings(currentUser: User | null) {
             if (error) throw error;
             return data;
         },
-        onSuccess: () => {
+        onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
+
+            // Notify participants
+            if (variables.participants && variables.participants.length > 0) {
+                for (const userId of variables.participants) {
+                    if (userId !== currentUser.id) {
+                        await addNotification({
+                            message: `Se te ha invitado a una nueva reunión: "${variables.title}"`,
+                            userId
+                        });
+                    }
+                }
+            }
         },
     });
 

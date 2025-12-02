@@ -1,9 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Training, TrainingComment } from '../types';
 
 export function useTraining(currentUser: User | null) {
     const queryClient = useQueryClient();
+    const { addNotification } = useNotifications(currentUser);
 
     const { data: trainingRequests = [], isLoading, error } = useQuery<Training[]>({
         queryKey: ['training', currentUser?.id],
@@ -90,8 +92,25 @@ export function useTraining(currentUser: User | null) {
 
             if (error) throw error;
         },
-        onSuccess: () => {
+        onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+
+            // Notify user of status change
+            const request = trainingRequests.find(r => r.id === variables.id);
+            if (request && request.user_id !== currentUser.id) {
+                let message = '';
+                if (variables.status === 'accepted') {
+                    message = 'Tu solicitud de formación ha sido aceptada.';
+                } else if (variables.status === 'rejected') {
+                    message = 'Tu solicitud de formación ha sido rechazada.';
+                } else if (variables.status === 'rescheduled') {
+                    message = 'Tu solicitud de formación ha sido reprogramada.';
+                }
+
+                if (message) {
+                    await addNotification({ message, userId: request.user_id });
+                }
+            }
         },
     });
 
