@@ -27,6 +27,7 @@ export function useAbsences(currentUser: User | null) {
                 created_by: row.created_by,
                 created_at: row.created_at,
                 date_key: row.date_key,
+                end_date: row.end_date,
                 reason: row.reason,
                 status: row.status,
                 type: row.type || 'absence', // Default to absence if null (though DB default is absence)
@@ -38,7 +39,7 @@ export function useAbsences(currentUser: User | null) {
     });
 
     const createAbsenceMutation = useMutation({
-        mutationFn: async ({ reason, date_key, type, attachments }: { reason: string; date_key: string; type: 'absence' | 'vacation', attachments?: any[] }) => {
+        mutationFn: async ({ reason, date_key, end_date, type, attachments }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation', attachments?: any[] }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('absence_requests')
@@ -46,6 +47,7 @@ export function useAbsences(currentUser: User | null) {
                     created_by: currentUser.id,
                     created_at: now,
                     date_key: date_key,
+                    end_date: end_date,
                     reason,
                     type,
                     status: 'pending',
@@ -56,6 +58,20 @@ export function useAbsences(currentUser: User | null) {
 
             if (error) throw error;
             return data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['absences'] });
+        },
+    });
+
+    const updateAbsenceMutation = useMutation({
+        mutationFn: async ({ id, ...updates }: { id: number;[key: string]: any }) => {
+            const { error } = await supabase
+                .from('absence_requests')
+                .update(updates)
+                .eq('id', id);
+
+            if (error) throw error;
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
@@ -94,6 +110,7 @@ export function useAbsences(currentUser: User | null) {
         isLoading,
         error,
         createAbsence: createAbsenceMutation.mutateAsync,
+        updateAbsence: updateAbsenceMutation.mutateAsync,
         updateAbsenceStatus: updateAbsenceStatusMutation.mutateAsync,
         deleteAbsence: deleteAbsenceMutation.mutateAsync,
     };

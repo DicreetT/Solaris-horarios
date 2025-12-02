@@ -45,9 +45,13 @@ function CalendarPage() {
 
         // Get absences
         const absences = absenceRequests.filter(
-            r => r.date_key === dKey &&
-                r.status !== 'rejected' &&
-                (isAdmin || r.created_by === currentUser.id)
+            r => {
+                const start = r.date_key;
+                const end = r.end_date || r.date_key;
+                return dKey >= start && dKey <= end &&
+                    r.status !== 'rejected' &&
+                    (isAdmin || r.created_by === currentUser.id);
+            }
         );
 
         // Get trainings
