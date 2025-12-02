@@ -29,6 +29,8 @@ function AbsencesPage() {
     const [reason, setReason] = useState('');
     const [attachments, setAttachments] = useState<Attachment[]>([]);
     const [editingId, setEditingId] = useState<number | null>(null);
+    const [replyingId, setReplyingId] = useState<number | null>(null);
+    const [replyText, setReplyText] = useState('');
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
@@ -171,6 +173,19 @@ function AbsencesPage() {
             await addNotification({ message: 'Solicitud de permiso eliminada.' });
         } catch (e) {
             console.error("Unexpected error deleting absence", e);
+        }
+    }
+
+    async function handleReply(id: number) {
+        if (!replyText.trim()) return;
+        try {
+            await updateAbsence({ id, response_message: replyText });
+            setReplyingId(null);
+            setReplyText('');
+            await addNotification({ message: 'Respuesta enviada.' });
+        } catch (e) {
+            console.error("Unexpected error replying to absence", e);
+            alert("Error al enviar la respuesta");
         }
     }
 
@@ -380,6 +395,50 @@ function AbsencesPage() {
                                                             {file.name}
                                                         </a>
                                                     ))}
+                                                </div>
+                                            )}
+
+                                            {r.response_message && (
+                                                <div className="mb-3 flex items-start gap-2 text-sm bg-blue-50 p-3 rounded-xl border border-blue-100">
+                                                    <MessageSquare size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Respuesta:</span> {r.response_message}</span>
+                                                </div>
+                                            )}
+
+                                            {replyingId === r.id ? (
+                                                <div className="mt-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                                    <textarea
+                                                        value={replyText}
+                                                        onChange={(e) => setReplyText(e.target.value)}
+                                                        placeholder="Escribe tu respuesta..."
+                                                        className="w-full rounded-lg border border-gray-300 p-2 text-sm mb-2 focus:border-primary focus:outline-none"
+                                                        rows={2}
+                                                        autoFocus
+                                                    />
+                                                    <div className="flex gap-2 justify-end">
+                                                        <button
+                                                            onClick={() => { setReplyingId(null); setReplyText(''); }}
+                                                            className="px-3 py-1.5 text-xs font-bold text-gray-500 hover:bg-gray-200 rounded-lg transition-colors"
+                                                        >
+                                                            Cancelar
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleReply(r.id)}
+                                                            className="px-3 py-1.5 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-lg transition-colors"
+                                                        >
+                                                            Enviar
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 flex justify-end">
+                                                    <button
+                                                        onClick={() => { setReplyingId(r.id); setReplyText(r.response_message || ''); }}
+                                                        className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                                    >
+                                                        <MessageSquare size={14} />
+                                                        {r.response_message ? 'Editar respuesta' : 'Responder'}
+                                                    </button>
                                                 </div>
                                             )}
 
