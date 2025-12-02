@@ -14,10 +14,13 @@ interface TaskDetailModalProps {
 
 export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
     const { currentUser } = useAuth();
-    const { addComment } = useTodos(currentUser);
+    const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
     const [newComment, setNewComment] = useState('');
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editTitle, setEditTitle] = useState(task.title);
+    const [editDescription, setEditDescription] = useState(task.description || '');
 
     const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
     const isCompleted = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
@@ -43,6 +46,47 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
         }
     };
 
+    const handleSaveEdit = async () => {
+        if (!editTitle.trim()) return;
+        try {
+            await updateTodo({
+                id: task.id,
+                title: editTitle,
+                description: editDescription
+            });
+            setIsEditing(false);
+        } catch (error) {
+            console.error('Error updating todo:', error);
+            alert('Error al actualizar la tarea');
+        }
+    };
+
+    const handleToggleStatus = async () => {
+        try {
+            // If I am the creator and not assigned, I can't toggle status for myself unless I am also assigned.
+            // But the requirement is "unmark". If the task is completed by everyone, maybe we want to unmark it for everyone?
+            // Or just unmark for specific users?
+            // The prompt says "user can edit it and 'unmark' it".
+            // If the user is the creator, they might want to reopen it.
+            // If the user is an assignee, they might want to unmark themselves.
+
+            // Let's assume for now we are toggling the current user's completion status if they are assigned.
+            // If they are the creator but not assigned, they can't "complete" it themselves usually.
+            // BUT, if the task is fully completed, maybe the creator wants to reopen it (remove completion from everyone? or just add a comment?)
+            // The simplest interpretation is: if I am assigned, I can toggle my status.
+
+            if (task.assigned_to.includes(currentUser.id)) {
+                await toggleTodo(task);
+            } else {
+                // If I am creator but not assigned, maybe I want to force unmark someone? 
+                // For now let's stick to standard toggle if assigned.
+                alert("Solo los asignados pueden cambiar el estado.");
+            }
+        } catch (error) {
+            console.error('Error toggling status:', error);
+        }
+    };
+
     return (
         <div
             className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
@@ -56,15 +100,20 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                 <div className="flex items-start justify-between mb-6">
                     <div className="flex-1 pr-4">
                         <div className="flex items-center gap-3 mb-2">
-                            <span className={`
-                                inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border
-                                ${isCompleted
-                                    ? 'bg-green-50 text-green-700 border-green-200'
-                                    : 'bg-orange-50 text-orange-700 border-orange-200'}
-                            `}>
+                            <button
+                                onClick={handleToggleStatus}
+                                disabled={!task.assigned_to.includes(currentUser.id)}
+                                className={`
+                                    inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all
+                                    ${isCompleted
+                                        ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                        : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'}
+                                    ${!task.assigned_to.includes(currentUser.id) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}
+                                `}
+                            >
                                 {isCompleted ? <CheckCircle2 size={14} /> : <Circle size={14} />}
                                 {isCompleted ? 'Completada' : 'Pendiente'}
-                            </span>
+                            </button>
                             {task.due_date_key && (
                                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
                                     <Calendar size={14} />
@@ -72,9 +121,30 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                                 </span>
                             )}
                         </div>
-                        <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-tight">
-                            {task.title}
-                        </h2>
+
+                        {isEditing ? (
+                            <div className="space-y-3">
+                                <input
+                                    type="text"
+                                    value={editTitle}
+                                    onChange={(e) => setEditTitle(e.target.value)}
+                                    className="w-full text-2xl font-black text-gray-900 tracking-tight leading-tight border-b-2 border-primary focus:outline-none bg-transparent"
+                                    autoFocus
+                                />
+                            </div>
+                        ) : (
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-tight group flex items-center gap-2">
+                                {task.title}
+                                {task.created_by === currentUser.id && (
+                                    <button
+                                        onClick={() => setIsEditing(true)}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-primary"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                    </button>
+                                )}
+                            </h2>
+                        )}
                     </div>
                     <button
                         type="button"
@@ -89,9 +159,38 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                     {/* Description */}
                     <div>
                         <h3 className="text-sm font-bold text-gray-900 mb-3 uppercase tracking-wider">Descripción</h3>
-                        <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed">
-                            {task.description || <span className="text-gray-400 italic">Sin descripción</span>}
-                        </div>
+                        {isEditing ? (
+                            <textarea
+                                value={editDescription}
+                                onChange={(e) => setEditDescription(e.target.value)}
+                                className="w-full bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed focus:outline-none focus:border-primary min-h-[100px]"
+                            />
+                        ) : (
+                            <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed">
+                                {task.description || <span className="text-gray-400 italic">Sin descripción</span>}
+                            </div>
+                        )}
+
+                        {isEditing && (
+                            <div className="flex gap-2 mt-3 justify-end">
+                                <button
+                                    onClick={() => {
+                                        setIsEditing(false);
+                                        setEditTitle(task.title);
+                                        setEditDescription(task.description || '');
+                                    }}
+                                    className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleSaveEdit}
+                                    className="px-4 py-2 text-sm font-bold text-white bg-primary hover:bg-primary-dark rounded-xl transition-colors"
+                                >
+                                    Guardar
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Attachments */}

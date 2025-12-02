@@ -156,6 +156,20 @@ export function useTodos(currentUser: User | null) {
         },
     });
 
+    const updateTodoMutation = useMutation({
+        mutationFn: async ({ id, title, description }: { id: number; title: string; description: string }) => {
+            const { error } = await supabase
+                .from('todos')
+                .update({ title, description })
+                .eq('id', id);
+
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
+        },
+    });
+
     return {
         todos,
         isLoading,
@@ -164,5 +178,6 @@ export function useTodos(currentUser: User | null) {
         toggleTodo: toggleTodoMutation.mutateAsync,
         deleteTodo: deleteTodoMutation.mutateAsync,
         addComment: addCommentMutation.mutateAsync,
+        updateTodo: updateTodoMutation.mutateAsync,
     };
 }

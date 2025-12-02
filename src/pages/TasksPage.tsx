@@ -61,6 +61,12 @@ function TasksPage() {
         return t.created_by === currentUser.id && !isCompleted;
     }));
 
+    const completedTasksCreatedByMe = sortTasksByDate(todos.filter((t) => {
+        const isCompleted = t.assigned_to.length > 0 &&
+            t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
+        return t.created_by === currentUser.id && isCompleted;
+    }));
+
 
 
     // Filter todos for admin view
@@ -86,6 +92,7 @@ function TasksPage() {
     });
 
     const [showCompleted, setShowCompleted] = useState(false);
+    const [showCreatedCompleted, setShowCreatedCompleted] = useState(false);
 
     function TaskRow({ todo, isMyTask }: { todo: any; isMyTask: boolean }) {
         const isDoneForMe = todo.completed_by.includes(currentUser.id);
