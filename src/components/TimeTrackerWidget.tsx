@@ -33,7 +33,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
             addNotification({ message: status === 'in_person' ? 'Has confirmado tu asistencia presencial.' : 'Has confirmado que no asistirás presencialmente.' });
         } catch (error) {
             console.error("Error setting status:", error);
-            alert("Error al actualizar el estado");
+            alert(`Error al actualizar el estado: ${(error as Error).message}`);
         }
     };
 

@@ -32,7 +32,7 @@ export function useDailyStatus(currentUser: User | null) {
                     user_id: currentUser.id,
                     date_key: dateKey,
                     status: status
-                }, { onConflict: 'user_id, date_key' })
+                }, { onConflict: 'user_id,date_key' })
                 .select()
                 .single();
 
