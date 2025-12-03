@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toDateKey } from '../utils/dateUtils';
-import { USERS } from '../constants';
+import { USERS, ESTEBAN_ID } from '../constants';
 import { useTimeData } from '../hooks/useTimeData';
 import { useTraining } from '../hooks/useTraining';
 import { useAuth } from '../context/AuthContext';
@@ -292,7 +292,7 @@ export default function CalendarGrid({
                     });
 
                     // 6. Esteban's Daily Status
-                    const estebanStatus = dailyStatuses.find(s => s.date_key === dKey && s.user_id === 'esteban');
+                    const estebanStatus = dailyStatuses.find(s => s.date_key === dKey && s.user_id === ESTEBAN_ID);
                     if (estebanStatus) {
                         const isPresencial = estebanStatus.status === 'in_person';
                         badges.push({

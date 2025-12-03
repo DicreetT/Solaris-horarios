@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ESTEBAN_ID } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
@@ -237,7 +238,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
             </div>
 
             {/* Esteban's Presence Control */}
-            {currentUser?.id === 'esteban' && (
+            {currentUser?.id === ESTEBAN_ID && (
                 <div className="px-6 py-4 bg-teal-50/50 border-t border-gray-100">
                     <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">

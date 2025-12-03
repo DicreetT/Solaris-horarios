@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { XCircle, Clock, Calendar, BookOpen, CheckSquare, Users, AlertCircle, ExternalLink, ArrowRight, Shield } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { USERS } from '../constants';
+import { USERS, ESTEBAN_ID } from '../constants';
 import MeetingDetailModal from './MeetingDetailModal';
 import TaskDetailModal from './TaskDetailModal';
 
@@ -361,7 +361,7 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                         </div>
                     )}
                     {/* Esteban's Presence Control */}
-                    {currentUser?.id === 'esteban' && (
+                    {currentUser?.id === ESTEBAN_ID && (
                         <div className="space-y-3 pt-4 border-t border-gray-100">
                             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
                                 <Users size={16} className="text-teal-600" />

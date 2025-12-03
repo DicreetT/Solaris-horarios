@@ -4,6 +4,8 @@ import { User, ShoppingItem, Attachment } from '../types';
 
 const EMPTY_ARRAY: ShoppingItem[] = [];
 
+import { ESTEBAN_ID } from '../constants';
+
 export function useShoppingList(currentUser: User | null) {
     const queryClient = useQueryClient();
 
@@ -80,7 +82,7 @@ export function useShoppingList(currentUser: User | null) {
             if (!currentUser) throw new Error('No user logged in');
 
             // Only Esteban can mark as purchased
-            if (currentUser.id !== 'esteban') {
+            if (currentUser.id !== ESTEBAN_ID) {
                 throw new Error('Solo Esteban puede marcar ítems como comprados');
             }
 
