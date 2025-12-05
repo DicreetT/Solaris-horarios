@@ -5,6 +5,7 @@ import { useShoppingList } from '../../hooks/useShoppingList';
 import { UserAvatar } from '../UserAvatar';
 import ShoppingItemModal from './ShoppingItemModal';
 import { formatDatePretty } from '../../utils/dateUtils';
+import { ESTEBAN_ID } from '../../constants';
 
 interface ShoppingLocationViewProps {
     location: 'canet' | 'huarte';
@@ -57,14 +58,14 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
     };
 
     const canEdit = (item: ShoppingItem) => {
-        return currentUser?.id === item.created_by || currentUser?.id === 'esteban';
+        return currentUser?.id === item.created_by || currentUser?.id === ESTEBAN_ID;
     };
 
     const canDelete = (item: ShoppingItem) => {
         return currentUser?.id === item.created_by;
     };
 
-    const canToggle = currentUser?.id === 'esteban';
+    const canToggle = currentUser?.id === ESTEBAN_ID;
 
     return (
         <div className="max-w-5xl mx-auto pb-20">
