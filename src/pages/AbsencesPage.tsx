@@ -89,7 +89,7 @@ function AbsencesPage() {
                 reason: finalReason,
                 date_key: selectedDateKey,
                 end_date: isDateRange ? endDateKey : null,
-                type: absenceType as 'vacation' | 'absence',
+                type: absenceType as 'vacation' | 'absence' | 'special_permit',
                 attachments: attachments
             };
 
@@ -115,18 +115,20 @@ function AbsencesPage() {
                         status: 'vacation-request',
                         note: 'Solicitud de vacaciones'
                     });
-                } else if (absenceType === 'absence') {
+                } else if (absenceType === 'absence' || absenceType === 'special_permit') {
                     createTimeEntry({
                         date: selectedDate,
                         userId: currentUser.id,
                         entry: null,
                         exit: null,
                         status: 'absent',
-                        note: 'Ausencia registrada'
+                        note: absenceType === 'special_permit' ? 'Permiso especial' : 'Ausencia registrada'
                     });
                 }
 
-                const typeLabel = absenceType === 'vacation' ? 'vacaciones' : 'un permiso especial';
+                let typeLabel = 'ausencia';
+                if (absenceType === 'vacation') typeLabel = 'vacaciones';
+                else if (absenceType === 'special_permit') typeLabel = 'un permiso especial';
                 const dateMsg = isDateRange ? `del ${selectedDateKey} al ${endDateKey}` : `para el día ${selectedDateKey}`;
                 await addNotification({ message: `Has solicitado ${typeLabel} ${dateMsg}.` });
             }
@@ -253,7 +255,7 @@ function AbsencesPage() {
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-3 mb-2">
                                                 <h3 className="text-lg font-bold text-gray-900">
-                                                    {r.type === 'vacation' ? 'Vacaciones' : 'Ausencia'} - {r.date_key} {r.end_date ? ` al ${r.end_date}` : ''}
+                                                    {r.type === 'vacation' ? 'Vacaciones' : (r.type === 'special_permit' ? 'Permiso especial' : 'Ausencia')} - {r.date_key} {r.end_date ? ` al ${r.end_date}` : ''}
                                                 </h3>
                                                 <span className={`
                                                     inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
@@ -401,7 +403,7 @@ function AbsencesPage() {
                                             <div className="flex items-center gap-2 mb-2">
                                                 <Calendar size={16} className="text-gray-400" />
                                                 <span className="font-bold text-gray-900">
-                                                    {r.type === 'vacation' ? 'Vacaciones' : 'Ausencia'} - {r.date_key} {r.end_date ? ` al ${r.end_date}` : ''}
+                                                    {r.type === 'vacation' ? 'Vacaciones' : (r.type === 'special_permit' ? 'Permiso especial' : 'Ausencia')} - {r.date_key} {r.end_date ? ` al ${r.end_date}` : ''}
                                                 </span>
                                             </div>
 
@@ -598,7 +600,8 @@ function AbsencesPage() {
                                         className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
                                     >
                                         <option value="vacation">Vacaciones</option>
-                                        <option value="absence">Ausencia / Permiso especial</option>
+                                        <option value="special_permit">Permiso especial</option>
+                                        <option value="absence">Ausencia</option>
                                     </select>
                                 </div>
 

@@ -39,7 +39,7 @@ export function useAbsences(currentUser: User | null) {
     });
 
     const createAbsenceMutation = useMutation({
-        mutationFn: async ({ reason, date_key, end_date, type, attachments }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation', attachments?: any[] }) => {
+        mutationFn: async ({ reason, date_key, end_date, type, attachments }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[] }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('absence_requests')
