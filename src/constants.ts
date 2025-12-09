@@ -61,7 +61,7 @@ export const USERS: User[] = [
 export const DRIVE_FOLDERS: DriveFolder[] = [
     {
         id: "inventario",
-        label: "Carpeta de inventario",
+        label: "CARPETA DE INVENTARIO",
         description: "Gestión y control de stock y existencias.",
         emoji: "📦",
         url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
@@ -69,7 +69,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
     },
     {
         id: "conteo",
-        label: "Conteo Canet lunes",
+        label: "CONTEO CANET LUNES",
         description: "Registro semanal de conteo en la sede Canet.",
         emoji: "📊",
         url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
@@ -77,7 +77,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
     },
     {
         id: "etiquetas",
-        label: "Carpeta de etiquetas",
+        label: "CARPETA DE ETIQUETAS",
         description: "Archivos de impresión y diseño de etiquetas.",
         emoji: "🏷️",
         url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
@@ -85,7 +85,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
     },
     {
         id: "facturacion",
-        label: "Carpeta de facturación",
+        label: "FACTURACION CANET",
         description: "Documentos, facturas y registros contables.",
         emoji: "📑",
         url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
@@ -93,7 +93,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
     },
     {
         id: "facturas_pagos",
-        label: "Facturas pagos proveedores",
+        label: "FACTURAS PAGOS PROVEEDORES",
         description: "Gestión de facturas y pagos a proveedores.",
         emoji: "🧾",
         url: "https://drive.google.com/drive/folders/1NWhx6o-Kqbd6m9xMXgbzVBtm0ny8e6zY?usp=sharing",
