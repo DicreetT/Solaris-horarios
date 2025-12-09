@@ -29,7 +29,9 @@ function TasksPage() {
     const { todos, toggleTodo, deleteTodo } = useTodos(currentUser);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
-    const [filterUser, setFilterUser] = useState<string>("all");
+    const [filterDate, setFilterDate] = useState("");
+    const [filterCreator, setFilterCreator] = useState("all");
+    const [filterAssignee, setFilterAssignee] = useState("all");
     const [filterStatus, setFilterStatus] = useState("all");
 
     const isAdmin = currentUser?.isAdmin;
@@ -43,39 +45,62 @@ function TasksPage() {
         });
     };
 
+    // Global Filter Logic
+    const matchesFilters = (t: Todo) => {
+        // Date Filter (Creation Date)
+        if (filterDate) {
+            // t.created_at is ISO string, e.g., "2023-10-27T10:00:00.000Z"
+            // filterDate is "YYYY-MM-DD"
+            const createdDate = t.created_at.split('T')[0];
+            if (createdDate !== filterDate) return false;
+        }
+
+        // Creator Filter
+        if (filterCreator !== "all") {
+            if (t.created_by !== filterCreator) return false;
+        }
+
+        // Assignee Filter
+        if (filterAssignee !== "all") {
+            if (!t.assigned_to.includes(filterAssignee)) return false;
+        }
+
+        return true;
+    };
+
     // Tasks for current user
     const tasksForMe = sortTasksByDate(todos.filter(
         (t) =>
             t.assigned_to.includes(currentUser.id) &&
-            !t.completed_by.includes(currentUser.id)
+            !t.completed_by.includes(currentUser.id) &&
+            matchesFilters(t)
     ));
     const completedTasksForMe = sortTasksByDate(todos.filter(
         (t) =>
             t.assigned_to.includes(currentUser.id) &&
-            t.completed_by.includes(currentUser.id)
+            t.completed_by.includes(currentUser.id) &&
+            matchesFilters(t)
     ));
 
     const tasksCreatedByMe = sortTasksByDate(todos.filter((t) => {
         const isCompleted = t.assigned_to.length > 0 &&
             t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
-        return t.created_by === currentUser.id && !isCompleted;
+        return t.created_by === currentUser.id && !isCompleted && matchesFilters(t);
     }));
 
     const completedTasksCreatedByMe = sortTasksByDate(todos.filter((t) => {
         const isCompleted = t.assigned_to.length > 0 &&
             t.assigned_to.every((uid: string) => t.completed_by.includes(uid));
-        return t.created_by === currentUser.id && isCompleted;
+        return t.created_by === currentUser.id && isCompleted && matchesFilters(t);
     }));
 
 
 
     // Filter todos for admin view
     const filteredTodos = todos.filter((t) => {
-        if (filterUser !== "all") {
-            const isAssigned = t.assigned_to.includes(filterUser);
-            const isCreated = t.created_by === filterUser;
-            if (!isAssigned && !isCreated) return false;
-        }
+        // Apply Global Filters first
+        if (!matchesFilters(t)) return false;
+
         if (filterStatus === "completed") {
             const allDone =
                 t.assigned_to.length > 0 &&
@@ -226,6 +251,67 @@ function TasksPage() {
                 </div>
             </div>
 
+            {/* Global Filters Section */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-8 flex flex-wrap gap-4 items-center">
+                <div className="flex items-center gap-2 text-gray-500 font-bold text-sm mr-2">
+                    <Filter size={18} />
+                    <span>Filtrar por:</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-4 flex-1">
+                    <div className="flex flex-col gap-1 flex-1">
+                        <label className="text-xs font-bold text-gray-500 ml-1">Fecha de creación</label>
+                        <input
+                            type="date"
+                            value={filterDate}
+                            onChange={(e) => setFilterDate(e.target.value)}
+                            className="w-full rounded-xl border-gray-200 text-sm font-medium focus:border-primary focus:ring-primary/20 bg-gray-50/50"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-1 flex-1">
+                        <label className="text-xs font-bold text-gray-500 ml-1">Persona asignada</label>
+                        <select
+                            value={filterAssignee}
+                            onChange={(e) => setFilterAssignee(e.target.value)}
+                            className="w-full rounded-xl border-gray-200 text-sm font-medium focus:border-primary focus:ring-primary/20 bg-gray-50/50"
+                        >
+                            <option value="all">Cualquiera</option>
+                            {USERS.map((u) => (
+                                <option key={u.id} value={u.id}>{u.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 flex-1">
+                        <label className="text-xs font-bold text-gray-500 ml-1">Creado por</label>
+                        <select
+                            value={filterCreator}
+                            onChange={(e) => setFilterCreator(e.target.value)}
+                            className="w-full rounded-xl border-gray-200 text-sm font-medium focus:border-primary focus:ring-primary/20 bg-gray-50/50"
+                        >
+                            <option value="all">Cualquiera</option>
+                            {USERS.map((u) => (
+                                <option key={u.id} value={u.id}>{u.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {(filterDate || filterCreator !== "all" || filterAssignee !== "all") && (
+                    <button
+                        onClick={() => {
+                            setFilterDate("");
+                            setFilterCreator("all");
+                            setFilterAssignee("all");
+                        }}
+                        className="px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl transition-colors self-end"
+                    >
+                        Limpiar
+                    </button>
+                )}
+            </div>
+
             {/* Tasks For Me Section */}
             <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
                 <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
@@ -240,7 +326,7 @@ function TasksPage() {
                         <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                             <div className="text-4xl mb-3">🎉</div>
                             <h3 className="text-lg font-bold text-gray-900 mb-1">¡Todo limpio!</h3>
-                            <p className="text-gray-500 text-sm">No tienes tareas pendientes por ahora.</p>
+                            <p className="text-gray-500 text-sm">No se encontraron tareas con los filtros actuales.</p>
                         </div>
                     ) : (
                         <div className="flex flex-col gap-2">
@@ -284,7 +370,7 @@ function TasksPage() {
                     {tasksCreatedByMe.length === 0 ? (
                         <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                             <CheckSquare size={48} className="mx-auto text-gray-300 mb-3" />
-                            <p className="text-gray-500 font-medium">No has asignado tareas a otros.</p>
+                            <p className="text-gray-500 font-medium">No se encontraron tareas con los filtros actuales.</p>
                         </div>
                     ) : (
                         <div className="flex flex-col gap-2">
@@ -315,19 +401,8 @@ function TasksPage() {
                         <div className="flex flex-wrap gap-2">
                             <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-500 font-medium">
                                 <Filter size={14} />
-                                <span>Filtros:</span>
+                                <span>Estado:</span>
                             </div>
-
-                            <select
-                                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
-                                value={filterUser}
-                                onChange={(e) => setFilterUser(e.target.value)}
-                            >
-                                <option value="all">Todos los usuarios</option>
-                                {USERS.map((u) => (
-                                    <option key={u.id} value={u.id}>{u.name}</option>
-                                ))}
-                            </select>
 
                             <select
                                 className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
@@ -338,6 +413,8 @@ function TasksPage() {
                                 <option value="pending">Pendientes</option>
                                 <option value="completed">Completadas</option>
                             </select>
+
+                            <span className="text-xs text-gray-400 self-center ml-2">(Los filtros globales de arriba también se aplican aquí)</span>
                         </div>
                     </div>
 
