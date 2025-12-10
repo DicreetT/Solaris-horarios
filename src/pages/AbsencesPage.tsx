@@ -5,11 +5,10 @@ import { useTimeData } from '../hooks/useTimeData';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
-import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clock, Paperclip, AlertCircle, Info, CheckSquare, Edit2 } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
 import { FileUploader, Attachment } from '../components/FileUploader';
-import { Paperclip } from 'lucide-react';
 
 /**
  * Absences page
@@ -22,15 +21,22 @@ function AbsencesPage() {
     const { createTimeEntry } = useTimeData();
     const { addNotification } = useNotificationsContext();
     const [showModal, setShowModal] = useState(false);
+
+    // Form States
     const [absenceType, setAbsenceType] = useState('vacation');
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [endDate, setEndDate] = useState<Date | null>(null);
     const [isDateRange, setIsDateRange] = useState(false);
     const [reason, setReason] = useState('');
+    const [makeUpHours, setMakeUpHours] = useState(false); // New: User preference
     const [attachments, setAttachments] = useState<Attachment[]>([]);
+
     const [editingId, setEditingId] = useState<number | null>(null);
     const [replyingId, setReplyingId] = useState<number | null>(null);
     const [replyText, setReplyText] = useState('');
+
+    // Admin Decision State
+    const [adminDecision, setAdminDecision] = useState<Record<number, string>>({}); // { requestId: 'makeup' | 'paid' | 'deducted' }
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
@@ -46,11 +52,18 @@ function AbsencesPage() {
         .filter((r) => r.created_by === currentUser.id)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    async function handleUpdateStatus(id: number, updates: any) {
+    async function handleUpdateStatus(id: number, status: 'approved' | 'rejected', message: string, resolutionType?: string) {
         try {
-            await updateAbsenceStatus({ id, ...updates });
+            await updateAbsenceStatus({
+                id,
+                status,
+                response_message: message,
+                resolution_type: resolutionType
+            });
+            await addNotification({ message: `Solicitud ${status === 'approved' ? 'aprobada' : 'rechazada'} correctamente.` });
         } catch (e) {
             console.error("Unexpected error updating absence status", e);
+            alert("Error al actualizar estado");
         }
     }
 
@@ -66,7 +79,7 @@ function AbsencesPage() {
 
     async function handleCreateAbsence(e?: React.FormEvent | React.MouseEvent) {
         if (e) e.preventDefault();
-        console.log("handleCreateAbsence called");
+
         if (!reason.trim()) {
             alert('Por favor, indica el motivo de la ausencia.');
             return;
@@ -90,22 +103,17 @@ function AbsencesPage() {
                 date_key: selectedDateKey,
                 end_date: isDateRange ? endDateKey : null,
                 type: absenceType as 'vacation' | 'absence' | 'special_permit',
+                makeUpHours: absenceType === 'special_permit' ? makeUpHours : false, // Send preference
                 attachments: attachments
             };
 
             if (editingId) {
-                await updateAbsence({ id: editingId, ...payload });
+                await updateAbsence({ id: editingId, ...payload }); // Backend needs to support mapping makeUpHours -> makeup_preference
                 await addNotification({ message: 'Solicitud actualizada correctamente.' });
             } else {
                 await createAbsence(payload);
 
-                // Create time entries logic (simplified for now, ideally should cover range)
-                // For now we just log the start date as before, or maybe we should loop?
-                // Let's keep it simple and just log the start date for now as the backend/hooks handle the request
-                // Ideally we should create time entries for each day in range, but that might be overkill for this refactor step
-                // and `createTimeEntry` might not be designed for bulk.
-                // Let's stick to the original logic for the start date at least.
-
+                // Create time entries logic (simplified logging)
                 if (absenceType === 'vacation') {
                     createTimeEntry({
                         date: selectedDate,
@@ -151,6 +159,7 @@ function AbsencesPage() {
         setIsDateRange(false);
         setAttachments([]);
         setEditingId(null);
+        setMakeUpHours(false);
     }
 
     function handleEdit(request: any) {
@@ -158,6 +167,7 @@ function AbsencesPage() {
         setReason(request.reason);
         setAbsenceType(request.type);
         setSelectedDate(new Date(request.date_key));
+        setMakeUpHours(request.makeup_preference || false); // Load preference
         if (request.end_date) {
             setEndDate(new Date(request.end_date));
             setIsDateRange(true);
@@ -170,6 +180,7 @@ function AbsencesPage() {
     }
 
     async function handleDeleteAbsence(id: number) {
+        if (!window.confirm('¿Seguro que quieres eliminar esta solicitud?')) return;
         try {
             await deleteAbsence(id);
             await addNotification({ message: 'Solicitud de permiso eliminada.' });
@@ -183,7 +194,6 @@ function AbsencesPage() {
         try {
             await updateAbsence({ id, response_message: replyText });
 
-            // Notify the user
             const request = absenceRequests.find(r => r.id === id);
             if (request && request.created_by) {
                 await addNotification({
@@ -272,6 +282,12 @@ function AbsencesPage() {
                                                 </span>
                                             </div>
 
+                                            {r.type === 'special_permit' && r.makeup_preference && (
+                                                <div className="mb-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md inline-block">
+                                                    Has solicitado reponer horas
+                                                </div>
+                                            )}
+
                                             <p className="text-gray-600 text-sm mb-3">
                                                 <span className="font-bold text-gray-700">Motivo:</span> {r.reason}
                                             </p>
@@ -309,22 +325,25 @@ function AbsencesPage() {
                                             </div>
                                         </div>
 
-                                        <div className="flex flex-col gap-2">
-                                            <button
-                                                onClick={() => handleEdit(r)}
-                                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
-                                                title="Editar solicitud"
-                                            >
-                                                <MessageSquare size={18} />
-                                            </button>
-                                            <button
-                                                onClick={() => handleDeleteAbsence(r.id)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                                title="Eliminar solicitud"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
-                                        </div>
+                                        {/* User actions: Edit/Delete only if Pending */}
+                                        {r.status === 'pending' && (
+                                            <div className="flex flex-col gap-2">
+                                                <button
+                                                    onClick={() => handleEdit(r)}
+                                                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                                                    title="Editar solicitud"
+                                                >
+                                                    <Edit2 size={18} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteAbsence(r.id)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                    title="Eliminar solicitud"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -350,6 +369,9 @@ function AbsencesPage() {
                             <div className="space-y-4">
                                 {sortedRequests.map((r) => {
                                     const creator = USERS.find((u) => u.id === r.created_by);
+                                    // Determine default decision based on user preference if not set
+                                    const currentDecision = adminDecision[r.id] || (r.makeup_preference ? 'makeup' : 'deducted');
+
                                     return (
                                         <div
                                             key={r.id}
@@ -407,6 +429,20 @@ function AbsencesPage() {
                                                 </span>
                                             </div>
 
+                                            {r.type === 'special_permit' && (
+                                                <div className="mb-2">
+                                                    {r.makeup_preference ? (
+                                                        <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 w-fit">
+                                                            <Clock size={12} /> Usuario solicita reponer horas
+                                                        </span>
+                                                    ) : (
+                                                        <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-bold w-fit">
+                                                            Usuario no solicita reponer horas
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+
                                             <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
                                                 <span className="font-bold text-gray-700 block mb-1">Motivo:</span>
                                                 {r.reason}
@@ -430,47 +466,52 @@ function AbsencesPage() {
                                                 </div>
                                             )}
 
-                                            {r.response_message && (
-                                                <div className="mb-3 flex items-start gap-2 text-sm bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                    <MessageSquare size={16} className="text-blue-400 mt-0.5 shrink-0" />
-                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Respuesta:</span> {r.response_message}</span>
+                                            {/* Resolution Message if approved */}
+                                            {r.status === 'approved' && r.resolution_type && (
+                                                <div className="mb-3 flex items-center gap-2 text-sm bg-green-50 p-2 rounded-lg border border-green-100 text-green-800">
+                                                    <CheckCircle size={14} />
+                                                    <span className="font-bold text-xs uppercase tracking-wide">Resolución:</span>
+                                                    {r.resolution_type === 'makeup' && "Debe Reponer Horas"}
+                                                    {r.resolution_type === 'paid' && "Cuenta como Trabajado (Pago)"}
+                                                    {r.resolution_type === 'deducted' && "Ausencia (Descuenta)"}
                                                 </div>
                                             )}
 
-                                            {replyingId === r.id ? (
-                                                <div className="mt-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
-                                                    <textarea
-                                                        value={replyText}
-                                                        onChange={(e) => setReplyText(e.target.value)}
-                                                        placeholder="Escribe tu respuesta..."
-                                                        className="w-full rounded-lg border border-gray-300 p-2 text-sm mb-2 focus:border-primary focus:outline-none"
-                                                        rows={2}
-                                                        autoFocus
-                                                    />
-                                                    <div className="flex gap-2 justify-end">
-                                                        <button
-                                                            onClick={() => { setReplyingId(null); setReplyText(''); }}
-                                                            className="px-3 py-1.5 text-xs font-bold text-gray-500 hover:bg-gray-200 rounded-lg transition-colors"
-                                                        >
-                                                            Cancelar
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleReply(r.id)}
-                                                            className="px-3 py-1.5 text-xs font-bold text-white bg-primary hover:bg-primary-dark rounded-lg transition-colors"
-                                                        >
-                                                            Enviar
-                                                        </button>
+                                            {r.status === "pending" && r.type === 'special_permit' && (
+                                                <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Decisión administrativa</p>
+                                                    <div className="space-y-2">
+                                                        <label className="flex items-center gap-2 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name={`resolution-${r.id}`}
+                                                                checked={currentDecision === 'makeup'}
+                                                                onChange={() => setAdminDecision({ ...adminDecision, [r.id]: 'makeup' })}
+                                                                className="text-primary focus:ring-primary"
+                                                            />
+                                                            <span className="text-sm text-gray-700">Reponer horas (Queda debiendo)</span>
+                                                        </label>
+                                                        <label className="flex items-center gap-2 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name={`resolution-${r.id}`}
+                                                                checked={currentDecision === 'paid'}
+                                                                onChange={() => setAdminDecision({ ...adminDecision, [r.id]: 'paid' })}
+                                                                className="text-primary focus:ring-primary"
+                                                            />
+                                                            <span className="text-sm text-gray-700">Cuenta como trabajada (Pagado)</span>
+                                                        </label>
+                                                        <label className="flex items-center gap-2 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name={`resolution-${r.id}`}
+                                                                checked={currentDecision === 'deducted'}
+                                                                onChange={() => setAdminDecision({ ...adminDecision, [r.id]: 'deducted' })}
+                                                                className="text-primary focus:ring-primary"
+                                                            />
+                                                            <span className="text-sm text-gray-700">Ausencia normal (Sin sueldo)</span>
+                                                        </label>
                                                     </div>
-                                                </div>
-                                            ) : (
-                                                <div className="mt-3 flex justify-end">
-                                                    <button
-                                                        onClick={() => { setReplyingId(r.id); setReplyText(r.response_message || ''); }}
-                                                        className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                                                    >
-                                                        <MessageSquare size={14} />
-                                                        {r.response_message ? 'Editar respuesta' : 'Responder'}
-                                                    </button>
                                                 </div>
                                             )}
 
@@ -480,14 +521,12 @@ function AbsencesPage() {
                                                         type="button"
                                                         className="flex-1 py-2 px-3 rounded-xl bg-green-50 text-green-700 font-bold text-xs hover:bg-green-100 transition-colors border border-green-200"
                                                         onClick={() => {
+                                                            const decision = (r.type === 'special_permit') ? (adminDecision[r.id] || (r.makeup_preference ? 'makeup' : 'deducted')) : undefined;
                                                             const msg = window.prompt(
                                                                 "Nota para la persona (opcional):",
                                                                 ""
                                                             );
-                                                            handleUpdateStatus(r.id, {
-                                                                status: "approved",
-                                                                response_message: msg || "",
-                                                            });
+                                                            handleUpdateStatus(r.id, "approved", msg || "", decision);
                                                         }}
                                                     >
                                                         Aprobar
@@ -500,10 +539,7 @@ function AbsencesPage() {
                                                                 "Motivo del rechazo (opcional):",
                                                                 ""
                                                             );
-                                                            handleUpdateStatus(r.id, {
-                                                                status: "rejected",
-                                                                response_message: msg || "",
-                                                            });
+                                                            handleUpdateStatus(r.id, "rejected", msg || "");
                                                         }}
                                                     >
                                                         Rechazar
@@ -604,6 +640,29 @@ function AbsencesPage() {
                                         <option value="absence">Ausencia</option>
                                     </select>
                                 </div>
+
+                                {absenceType === 'special_permit' && (
+                                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                                        <div className="flex items-start gap-2 mb-2">
+                                            <Info size={16} className="text-indigo-600 mt-0.5" />
+                                            <p className="text-xs text-indigo-700">
+                                                Los permisos especiales pueden requerir reponer horas.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                id="makeUpHours"
+                                                checked={makeUpHours}
+                                                onChange={(e) => setMakeUpHours(e.target.checked)}
+                                                className="w-4 h-4 text-indigo-600 border-indigo-300 rounded focus:ring-indigo-500"
+                                            />
+                                            <label htmlFor="makeUpHours" className="text-sm font-bold text-indigo-900 select-none cursor-pointer">
+                                                Me comprometo a reponer estas horas.
+                                            </label>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div>
                                     <label className="block text-sm font-bold text-gray-900 mb-2">

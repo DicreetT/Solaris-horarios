@@ -43,6 +43,7 @@ export default function TimeTrackingPage() {
 
         let totalMinutes = 0;
 
+        // 1. Time Entries (Worked Hours)
         Object.values(timeData).forEach(dayData => {
             const userEntries = dayData[userId] || [];
             userEntries.forEach(entry => {
@@ -53,6 +54,32 @@ export default function TimeTrackingPage() {
                     }
                 }
             });
+        });
+
+        // 2. Paid Special Permissions (Virtual Hours)
+        const profile = getProfile(userId);
+        const dailyHours = profile.weekly_hours / 5;
+
+        absenceRequests.forEach(req => {
+            if (req.created_by === userId && req.status === 'approved' && req.type === 'special_permit' && req.resolution_type === 'paid') {
+                const startDate = new Date(req.date_key);
+                const endDate = req.end_date ? new Date(req.end_date) : new Date(req.date_key);
+
+                // Iterate days in range
+                for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                    const dMonth = String(d.getMonth() + 1).padStart(2, '0');
+                    const dYear = d.getFullYear();
+                    const dString = `${dYear}-${dMonth}`;
+
+                    if (dString === currentMonthPrefix) {
+                        // Only count weekdays (Mon-Fri) for paid leave typically
+                        const dayOfWeek = d.getDay();
+                        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                            totalMinutes += dailyHours * 60;
+                        }
+                    }
+                }
+            }
         });
 
         return parseFloat((totalMinutes / 60).toFixed(1));
@@ -414,8 +441,8 @@ export default function TimeTrackingPage() {
                                                         <button
                                                             onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
                                                             className={`p-2 rounded-full transition-all ${isExpanded
-                                                                    ? 'text-indigo-600 bg-indigo-100 rotate-180'
-                                                                    : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                                                ? 'text-indigo-600 bg-indigo-100 rotate-180'
+                                                                : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
                                                                 }`}
                                                             title={isExpanded ? "Ocultar Jornadas" : "Ver Jornadas"}
                                                         >

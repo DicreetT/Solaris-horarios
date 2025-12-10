@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { User, Absence } from '../types';
+import { User } from '../types';
 
 export function useAbsences(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -30,16 +30,18 @@ export function useAbsences(currentUser: User | null) {
                 end_date: row.end_date,
                 reason: row.reason,
                 status: row.status,
-                type: row.type || 'absence', // Default to absence if null (though DB default is absence)
+                type: row.type || 'absence',
                 response_message: row.response_message || '',
                 attachments: row.attachments || [],
+                makeup_preference: row.makeup_preference || false, // New field mapping
+                resolution_type: row.resolution_type || null // New field mapping
             }));
         },
         enabled: !!currentUser,
     });
 
     const createAbsenceMutation = useMutation({
-        mutationFn: async ({ reason, date_key, end_date, type, attachments }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[] }) => {
+        mutationFn: async ({ reason, date_key, end_date, type, attachments, makeUpHours }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[], makeUpHours?: boolean }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('absence_requests')
@@ -51,7 +53,8 @@ export function useAbsences(currentUser: User | null) {
                     reason,
                     type,
                     status: 'pending',
-                    attachments: attachments || []
+                    attachments: attachments || [],
+                    makeup_preference: makeUpHours || false // Map to DB column
                 })
                 .select()
                 .single();
@@ -78,11 +81,16 @@ export function useAbsences(currentUser: User | null) {
         },
     });
 
-    const updateAbsenceStatusMutation = useMutation<void, Error, { id: number; status: string; response_message: string }>({
+    const updateAbsenceStatusMutation = useMutation<void, Error, { id: number; status: string; response_message: string; resolution_type?: string }>({
         mutationFn: async (payload) => {
+            const updatePayload: any = { status: payload.status, response_message: payload.response_message };
+            if (payload.resolution_type) {
+                updatePayload.resolution_type = payload.resolution_type;
+            }
+
             const { error } = await supabase
                 .from('absence_requests')
-                .update({ status: payload.status, response_message: payload.response_message })
+                .update(updatePayload)
                 .eq('id', payload.id);
 
             if (error) throw error;
