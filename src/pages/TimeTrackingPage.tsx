@@ -1,409 +1,386 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
+import { useWorkProfile } from '../hooks/useWorkProfile';
 import { USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
-import { getStatusBadgeProps } from '../utils/statusUtils';
-import { calculateHours, formatHours, calculateTotalHours } from '../utils/timeUtils';
+import { calculateTotalHours, calculateHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import { Clock, History, User, CheckSquare, Edit2, Trash2 } from 'lucide-react';
+import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
-import { RoleBadge } from '../components/RoleBadge';
 
-/**
- * Time Tracking page
- * Shows user's time entries with notes and total hours
- * Admin view to see all users' time tracking with totals
- */
-function TimeTrackingPage() {
+export default function TimeTrackingPage() {
     const { currentUser } = useAuth();
-    const { timeData, updateTimeEntry, deleteTimeEntry } = useTimeData();
-    const { absenceRequests } = useAbsences(currentUser);
-    const [editingId, setEditingId] = useState<string | null>(null);
-
     const isAdmin = currentUser?.isAdmin;
 
-    // Get all dates with time data or absences, sorted descending
-    const allDates = Array.from(new Set([
-        ...Object.keys(timeData),
-        ...absenceRequests.map(r => r.date_key)
-    ])).sort().reverse();
+    const { timeData, deleteTimeEntry, updateTimeEntry } = useTimeData();
+    const { absenceRequests } = useAbsences(currentUser);
+    const { userProfiles, updateProfile } = useWorkProfile();
 
-    // Filter out absence-related statuses from time entries as they are now handled by absenceRequests
-    const ABSENCE_STATUSES = ['vacation', 'absent', 'vacation-request'];
-    const filterTimeEntries = (entries: any[]) => {
-        return entries.filter(e => !ABSENCE_STATUSES.includes(e.status));
+    // UI States
+    const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
+    const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+    const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+    const [editForm, setEditForm] = useState({ monthly_hours: 0, vacation_days_total: 0 });
+
+    // --- Helpers ---
+
+    const getProfile = (userId: string) => {
+        return userProfiles.find(p => p.user_id === userId) || {
+            monthly_hours: 0,
+            vacation_days_total: 22
+        };
     };
 
-    // User's own dates
-    const userDates = allDates.filter(dateKey => {
-        const dayData = timeData[dateKey];
-        const userEntries = dayData?.[currentUser.id] || [];
-        const validEntries = filterTimeEntries(userEntries);
-        const hasTimeEntries = validEntries.length > 0;
-        const hasAbsence = absenceRequests.some(r => r.created_by === currentUser.id && r.date_key === dateKey);
-        return hasTimeEntries || hasAbsence;
-    });
+    const calculateMonthlyWorkedHours = (userId: string) => {
+        const today = new Date();
+        const currentMonthPrefix = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
 
-    const handleUpdateTime = async (entryId: number, field: string, value: string) => {
-        try {
-            await updateTimeEntry({
-                id: entryId,
-                updates: { [field]: value },
+        let totalMinutes = 0;
+
+        Object.values(timeData).forEach(dayData => {
+            // dayData is Record<userId, TimeEntry[]>
+            const userEntries = dayData[userId] || [];
+            userEntries.forEach(entry => {
+                if (entry.date_key.startsWith(currentMonthPrefix)) {
+                    if (entry.entry && entry.exit) {
+                        const hours = calculateHours(entry.entry, entry.exit);
+                        totalMinutes += hours * 60;
+                    }
+                }
             });
-        } catch (e) {
-            console.error('Error updating time:', e);
-        }
+        });
+
+        // Convert back to decimal hours for display
+        return parseFloat((totalMinutes / 60).toFixed(1));
     };
 
-    const handleUpdateNote = async (entryId: number, note: string) => {
-        try {
-            await updateTimeEntry({
-                id: entryId,
-                updates: { note },
+    const calculateVacationDaysUsed = (userId: string) => {
+        return absenceRequests
+            .filter(req => req.created_by === userId && req.type === 'vacation' && req.status !== 'rejected')
+            .reduce((acc, req) => {
+                if (!req.end_date || req.end_date === req.date_key) return acc + 1;
+                const start = new Date(req.date_key);
+                const end = new Date(req.end_date);
+                const diffTime = Math.abs(end.getTime() - start.getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+                return acc + diffDays;
+            }, 0);
+    };
+
+    // --- Rendering ---
+
+    const renderUserDashboard = (userId: string) => {
+        const profile = getProfile(userId);
+        const workedHours = calculateMonthlyWorkedHours(userId);
+        const vacationUsed = calculateVacationDaysUsed(userId);
+
+        const remainingHours = Math.max(0, profile.monthly_hours - workedHours);
+        const remainingVacation = Math.max(0, profile.vacation_days_total - vacationUsed);
+
+        // Get recent logs for this user
+        const logs: any[] = [];
+        const sortedDates = Object.keys(timeData).sort().reverse();
+        sortedDates.forEach(dateKey => {
+            const entries = timeData[dateKey][userId] || [];
+            entries.forEach(e => {
+                // Add dateKey to entry object for display
+                logs.push({ ...e, date_key: dateKey });
             });
-        } catch (e) {
-            console.error('Error updating note:', e);
-        }
+        });
+        const recentLogs = logs.slice(0, 10); // Show last 10
+
+        return (
+            <div className="space-y-8">
+                {/* Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Hours Card */}
+                    <div className="bg-white rounded-3xl p-6 shadow-lg border border-indigo-50 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-10 -mt-10 opacity-50" />
+                        <div className="relative z-10">
+                            <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
+                                <Clock className="text-indigo-500" />
+                                Control Horario (Mes)
+                            </h3>
+                            <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Contratadas</p>
+                                    <p className="text-2xl font-black text-gray-900">{profile.monthly_hours}h</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Trabajadas</p>
+                                    <p className="text-2xl font-black text-indigo-600">{workedHours}h</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Pendientes</p>
+                                    <p className="text-2xl font-black text-orange-500">{remainingHours.toFixed(1)}h</p>
+                                </div>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-gray-100">
+                                <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-indigo-500 rounded-full transition-all duration-1000"
+                                        style={{ width: `${Math.min(100, (workedHours / (profile.monthly_hours || 1)) * 100)}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Vacation Card */}
+                    <div className="bg-white rounded-3xl p-6 shadow-lg border border-teal-50 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-teal-50 rounded-full -mr-10 -mt-10 opacity-50" />
+                        <div className="relative z-10">
+                            <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
+                                <Calendar className="text-teal-500" />
+                                Vacaciones (Año)
+                            </h3>
+                            <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Totales</p>
+                                    <p className="text-2xl font-black text-gray-900">{profile.vacation_days_total}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Usadas</p>
+                                    <p className="text-2xl font-black text-teal-600">{vacationUsed}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Restantes</p>
+                                    <p className="text-2xl font-black text-green-500">{remainingVacation}</p>
+                                </div>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-gray-100">
+                                <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-teal-500 rounded-full transition-all duration-1000"
+                                        style={{ width: `${Math.min(100, (vacationUsed / (profile.vacation_days_total || 1)) * 100)}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Clock Widget */}
+                {userId === currentUser.id && (
+                    <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 text-center">
+                        <h3 className="text-xl font-bold text-gray-900 mb-6">Fichar Ahora</h3>
+                        <TimeTrackerWidget />
+                    </div>
+                )}
+
+                {/* Recent Logs Table */}
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+                        <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                            <History size={20} className="text-gray-400" />
+                            Historial Reciente
+                        </h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm text-gray-600">
+                            <thead className="bg-gray-50 text-gray-900 font-bold uppercase text-xs">
+                                <tr>
+                                    <th className="px-6 py-4">Fecha</th>
+                                    <th className="px-6 py-4">Entrada</th>
+                                    <th className="px-6 py-4">Salida</th>
+                                    <th className="px-6 py-4">Total</th>
+                                    {isAdmin && <th className="px-6 py-4">Acciones</th>}
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {recentLogs.length === 0 ? (
+                                    <tr><td colSpan={5} className="p-8 text-center text-gray-400 italic">No hay registros recientes.</td></tr>
+                                ) : (
+                                    recentLogs.map(entry => (
+                                        <tr key={entry.id} className="hover:bg-gray-50/50">
+                                            <td className="px-6 py-4 font-medium">{formatDatePretty(new Date(entry.date_key))}</td>
+                                            <td className="px-6 py-4">{entry.entry || '-'}</td>
+                                            <td className="px-6 py-4">{entry.exit || '-'}</td>
+                                            <td className="px-6 py-4 font-bold text-indigo-600">
+                                                {entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
+                                            </td>
+                                            {isAdmin && (
+                                                <td className="px-6 py-4 text-right">
+                                                    <button onClick={() => deleteTimeEntry(entry.id)} className="text-gray-400 hover:text-red-500">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </td>
+                                            )}
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        );
     };
 
-    const handleDeleteEntry = async (entryId: number) => {
-        if (!window.confirm('¿Estás seguro de que quieres eliminar este fichaje?')) return;
-        try {
-            await deleteTimeEntry(entryId);
-        } catch (e) {
-            console.error('Error deleting entry:', e);
-        }
+    const renderAdminTable = () => {
+        return (
+            <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden min-h-[400px]">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-gray-600">
+                        <thead className="bg-gray-900 text-white font-bold uppercase text-xs">
+                            <tr>
+                                <th className="px-6 py-4">Usuario</th>
+                                <th className="px-6 py-4 text-center">Horas Mensuales</th>
+                                <th className="px-6 py-4 text-center">Trabajadas</th>
+                                <th className="px-6 py-4 text-center">Pendientes</th>
+                                <th className="px-6 py-4 text-center">Vacaciones Totales</th>
+                                <th className="px-6 py-4 text-center">Usadas</th>
+                                <th className="px-6 py-4 text-center">Restantes</th>
+                                <th className="px-6 py-4 text-center">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {USERS.map(user => {
+                                const profile = getProfile(user.id);
+                                const worked = calculateMonthlyWorkedHours(user.id);
+                                const vacationUsed = calculateVacationDaysUsed(user.id);
+                                const isEditing = editingProfileId === user.id;
+
+                                return (
+                                    <tr key={user.id} className="hover:bg-blue-50/20 transition-colors">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <UserAvatar name={user.name} size="sm" />
+                                                <span className="font-bold text-gray-900">{user.name}</span>
+                                            </div>
+                                        </td>
+
+                                        {/* Monthly Hours */}
+                                        <td className="px-6 py-4 text-center">
+                                            {isEditing ? (
+                                                <input
+                                                    type="number"
+                                                    className="w-16 p-1 border rounded text-center bg-white"
+                                                    value={editForm.monthly_hours}
+                                                    onChange={e => setEditForm({ ...editForm, monthly_hours: parseInt(e.target.value) || 0 })}
+                                                />
+                                            ) : (
+                                                <span className="font-mono font-bold">{profile.monthly_hours}h</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-indigo-600 font-bold">{worked}h</td>
+                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">{(profile.monthly_hours - worked).toFixed(1)}h</td>
+
+                                        {/* Vacation Days */}
+                                        <td className="px-6 py-4 text-center border-l border-gray-100">
+                                            {isEditing ? (
+                                                <input
+                                                    type="number"
+                                                    className="w-16 p-1 border rounded text-center bg-white"
+                                                    value={editForm.vacation_days_total}
+                                                    onChange={e => setEditForm({ ...editForm, vacation_days_total: parseInt(e.target.value) || 0 })}
+                                                />
+                                            ) : (
+                                                <span className="font-mono font-bold">{profile.vacation_days_total}</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 text-center text-teal-600 font-bold">{vacationUsed}</td>
+                                        <td className="px-6 py-4 text-center text-green-600 font-medium">{profile.vacation_days_total - vacationUsed}</td>
+
+                                        <td className="px-6 py-4 text-center">
+                                            {isEditing ? (
+                                                <button
+                                                    onClick={() => {
+                                                        updateProfile({
+                                                            userId: user.id, updates: {
+                                                                monthly_hours: editForm.monthly_hours,
+                                                                vacation_days_total: editForm.vacation_days_total
+                                                            }
+                                                        });
+                                                        setEditingProfileId(null);
+                                                    }}
+                                                    className="text-green-600 hover:bg-green-50 p-2 rounded-full"
+                                                >
+                                                    <Save size={18} />
+                                                </button>
+                                            ) : (
+                                                <div className="flex justify-center gap-2">
+                                                    <button
+                                                        onClick={() => {
+                                                            setEditingProfileId(user.id);
+                                                            setEditForm({
+                                                                monthly_hours: profile.monthly_hours,
+                                                                vacation_days_total: profile.vacation_days_total
+                                                            });
+                                                        }}
+                                                        className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
+                                                        title="Editar cupos"
+                                                    >
+                                                        <Edit2 size={16} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedUserId(user.id);
+                                                            setAdminViewMode('details');
+                                                        }}
+                                                        className="text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-full transition-all"
+                                                        title="Ver detalles"
+                                                    >
+                                                        <History size={16} />
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
     };
 
     return (
-        <div className="max-w-6xl mx-auto pb-10">
+        <div className="max-w-6xl mx-auto pb-20">
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-indigo-600">
-                        <Clock size={32} />
-                    </div>
-                    <div>
-                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
-                            Registro Horario
-                        </h1>
-                        <p className="text-gray-500 font-medium">
-                            {isAdmin
-                                ? 'Gestiona el registro horario del equipo'
-                                : 'Gestiona tu registro de entrada y salida'}
-                        </p>
-                    </div>
+                <div>
+                    <h1 className="text-3xl font-black text-gray-900 flex items-center gap-3">
+                        Registro Horario
+                        {adminViewMode === 'details' && selectedUserId && (
+                            <span className="text-gray-400 text-xl font-medium flex items-center gap-2">
+                                / <UserAvatar name={USERS.find(u => u.id === selectedUserId)?.name} size="xs" />
+                                {USERS.find(u => u.id === selectedUserId)?.name}
+                            </span>
+                        )}
+                    </h1>
+                    <p className="text-gray-500 mt-1">Gestión de horas y vacaciones.</p>
                 </div>
+                {isAdmin && (
+                    <div className="flex bg-white rounded-lg p-1 shadow-sm border border-gray-200">
+                        <button
+                            onClick={() => { setAdminViewMode('table'); setSelectedUserId(null); }}
+                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${adminViewMode === 'table' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                        >
+                            Vista General
+                        </button>
+                        <button
+                            onClick={() => { setAdminViewMode('details'); setSelectedUserId(currentUser.id); }}
+                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${adminViewMode === 'details' && selectedUserId === currentUser.id
+                                ? 'bg-gray-900 text-white shadow-md'
+                                : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                        >
+                            Mi Registro
+                        </button>
+                    </div>
+                )}
             </div>
 
-            {/* Time tracker widget */}
-            <div className="mb-8">
-                <TimeTrackerWidget showEntries={true} />
-            </div>
-
-            {/* User view - own time tracking */}
-            {!isAdmin && (
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden mb-8">
-                    <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <History size={20} className="text-gray-400" />
-                            <h2 className="text-xl font-bold text-gray-900">Historial de registros</h2>
-                        </div>
-                    </div>
-
-                    <div className="p-6">
-                        {userDates.length === 0 ? (
-                            <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                                <Clock size={48} className="mx-auto text-gray-300 mb-3" />
-                                <p className="text-gray-500 font-medium">No tienes registros de horario aún.</p>
-                            </div>
-                        ) : (
-                            <div className="grid gap-4">
-                                {userDates.map((dateKey) => {
-                                    const rawEntries = timeData[dateKey]?.[currentUser.id] || [];
-                                    const entries = filterTimeEntries(rawEntries);
-                                    const absence = absenceRequests.find(r => r.created_by === currentUser.id && r.date_key === dateKey);
-                                    const date = new Date(dateKey + 'T00:00:00');
-                                    const totalHours = calculateTotalHours(entries);
-
-                                    return (
-                                        <div
-                                            key={dateKey}
-                                            className="bg-white border border-gray-100 rounded-2xl p-5 hover:border-indigo-200 hover:shadow-md transition-all duration-200"
-                                        >
-                                            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-50">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-lg font-bold text-sm">
-                                                        {formatDatePretty(date)}
-                                                    </div>
-                                                    {absence && (
-                                                        <span className={`px-2 py-0.5 rounded-md text-xs font-bold border ${absence.type === 'vacation'
-                                                            ? 'bg-purple-50 text-purple-700 border-purple-200'
-                                                            : 'bg-amber-50 text-amber-700 border-amber-200'
-                                                            }`}>
-                                                            {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="text-sm font-medium text-gray-600">
-                                                    {!absence && (
-                                                        <>Total: <span className="text-indigo-600 font-bold text-lg ml-1">{formatHours(totalHours)}</span></>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Individual entries */}
-                                            <div className="space-y-3">
-                                                {entries.map((entry: any, idx: number) => {
-                                                    const hours = calculateHours(entry.entry, entry.exit);
-                                                    const isToday = dateKey === toDateKey(new Date());
-                                                    const isIncomplete = !entry.exit;
-
-                                                    return (
-                                                        <div
-                                                            key={entry.id}
-                                                            className="bg-gray-50 rounded-xl p-3 border border-gray-100 flex flex-col sm:flex-row sm:items-center gap-3"
-                                                        >
-                                                            <div className="flex items-center gap-3 min-w-[120px]">
-                                                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                                                                    #{idx + 1}
-                                                                </span>
-                                                                {isIncomplete && (
-                                                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${isToday
-                                                                        ? 'bg-green-50 text-green-700 border-green-200'
-                                                                        : 'bg-red-50 text-red-700 border-red-200'
-                                                                        }`}>
-                                                                        {isToday ? 'Activo' : 'Incompleto'}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-
-                                                            <div className="flex-1 grid grid-cols-2 gap-4">
-                                                                <div>
-                                                                    <span className="text-[10px] uppercase font-bold text-gray-400 block mb-0.5">Entrada</span>
-                                                                    <span className="font-mono font-bold text-gray-700">
-                                                                        {entry.entry || <span className="text-gray-400">-</span>}
-                                                                    </span>
-                                                                </div>
-                                                                <div>
-                                                                    <span className="text-[10px] uppercase font-bold text-gray-400 block mb-0.5">Salida</span>
-                                                                    <span className="font-mono font-bold text-gray-700">
-                                                                        {entry.exit || (isToday ? <span className="text-green-600 italic">En curso...</span> : <span className="text-red-400">-</span>)}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-
-                                                            {entry.exit && hours > 0 && (
-                                                                <div className="text-right sm:text-left">
-                                                                    <span className="text-[10px] uppercase font-bold text-gray-400 block mb-0.5">Duración</span>
-                                                                    <span className="font-mono font-medium text-gray-600">{formatHours(hours)}</span>
-                                                                </div>
-                                                            )}
-
-                                                            {entry.note && (
-                                                                <div className="w-full sm:w-auto sm:flex-1 sm:text-right text-sm text-gray-500 italic border-t sm:border-t-0 border-gray-200 pt-2 sm:pt-0 mt-1 sm:mt-0">
-                                                                    "{entry.note}"
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                                {entries.length === 0 && absence && (
-                                                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 text-center text-gray-500 italic text-sm">
-                                                        {absence.reason || (absence.type === 'vacation' ? 'Vacaciones registradas' : 'Ausencia registrada')}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Admin view - all users' time tracking (Admin only) */}
-            {isAdmin && (
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
-                    <div className="p-6 border-b border-gray-100 bg-amber-50/50 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <h2 className="text-xl font-bold text-gray-900">Panel de administración</h2>
-                            <RoleBadge role="admin" size="sm" />
-                        </div>
-                    </div>
-
-                    <div className="p-6">
-                        <p className="text-gray-500 mb-6 font-medium">
-                            Registro horario de todo el equipo. Se muestra el total de horas trabajadas y todos los fichajes por fecha.
-                        </p>
-
-                        {allDates.length === 0 ? (
-                            <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                                <Clock size={48} className="mx-auto text-gray-300 mb-3" />
-                                <p className="text-gray-500 font-medium">No hay registros de horario por ahora.</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-6">
-                                {allDates.map((dateKey) => {
-                                    const dayData = timeData[dateKey] || {};
-                                    const date = new Date(dateKey + 'T00:00:00');
-
-                                    // Get users who have either time entries OR absences for this day
-                                    const usersWithActivity = USERS.filter(u => {
-                                        const userEntries = dayData[u.id] || [];
-                                        const validEntries = filterTimeEntries(userEntries);
-                                        const hasEntries = validEntries.length > 0;
-                                        const hasAbsence = absenceRequests.some(r => r.created_by === u.id && r.date_key === dateKey);
-                                        return hasEntries || hasAbsence;
-                                    });
-
-                                    if (usersWithActivity.length === 0) return null;
-
-                                    return (
-                                        <div key={dateKey} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-                                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 font-bold text-gray-700 flex items-center gap-2">
-                                                <Clock size={16} className="text-gray-400" />
-                                                {formatDatePretty(date)}
-                                            </div>
-
-                                            <div className="divide-y divide-gray-100">
-                                                {usersWithActivity.map((user) => {
-                                                    const rawEntries = dayData[user.id] || [];
-                                                    const entries = filterTimeEntries(rawEntries);
-                                                    const absence = absenceRequests.find(r => r.created_by === user.id && r.date_key === dateKey);
-                                                    const totalHours = calculateTotalHours(entries);
-
-                                                    const rowId = `${dateKey}-${user.id}`;
-                                                    const isEditing = editingId === rowId;
-
-                                                    return (
-                                                        <div key={user.id} className="p-4 hover:bg-gray-50 transition-colors">
-                                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
-                                                                <div className="flex items-center gap-3">
-                                                                    <UserAvatar name={user.name} size="sm" />
-                                                                    <div>
-                                                                        <div className="font-bold text-gray-900 flex items-center gap-2">
-                                                                            {user.name}
-                                                                            {absence && (
-                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${absence.type === 'vacation'
-                                                                                    ? 'bg-purple-50 text-purple-700 border-purple-200'
-                                                                                    : 'bg-amber-50 text-amber-700 border-amber-200'
-                                                                                    }`}>
-                                                                                    {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                        <div className="text-xs text-gray-500 font-medium">
-                                                                            {!absence && (
-                                                                                <>Total: <span className="text-indigo-600">{formatHours(totalHours)}</span></>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-
-                                                                <button
-                                                                    onClick={() => setEditingId(isEditing ? null : rowId)}
-                                                                    className={`p-2 rounded-lg transition-colors ${isEditing
-                                                                        ? 'bg-amber-100 text-amber-700'
-                                                                        : 'text-gray-400 hover:bg-gray-200 hover:text-gray-600'
-                                                                        }`}
-                                                                >
-                                                                    {isEditing ? <CheckSquare size={16} /> : <Edit2 size={16} />}
-                                                                </button>
-                                                            </div>
-
-                                                            {/* Show individual entries with notes */}
-                                                            <div className="pl-11 space-y-1">
-                                                                {entries.map((entry: any, idx: number) => {
-                                                                    const isToday = dateKey === toDateKey(new Date());
-                                                                    const isIncomplete = !entry.exit;
-
-                                                                    return (
-                                                                        <div key={entry.id} className="text-xs flex items-center gap-2 flex-wrap min-h-[28px]">
-                                                                            <span className="text-gray-400 font-medium">#{idx + 1}</span>
-
-                                                                            {isEditing ? (
-                                                                                <div className="flex items-center gap-2">
-                                                                                    <input
-                                                                                        type="time"
-                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-16"
-                                                                                        value={entry.entry || ''}
-                                                                                        onChange={(e) => handleUpdateTime(entry.id, 'entry', e.target.value)}
-                                                                                    />
-                                                                                    <span>→</span>
-                                                                                    <input
-                                                                                        type="time"
-                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-16"
-                                                                                        value={entry.exit || ''}
-                                                                                        onChange={(e) => handleUpdateTime(entry.id, 'exit', e.target.value)}
-                                                                                    />
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        placeholder="Nota..."
-                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-32"
-                                                                                        value={entry.note || ''}
-                                                                                        onChange={(e) => handleUpdateNote(entry.id, e.target.value)}
-                                                                                    />
-                                                                                    <button
-                                                                                        onClick={() => handleDeleteEntry(entry.id)}
-                                                                                        className="text-red-400 hover:text-red-600 p-1"
-                                                                                        title="Eliminar"
-                                                                                    >
-                                                                                        <Trash2 size={12} />
-                                                                                    </button>
-                                                                                </div>
-                                                                            ) : (
-                                                                                <>
-                                                                                    <span className="font-mono text-gray-700">
-                                                                                        {entry.entry || '—'} → {entry.exit || (isToday ? <span className="text-green-600 italic">activo</span> : <span className="text-red-400">-</span>)}
-                                                                                    </span>
-                                                                                    {isIncomplete && (
-                                                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${isToday
-                                                                                            ? 'bg-green-50 text-green-700 border-green-200'
-                                                                                            : 'bg-red-50 text-red-700 border-red-200'
-                                                                                            }`}>
-                                                                                            {isToday ? 'Activo' : 'Incompleto'}
-                                                                                        </span>
-                                                                                    )}
-                                                                                    {entry.note && (
-                                                                                        <span className="text-gray-500 italic border-l border-gray-300 pl-2 ml-1">
-                                                                                            {entry.note}
-                                                                                        </span>
-                                                                                    )}
-                                                                                </>
-                                                                            )}
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                                {isEditing && entries.length === 0 && (
-                                                                    <div className="text-xs text-gray-400 italic py-1">
-                                                                        No hay registros para editar en este día.
-                                                                    </div>
-                                                                )}
-                                                                {entries.length === 0 && absence && (
-                                                                    <div className="text-xs text-gray-500 italic">
-                                                                        {absence.reason || (absence.type === 'vacation' ? 'Vacaciones registradas' : 'Ausencia registrada')}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </div>
+            {isAdmin && adminViewMode === 'table' ? (
+                renderAdminTable()
+            ) : (
+                renderUserDashboard(selectedUserId || currentUser.id)
             )}
         </div>
     );
 }
-
-export default TimeTrackingPage;
-
