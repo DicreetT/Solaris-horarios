@@ -5,56 +5,38 @@ export interface UserProfile {
     user_id: string;
     weekly_hours: number;
     vacation_days_total: number;
-    created_at?: string;
+    hours_adjustment: number;
+    vacation_adjustment: number;
 }
 
 export function useWorkProfile() {
     const queryClient = useQueryClient();
 
-    // Fetch all user profiles
-    const { data: userProfiles = [], isLoading, error } = useQuery<UserProfile[]>({
-        queryKey: ['userProfiles'],
+    const { data: userProfiles = [], isLoading, error } = useQuery({
+        queryKey: ['user_profiles'],
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('user_profiles')
                 .select('*');
 
             if (error) throw error;
-            return data;
+            return data as UserProfile[];
         },
     });
 
-    // Update specific profile
     const updateProfileMutation = useMutation({
         mutationFn: async ({ userId, updates }: { userId: string; updates: Partial<UserProfile> }) => {
-            const { data, error } = await supabase
+            // Upsert: Try to update, if not found (rows=0), insert. 
+            // Actually 'upsert' method is cleaner.
+            const { error } = await supabase
                 .from('user_profiles')
-                .update(updates)
-                .eq('user_id', userId)
-                .select()
-                .single();
+                .upsert({ user_id: userId, ...updates })
+                .select();
 
             if (error) throw error;
-            return data;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['userProfiles'] });
-        },
-    });
-
-    // Initial Seed / Create if missing (handled via upsert in migration, but good to have)
-    const upsertProfileMutation = useMutation({
-        mutationFn: async (profile: UserProfile) => {
-            const { data, error } = await supabase
-                .from('user_profiles')
-                .upsert(profile)
-                .select()
-                .single();
-            if (error) throw error;
-            return data;
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['userProfiles'] });
+            queryClient.invalidateQueries({ queryKey: ['user_profiles'] });
         },
     });
 
@@ -63,6 +45,5 @@ export function useWorkProfile() {
         isLoading,
         error,
         updateProfile: updateProfileMutation.mutateAsync,
-        upsertProfile: upsertProfileMutation.mutateAsync
     };
 }

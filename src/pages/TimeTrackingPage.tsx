@@ -20,9 +20,16 @@ export default function TimeTrackingPage() {
 
     // UI States
     const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
-    const [expandedUserId, setExpandedUserId] = useState<string | null>(null); // For Admin expandable row
+    const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
     const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
-    const [editForm, setEditForm] = useState({ weekly_hours: 0, vacation_days_total: 0 });
+
+    // Edit Form for Profile + Adjustments
+    const [editForm, setEditForm] = useState({
+        weekly_hours: 0,
+        vacation_days_total: 0,
+        displayed_worked_hours: 0,
+        displayed_vacation_used: 0
+    });
 
     // Log Editing State (Admin only)
     const [editingLogId, setEditingLogId] = useState<number | null>(null);
@@ -38,7 +45,9 @@ export default function TimeTrackingPage() {
     const getProfile = (userId: string) => {
         return userProfiles.find(p => p.user_id === userId) || {
             weekly_hours: 0,
-            vacation_days_total: 22
+            vacation_days_total: 22,
+            hours_adjustment: 0,
+            vacation_adjustment: 0
         };
     };
 
@@ -106,7 +115,6 @@ export default function TimeTrackingPage() {
     // --- Sub-Components ---
 
     const DailyLogsTable = ({ userId, limit = 10, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
-        // Get sorted logs
         const logs: any[] = [];
         const sortedDates = Object.keys(timeData).sort().reverse();
         sortedDates.forEach(dateKey => {
@@ -118,23 +126,17 @@ export default function TimeTrackingPage() {
         const handleSaveLog = async (id: number, dateKey: string) => {
             try {
                 if (logEditForm.type === 'work') {
-                    // Update Time Entry
                     await updateTimeEntry({
                         id,
                         updates: {
                             entry: logEditForm.entry,
                             exit: logEditForm.exit,
-                            status: 'present', // Reset status
+                            status: 'present',
                             note: null
                         }
                     });
-
-                    // Cleanup any Absence Request for this day
                     await deleteAbsenceByDate({ date_key: dateKey, user_id: userId });
-
                 } else {
-                    // Convert to Absence/Vacation
-                    // 1. Update Time Entry to be empty/placeholder
                     let statusLabel = 'absent';
                     if (logEditForm.type === 'vacation') statusLabel = 'vacation';
                     if (logEditForm.type === 'special_permit') statusLabel = 'special_permit';
@@ -149,11 +151,8 @@ export default function TimeTrackingPage() {
                         }
                     });
 
-                    // 2. Create/Overlap Absence Request
-                    // First delete existing to avoid dupes on this day
                     await deleteAbsenceByDate({ date_key: dateKey, user_id: userId });
 
-                    // Create new Approved Absence
                     await createAbsence({
                         userId,
                         date_key: dateKey,
@@ -162,7 +161,6 @@ export default function TimeTrackingPage() {
                         resolution_type: logEditForm.type === 'special_permit' ? logEditForm.resolution_type : undefined
                     });
                 }
-
                 setEditingLogId(null);
             } catch (e) {
                 console.error("Error saving log", e);
@@ -171,7 +169,6 @@ export default function TimeTrackingPage() {
         };
 
         const getLogType = (entry: any) => {
-            // Helper to determine initial type state from entry status
             if (entry.status === 'vacation') return 'vacation';
             if (entry.status === 'special_permit') return 'special_permit';
             if (entry.status === 'absent') return 'absence';
@@ -184,7 +181,6 @@ export default function TimeTrackingPage() {
                     <thead className="bg-gray-50 text-gray-900 font-bold uppercase text-xs">
                         <tr>
                             <th className="px-6 py-4">Fecha</th>
-                            {/* If editing and not work, merge columns? No, simpler to keep structure */}
                             <th className="px-6 py-4">Tipo / Entrada</th>
                             <th className="px-6 py-4">Detalles / Salida</th>
                             <th className="px-6 py-4">Total</th>
@@ -203,7 +199,6 @@ export default function TimeTrackingPage() {
                                     <tr key={entry.id} className="hover:bg-gray-50/50">
                                         <td className="px-6 py-4 font-medium">{formatDatePretty(new Date(entry.date_key))}</td>
 
-                                        {/* Column 2: Type Selector OR Entry Time */}
                                         <td className="px-6 py-4">
                                             {isEditing ? (
                                                 <div className="flex flex-col gap-2">
@@ -217,7 +212,6 @@ export default function TimeTrackingPage() {
                                                         <option value="absence">Ausencia (Injust.)</option>
                                                         <option value="special_permit">Permiso Especial</option>
                                                     </select>
-
                                                     {logEditForm.type === 'work' && (
                                                         <input
                                                             type="time"
@@ -238,7 +232,6 @@ export default function TimeTrackingPage() {
                                             )}
                                         </td>
 
-                                        {/* Column 3: Resolution Details OR Exit Time */}
                                         <td className="px-6 py-4">
                                             {isEditing ? (
                                                 <div>
@@ -250,10 +243,9 @@ export default function TimeTrackingPage() {
                                                             onChange={e => setLogEditForm({ ...logEditForm, exit: e.target.value })}
                                                         />
                                                     )}
-
                                                     {logEditForm.type === 'special_permit' && (
                                                         <select
-                                                            className="border rounded p-1 text-xs w-full mt-7" // Align with the type select above visually
+                                                            className="border rounded p-1 text-xs w-full mt-7"
                                                             value={logEditForm.resolution_type}
                                                             onChange={e => setLogEditForm({ ...logEditForm, resolution_type: e.target.value })}
                                                         >
@@ -266,19 +258,16 @@ export default function TimeTrackingPage() {
                                             ) : (
                                                 <div className="text-gray-500">
                                                     {currentType === 'work' ? (entry.exit || '-') : (
-                                                        /* Maybe show absence details? */
                                                         <span className="text-xs italic">{entry.note || ''}</span>
                                                     )}
                                                 </div>
                                             )}
                                         </td>
 
-                                        {/* Total Duration */}
                                         <td className="px-6 py-4 font-bold text-indigo-600">
                                             {!isEditing && currentType === 'work' && entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
                                         </td>
 
-                                        {/* Actions */}
                                         {isEditable && (
                                             <td className="px-6 py-4 text-right flex justify-end gap-2">
                                                 {isEditing ? (
@@ -286,14 +275,12 @@ export default function TimeTrackingPage() {
                                                         <button
                                                             onClick={() => handleSaveLog(entry.id, entry.date_key)}
                                                             className="text-green-600 hover:bg-green-50 p-1 rounded"
-                                                            title="Guardar"
                                                         >
                                                             <Save size={16} />
                                                         </button>
                                                         <button
                                                             onClick={() => setEditingLogId(null)}
                                                             className="text-gray-400 hover:bg-gray-100 p-1 rounded"
-                                                            title="Cancelar"
                                                         >
                                                             <Shield size={16} className="rotate-45" />
                                                         </button>
@@ -307,11 +294,10 @@ export default function TimeTrackingPage() {
                                                                     entry: entry.entry || '',
                                                                     exit: entry.exit || '',
                                                                     type: getLogType(entry),
-                                                                    resolution_type: 'makeup' // Default
+                                                                    resolution_type: 'makeup'
                                                                 });
                                                             }}
                                                             className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-1 rounded"
-                                                            title="Editar Registro"
                                                         >
                                                             <Edit2 size={16} />
                                                         </button>
@@ -320,7 +306,6 @@ export default function TimeTrackingPage() {
                                                                 if (window.confirm('¿Borrar este registro?')) deleteTimeEntry(entry.id);
                                                             }}
                                                             className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded"
-                                                            title="Eliminar"
                                                         >
                                                             <Trash2 size={16} />
                                                         </button>
@@ -343,32 +328,34 @@ export default function TimeTrackingPage() {
     const renderUserDashboard = (userId: string) => {
         const profile = getProfile(userId);
         const monthlyTarget = profile.weekly_hours * 4;
-        const workedHours = calculateMonthlyWorkedHours(userId);
-        const vacationUsed = calculateVacationDaysUsed(userId);
 
-        const remainingHours = Math.max(0, monthlyTarget - workedHours);
-        const remainingVacation = Math.max(0, profile.vacation_days_total - vacationUsed);
+        // Calculated + Adjusted
+        const workedHoursCalculated = calculateMonthlyWorkedHours(userId);
+        const workedHoursTotal = workedHoursCalculated + (profile.hours_adjustment || 0);
+
+        const vacationUsedCalculated = calculateVacationDaysUsed(userId);
+        const vacationUsedTotal = vacationUsedCalculated + (profile.vacation_adjustment || 0);
+
+        const remainingHours = Math.max(0, monthlyTarget - workedHoursTotal);
+        const remainingVacation = Math.max(0, profile.vacation_days_total - vacationUsedTotal);
 
         return (
             <div className="space-y-8">
-                {/* Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Hours Card */}
                     <div className="bg-white rounded-3xl p-6 shadow-lg border border-indigo-50 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-10 -mt-10 opacity-50" />
                         <div className="relative z-10">
                             <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
-                                <Clock className="text-indigo-500" />
-                                Control Horario (Mes)
+                                <Clock className="text-indigo-500" /> Control Horario (Mes)
                             </h3>
                             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
                                 <div>
-                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Objetivo ({profile.weekly_hours}h/sem)</p>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Objetivo</p>
                                     <p className="text-2xl font-black text-gray-900">{monthlyTarget}h</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Trabajadas</p>
-                                    <p className="text-2xl font-black text-indigo-600">{workedHours}h</p>
+                                    <p className="text-2xl font-black text-indigo-600">{workedHoursTotal.toFixed(1)}h</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Pendientes</p>
@@ -379,7 +366,7 @@ export default function TimeTrackingPage() {
                                 <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-indigo-500 rounded-full transition-all duration-1000"
-                                        style={{ width: `${Math.min(100, (workedHours / (monthlyTarget || 1)) * 100)}%` }}
+                                        style={{ width: `${Math.min(100, (workedHoursTotal / (monthlyTarget || 1)) * 100)}%` }}
                                     />
                                 </div>
                             </div>
@@ -388,11 +375,9 @@ export default function TimeTrackingPage() {
 
                     {/* Vacation Card */}
                     <div className="bg-white rounded-3xl p-6 shadow-lg border border-teal-50 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-teal-50 rounded-full -mr-10 -mt-10 opacity-50" />
                         <div className="relative z-10">
                             <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
-                                <Calendar className="text-teal-500" />
-                                Vacaciones (Año)
+                                <Calendar className="text-teal-500" /> Vacaciones (Año)
                             </h3>
                             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
                                 <div>
@@ -401,7 +386,7 @@ export default function TimeTrackingPage() {
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Usadas</p>
-                                    <p className="text-2xl font-black text-teal-600">{vacationUsed}</p>
+                                    <p className="text-2xl font-black text-teal-600">{vacationUsedTotal}</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Restantes</p>
@@ -412,7 +397,7 @@ export default function TimeTrackingPage() {
                                 <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-teal-500 rounded-full transition-all duration-1000"
-                                        style={{ width: `${Math.min(100, (vacationUsed / (profile.vacation_days_total || 1)) * 100)}%` }}
+                                        style={{ width: `${Math.min(100, (vacationUsedTotal / (profile.vacation_days_total || 1)) * 100)}%` }}
                                     />
                                 </div>
                             </div>
@@ -420,7 +405,6 @@ export default function TimeTrackingPage() {
                     </div>
                 </div>
 
-                {/* Clock Widget for Current User ONLY */}
                 {userId === currentUser.id && (
                     <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 text-center">
                         <h3 className="text-xl font-bold text-gray-900 mb-6">Fichar Ahora</h3>
@@ -428,15 +412,12 @@ export default function TimeTrackingPage() {
                     </div>
                 )}
 
-                {/* Recent Logs Table */}
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                            <History size={20} className="text-gray-400" />
-                            Historial Reciente
+                            <History size={20} className="text-gray-400" /> Historial Reciente
                         </h3>
                     </div>
-                    {/* User sees their logs READ ONLY */}
                     <DailyLogsTable userId={userId} limit={10} isEditable={false} />
                 </div>
             </div>
@@ -451,10 +432,10 @@ export default function TimeTrackingPage() {
                         <thead className="bg-gray-900 text-white font-bold uppercase text-xs">
                             <tr>
                                 <th className="px-6 py-4">Usuario</th>
-                                <th className="px-6 py-4 text-center">Horas Semanales</th>
-                                <th className="px-6 py-4 text-center">Objetivo Mes (x4)</th>
-                                <th className="px-6 py-4 text-center">Trabajadas Mes</th>
-                                <th className="px-6 py-4 text-center">Pendientes Mes</th>
+                                <th className="px-6 py-4 text-center">Horas Sem.</th>
+                                <th className="px-6 py-4 text-center">Meta Mes</th>
+                                <th className="px-6 py-4 text-center">Trabajadas</th>
+                                <th className="px-6 py-4 text-center">Pendientes</th>
                                 <th className="px-6 py-4 text-center">Vacaciones</th>
                                 <th className="px-6 py-4 text-center">Usadas</th>
                                 <th className="px-6 py-4 text-center">Restantes</th>
@@ -465,8 +446,13 @@ export default function TimeTrackingPage() {
                             {USERS.map(user => {
                                 const profile = getProfile(user.id);
                                 const monthlyTarget = profile.weekly_hours * 4;
-                                const worked = calculateMonthlyWorkedHours(user.id);
-                                const vacationUsed = calculateVacationDaysUsed(user.id);
+
+                                const workedCalculated = calculateMonthlyWorkedHours(user.id);
+                                const workedTotal = workedCalculated + (profile.hours_adjustment || 0);
+
+                                const vacationUsedCalculated = calculateVacationDaysUsed(user.id);
+                                const vacationUsedTotal = vacationUsedCalculated + (profile.vacation_adjustment || 0);
+
                                 const isEditing = editingProfileId === user.id;
                                 const isExpanded = expandedUserId === user.id;
 
@@ -480,12 +466,12 @@ export default function TimeTrackingPage() {
                                                 </div>
                                             </td>
 
-                                            {/* Weekly Hours (Editable) */}
+                                            {/* Weekly Hours */}
                                             <td className="px-6 py-4 text-center">
                                                 {isEditing ? (
                                                     <input
                                                         type="number"
-                                                        className="w-16 p-1 border rounded text-center bg-white"
+                                                        className="w-16 p-1 border rounded text-center bg-white border-blue-400"
                                                         value={editForm.weekly_hours}
                                                         onChange={e => setEditForm({ ...editForm, weekly_hours: parseInt(e.target.value) || 0 })}
                                                     />
@@ -494,22 +480,33 @@ export default function TimeTrackingPage() {
                                                 )}
                                             </td>
 
-                                            {/* Monthly Target (Calculated) */}
                                             <td className="px-6 py-4 text-center text-gray-500 font-medium">{monthlyTarget}h</td>
 
-                                            <td className="px-6 py-4 text-center text-indigo-600 font-bold">{worked}h</td>
-
-                                            {/* Pending */}
-                                            <td className="px-6 py-4 text-center text-orange-500 font-medium">
-                                                {(monthlyTarget - worked).toFixed(1)}h
+                                            {/* Worked Hours (Now Editable via Adjustment) */}
+                                            <td className="px-6 py-4 text-center text-indigo-600 font-bold">
+                                                {isEditing ? (
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        className="w-20 p-1 border rounded text-center bg-white border-blue-400"
+                                                        value={editForm.displayed_worked_hours}
+                                                        onChange={e => setEditForm({ ...editForm, displayed_worked_hours: parseFloat(e.target.value) || 0 })}
+                                                    />
+                                                ) : (
+                                                    <span>{workedTotal.toFixed(1)}h</span>
+                                                )}
                                             </td>
 
-                                            {/* Vacation Days */}
+                                            <td className="px-6 py-4 text-center text-orange-500 font-medium">
+                                                {(monthlyTarget - workedTotal).toFixed(1)}h
+                                            </td>
+
+                                            {/* Vacation Total */}
                                             <td className="px-6 py-4 text-center border-l border-gray-100">
                                                 {isEditing ? (
                                                     <input
                                                         type="number"
-                                                        className="w-16 p-1 border rounded text-center bg-white"
+                                                        className="w-16 p-1 border rounded text-center bg-white border-blue-400"
                                                         value={editForm.vacation_days_total}
                                                         onChange={e => setEditForm({ ...editForm, vacation_days_total: parseInt(e.target.value) || 0 })}
                                                     />
@@ -517,17 +514,37 @@ export default function TimeTrackingPage() {
                                                     <span className="font-mono font-bold">{profile.vacation_days_total}</span>
                                                 )}
                                             </td>
-                                            <td className="px-6 py-4 text-center text-teal-600 font-bold">{vacationUsed}</td>
-                                            <td className="px-6 py-4 text-center text-green-600 font-medium">{profile.vacation_days_total - vacationUsed}</td>
+
+                                            {/* Vacation Used (Now Editable via Adjustment) */}
+                                            <td className="px-6 py-4 text-center text-teal-600 font-bold">
+                                                {isEditing ? (
+                                                    <input
+                                                        type="number"
+                                                        className="w-16 p-1 border rounded text-center bg-white border-blue-400"
+                                                        value={editForm.displayed_vacation_used}
+                                                        onChange={e => setEditForm({ ...editForm, displayed_vacation_used: parseInt(e.target.value) || 0 })}
+                                                    />
+                                                ) : (
+                                                    <span>{vacationUsedTotal}</span>
+                                                )}
+                                            </td>
+
+                                            <td className="px-6 py-4 text-center text-green-600 font-medium">{profile.vacation_days_total - vacationUsedTotal}</td>
 
                                             <td className="px-6 py-4 text-center">
                                                 {isEditing ? (
                                                     <button
                                                         onClick={() => {
+                                                            // Calculate adjustments
+                                                            const newHoursAdjustment = editForm.displayed_worked_hours - workedCalculated;
+                                                            const newVacationAdjustment = editForm.displayed_vacation_used - vacationUsedCalculated;
+
                                                             updateProfile({
                                                                 userId: user.id, updates: {
                                                                     weekly_hours: editForm.weekly_hours,
-                                                                    vacation_days_total: editForm.vacation_days_total
+                                                                    vacation_days_total: editForm.vacation_days_total,
+                                                                    hours_adjustment: newHoursAdjustment,
+                                                                    vacation_adjustment: newVacationAdjustment
                                                                 }
                                                             });
                                                             setEditingProfileId(null);
@@ -543,11 +560,12 @@ export default function TimeTrackingPage() {
                                                                 setEditingProfileId(user.id);
                                                                 setEditForm({
                                                                     weekly_hours: profile.weekly_hours,
-                                                                    vacation_days_total: profile.vacation_days_total
+                                                                    vacation_days_total: profile.vacation_days_total,
+                                                                    displayed_worked_hours: parseFloat(workedTotal.toFixed(1)),
+                                                                    displayed_vacation_used: vacationUsedTotal
                                                                 });
                                                             }}
                                                             className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
-                                                            title="Editar cupos"
                                                         >
                                                             <Edit2 size={16} />
                                                         </button>
@@ -557,9 +575,7 @@ export default function TimeTrackingPage() {
                                                                     ? 'text-indigo-600 bg-indigo-100 rotate-180'
                                                                     : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
                                                                 }`}
-                                                            title={isExpanded ? "Ocultar Jornadas" : "Ver Jornadas"}
                                                         >
-                                                            {/* Chevron or similar icon to indicate expansion */}
                                                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
                                                         </button>
                                                     </div>
@@ -574,7 +590,6 @@ export default function TimeTrackingPage() {
                                                             <Clock size={18} className="text-gray-400" />
                                                             Registro de Jornadas: {user.name}
                                                         </h4>
-                                                        {/* Admin sees EDITABLE logs here */}
                                                         <DailyLogsTable userId={user.id} limit={31} isEditable={true} />
                                                     </div>
                                                 </td>
@@ -592,13 +607,11 @@ export default function TimeTrackingPage() {
 
     return (
         <div className="max-w-6xl mx-auto pb-20">
-            {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-black text-gray-900 flex items-center gap-3">
                         Registro Horario
-                        {adminViewMode === 'details' && adminViewMode === 'details' && !isAdmin && (
-                            // Only show subtitle if user is viewing their own details. 
+                        {adminViewMode === 'details' && !isAdmin && (
                             <span className="text-gray-400 text-xl font-medium flex items-center gap-2">
                                 / <UserIcon size={20} /> Mi Registro
                             </span>
@@ -606,16 +619,9 @@ export default function TimeTrackingPage() {
                     </h1>
                     <p className="text-gray-500 mt-1">Gestión de horas y vacaciones.</p>
                 </div>
-                {/* User actions or Admin Toggles */}
             </div>
 
-            {isAdmin ? (
-                // Admin always sees the powerful Table View which now expands
-                renderAdminTable()
-            ) : (
-                // Users see their personal dashboard
-                renderUserDashboard(currentUser.id)
-            )}
+            {isAdmin ? renderAdminTable() : renderUserDashboard(currentUser.id)}
         </div>
     );
 }
