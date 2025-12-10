@@ -6,7 +6,7 @@ import { useAbsences } from '../hooks/useAbsences';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { formatTimeNow, toDateKey, isWeekend } from '../utils/dateUtils';
-import { Clock, Play, Square, Edit2, Trash2, Timer, Info, Users, CheckSquare, XCircle } from 'lucide-react';
+import { Clock, Play, Square, Edit2, Trash2, Timer, Info, Users, CheckSquare, XCircle, Coffee } from 'lucide-react';
 
 /**
  * Shared time tracker widget for clocking in/out
@@ -214,27 +214,32 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                             )}
                         </div>
 
-                        <button
-                            onClick={isClocked ? handleMarkExit : handleMarkEntry}
-                            className={`
-                                group relative overflow-hidden rounded-2xl px-8 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center
-                                ${isClocked
-                                    ? 'bg-white border-2 border-red-100 text-red-600 hover:border-red-200 hover:bg-red-50 shadow-red-100'
-                                    : 'bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5'}
-                            `}
-                        >
-                            {isClocked ? (
-                                <>
+                        {isClocked ? (
+                            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                                <button
+                                    onClick={handleMarkExit}
+                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-amber-100 text-amber-700 hover:bg-amber-200 hover:shadow-amber-100"
+                                >
+                                    <Coffee size={18} />
+                                    <span>Pausar (Comida)</span>
+                                </button>
+                                <button
+                                    onClick={handleMarkExit}
+                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200"
+                                >
                                     <Square size={18} fill="currentColor" />
                                     <span>Finalizar Jornada</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Play size={18} fill="currentColor" />
-                                    <span>Iniciar Jornada</span>
-                                </>
-                            )}
-                        </button>
+                                </button>
+                            </div>
+                        ) : (
+                            <button
+                                onClick={handleMarkEntry}
+                                className="group relative overflow-hidden rounded-2xl px-8 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5"
+                            >
+                                <Play size={18} fill="currentColor" />
+                                <span>Iniciar Jornada</span>
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -311,7 +316,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                         <div className="flex items-center gap-4">
                                             <div className="flex flex-col">
                                                 <span className="text-[10px] text-gray-400 font-bold mb-1">ENTRADA</span>
-                                                {isEditing ? (
+                                                {isEditing && isAdmin ? (
                                                     <input
                                                         type="time"
                                                         className="bg-white border border-gray-200 rounded-lg px-2 py-1 text-sm font-medium focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 w-24 transition-all"
@@ -325,7 +330,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                             <div className="h-8 w-px bg-gray-200 rotate-12 mx-2" />
                                             <div className="flex flex-col">
                                                 <span className="text-[10px] text-gray-400 font-bold mb-1">SALIDA</span>
-                                                {isEditing ? (
+                                                {isEditing && isAdmin ? (
                                                     <input
                                                         type="time"
                                                         className="bg-white border border-gray-200 rounded-lg px-2 py-1 text-sm font-medium focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 w-24 transition-all"
@@ -343,7 +348,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                         {/* Note */}
                                         <div className="flex items-center gap-3">
                                             <div className="flex-1">
-                                                {isEditing ? (
+                                                {isEditing && isAdmin ? (
                                                     <input
                                                         type="text"
                                                         placeholder="Añadir nota..."
@@ -359,7 +364,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                             </div>
 
                                             {/* Delete Button */}
-                                            {isEditing && (
+                                            {isEditing && isAdmin && (
                                                 <button
                                                     onClick={() => handleDeleteEntry(entry.id)}
                                                     className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"

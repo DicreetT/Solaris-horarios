@@ -378,6 +378,11 @@ function TimeTrackingPage() {
                                                                         </div>
                                                                     );
                                                                 })}
+                                                                {isEditing && entries.length === 0 && (
+                                                                    <div className="text-xs text-gray-400 italic py-1">
+                                                                        No hay registros para editar en este día.
+                                                                    </div>
+                                                                )}
                                                                 {entries.length === 0 && absence && (
                                                                     <div className="text-xs text-gray-500 italic">
                                                                         {absence.reason || (absence.type === 'vacation' ? 'Vacaciones registradas' : 'Ausencia registrada')}
