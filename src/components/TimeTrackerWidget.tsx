@@ -143,6 +143,8 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
         }
     }
 
+    const isAdmin = currentUser?.isAdmin;
+
     return (
         <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-visible">
             <div className="p-6 border-b border-gray-100 bg-gray-50/50">
@@ -284,16 +286,18 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                             <Clock size={12} />
                             Historial de hoy
                         </span>
-                        <button
-                            onClick={() => setIsEditing(!isEditing)}
-                            className={`p-2 rounded-lg transition-colors ${isEditing
-                                ? 'bg-primary/10 text-primary'
-                                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
-                                }`}
-                            title="Editar fichajes"
-                        >
-                            <Edit2 size={14} />
-                        </button>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setIsEditing(!isEditing)}
+                                className={`p-2 rounded-lg transition-colors ${isEditing
+                                    ? 'bg-primary/10 text-primary'
+                                    : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                                    }`}
+                                title="Editar fichajes"
+                            >
+                                <Edit2 size={14} />
+                            </button>
+                        )}
                     </div>
 
                     <div className="divide-y divide-gray-100">
@@ -339,7 +343,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                         {/* Note */}
                                         <div className="flex items-center gap-3">
                                             <div className="flex-1">
-                                                {isEditing || entry.note ? (
+                                                {isEditing ? (
                                                     <input
                                                         type="text"
                                                         placeholder="Añadir nota..."
@@ -348,7 +352,9 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                                         onChange={(e) => handleUpdateNote(entry.id, e.target.value)}
                                                     />
                                                 ) : (
-                                                    <div className="h-6" />
+                                                    <div className="text-sm text-gray-500 italic">
+                                                        {entry.note}
+                                                    </div>
                                                 )}
                                             </div>
 

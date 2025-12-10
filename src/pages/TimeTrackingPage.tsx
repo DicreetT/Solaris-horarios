@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
@@ -7,7 +7,7 @@ import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { getStatusBadgeProps } from '../utils/statusUtils';
 import { calculateHours, formatHours, calculateTotalHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import { Clock, History, User } from 'lucide-react';
+import { Clock, History, User, CheckSquare, Edit2, Trash2 } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
 
@@ -18,8 +18,9 @@ import { RoleBadge } from '../components/RoleBadge';
  */
 function TimeTrackingPage() {
     const { currentUser } = useAuth();
-    const { timeData } = useTimeData();
+    const { timeData, updateTimeEntry, deleteTimeEntry } = useTimeData();
     const { absenceRequests } = useAbsences(currentUser);
+    const [editingId, setEditingId] = useState<string | null>(null);
 
     const isAdmin = currentUser?.isAdmin;
 
@@ -44,6 +45,37 @@ function TimeTrackingPage() {
         const hasAbsence = absenceRequests.some(r => r.created_by === currentUser.id && r.date_key === dateKey);
         return hasTimeEntries || hasAbsence;
     });
+
+    const handleUpdateTime = async (entryId: number, field: string, value: string) => {
+        try {
+            await updateTimeEntry({
+                id: entryId,
+                updates: { [field]: value },
+            });
+        } catch (e) {
+            console.error('Error updating time:', e);
+        }
+    };
+
+    const handleUpdateNote = async (entryId: number, note: string) => {
+        try {
+            await updateTimeEntry({
+                id: entryId,
+                updates: { note },
+            });
+        } catch (e) {
+            console.error('Error updating note:', e);
+        }
+    };
+
+    const handleDeleteEntry = async (entryId: number) => {
+        if (!window.confirm('¿Estás seguro de que quieres eliminar este fichaje?')) return;
+        try {
+            await deleteTimeEntry(entryId);
+        } catch (e) {
+            console.error('Error deleting entry:', e);
+        }
+    };
 
     return (
         <div className="max-w-6xl mx-auto pb-10">
@@ -244,6 +276,9 @@ function TimeTrackingPage() {
                                                     const absence = absenceRequests.find(r => r.created_by === user.id && r.date_key === dateKey);
                                                     const totalHours = calculateTotalHours(entries);
 
+                                                    const rowId = `${dateKey}-${user.id}`;
+                                                    const isEditing = editingId === rowId;
+
                                                     return (
                                                         <div key={user.id} className="p-4 hover:bg-gray-50 transition-colors">
                                                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
@@ -268,6 +303,16 @@ function TimeTrackingPage() {
                                                                         </div>
                                                                     </div>
                                                                 </div>
+
+                                                                <button
+                                                                    onClick={() => setEditingId(isEditing ? null : rowId)}
+                                                                    className={`p-2 rounded-lg transition-colors ${isEditing
+                                                                        ? 'bg-amber-100 text-amber-700'
+                                                                        : 'text-gray-400 hover:bg-gray-200 hover:text-gray-600'
+                                                                        }`}
+                                                                >
+                                                                    {isEditing ? <CheckSquare size={16} /> : <Edit2 size={16} />}
+                                                                </button>
                                                             </div>
 
                                                             {/* Show individual entries with notes */}
@@ -277,23 +322,58 @@ function TimeTrackingPage() {
                                                                     const isIncomplete = !entry.exit;
 
                                                                     return (
-                                                                        <div key={entry.id} className="text-xs flex items-center gap-2 flex-wrap">
+                                                                        <div key={entry.id} className="text-xs flex items-center gap-2 flex-wrap min-h-[28px]">
                                                                             <span className="text-gray-400 font-medium">#{idx + 1}</span>
-                                                                            <span className="font-mono text-gray-700">
-                                                                                {entry.entry || '—'} → {entry.exit || (isToday ? <span className="text-green-600 italic">activo</span> : <span className="text-red-400">-</span>)}
-                                                                            </span>
-                                                                            {isIncomplete && (
-                                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${isToday
-                                                                                    ? 'bg-green-50 text-green-700 border-green-200'
-                                                                                    : 'bg-red-50 text-red-700 border-red-200'
-                                                                                    }`}>
-                                                                                    {isToday ? 'Activo' : 'Incompleto'}
-                                                                                </span>
-                                                                            )}
-                                                                            {entry.note && (
-                                                                                <span className="text-gray-500 italic border-l border-gray-300 pl-2 ml-1">
-                                                                                    {entry.note}
-                                                                                </span>
+
+                                                                            {isEditing ? (
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <input
+                                                                                        type="time"
+                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-16"
+                                                                                        value={entry.entry || ''}
+                                                                                        onChange={(e) => handleUpdateTime(entry.id, 'entry', e.target.value)}
+                                                                                    />
+                                                                                    <span>→</span>
+                                                                                    <input
+                                                                                        type="time"
+                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-16"
+                                                                                        value={entry.exit || ''}
+                                                                                        onChange={(e) => handleUpdateTime(entry.id, 'exit', e.target.value)}
+                                                                                    />
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        placeholder="Nota..."
+                                                                                        className="bg-white border border-gray-200 rounded px-1 py-0.5 text-xs w-32"
+                                                                                        value={entry.note || ''}
+                                                                                        onChange={(e) => handleUpdateNote(entry.id, e.target.value)}
+                                                                                    />
+                                                                                    <button
+                                                                                        onClick={() => handleDeleteEntry(entry.id)}
+                                                                                        className="text-red-400 hover:text-red-600 p-1"
+                                                                                        title="Eliminar"
+                                                                                    >
+                                                                                        <Trash2 size={12} />
+                                                                                    </button>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <span className="font-mono text-gray-700">
+                                                                                        {entry.entry || '—'} → {entry.exit || (isToday ? <span className="text-green-600 italic">activo</span> : <span className="text-red-400">-</span>)}
+                                                                                    </span>
+                                                                                    {isIncomplete && (
+                                                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${isToday
+                                                                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                                                                            : 'bg-red-50 text-red-700 border-red-200'
+                                                                                            }`}>
+                                                                                            {isToday ? 'Activo' : 'Incompleto'}
+                                                                                        </span>
+                                                                                    )}
+                                                                                    {entry.note && (
+                                                                                        <span className="text-gray-500 italic border-l border-gray-300 pl-2 ml-1">
+                                                                                            {entry.note}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </>
                                                                             )}
                                                                         </div>
                                                                     );
