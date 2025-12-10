@@ -12,6 +12,7 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { toDateKey, formatDatePretty } from '../utils/dateUtils';
 import { calculateTotalHours, formatHours } from '../utils/timeUtils';
+import { USERS } from '../constants';
 
 /**
  * Dashboard page
@@ -302,54 +303,114 @@ function Dashboard() {
                     </div>
                 </div>
 
-                {/* Right Column: Due Today */}
-                <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col h-full">
-                    <div className="p-6 border-b border-gray-100 bg-red-50/30">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                    Para hoy
-                                </h2>
-                                <p className="text-sm text-gray-500 mt-1">Tareas que vencen hoy</p>
+                {/* Right Column: Absences & Due Today */}
+                <div className="flex flex-col gap-8 h-full">
+                    {/* Absences Card */}
+                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col">
+                        <div className="p-6 border-b border-gray-100 bg-orange-50/50">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        Equipo ausente hoy
+                                    </h2>
+                                    <p className="text-sm text-gray-500 mt-1">Personas que no están disponibles hoy</p>
+                                </div>
                             </div>
+                        </div>
+                        <div className="p-6">
+                            {(() => {
+                                const todayKey = toDateKey(new Date());
+                                const { absenceRequests } = useAbsences(currentUser);
+
+                                const todaysAbsences = absenceRequests?.filter(r =>
+                                    r.status === 'approved' &&
+                                    r.date_key === todayKey
+                                ) || [];
+
+                                return todaysAbsences.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {todaysAbsences.map(absence => {
+                                            const user = USERS.find(u => u.id === absence.created_by);
+                                            // Handle potential missing user if ID doesn't match USERS list
+                                            if (!user) return null;
+
+                                            return (
+                                                <div key={absence.id} className="flex items-center gap-4 p-3 rounded-xl bg-orange-50/30 border border-orange-100">
+                                                    <UserAvatar name={user.name} size="md" />
+                                                    <div>
+                                                        <p className="font-bold text-gray-900">{user.name}</p>
+                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded textxs font-medium border ${absence.type === 'vacation'
+                                                            ? 'bg-purple-100 text-purple-700 border-purple-200'
+                                                            : 'bg-amber-100 text-amber-700 border-amber-200'
+                                                            }`}>
+                                                            {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia / Baja'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-6 text-gray-400 text-sm italic">
+                                        <div className="w-12 h-12 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <Users size={24} />
+                                        </div>
+                                        Todo el equipo está disponible hoy.
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
 
-                    <div className="p-6 flex-1">
-                        {dueTodayTodos.length > 0 ? (
-                            <div className="space-y-3">
-                                {dueTodayTodos.map(todo => (
-                                    <div key={todo.id} className="flex items-start gap-4 p-4 bg-white border border-red-100 rounded-2xl shadow-sm hover:shadow-md transition-all group">
-                                        <div className="mt-1">
-                                            <div className="w-6 h-6 rounded-full border-2 border-red-200 bg-red-50 flex items-center justify-center group-hover:border-red-400 transition-colors">
-                                                <div className="w-2.5 h-2.5 rounded-full bg-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                            </div>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-bold text-gray-900 mb-1 truncate">{todo.title}</p>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full border border-red-100">
-                                                    VENCE HOY
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                                <Link to="/tasks" className="block text-center w-full py-3 mt-6 bg-gray-50 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-colors">
-                                    Ir a Mis Tareas
-                                </Link>
-                            </div>
-                        ) : (
-                            <div className="h-full flex flex-col items-center justify-center text-center py-12">
-                                <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center mb-6">
-                                    <CheckSquare size={40} />
+                    {/* Due Today Card */}
+                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col flex-1">
+                        <div className="p-6 border-b border-gray-100 bg-red-50/30">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        Para hoy
+                                    </h2>
+                                    <p className="text-sm text-gray-500 mt-1">Tareas que vencen hoy</p>
                                 </div>
-                                <h3 className="text-xl font-black text-gray-900 mb-2">¡Todo al día!</h3>
-                                <p className="text-gray-500 max-w-xs mx-auto">
-                                    No tienes tareas que venzan hoy. ¡Disfruta de tu día! 🌟
-                                </p>
                             </div>
-                        )}
+                        </div>
+
+                        <div className="p-6 flex-1">
+                            {dueTodayTodos.length > 0 ? (
+                                <div className="space-y-3">
+                                    {dueTodayTodos.map(todo => (
+                                        <div key={todo.id} className="flex items-start gap-4 p-4 bg-white border border-red-100 rounded-2xl shadow-sm hover:shadow-md transition-all group">
+                                            <div className="mt-1">
+                                                <div className="w-6 h-6 rounded-full border-2 border-red-200 bg-red-50 flex items-center justify-center group-hover:border-red-400 transition-colors">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-bold text-gray-900 mb-1 truncate">{todo.title}</p>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full border border-red-100">
+                                                        VENCE HOY
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <Link to="/tasks" className="block text-center w-full py-3 mt-6 bg-gray-50 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-colors">
+                                        Ir a Mis Tareas
+                                    </Link>
+                                </div>
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-center py-12">
+                                    <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center mb-6">
+                                        <CheckSquare size={40} />
+                                    </div>
+                                    <h3 className="text-xl font-black text-gray-900 mb-2">¡Todo al día!</h3>
+                                    <p className="text-gray-500 max-w-xs mx-auto">
+                                        No tienes tareas que venzan hoy. ¡Disfruta de tu día! 🌟
+                                    </p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
