@@ -16,7 +16,8 @@ import {
     ChevronDown,
     ChevronLeft,
     ChevronRight,
-    ShoppingBag
+    ShoppingBag,
+    ClipboardCheck
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -106,6 +107,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/time-tracking',
             label: 'Registro Horario',
             icon: Clock,
+            show: true
+        },
+        {
+            path: '/checklist',
+            label: 'Check-list Diario',
+            icon: ClipboardCheck,
             show: true
         },
         {
