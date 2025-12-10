@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 
 export interface UserProfile {
     user_id: string;
-    monthly_hours: number;
+    weekly_hours: number;
     vacation_days_total: number;
     created_at?: string;
 }

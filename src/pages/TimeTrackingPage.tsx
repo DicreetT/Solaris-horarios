@@ -22,13 +22,13 @@ export default function TimeTrackingPage() {
     const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
     const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
     const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
-    const [editForm, setEditForm] = useState({ monthly_hours: 0, vacation_days_total: 0 });
+    const [editForm, setEditForm] = useState({ weekly_hours: 0, vacation_days_total: 0 });
 
     // --- Helpers ---
 
     const getProfile = (userId: string) => {
         return userProfiles.find(p => p.user_id === userId) || {
-            monthly_hours: 0,
+            weekly_hours: 0,
             vacation_days_total: 22
         };
     };
@@ -73,10 +73,11 @@ export default function TimeTrackingPage() {
 
     const renderUserDashboard = (userId: string) => {
         const profile = getProfile(userId);
+        const monthlyTarget = profile.weekly_hours * 4; // Logic: Weekly * 4
         const workedHours = calculateMonthlyWorkedHours(userId);
         const vacationUsed = calculateVacationDaysUsed(userId);
 
-        const remainingHours = Math.max(0, profile.monthly_hours - workedHours);
+        const remainingHours = Math.max(0, monthlyTarget - workedHours);
         const remainingVacation = Math.max(0, profile.vacation_days_total - vacationUsed);
 
         // Get recent logs for this user
@@ -105,8 +106,8 @@ export default function TimeTrackingPage() {
                             </h3>
                             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
                                 <div>
-                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Contratadas</p>
-                                    <p className="text-2xl font-black text-gray-900">{profile.monthly_hours}h</p>
+                                    <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Objetivo ({profile.weekly_hours}h/sem)</p>
+                                    <p className="text-2xl font-black text-gray-900">{monthlyTarget}h</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Trabajadas</p>
@@ -121,7 +122,7 @@ export default function TimeTrackingPage() {
                                 <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-indigo-500 rounded-full transition-all duration-1000"
-                                        style={{ width: `${Math.min(100, (workedHours / (profile.monthly_hours || 1)) * 100)}%` }}
+                                        style={{ width: `${Math.min(100, (workedHours / (monthlyTarget || 1)) * 100)}%` }}
                                     />
                                 </div>
                             </div>
@@ -227,10 +228,11 @@ export default function TimeTrackingPage() {
                         <thead className="bg-gray-900 text-white font-bold uppercase text-xs">
                             <tr>
                                 <th className="px-6 py-4">Usuario</th>
-                                <th className="px-6 py-4 text-center">Horas Mensuales</th>
-                                <th className="px-6 py-4 text-center">Trabajadas</th>
-                                <th className="px-6 py-4 text-center">Pendientes</th>
-                                <th className="px-6 py-4 text-center">Vacaciones Totales</th>
+                                <th className="px-6 py-4 text-center">Horas Semanales</th>
+                                <th className="px-6 py-4 text-center">Objetivo Mes (x4)</th>
+                                <th className="px-6 py-4 text-center">Trabajadas Mes</th>
+                                <th className="px-6 py-4 text-center">Pendientes Mes</th>
+                                <th className="px-6 py-4 text-center">Vacaciones</th>
                                 <th className="px-6 py-4 text-center">Usadas</th>
                                 <th className="px-6 py-4 text-center">Restantes</th>
                                 <th className="px-6 py-4 text-center">Acciones</th>
@@ -239,6 +241,7 @@ export default function TimeTrackingPage() {
                         <tbody className="divide-y divide-gray-100">
                             {USERS.map(user => {
                                 const profile = getProfile(user.id);
+                                const monthlyTarget = profile.weekly_hours * 4;
                                 const worked = calculateMonthlyWorkedHours(user.id);
                                 const vacationUsed = calculateVacationDaysUsed(user.id);
                                 const isEditing = editingProfileId === user.id;
@@ -252,21 +255,29 @@ export default function TimeTrackingPage() {
                                             </div>
                                         </td>
 
-                                        {/* Monthly Hours */}
+                                        {/* Weekly Hours (Editable) */}
                                         <td className="px-6 py-4 text-center">
                                             {isEditing ? (
                                                 <input
                                                     type="number"
                                                     className="w-16 p-1 border rounded text-center bg-white"
-                                                    value={editForm.monthly_hours}
-                                                    onChange={e => setEditForm({ ...editForm, monthly_hours: parseInt(e.target.value) || 0 })}
+                                                    value={editForm.weekly_hours}
+                                                    onChange={e => setEditForm({ ...editForm, weekly_hours: parseInt(e.target.value) || 0 })}
                                                 />
                                             ) : (
-                                                <span className="font-mono font-bold">{profile.monthly_hours}h</span>
+                                                <span className="font-mono font-bold bg-indigo-50 text-indigo-700 px-2 py-1 rounded">{profile.weekly_hours}h</span>
                                             )}
                                         </td>
+
+                                        {/* Monthly Target (Calculated) */}
+                                        <td className="px-6 py-4 text-center text-gray-500 font-medium">{monthlyTarget}h</td>
+
                                         <td className="px-6 py-4 text-center text-indigo-600 font-bold">{worked}h</td>
-                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">{(profile.monthly_hours - worked).toFixed(1)}h</td>
+
+                                        {/* Pending */}
+                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">
+                                            {(monthlyTarget - worked).toFixed(1)}h
+                                        </td>
 
                                         {/* Vacation Days */}
                                         <td className="px-6 py-4 text-center border-l border-gray-100">
@@ -290,7 +301,7 @@ export default function TimeTrackingPage() {
                                                     onClick={() => {
                                                         updateProfile({
                                                             userId: user.id, updates: {
-                                                                monthly_hours: editForm.monthly_hours,
+                                                                weekly_hours: editForm.weekly_hours,
                                                                 vacation_days_total: editForm.vacation_days_total
                                                             }
                                                         });
@@ -306,7 +317,7 @@ export default function TimeTrackingPage() {
                                                         onClick={() => {
                                                             setEditingProfileId(user.id);
                                                             setEditForm({
-                                                                monthly_hours: profile.monthly_hours,
+                                                                weekly_hours: profile.weekly_hours,
                                                                 vacation_days_total: profile.vacation_days_total
                                                             });
                                                         }}
