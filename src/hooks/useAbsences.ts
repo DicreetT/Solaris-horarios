@@ -33,28 +33,38 @@ export function useAbsences(currentUser: User | null) {
                 type: row.type || 'absence',
                 response_message: row.response_message || '',
                 attachments: row.attachments || [],
-                makeup_preference: row.makeup_preference || false, // New field mapping
-                resolution_type: row.resolution_type || null // New field mapping
+                makeup_preference: row.makeup_preference || false,
+                resolution_type: row.resolution_type || null
             }));
         },
         enabled: !!currentUser,
     });
 
     const createAbsenceMutation = useMutation({
-        mutationFn: async ({ reason, date_key, end_date, type, attachments, makeUpHours }: { reason: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[], makeUpHours?: boolean }) => {
+        mutationFn: async ({ reason, date_key, end_date, type, attachments, makeUpHours, status, resolution_type, userId }: { reason?: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[], makeUpHours?: boolean, status?: string, resolution_type?: string, userId?: string }) => {
             const now = new Date().toISOString();
+            const targetUser = userId || currentUser.id; // Allow admin to create for others if userId passed
+
+            // Check if exists to update or insert? 
+            // Better to upsert if we want to overwrite, but ID is needed. 
+            // For now, let's just insert. Uniqueness is rarely enforced but should be.
+            // Let's assume the UI handles preventing dupes or we just add a new one.
+
+            const defaultReason = status === 'approved' ? 'Registrado por Admin' : '';
+
             const { data, error } = await supabase
                 .from('absence_requests')
                 .insert({
-                    created_by: currentUser.id,
+                    created_by: targetUser,
                     created_at: now,
                     date_key: date_key,
                     end_date: end_date,
-                    reason,
+                    reason: reason || defaultReason,
                     type,
-                    status: 'pending',
+                    status: status || 'pending', // Allow override
                     attachments: attachments || [],
-                    makeup_preference: makeUpHours || false // Map to DB column
+                    makeup_preference: makeUpHours || false,
+                    resolution_type: resolution_type || null
                 })
                 .select()
                 .single();
@@ -113,6 +123,23 @@ export function useAbsences(currentUser: User | null) {
         },
     });
 
+    // Helper to delete by date/user (useful for Admin switching back to Work)
+    const deleteAbsenceByDateMutation = useMutation({
+        mutationFn: async ({ date_key, user_id }: { date_key: string, user_id: string }) => {
+            // Find request for this date/user
+            const { error } = await supabase
+                .from('absence_requests')
+                .delete()
+                .eq('date_key', date_key)
+                .eq('created_by', user_id);
+
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['absences'] });
+        }
+    })
+
     return {
         absenceRequests,
         isLoading,
@@ -121,5 +148,6 @@ export function useAbsences(currentUser: User | null) {
         updateAbsence: updateAbsenceMutation.mutateAsync,
         updateAbsenceStatus: updateAbsenceStatusMutation.mutateAsync,
         deleteAbsence: deleteAbsenceMutation.mutateAsync,
+        deleteAbsenceByDate: deleteAbsenceByDateMutation.mutateAsync // Export this
     };
 }

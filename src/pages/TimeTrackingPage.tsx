@@ -7,7 +7,7 @@ import { USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateTotalHours, calculateHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon } from 'lucide-react';
+import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
 export default function TimeTrackingPage() {
@@ -15,7 +15,7 @@ export default function TimeTrackingPage() {
     const isAdmin = currentUser?.isAdmin;
 
     const { timeData, deleteTimeEntry, updateTimeEntry } = useTimeData();
-    const { absenceRequests } = useAbsences(currentUser);
+    const { absenceRequests, createAbsence, deleteAbsenceByDate } = useAbsences(currentUser);
     const { userProfiles, updateProfile } = useWorkProfile();
 
     // UI States
@@ -26,7 +26,12 @@ export default function TimeTrackingPage() {
 
     // Log Editing State (Admin only)
     const [editingLogId, setEditingLogId] = useState<number | null>(null);
-    const [logEditForm, setLogEditForm] = useState({ entry: '', exit: '' });
+    const [logEditForm, setLogEditForm] = useState({
+        entry: '',
+        exit: '',
+        type: 'work', // work, vacation, absence, special_permit
+        resolution_type: 'makeup' // makeup, paid, deducted
+    });
 
     // --- Helpers ---
 
@@ -110,9 +115,67 @@ export default function TimeTrackingPage() {
         });
         const displayLogs = limit ? logs.slice(0, limit) : logs;
 
-        const handleSaveLog = async (id: number) => {
-            await updateTimeEntry({ id, updates: { entry: logEditForm.entry, exit: logEditForm.exit } });
-            setEditingLogId(null);
+        const handleSaveLog = async (id: number, dateKey: string) => {
+            try {
+                if (logEditForm.type === 'work') {
+                    // Update Time Entry
+                    await updateTimeEntry({
+                        id,
+                        updates: {
+                            entry: logEditForm.entry,
+                            exit: logEditForm.exit,
+                            status: 'present', // Reset status
+                            note: null
+                        }
+                    });
+
+                    // Cleanup any Absence Request for this day
+                    await deleteAbsenceByDate({ date_key: dateKey, user_id: userId });
+
+                } else {
+                    // Convert to Absence/Vacation
+                    // 1. Update Time Entry to be empty/placeholder
+                    let statusLabel = 'absent';
+                    if (logEditForm.type === 'vacation') statusLabel = 'vacation';
+                    if (logEditForm.type === 'special_permit') statusLabel = 'special_permit';
+
+                    await updateTimeEntry({
+                        id,
+                        updates: {
+                            entry: null,
+                            exit: null,
+                            status: statusLabel,
+                            note: `Admin set to ${logEditForm.type}`
+                        }
+                    });
+
+                    // 2. Create/Overlap Absence Request
+                    // First delete existing to avoid dupes on this day
+                    await deleteAbsenceByDate({ date_key: dateKey, user_id: userId });
+
+                    // Create new Approved Absence
+                    await createAbsence({
+                        userId,
+                        date_key: dateKey,
+                        type: logEditForm.type as any,
+                        status: 'approved',
+                        resolution_type: logEditForm.type === 'special_permit' ? logEditForm.resolution_type : undefined
+                    });
+                }
+
+                setEditingLogId(null);
+            } catch (e) {
+                console.error("Error saving log", e);
+                alert("Error al guardar cambios");
+            }
+        };
+
+        const getLogType = (entry: any) => {
+            // Helper to determine initial type state from entry status
+            if (entry.status === 'vacation') return 'vacation';
+            if (entry.status === 'special_permit') return 'special_permit';
+            if (entry.status === 'absent') return 'absence';
+            return 'work';
         };
 
         return (
@@ -121,8 +184,9 @@ export default function TimeTrackingPage() {
                     <thead className="bg-gray-50 text-gray-900 font-bold uppercase text-xs">
                         <tr>
                             <th className="px-6 py-4">Fecha</th>
-                            <th className="px-6 py-4">Entrada</th>
-                            <th className="px-6 py-4">Salida</th>
+                            {/* If editing and not work, merge columns? No, simpler to keep structure */}
+                            <th className="px-6 py-4">Tipo / Entrada</th>
+                            <th className="px-6 py-4">Detalles / Salida</th>
                             <th className="px-6 py-4">Total</th>
                             {isEditable && <th className="px-6 py-4 text-right">Acciones</th>}
                         </tr>
@@ -133,41 +197,85 @@ export default function TimeTrackingPage() {
                         ) : (
                             displayLogs.map(entry => {
                                 const isEditing = editingLogId === entry.id;
+                                const currentType = isEditing ? logEditForm.type : getLogType(entry);
+
                                 return (
                                     <tr key={entry.id} className="hover:bg-gray-50/50">
                                         <td className="px-6 py-4 font-medium">{formatDatePretty(new Date(entry.date_key))}</td>
 
-                                        {/* Entry Time */}
+                                        {/* Column 2: Type Selector OR Entry Time */}
                                         <td className="px-6 py-4">
                                             {isEditing ? (
-                                                <input
-                                                    type="time"
-                                                    className="border rounded p-1"
-                                                    value={logEditForm.entry}
-                                                    onChange={e => setLogEditForm({ ...logEditForm, entry: e.target.value })}
-                                                />
+                                                <div className="flex flex-col gap-2">
+                                                    <select
+                                                        className="border rounded p-1 text-xs font-bold bg-gray-50"
+                                                        value={logEditForm.type}
+                                                        onChange={e => setLogEditForm({ ...logEditForm, type: e.target.value })}
+                                                    >
+                                                        <option value="work">Trabajo</option>
+                                                        <option value="vacation">Vacaciones</option>
+                                                        <option value="absence">Ausencia (Injust.)</option>
+                                                        <option value="special_permit">Permiso Especial</option>
+                                                    </select>
+
+                                                    {logEditForm.type === 'work' && (
+                                                        <input
+                                                            type="time"
+                                                            className="border rounded p-1 w-full"
+                                                            value={logEditForm.entry}
+                                                            onChange={e => setLogEditForm({ ...logEditForm, entry: e.target.value })}
+                                                        />
+                                                    )}
+                                                </div>
                                             ) : (
-                                                entry.entry || '-'
+                                                <div className="font-medium text-gray-900">
+                                                    {currentType === 'work' ? (entry.entry || '-') :
+                                                        currentType === 'vacation' ? <span className="text-teal-600 flex items-center gap-1"><Calendar size={14} /> Vacaciones</span> :
+                                                            currentType === 'special_permit' ? <span className="text-indigo-600 flex items-center gap-1"><Briefcase size={14} /> Permiso</span> :
+                                                                <span className="text-red-500 flex items-center gap-1"><AlertTriangle size={14} /> Ausencia</span>
+                                                    }
+                                                </div>
                                             )}
                                         </td>
 
-                                        {/* Exit Time */}
+                                        {/* Column 3: Resolution Details OR Exit Time */}
                                         <td className="px-6 py-4">
                                             {isEditing ? (
-                                                <input
-                                                    type="time"
-                                                    className="border rounded p-1"
-                                                    value={logEditForm.exit}
-                                                    onChange={e => setLogEditForm({ ...logEditForm, exit: e.target.value })}
-                                                />
+                                                <div>
+                                                    {logEditForm.type === 'work' && (
+                                                        <input
+                                                            type="time"
+                                                            className="border rounded p-1 w-full"
+                                                            value={logEditForm.exit}
+                                                            onChange={e => setLogEditForm({ ...logEditForm, exit: e.target.value })}
+                                                        />
+                                                    )}
+
+                                                    {logEditForm.type === 'special_permit' && (
+                                                        <select
+                                                            className="border rounded p-1 text-xs w-full mt-7" // Align with the type select above visually
+                                                            value={logEditForm.resolution_type}
+                                                            onChange={e => setLogEditForm({ ...logEditForm, resolution_type: e.target.value })}
+                                                        >
+                                                            <option value="makeup">Reponer (Deuda)</option>
+                                                            <option value="paid">Pagado (Trabajado)</option>
+                                                            <option value="deducted">Descontar (Ausencia)</option>
+                                                        </select>
+                                                    )}
+                                                </div>
                                             ) : (
-                                                entry.exit || '-'
+                                                <div className="text-gray-500">
+                                                    {currentType === 'work' ? (entry.exit || '-') : (
+                                                        /* Maybe show absence details? */
+                                                        <span className="text-xs italic">{entry.note || ''}</span>
+                                                    )}
+                                                </div>
                                             )}
                                         </td>
 
                                         {/* Total Duration */}
                                         <td className="px-6 py-4 font-bold text-indigo-600">
-                                            {!isEditing && entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
+                                            {!isEditing && currentType === 'work' && entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
                                         </td>
 
                                         {/* Actions */}
@@ -176,7 +284,7 @@ export default function TimeTrackingPage() {
                                                 {isEditing ? (
                                                     <>
                                                         <button
-                                                            onClick={() => handleSaveLog(entry.id)}
+                                                            onClick={() => handleSaveLog(entry.id, entry.date_key)}
                                                             className="text-green-600 hover:bg-green-50 p-1 rounded"
                                                             title="Guardar"
                                                         >
@@ -195,10 +303,15 @@ export default function TimeTrackingPage() {
                                                         <button
                                                             onClick={() => {
                                                                 setEditingLogId(entry.id);
-                                                                setLogEditForm({ entry: entry.entry || '', exit: entry.exit || '' });
+                                                                setLogEditForm({
+                                                                    entry: entry.entry || '',
+                                                                    exit: entry.exit || '',
+                                                                    type: getLogType(entry),
+                                                                    resolution_type: 'makeup' // Default
+                                                                });
                                                             }}
                                                             className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-1 rounded"
-                                                            title="Editar Tiempo"
+                                                            title="Editar Registro"
                                                         >
                                                             <Edit2 size={16} />
                                                         </button>
@@ -441,8 +554,8 @@ export default function TimeTrackingPage() {
                                                         <button
                                                             onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
                                                             className={`p-2 rounded-full transition-all ${isExpanded
-                                                                ? 'text-indigo-600 bg-indigo-100 rotate-180'
-                                                                : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                                                    ? 'text-indigo-600 bg-indigo-100 rotate-180'
+                                                                    : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
                                                                 }`}
                                                             title={isExpanded ? "Ocultar Jornadas" : "Ver Jornadas"}
                                                         >
