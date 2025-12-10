@@ -83,32 +83,44 @@ export default function DailyChecklistPage() {
         if (!currentUser) return;
         setLoading(true);
 
-        // 1. Try to get existing daily record
-        const { data: dailyData } = await supabase
-            .from('daily_checklists')
-            .select('*')
-            .eq('user_id', currentUser.id)
-            .eq('date_key', todayKey)
-            .single();
-
-        let tasksToShow = [];
-
-        // 2. Determine tasks to show
-        if (dailyData && dailyData.history && dailyData.history.length > 0) {
-            // Case A: Day already started and has items
-            tasksToShow = dailyData.history;
-        } else {
-            // Case B: Day not started OR empty record -> Load from template
-            const { data: templateData } = await supabase
+        // 1. Fetch BOTH template and daily data needed for merging
+        const [{ data: dailyData }, { data: templateData }] = await Promise.all([
+            supabase
+                .from('daily_checklists')
+                .select('*')
+                .eq('user_id', currentUser.id)
+                .eq('date_key', todayKey)
+                .single(),
+            supabase
                 .from('checklist_templates')
                 .select('tasks')
                 .eq('user_id', currentUser.id)
-                .single();
+                .single()
+        ]);
 
-            if (templateData?.tasks) {
-                // Initialize as uncompleted
-                tasksToShow = templateData.tasks.map((t: any) => ({ ...t, completed: false }));
+        let tasksToShow = [];
+
+        if (templateData?.tasks) {
+            // 2. Logic: Always respect the TEMPLATE structure (so deleted tasks disappear, new ones appear)
+            // But preserve the COMPLETION STATUS from the daily record if it exists.
+
+            const completionMap = new Map();
+            if (dailyData?.history) {
+                dailyData.history.forEach((t: any) => {
+                    completionMap.set(t.id, t.completed);
+                });
             }
+
+            tasksToShow = templateData.tasks.map((t: any) => ({
+                ...t,
+                completed: completionMap.has(t.id) ? completionMap.get(t.id) : false
+            }));
+
+        } else if (dailyData?.history) {
+            // Fallback: If no template exists anymore but we have history, show history? 
+            // Or if template is empty, show nothing. 
+            // Let's assume if template is missing/empty, the user should have no tasks.
+            tasksToShow = [];
         }
 
         setDailyTasks(tasksToShow);
@@ -243,8 +255,8 @@ export default function DailyChecklistPage() {
                                         key={task.id}
                                         onClick={() => toggleTask(task.id)}
                                         className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${task.completed
-                                                ? 'bg-gray-50 border-gray-200'
-                                                : 'bg-green-50 border-green-200 hover:border-green-300 shadow-sm'
+                                            ? 'bg-gray-50 border-gray-200'
+                                            : 'bg-green-50 border-green-200 hover:border-green-300 shadow-sm'
                                             }`}
                                     >
                                         <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${task.completed ? 'bg-gray-400 border-gray-400 text-white' : 'border-green-500 bg-white text-transparent'
@@ -273,8 +285,8 @@ export default function DailyChecklistPage() {
                                             key={user.id}
                                             onClick={() => setSelectedUserForTemplate(user.id)}
                                             className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${selectedUserForTemplate === user.id
-                                                    ? 'border-primary bg-primary/5 shadow-md'
-                                                    : 'border-transparent hover:bg-gray-50'
+                                                ? 'border-primary bg-primary/5 shadow-md'
+                                                : 'border-transparent hover:bg-gray-50'
                                                 }`}
                                         >
                                             <UserAvatar name={user.name} size="sm" />
