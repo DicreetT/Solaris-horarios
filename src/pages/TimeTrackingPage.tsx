@@ -20,9 +20,13 @@ export default function TimeTrackingPage() {
 
     // UI States
     const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
-    const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+    const [expandedUserId, setExpandedUserId] = useState<string | null>(null); // For Admin expandable row
     const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState({ weekly_hours: 0, vacation_days_total: 0 });
+
+    // Log Editing State (Admin only)
+    const [editingLogId, setEditingLogId] = useState<number | null>(null);
+    const [logEditForm, setLogEditForm] = useState({ entry: '', exit: '' });
 
     // --- Helpers ---
 
@@ -40,7 +44,6 @@ export default function TimeTrackingPage() {
         let totalMinutes = 0;
 
         Object.values(timeData).forEach(dayData => {
-            // dayData is Record<userId, TimeEntry[]>
             const userEntries = dayData[userId] || [];
             userEntries.forEach(entry => {
                 if (entry.date_key.startsWith(currentMonthPrefix)) {
@@ -52,7 +55,6 @@ export default function TimeTrackingPage() {
             });
         });
 
-        // Convert back to decimal hours for display
         return parseFloat((totalMinutes / 60).toFixed(1));
     };
 
@@ -69,28 +71,143 @@ export default function TimeTrackingPage() {
             }, 0);
     };
 
+    // --- Sub-Components ---
+
+    const DailyLogsTable = ({ userId, limit = 10, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
+        // Get sorted logs
+        const logs: any[] = [];
+        const sortedDates = Object.keys(timeData).sort().reverse();
+        sortedDates.forEach(dateKey => {
+            const entries = timeData[dateKey][userId] || [];
+            entries.forEach(e => logs.push({ ...e, date_key: dateKey }));
+        });
+        const displayLogs = limit ? logs.slice(0, limit) : logs;
+
+        const handleSaveLog = async (id: number) => {
+            await updateTimeEntry({ id, updates: { entry: logEditForm.entry, exit: logEditForm.exit } });
+            setEditingLogId(null);
+        };
+
+        return (
+            <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-600">
+                    <thead className="bg-gray-50 text-gray-900 font-bold uppercase text-xs">
+                        <tr>
+                            <th className="px-6 py-4">Fecha</th>
+                            <th className="px-6 py-4">Entrada</th>
+                            <th className="px-6 py-4">Salida</th>
+                            <th className="px-6 py-4">Total</th>
+                            {isEditable && <th className="px-6 py-4 text-right">Acciones</th>}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {displayLogs.length === 0 ? (
+                            <tr><td colSpan={5} className="p-8 text-center text-gray-400 italic">No hay registros recientes.</td></tr>
+                        ) : (
+                            displayLogs.map(entry => {
+                                const isEditing = editingLogId === entry.id;
+                                return (
+                                    <tr key={entry.id} className="hover:bg-gray-50/50">
+                                        <td className="px-6 py-4 font-medium">{formatDatePretty(new Date(entry.date_key))}</td>
+
+                                        {/* Entry Time */}
+                                        <td className="px-6 py-4">
+                                            {isEditing ? (
+                                                <input
+                                                    type="time"
+                                                    className="border rounded p-1"
+                                                    value={logEditForm.entry}
+                                                    onChange={e => setLogEditForm({ ...logEditForm, entry: e.target.value })}
+                                                />
+                                            ) : (
+                                                entry.entry || '-'
+                                            )}
+                                        </td>
+
+                                        {/* Exit Time */}
+                                        <td className="px-6 py-4">
+                                            {isEditing ? (
+                                                <input
+                                                    type="time"
+                                                    className="border rounded p-1"
+                                                    value={logEditForm.exit}
+                                                    onChange={e => setLogEditForm({ ...logEditForm, exit: e.target.value })}
+                                                />
+                                            ) : (
+                                                entry.exit || '-'
+                                            )}
+                                        </td>
+
+                                        {/* Total Duration */}
+                                        <td className="px-6 py-4 font-bold text-indigo-600">
+                                            {!isEditing && entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
+                                        </td>
+
+                                        {/* Actions */}
+                                        {isEditable && (
+                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                {isEditing ? (
+                                                    <>
+                                                        <button
+                                                            onClick={() => handleSaveLog(entry.id)}
+                                                            className="text-green-600 hover:bg-green-50 p-1 rounded"
+                                                            title="Guardar"
+                                                        >
+                                                            <Save size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setEditingLogId(null)}
+                                                            className="text-gray-400 hover:bg-gray-100 p-1 rounded"
+                                                            title="Cancelar"
+                                                        >
+                                                            <Shield size={16} className="rotate-45" />
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingLogId(entry.id);
+                                                                setLogEditForm({ entry: entry.entry || '', exit: entry.exit || '' });
+                                                            }}
+                                                            className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-1 rounded"
+                                                            title="Editar Tiempo"
+                                                        >
+                                                            <Edit2 size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (window.confirm('¿Borrar este registro?')) deleteTimeEntry(entry.id);
+                                                            }}
+                                                            className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded"
+                                                            title="Eliminar"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </td>
+                                        )}
+                                    </tr>
+                                );
+                            })
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
     // --- Rendering ---
 
     const renderUserDashboard = (userId: string) => {
         const profile = getProfile(userId);
-        const monthlyTarget = profile.weekly_hours * 4; // Logic: Weekly * 4
+        const monthlyTarget = profile.weekly_hours * 4;
         const workedHours = calculateMonthlyWorkedHours(userId);
         const vacationUsed = calculateVacationDaysUsed(userId);
 
         const remainingHours = Math.max(0, monthlyTarget - workedHours);
         const remainingVacation = Math.max(0, profile.vacation_days_total - vacationUsed);
-
-        // Get recent logs for this user
-        const logs: any[] = [];
-        const sortedDates = Object.keys(timeData).sort().reverse();
-        sortedDates.forEach(dateKey => {
-            const entries = timeData[dateKey][userId] || [];
-            entries.forEach(e => {
-                // Add dateKey to entry object for display
-                logs.push({ ...e, date_key: dateKey });
-            });
-        });
-        const recentLogs = logs.slice(0, 10); // Show last 10
 
         return (
             <div className="space-y-8">
@@ -163,7 +280,7 @@ export default function TimeTrackingPage() {
                     </div>
                 </div>
 
-                {/* Clock Widget */}
+                {/* Clock Widget for Current User ONLY */}
                 {userId === currentUser.id && (
                     <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 text-center">
                         <h3 className="text-xl font-bold text-gray-900 mb-6">Fichar Ahora</h3>
@@ -179,42 +296,8 @@ export default function TimeTrackingPage() {
                             Historial Reciente
                         </h3>
                     </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm text-gray-600">
-                            <thead className="bg-gray-50 text-gray-900 font-bold uppercase text-xs">
-                                <tr>
-                                    <th className="px-6 py-4">Fecha</th>
-                                    <th className="px-6 py-4">Entrada</th>
-                                    <th className="px-6 py-4">Salida</th>
-                                    <th className="px-6 py-4">Total</th>
-                                    {isAdmin && <th className="px-6 py-4">Acciones</th>}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {recentLogs.length === 0 ? (
-                                    <tr><td colSpan={5} className="p-8 text-center text-gray-400 italic">No hay registros recientes.</td></tr>
-                                ) : (
-                                    recentLogs.map(entry => (
-                                        <tr key={entry.id} className="hover:bg-gray-50/50">
-                                            <td className="px-6 py-4 font-medium">{formatDatePretty(new Date(entry.date_key))}</td>
-                                            <td className="px-6 py-4">{entry.entry || '-'}</td>
-                                            <td className="px-6 py-4">{entry.exit || '-'}</td>
-                                            <td className="px-6 py-4 font-bold text-indigo-600">
-                                                {entry.entry && entry.exit ? `${calculateHours(entry.entry, entry.exit)} h` : '-'}
-                                            </td>
-                                            {isAdmin && (
-                                                <td className="px-6 py-4 text-right">
-                                                    <button onClick={() => deleteTimeEntry(entry.id)} className="text-gray-400 hover:text-red-500">
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </td>
-                                            )}
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                    {/* User sees their logs READ ONLY */}
+                    <DailyLogsTable userId={userId} limit={10} isEditable={false} />
                 </div>
             </div>
         );
@@ -245,101 +328,119 @@ export default function TimeTrackingPage() {
                                 const worked = calculateMonthlyWorkedHours(user.id);
                                 const vacationUsed = calculateVacationDaysUsed(user.id);
                                 const isEditing = editingProfileId === user.id;
+                                const isExpanded = expandedUserId === user.id;
 
                                 return (
-                                    <tr key={user.id} className="hover:bg-blue-50/20 transition-colors">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <UserAvatar name={user.name} size="sm" />
-                                                <span className="font-bold text-gray-900">{user.name}</span>
-                                            </div>
-                                        </td>
-
-                                        {/* Weekly Hours (Editable) */}
-                                        <td className="px-6 py-4 text-center">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    className="w-16 p-1 border rounded text-center bg-white"
-                                                    value={editForm.weekly_hours}
-                                                    onChange={e => setEditForm({ ...editForm, weekly_hours: parseInt(e.target.value) || 0 })}
-                                                />
-                                            ) : (
-                                                <span className="font-mono font-bold bg-indigo-50 text-indigo-700 px-2 py-1 rounded">{profile.weekly_hours}h</span>
-                                            )}
-                                        </td>
-
-                                        {/* Monthly Target (Calculated) */}
-                                        <td className="px-6 py-4 text-center text-gray-500 font-medium">{monthlyTarget}h</td>
-
-                                        <td className="px-6 py-4 text-center text-indigo-600 font-bold">{worked}h</td>
-
-                                        {/* Pending */}
-                                        <td className="px-6 py-4 text-center text-orange-500 font-medium">
-                                            {(monthlyTarget - worked).toFixed(1)}h
-                                        </td>
-
-                                        {/* Vacation Days */}
-                                        <td className="px-6 py-4 text-center border-l border-gray-100">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    className="w-16 p-1 border rounded text-center bg-white"
-                                                    value={editForm.vacation_days_total}
-                                                    onChange={e => setEditForm({ ...editForm, vacation_days_total: parseInt(e.target.value) || 0 })}
-                                                />
-                                            ) : (
-                                                <span className="font-mono font-bold">{profile.vacation_days_total}</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-center text-teal-600 font-bold">{vacationUsed}</td>
-                                        <td className="px-6 py-4 text-center text-green-600 font-medium">{profile.vacation_days_total - vacationUsed}</td>
-
-                                        <td className="px-6 py-4 text-center">
-                                            {isEditing ? (
-                                                <button
-                                                    onClick={() => {
-                                                        updateProfile({
-                                                            userId: user.id, updates: {
-                                                                weekly_hours: editForm.weekly_hours,
-                                                                vacation_days_total: editForm.vacation_days_total
-                                                            }
-                                                        });
-                                                        setEditingProfileId(null);
-                                                    }}
-                                                    className="text-green-600 hover:bg-green-50 p-2 rounded-full"
-                                                >
-                                                    <Save size={18} />
-                                                </button>
-                                            ) : (
-                                                <div className="flex justify-center gap-2">
-                                                    <button
-                                                        onClick={() => {
-                                                            setEditingProfileId(user.id);
-                                                            setEditForm({
-                                                                weekly_hours: profile.weekly_hours,
-                                                                vacation_days_total: profile.vacation_days_total
-                                                            });
-                                                        }}
-                                                        className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
-                                                        title="Editar cupos"
-                                                    >
-                                                        <Edit2 size={16} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            setSelectedUserId(user.id);
-                                                            setAdminViewMode('details');
-                                                        }}
-                                                        className="text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-full transition-all"
-                                                        title="Ver detalles"
-                                                    >
-                                                        <History size={16} />
-                                                    </button>
+                                    <React.Fragment key={user.id}>
+                                        <tr className={`hover:bg-blue-50/20 transition-colors ${isExpanded ? 'bg-blue-50/10' : ''}`}>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <UserAvatar name={user.name} size="sm" />
+                                                    <span className="font-bold text-gray-900">{user.name}</span>
                                                 </div>
-                                            )}
-                                        </td>
-                                    </tr>
+                                            </td>
+
+                                            {/* Weekly Hours (Editable) */}
+                                            <td className="px-6 py-4 text-center">
+                                                {isEditing ? (
+                                                    <input
+                                                        type="number"
+                                                        className="w-16 p-1 border rounded text-center bg-white"
+                                                        value={editForm.weekly_hours}
+                                                        onChange={e => setEditForm({ ...editForm, weekly_hours: parseInt(e.target.value) || 0 })}
+                                                    />
+                                                ) : (
+                                                    <span className="font-mono font-bold bg-indigo-50 text-indigo-700 px-2 py-1 rounded">{profile.weekly_hours}h</span>
+                                                )}
+                                            </td>
+
+                                            {/* Monthly Target (Calculated) */}
+                                            <td className="px-6 py-4 text-center text-gray-500 font-medium">{monthlyTarget}h</td>
+
+                                            <td className="px-6 py-4 text-center text-indigo-600 font-bold">{worked}h</td>
+
+                                            {/* Pending */}
+                                            <td className="px-6 py-4 text-center text-orange-500 font-medium">
+                                                {(monthlyTarget - worked).toFixed(1)}h
+                                            </td>
+
+                                            {/* Vacation Days */}
+                                            <td className="px-6 py-4 text-center border-l border-gray-100">
+                                                {isEditing ? (
+                                                    <input
+                                                        type="number"
+                                                        className="w-16 p-1 border rounded text-center bg-white"
+                                                        value={editForm.vacation_days_total}
+                                                        onChange={e => setEditForm({ ...editForm, vacation_days_total: parseInt(e.target.value) || 0 })}
+                                                    />
+                                                ) : (
+                                                    <span className="font-mono font-bold">{profile.vacation_days_total}</span>
+                                                )}
+                                            </td>
+                                            <td className="px-6 py-4 text-center text-teal-600 font-bold">{vacationUsed}</td>
+                                            <td className="px-6 py-4 text-center text-green-600 font-medium">{profile.vacation_days_total - vacationUsed}</td>
+
+                                            <td className="px-6 py-4 text-center">
+                                                {isEditing ? (
+                                                    <button
+                                                        onClick={() => {
+                                                            updateProfile({
+                                                                userId: user.id, updates: {
+                                                                    weekly_hours: editForm.weekly_hours,
+                                                                    vacation_days_total: editForm.vacation_days_total
+                                                                }
+                                                            });
+                                                            setEditingProfileId(null);
+                                                        }}
+                                                        className="text-green-600 hover:bg-green-50 p-2 rounded-full"
+                                                    >
+                                                        <Save size={18} />
+                                                    </button>
+                                                ) : (
+                                                    <div className="flex justify-center gap-2">
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingProfileId(user.id);
+                                                                setEditForm({
+                                                                    weekly_hours: profile.weekly_hours,
+                                                                    vacation_days_total: profile.vacation_days_total
+                                                                });
+                                                            }}
+                                                            className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
+                                                            title="Editar cupos"
+                                                        >
+                                                            <Edit2 size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
+                                                            className={`p-2 rounded-full transition-all ${isExpanded
+                                                                    ? 'text-indigo-600 bg-indigo-100 rotate-180'
+                                                                    : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                                                }`}
+                                                            title={isExpanded ? "Ocultar Jornadas" : "Ver Jornadas"}
+                                                        >
+                                                            {/* Chevron or similar icon to indicate expansion */}
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </td>
+                                        </tr>
+                                        {isExpanded && (
+                                            <tr>
+                                                <td colSpan={9} className="bg-gray-50/50 p-6 shadow-inner">
+                                                    <div className="bg-white rounded-2xl border border-gray-200 p-6">
+                                                        <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                                                            <Clock size={18} className="text-gray-400" />
+                                                            Registro de Jornadas: {user.name}
+                                                        </h4>
+                                                        {/* Admin sees EDITABLE logs here */}
+                                                        <DailyLogsTable userId={user.id} limit={31} isEditable={true} />
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
                                 )
                             })}
                         </tbody>
@@ -356,41 +457,24 @@ export default function TimeTrackingPage() {
                 <div>
                     <h1 className="text-3xl font-black text-gray-900 flex items-center gap-3">
                         Registro Horario
-                        {adminViewMode === 'details' && selectedUserId && (
+                        {adminViewMode === 'details' && adminViewMode === 'details' && !isAdmin && (
+                            // Only show subtitle if user is viewing their own details. 
                             <span className="text-gray-400 text-xl font-medium flex items-center gap-2">
-                                / <UserAvatar name={USERS.find(u => u.id === selectedUserId)?.name} size="xs" />
-                                {USERS.find(u => u.id === selectedUserId)?.name}
+                                / <UserIcon size={20} /> Mi Registro
                             </span>
                         )}
                     </h1>
                     <p className="text-gray-500 mt-1">Gestión de horas y vacaciones.</p>
                 </div>
-                {isAdmin && (
-                    <div className="flex bg-white rounded-lg p-1 shadow-sm border border-gray-200">
-                        <button
-                            onClick={() => { setAdminViewMode('table'); setSelectedUserId(null); }}
-                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${adminViewMode === 'table' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'
-                                }`}
-                        >
-                            Vista General
-                        </button>
-                        <button
-                            onClick={() => { setAdminViewMode('details'); setSelectedUserId(currentUser.id); }}
-                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${adminViewMode === 'details' && selectedUserId === currentUser.id
-                                ? 'bg-gray-900 text-white shadow-md'
-                                : 'text-gray-500 hover:bg-gray-50'
-                                }`}
-                        >
-                            Mi Registro
-                        </button>
-                    </div>
-                )}
+                {/* User actions or Admin Toggles */}
             </div>
 
-            {isAdmin && adminViewMode === 'table' ? (
+            {isAdmin ? (
+                // Admin always sees the powerful Table View which now expands
                 renderAdminTable()
             ) : (
-                renderUserDashboard(selectedUserId || currentUser.id)
+                // Users see their personal dashboard
+                renderUserDashboard(currentUser.id)
             )}
         </div>
     );
