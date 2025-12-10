@@ -91,10 +91,14 @@ export default function DailyChecklistPage() {
             .eq('date_key', todayKey)
             .single();
 
-        if (dailyData) {
-            setDailyTasks(dailyData.history || []);
+        let tasksToShow = [];
+
+        // 2. Determine tasks to show
+        if (dailyData && dailyData.history && dailyData.history.length > 0) {
+            // Case A: Day already started and has items
+            tasksToShow = dailyData.history;
         } else {
-            // 2. If not exists, load from template
+            // Case B: Day not started OR empty record -> Load from template
             const { data: templateData } = await supabase
                 .from('checklist_templates')
                 .select('tasks')
@@ -102,11 +106,12 @@ export default function DailyChecklistPage() {
                 .single();
 
             if (templateData?.tasks) {
-                setDailyTasks(templateData.tasks.map((t: any) => ({ ...t, completed: false })));
-            } else {
-                setDailyTasks([]);
+                // Initialize as uncompleted
+                tasksToShow = templateData.tasks.map((t: any) => ({ ...t, completed: false }));
             }
         }
+
+        setDailyTasks(tasksToShow);
         setLoading(false);
     }
 
@@ -149,10 +154,6 @@ export default function DailyChecklistPage() {
         } else {
             if (historyFilterUser !== 'all') {
                 query = query.eq('user_id', historyFilterUser);
-            }
-            if (historyFilterDate) {
-                // Optional: filter by date if selected, currently showing all or matching date
-                // query = query.eq('date_key', historyFilterDate); 
             }
         }
 
@@ -228,6 +229,12 @@ export default function DailyChecklistPage() {
                         ) : dailyTasks.length === 0 ? (
                             <div className="text-center py-12 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
                                 <p className="text-gray-400 font-medium">No tienes tareas asignadas para hoy.</p>
+                                <button
+                                    onClick={() => fetchDailyChecklist()}
+                                    className="mt-4 text-primary font-bold hover:underline"
+                                >
+                                    Recargar tareas
+                                </button>
                             </div>
                         ) : (
                             <div className="space-y-3">
@@ -236,15 +243,15 @@ export default function DailyChecklistPage() {
                                         key={task.id}
                                         onClick={() => toggleTask(task.id)}
                                         className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${task.completed
-                                                ? 'bg-green-50 border-green-200 opacity-60'
-                                                : 'bg-white border-gray-100 hover:border-blue-200 shadow-sm'
+                                                ? 'bg-gray-50 border-gray-200'
+                                                : 'bg-green-50 border-green-200 hover:border-green-300 shadow-sm'
                                             }`}
                                     >
-                                        <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${task.completed ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300 bg-white'
+                                        <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${task.completed ? 'bg-gray-400 border-gray-400 text-white' : 'border-green-500 bg-white text-transparent'
                                             }`}>
-                                            {task.completed && <CheckSquare size={14} />}
+                                            <CheckSquare size={14} fill="currentColor" className={task.completed ? 'text-white' : 'text-green-500 opacity-0'} />
                                         </div>
-                                        <span className={`text-lg font-medium ${task.completed ? 'text-gray-500 line-through' : 'text-gray-800'}`}>
+                                        <span className={`text-lg font-medium transition-colors ${task.completed ? 'text-gray-400 line-through' : 'text-green-900'}`}>
                                             {task.text}
                                         </span>
                                     </div>
@@ -350,7 +357,7 @@ export default function DailyChecklistPage() {
                                         <th className="px-6 py-4">Fecha</th>
                                         <th className="px-6 py-4">Usuario</th>
                                         <th className="px-6 py-4">Progreso</th>
-                                        <th className="px-6 py-4">Detalles</th>
+                                        <th className="px-6 py-4">Tareas Completadas</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
@@ -362,8 +369,9 @@ export default function DailyChecklistPage() {
                                         history.map(record => {
                                             const user = USERS.find(u => u.id === record.user_id);
                                             const tasks = record.history || [];
-                                            const completedCount = tasks.filter((t: any) => t.completed).length;
+                                            const completedTasks = tasks.filter((t: any) => t.completed);
                                             const totalCount = tasks.length;
+                                            const completedCount = completedTasks.length;
                                             const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
                                             return (
@@ -389,19 +397,19 @@ export default function DailyChecklistPage() {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <details className="group cursor-pointer">
-                                                            <summary className="list-none text-xs font-bold text-gray-400 hover:text-primary transition-colors flex items-center gap-1">
-                                                                Ver tareas
-                                                            </summary>
-                                                            <div className="absolute mt-2 z-10 w-64 p-4 bg-white rounded-xl shadow-xl border border-gray-100 hidden group-open:block">
-                                                                {tasks.map((t: any) => (
-                                                                    <div key={t.id} className="flex items-center gap-2 mb-1">
-                                                                        {t.completed ? <CheckSquare size={12} className="text-green-500" /> : <div className="w-3 h-3 border border-gray-300 rounded-sm" />}
-                                                                        <span className={`text-xs ${t.completed ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{t.text}</span>
+                                                        <div className="space-y-1">
+                                                            {tasks.length === 0 ? <span className="text-xs text-gray-400">Sin tareas</span> :
+                                                                tasks.map((t: any) => (
+                                                                    <div key={t.id} className="flex items-center gap-2">
+                                                                        <div
+                                                                            className={`w-2 h-2 rounded-full ${t.completed ? 'bg-green-500' : 'bg-gray-200'}`}
+                                                                        />
+                                                                        <span className={`text-xs ${t.completed ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+                                                                            {t.text}
+                                                                        </span>
                                                                     </div>
                                                                 ))}
-                                                            </div>
-                                                        </details>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             );
