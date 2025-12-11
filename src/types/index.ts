@@ -101,6 +101,7 @@ export interface Todo {
     completed_by: string[]; // jsonb
     attachments?: Attachment[]; // jsonb
     comments?: Comment[]; // jsonb
+    tags?: string[]; // array of strings
     created_at: string;
 }
 

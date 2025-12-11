@@ -31,6 +31,7 @@ export function useTodos(currentUser: User | null) {
                 completed_by: row.completed_by || [],
                 attachments: row.attachments || [],
                 comments: row.comments || [],
+                tags: row.tags || [],
                 created_at: row.created_at,
             }));
 
@@ -48,12 +49,13 @@ export function useTodos(currentUser: User | null) {
     });
 
     const createTodoMutation = useMutation({
-        mutationFn: async ({ title, description, assignedTo, dueDateKey, attachments }: {
+        mutationFn: async ({ title, description, assignedTo, dueDateKey, attachments, tags }: {
             title: string;
             description: string;
             assignedTo: string[];
             dueDateKey: string | null;
             attachments?: any[];
+            tags?: string[];
         }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
@@ -65,6 +67,7 @@ export function useTodos(currentUser: User | null) {
                     assigned_to: assignedTo,
                     due_date_key: dueDateKey,
                     attachments,
+                    tags: tags || [],
                     created_at: now,
                     completed_by: [],
                     comments: []
@@ -157,10 +160,22 @@ export function useTodos(currentUser: User | null) {
     });
 
     const updateTodoMutation = useMutation({
-        mutationFn: async ({ id, title, description }: { id: number; title: string; description: string }) => {
+        mutationFn: async ({ id, updates }: { id: number; updates: Partial<Todo> }) => {
+            // Sanitize updates to match DB columns if needed, but TypeScript Partial<Todo> is good.
+            // We need to verify mapped names match DB columns.
+            // DB: title, description, tags, assigned_to
+            // Todo interface matches these keys except case?
+            // DB is snake_case. Interface is snake_case for these properties except mapped ones in useQuery?
+            // Wait, useQuery maps `due_date_key` (snake) to `due_date_key`.
+            // `assigned_to` to `assigned_to`.
+            // `created_by` to `created_by`.
+            // So keys match.
+
+            // Only issue: `assignedTo` vs `assigned_to` in Create logic.
+            // The updates object passed here should use interface keys (which are snake_case).
             const { error } = await supabase
                 .from('todos')
-                .update({ title, description })
+                .update(updates)
                 .eq('id', id);
 
             if (error) throw error;

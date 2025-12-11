@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send } from 'lucide-react';
+import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send, Tag, Plus, X } from 'lucide-react';
 import { Todo, Attachment, Comment } from '../types';
 import { USERS } from '../constants';
 import { UserAvatar } from './UserAvatar';
@@ -18,12 +18,53 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
     const [newComment, setNewComment] = useState('');
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Edit States
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const [editDescription, setEditDescription] = useState(task.description || '');
+    const [editTags, setEditTags] = useState<string[]>(task.tags || []);
+    const [tagInput, setTagInput] = useState("");
 
     const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
     const isCompleted = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
+
+    // Tag Helpers
+    const handleAddTag = (e: React.KeyboardEvent | React.MouseEvent) => {
+        if ((e.type === 'keydown' && (e as React.KeyboardEvent).key !== 'Enter') || !tagInput.trim()) return;
+        e.preventDefault();
+        const newTag = tagInput.trim();
+        if (!editTags.includes(newTag)) {
+            setEditTags([...editTags, newTag]);
+        }
+        setTagInput("");
+    };
+
+    const handleRemoveTag = (tagToRemove: string) => {
+        setEditTags(editTags.filter(t => t !== tagToRemove));
+    };
+
+    // Color Helper (duplicated from TasksPage, ideally in utils but okay here)
+    const getTagColor = (tag: string) => {
+        const colors = [
+            'bg-blue-100 text-blue-700 border-blue-200',
+            'bg-green-100 text-green-700 border-green-200',
+            'bg-purple-100 text-purple-700 border-purple-200',
+            'bg-orange-100 text-orange-700 border-orange-200',
+            'bg-pink-100 text-pink-700 border-pink-200',
+            'bg-indigo-100 text-indigo-700 border-indigo-200',
+            'bg-teal-100 text-teal-700 border-teal-200',
+            'bg-yellow-100 text-yellow-800 border-yellow-200',
+            'bg-gray-100 text-gray-700 border-gray-200',
+            'bg-red-100 text-red-700 border-red-200',
+        ];
+        let hash = 0;
+        for (let i = 0; i < tag.length; i++) {
+            hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const index = Math.abs(hash) % colors.length;
+        return colors[index];
+    };
 
     const handleAddComment = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -51,8 +92,11 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
         try {
             await updateTodo({
                 id: task.id,
-                title: editTitle,
-                description: editDescription
+                updates: {
+                    title: editTitle,
+                    description: editDescription,
+                    tags: editTags
+                }
             });
             setIsEditing(false);
         } catch (error) {
@@ -63,23 +107,9 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
 
     const handleToggleStatus = async () => {
         try {
-            // If I am the creator and not assigned, I can't toggle status for myself unless I am also assigned.
-            // But the requirement is "unmark". If the task is completed by everyone, maybe we want to unmark it for everyone?
-            // Or just unmark for specific users?
-            // The prompt says "user can edit it and 'unmark' it".
-            // If the user is the creator, they might want to reopen it.
-            // If the user is an assignee, they might want to unmark themselves.
-
-            // Let's assume for now we are toggling the current user's completion status if they are assigned.
-            // If they are the creator but not assigned, they can't "complete" it themselves usually.
-            // BUT, if the task is fully completed, maybe the creator wants to reopen it (remove completion from everyone? or just add a comment?)
-            // The simplest interpretation is: if I am assigned, I can toggle my status.
-
             if (task.assigned_to.includes(currentUser.id)) {
                 await toggleTodo(task);
             } else {
-                // If I am creator but not assigned, maybe I want to force unmark someone? 
-                // For now let's stick to standard toggle if assigned.
                 alert("Solo los asignados pueden cambiar el estado.");
             }
         } catch (error) {
@@ -99,7 +129,7 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                 {/* Header */}
                 <div className="flex items-start justify-between mb-6">
                     <div className="flex-1 pr-4">
-                        <div className="flex items-center gap-3 mb-2">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
                             <button
                                 onClick={handleToggleStatus}
                                 disabled={!task.assigned_to.includes(currentUser.id)}
@@ -120,6 +150,13 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                                     {task.due_date_key}
                                 </span>
                             )}
+
+                            {/* Tags View (Non-Edit) */}
+                            {!isEditing && task.tags && task.tags.map(tag => (
+                                <span key={tag} className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${getTagColor(tag)}`}>
+                                    {tag}
+                                </span>
+                            ))}
                         </div>
 
                         {isEditing ? (
@@ -131,14 +168,48 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                                     className="w-full text-2xl font-black text-gray-900 tracking-tight leading-tight border-b-2 border-primary focus:outline-none bg-transparent"
                                     autoFocus
                                 />
+                                {/* Tags Edit */}
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Etiquetas</label>
+                                    <div className="flex gap-2 mb-2">
+                                        <input
+                                            className="flex-1 rounded-lg border border-gray-200 p-2 text-sm focus:border-primary focus:outline-none"
+                                            value={tagInput}
+                                            onChange={(e) => setTagInput(e.target.value)}
+                                            onKeyDown={handleAddTag}
+                                            placeholder="Añadir etiqueta..."
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleAddTag}
+                                            className="p-2 bg-gray-100 rounded-lg text-gray-600 hover:bg-gray-200"
+                                        >
+                                            <Plus size={18} />
+                                        </button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {editTags.map(tag => (
+                                            <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 text-xs font-bold rounded-lg border border-gray-200">
+                                                {tag}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveTag(tag)}
+                                                    className="hover:text-red-500"
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         ) : (
-                            <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-tight group flex items-center gap-2">
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-tight group flex items-start gap-2">
                                 {task.title}
                                 {task.created_by === currentUser.id && (
                                     <button
                                         onClick={() => setIsEditing(true)}
-                                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-primary"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-primary mt-1"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                                     </button>
@@ -178,6 +249,7 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                                         setIsEditing(false);
                                         setEditTitle(task.title);
                                         setEditDescription(task.description || '');
+                                        setEditTags(task.tags || []);
                                     }}
                                     className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors"
                                 >

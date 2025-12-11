@@ -2,13 +2,9 @@ import React, { useState } from 'react';
 import { USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
-import { XCircle, CheckSquare } from 'lucide-react';
+import { XCircle, CheckSquare, Tag, Plus, X } from 'lucide-react';
 import { FileUploader, Attachment } from './FileUploader';
 
-/**
- * Modal To-Do Creation
- * Simplified modal for creating new tasks only
- */
 export default function TodoModal({ onClose }: { onClose: () => void }) {
     const { currentUser } = useAuth();
     const { createTodo } = useTodos(currentUser);
@@ -19,17 +15,34 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
     const [assignedIds, setAssignedIds] = useState([currentUser.id]);
     const [attachments, setAttachments] = useState<Attachment[]>([]);
 
+    // Tag State
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState("");
+
     const handleToggleAssignee = (id: string) => {
         setAssignedIds((prev) =>
             prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
         );
     }
 
+    const handleAddTag = (e: React.KeyboardEvent | React.MouseEvent) => {
+        if ((e.type === 'keydown' && (e as React.KeyboardEvent).key !== 'Enter') || !tagInput.trim()) return;
+        e.preventDefault();
+        const newTag = tagInput.trim();
+        if (!tags.includes(newTag)) {
+            setTags([...tags, newTag]);
+        }
+        setTagInput("");
+    };
+
+    const handleRemoveTag = (tagToRemove: string) => {
+        setTags(tags.filter(t => t !== tagToRemove));
+    };
+
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
         if (e) e.preventDefault();
-        console.log("handleSubmit called");
 
         if (!title.trim()) {
             alert('Por favor, escribe un título para la tarea.');
@@ -44,13 +57,9 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                 dueDateKey: dueDate || null,
                 assignedTo: assignedIds,
                 attachments,
+                tags
             });
             onClose();
-            setTitle("");
-            setDescription("");
-            setDueDate("");
-            setAssignedIds([currentUser.id]);
-            setAttachments([]);
         } catch (error: any) {
             console.error('Error creating todo:', error);
             alert(`Error al crear la tarea: ${error.message || 'Error desconocido'}`);
@@ -80,8 +89,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <p className="text-gray-500 px-6 mb-6 font-medium shrink-0 pt-4">
-                    Crea tareas, asígnalas a tus compañeros y marca cada una cuando esté hecha.
-                    Cuando todas las personas asignadas la marcan, la tarea se considera completada por el equipo. ✨
+                    Organiza el trabajo del equipo. Añade etiquetas para categorizar fácilmente.
                 </p>
 
                 <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
@@ -94,9 +102,47 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                 className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
-                                placeholder="Ej.: Revisar manual de acogida, preparar informe, etc."
+                                placeholder="Ej.: Revisar inventario mensual"
                                 required
                             />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-gray-900 mb-2">
+                                Etiquetas / Categorías
+                            </label>
+                            <div className="flex gap-2 mb-2">
+                                <input
+                                    className="flex-1 rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                    value={tagInput}
+                                    onChange={(e) => setTagInput(e.target.value)}
+                                    onKeyDown={handleAddTag}
+                                    placeholder="Ej.: Ventas, Urgente... (Enter para añadir)"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAddTag}
+                                    className="p-3 bg-gray-100 rounded-xl text-gray-600 hover:bg-gray-200"
+                                >
+                                    <Plus size={20} />
+                                </button>
+                            </div>
+                            {tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {tags.map(tag => (
+                                        <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg border border-blue-100">
+                                            {tag}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveTag(tag)}
+                                                className="hover:text-red-500"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
                         <div>
@@ -113,7 +159,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
 
                         <div>
                             <label className="block text-sm font-bold text-gray-900 mb-2">
-                                Fecha objetivo (opcional)
+                                Fecha objetivo
                             </label>
                             <input
                                 className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
