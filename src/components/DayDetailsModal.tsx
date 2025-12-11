@@ -360,42 +360,7 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                             )}
                         </div>
                     )}
-                    {/* Esteban's Presence Control */}
-                    {currentUser?.id === ESTEBAN_ID && (
-                        <div className="space-y-3 pt-4 border-t border-gray-100">
-                            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
-                                <Users size={16} className="text-teal-600" />
-                                Mi Presencia
-                            </h3>
-                            <div className="p-4 rounded-xl bg-teal-50 border border-teal-200">
-                                <p className="text-sm text-gray-700 mb-3 font-medium">
-                                    ¿Vas a ir presencialmente a la nave hoy?
-                                </p>
-                                <div className="flex gap-3">
-                                    <button
-                                        onClick={() => onSetStatus('in_person')}
-                                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${currentStatus?.status === 'in_person'
-                                            ? 'bg-teal-600 text-white shadow-md'
-                                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                                            }`}
-                                    >
-                                        <CheckSquare size={16} />
-                                        Sí, iré
-                                    </button>
-                                    <button
-                                        onClick={() => onSetStatus('remote')}
-                                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${currentStatus?.status === 'remote'
-                                            ? 'bg-gray-600 text-white shadow-md'
-                                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                                            }`}
-                                    >
-                                        <XCircle size={16} />
-                                        No iré
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+
                 </div>
             </div>
             {selectedMeeting && (
