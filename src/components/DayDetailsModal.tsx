@@ -35,18 +35,10 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
 
     // Daily Status Logic
-    const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
+    const { dailyStatuses } = useDailyStatus(currentUser);
     const dateKey = date ? date.toISOString().split('T')[0] : '';
-    const currentStatus = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === dateKey);
-
-    const onSetStatus = async (status: 'in_person' | 'remote') => {
-        try {
-            await setDailyStatus({ dateKey, status });
-        } catch (error) {
-            console.error("Error setting status:", error);
-            alert("Error al actualizar el estado");
-        }
-    };
+    // Find Esteban's status specifically (to show to everyone)
+    const estebanStatus = dailyStatuses.find(s => s.user_id === ESTEBAN_ID && s.date_key === dateKey);
 
     if (!date || !events) return null;
 
@@ -54,7 +46,8 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
         events.trainings.length > 0 ||
         events.meetings.length > 0 ||
         events.tasks.length > 0 ||
-        events.timeEntry;
+        events.timeEntry ||
+        estebanStatus; // Include status in check
 
     const formattedDate = new Date(date).toLocaleDateString('es-ES', {
         weekday: 'long',
@@ -109,6 +102,44 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                         </div>
                     ) : (
                         <div className="space-y-6">
+                            {/* Esteban Presence Display (Visible to All) */}
+                            {estebanStatus && (
+                                <div className="space-y-3">
+                                    <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+                                        <Users size={16} className="text-teal-600" />
+                                        Asistencia Bodega
+                                    </h3>
+                                    <div className={`p-4 rounded-xl border ${estebanStatus.status === 'in_person'
+                                            ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                            : 'bg-gray-50 border-gray-200 text-gray-600'
+                                        }`}>
+                                        <div className="flex items-center gap-3">
+                                            {estebanStatus.status === 'in_person' ? (
+                                                <div className="p-2 bg-teal-100 rounded-full text-teal-600">
+                                                    <CheckSquare size={20} />
+                                                </div>
+                                            ) : (
+                                                <div className="p-2 bg-gray-200 rounded-full text-gray-500">
+                                                    <XCircle size={20} />
+                                                </div>
+                                            )}
+                                            <div>
+                                                <p className="font-bold text-sm">
+                                                    {estebanStatus.status === 'in_person'
+                                                        ? 'Esteban asistirá presencialmente'
+                                                        : 'Esteban NO asistirá presencialmente'}
+                                                </p>
+                                                <p className="text-xs opacity-80 mt-0.5">
+                                                    {estebanStatus.status === 'in_person'
+                                                        ? 'Confirmada asistencia a la nave.'
+                                                        : 'Ha marcado que trabajará en remoto o no irá.'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Time Entry Section */}
                             {events.timeEntry && (
                                 <div className="space-y-3">
