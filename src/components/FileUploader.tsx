@@ -17,6 +17,7 @@ interface FileUploaderProps {
     maxSizeMB?: number;
     acceptedTypes?: string;
     compact?: boolean;
+    resetOnUpload?: boolean;
 }
 
 export function FileUploader({
@@ -26,7 +27,8 @@ export function FileUploader({
     existingFiles = [],
     maxSizeMB = 5,
     acceptedTypes = 'image/*,.pdf,.doc,.docx,.xls,.xlsx',
-    compact = false
+    compact = false,
+    resetOnUpload = false
 }: FileUploaderProps) {
     const [isUploading, setIsUploading] = useState(false);
     const [files, setFiles] = useState<Attachment[]>(existingFiles);
@@ -75,8 +77,16 @@ export function FileUploader({
             }
 
             const updatedFiles = [...files, ...newAttachments];
-            setFiles(updatedFiles);
-            onUploadComplete(updatedFiles);
+
+            if (resetOnUpload) {
+                setFiles([]);
+                onUploadComplete(updatedFiles); // In reset mode, we arguably should send only newAttachments, but existing logic (files is likely empty) makes this safe. 
+                // Actually, if we reset, 'files' state should technically strictly be just the new ones if we treat it as an event.
+                // But given 'files' comes from state which starts at existingFiles, 'updatedFiles' is correct.
+            } else {
+                setFiles(updatedFiles);
+                onUploadComplete(updatedFiles);
+            }
 
         } catch (error) {
             console.error('Unexpected error:', error);

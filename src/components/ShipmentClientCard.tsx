@@ -121,6 +121,7 @@ export function ShipmentClientCard({ client, onUpdate, onDelete }: ShipmentClien
                         existingFiles={[]} // We don't display preview here, we handle it above
                         maxSizeMB={5}
                         compact
+                        resetOnUpload
                     />
                 </div>
 
@@ -156,6 +157,7 @@ export function ShipmentClientCard({ client, onUpdate, onDelete }: ShipmentClien
                         existingFiles={[]}
                         maxSizeMB={5}
                         compact
+                        resetOnUpload
                     />
                 </div>
             </div>
