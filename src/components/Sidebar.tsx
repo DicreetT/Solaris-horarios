@@ -17,7 +17,8 @@ import {
     ChevronLeft,
     ChevronRight,
     ShoppingBag,
-    ClipboardCheck
+    ClipboardCheck,
+    Package
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -113,6 +114,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/checklist',
             label: 'Check-list Diario',
             icon: ClipboardCheck,
+            show: true
+        },
+        {
+            path: '/shipments',
+            label: 'Envíos',
+            icon: Package,
             show: true
         },
         {

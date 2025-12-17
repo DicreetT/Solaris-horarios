@@ -16,6 +16,7 @@ interface FileUploaderProps {
     existingFiles?: Attachment[];
     maxSizeMB?: number;
     acceptedTypes?: string;
+    compact?: boolean;
 }
 
 export function FileUploader({
@@ -24,7 +25,8 @@ export function FileUploader({
     onUploadComplete,
     existingFiles = [],
     maxSizeMB = 5,
-    acceptedTypes = 'image/*,.pdf,.doc,.docx,.xls,.xlsx'
+    acceptedTypes = 'image/*,.pdf,.doc,.docx,.xls,.xlsx',
+    compact = false
 }: FileUploaderProps) {
     const [isUploading, setIsUploading] = useState(false);
     const [files, setFiles] = useState<Attachment[]>(existingFiles);
@@ -104,15 +106,17 @@ export function FileUploader({
         <div className="w-full space-y-3">
             <div className="flex items-center gap-3">
                 <button
-                    type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={`
+                    flex items-center gap-2 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-100 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed
+                    ${compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm bg-gray-50'}
+                `}
                 >
-                    {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                    {isUploading ? <Loader2 size={compact ? 14 : 18} className="animate-spin" /> : <Upload size={compact ? 14 : 18} />}
                     {isUploading ? 'Subiendo...' : 'Adjuntar archivos'}
                 </button>
-                <span className="text-xs text-gray-400">Máx. {maxSizeMB}MB</span>
+                {!compact && <span className="text-xs text-gray-400">Máx. {maxSizeMB}MB</span>}
             </div>
 
             <input

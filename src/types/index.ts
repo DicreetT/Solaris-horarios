@@ -167,3 +167,21 @@ export interface ShoppingItem {
     purchased_by: string | null;
     attachments: Attachment[];
 }
+
+export interface ShipmentClient {
+    id: number;
+    folder_id: number;
+    client_name: string;
+    invoices: Attachment[];
+    labels: Attachment[];
+    created_by: string;
+    created_at: string;
+}
+
+export interface ShipmentFolder {
+    id: number;
+    date_key: string;
+    created_by: string;
+    created_at: string;
+    clients?: ShipmentClient[]; // Joined data
+}
