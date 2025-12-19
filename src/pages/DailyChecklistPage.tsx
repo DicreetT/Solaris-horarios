@@ -24,8 +24,9 @@ export default function DailyChecklistPage() {
     const todayKey = toDateKey(new Date());
 
     useEffect(() => {
-        if (viewMode === 'templates' && isAdmin) {
-            fetchTemplate(selectedUserForTemplate);
+        if (viewMode === 'templates') {
+            const targetUser = isAdmin ? selectedUserForTemplate : currentUser?.id;
+            if (targetUser) fetchTemplate(targetUser);
         } else if (viewMode === 'daily') {
             fetchDailyChecklist();
         } else if (viewMode === 'history') {
@@ -33,7 +34,7 @@ export default function DailyChecklistPage() {
         }
     }, [viewMode, selectedUserForTemplate, historyFilterDate, historyFilterUser, currentUser]);
 
-    // --- Template Management (Admin) ---
+    // --- Template Management ---
     async function fetchTemplate(userId: string) {
         setLoading(true);
         const { data, error } = await supabase
@@ -51,17 +52,27 @@ export default function DailyChecklistPage() {
     }
 
     async function saveTemplate() {
+        if (!currentUser) return;
         setSaving(true);
+
+        const targetUserId = isAdmin ? selectedUserForTemplate : currentUser.id;
+
         const { error } = await supabase
             .from('checklist_templates')
             .upsert({
-                user_id: selectedUserForTemplate,
+                user_id: targetUserId,
                 tasks: templateTasks,
                 updated_at: new Date().toISOString()
             });
 
-        if (error) alert('Error guardando plantilla');
-        else alert('Plantilla guardada correctamente');
+        if (error) {
+            console.error(error);
+            alert('Error guardando plantilla');
+        } else {
+            alert('Lista guardada correctamente');
+            // If editing own list, refresh daily view logic if needed? 
+            // Actually daily view fetches on mode switch.
+        }
         setSaving(false);
     }
 
@@ -202,16 +213,14 @@ export default function DailyChecklistPage() {
                     <Calendar size={16} />
                     Historial
                 </button>
-                {isAdmin && (
-                    <button
-                        onClick={() => setViewMode('templates')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'templates' ? 'bg-gray-800 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'
-                            }`}
-                    >
-                        <Settings size={16} />
-                        Gestionar Plantillas (Admin)
-                    </button>
-                )}
+                <button
+                    onClick={() => setViewMode('templates')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'templates' ? 'bg-gray-800 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                >
+                    <Settings size={16} />
+                    {isAdmin ? 'Gestionar Plantillas (Admin)' : 'Editar mi lista'}
+                </button>
             </div>
 
             {/* Content Areas */}
@@ -273,32 +282,38 @@ export default function DailyChecklistPage() {
                     </div>
                 )}
 
-                {/* --- TEMPLATES VIEW (ADMIN) --- */}
-                {viewMode === 'templates' && isAdmin && (
+                {/* --- TEMPLATES VIEW --- */}
+                {viewMode === 'templates' && (
                     <div className="p-8">
                         <div className="flex flex-col sm:flex-row gap-6 mb-8">
-                            <div className="w-full sm:w-1/3">
-                                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Seleccionar Usuario</label>
-                                <div className="space-y-2">
-                                    {USERS.map(user => (
-                                        <button
-                                            key={user.id}
-                                            onClick={() => setSelectedUserForTemplate(user.id)}
-                                            className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${selectedUserForTemplate === user.id
-                                                ? 'border-primary bg-primary/5 shadow-md'
-                                                : 'border-transparent hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            <UserAvatar name={user.name} size="sm" />
-                                            <span className="font-bold text-gray-700">{user.name}</span>
-                                        </button>
-                                    ))}
+                            {isAdmin && (
+                                <div className="w-full sm:w-1/3">
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Seleccionar Usuario</label>
+                                    <div className="space-y-2">
+                                        {USERS.map(user => (
+                                            <button
+                                                key={user.id}
+                                                onClick={() => setSelectedUserForTemplate(user.id)}
+                                                className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${selectedUserForTemplate === user.id
+                                                    ? 'border-primary bg-primary/5 shadow-md'
+                                                    : 'border-transparent hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <UserAvatar name={user.name} size="sm" />
+                                                <span className="font-bold text-gray-700">{user.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
                             <div className="flex-1 bg-gray-50 rounded-2xl p-6 border border-gray-100">
                                 <div className="flex justify-between items-center mb-4">
-                                    <h3 className="font-bold text-gray-900">Tareas asignadas</h3>
+                                    <h3 className="font-bold text-gray-900">
+                                        {isAdmin
+                                            ? `Tareas asignadas a ${USERS.find(u => u.id === selectedUserForTemplate)?.name}`
+                                            : 'Mis tareas diarias recurrentes'}
+                                    </h3>
                                     <div className="flex gap-2">
                                         <button
                                             onClick={addTemplateTask}
