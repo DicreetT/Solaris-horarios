@@ -9,6 +9,7 @@ import { useAbsences } from '../hooks/useAbsences';
 import { UserAvatar } from '../components/UserAvatar';
 import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
+import { useDailyStatus } from '../hooks/useDailyStatus';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { toDateKey, formatDatePretty } from '../utils/dateUtils';
 import { calculateTotalHours, formatHours } from '../utils/timeUtils';
@@ -321,34 +322,66 @@ function Dashboard() {
                             {(() => {
                                 const todayKey = toDateKey(new Date());
                                 const { absenceRequests } = useAbsences(currentUser);
+                                const { dailyStatuses } = useDailyStatus(currentUser);
 
-                                const todaysAbsences = absenceRequests?.filter(r =>
-                                    r.status === 'approved' &&
-                                    r.date_key === todayKey
+                                // 1. Absences filter (with range support)
+                                const todaysAbsences = absenceRequests?.filter(r => {
+                                    if (r.status !== 'approved') return false;
+                                    const start = r.date_key;
+                                    const end = r.end_date || r.date_key;
+                                    return todayKey >= start && todayKey <= end;
+                                }) || [];
+
+                                // 2. Daily Status filter (Remote/Not in person)
+                                const todaysRemote = dailyStatuses?.filter(s =>
+                                    s.date_key === todayKey && s.status === 'remote'
                                 ) || [];
 
-                                return todaysAbsences.length > 0 ? (
-                                    <div className="space-y-3">
-                                        {todaysAbsences.map(absence => {
-                                            const user = USERS.find(u => u.id === absence.created_by);
-                                            // Handle potential missing user if ID doesn't match USERS list
-                                            if (!user) return null;
+                                // Combine and unique by user ID
+                                const absentUserIds = new Set([
+                                    ...todaysAbsences.map(a => a.created_by),
+                                    ...todaysRemote.map(s => s.user_id)
+                                ]);
 
-                                            return (
-                                                <div key={absence.id} className="flex items-center gap-4 p-3 rounded-xl bg-orange-50/30 border border-orange-100">
-                                                    <UserAvatar name={user.name} size="md" />
-                                                    <div>
-                                                        <p className="font-bold text-gray-900">{user.name}</p>
-                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded textxs font-medium border ${absence.type === 'vacation'
-                                                            ? 'bg-purple-100 text-purple-700 border-purple-200'
-                                                            : 'bg-amber-100 text-amber-700 border-amber-200'
-                                                            }`}>
-                                                            {absence.type === 'vacation' ? 'Vacaciones' : 'Ausencia / Baja'}
-                                                        </span>
-                                                    </div>
+                                const absentItems = Array.from(absentUserIds).map(userId => {
+                                    const user = USERS.find(u => u.id === userId);
+                                    if (!user) return null;
+
+                                    // Determine reason/label
+                                    const absence = todaysAbsences.find(a => a.created_by === userId);
+                                    const remote = todaysRemote.find(s => s.user_id === userId);
+
+                                    let label = 'Ausente';
+                                    let style = 'bg-amber-100 text-amber-700 border-amber-200';
+
+                                    if (absence) {
+                                        if (absence.type === 'vacation') {
+                                            label = 'Vacaciones';
+                                            style = 'bg-purple-100 text-purple-700 border-purple-200';
+                                        } else {
+                                            label = 'Ausencia / Baja';
+                                        }
+                                    } else if (remote) {
+                                        label = 'No Presencial';
+                                        style = 'bg-gray-100 text-gray-700 border-gray-200';
+                                    }
+
+                                    return { userId, user, label, style };
+                                }).filter(Boolean); // Filter out nulls from missing users
+
+                                return absentItems.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {absentItems.map((item: any) => (
+                                            <div key={item.userId} className="flex items-center gap-4 p-3 rounded-xl bg-orange-50/30 border border-orange-100">
+                                                <UserAvatar name={item.user.name} size="md" />
+                                                <div>
+                                                    <p className="font-bold text-gray-900">{item.user.name}</p>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${item.style}`}>
+                                                        {item.label}
+                                                    </span>
                                                 </div>
-                                            );
-                                        })}
+                                            </div>
+                                        ))}
                                     </div>
                                 ) : (
                                     <div className="text-center py-6 text-gray-400 text-sm italic">
