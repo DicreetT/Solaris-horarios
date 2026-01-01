@@ -9,6 +9,7 @@ import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { toDateKey } from '../utils/dateUtils';
 import { Calendar as CalendarIcon } from 'lucide-react';
+import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 
 /**
  * Calendar page
@@ -25,6 +26,7 @@ function CalendarPage() {
     const { absenceRequests } = useAbsences(currentUser);
     const { todos } = useTodos(currentUser);
     const { meetingRequests } = useMeetings(currentUser);
+    const { overrides, toggleDayStatus } = useCalendarOverrides();
 
     const handleDateClick = (date: Date) => {
         setSelectedDate(date);
@@ -39,6 +41,7 @@ function CalendarPage() {
         const dayData = timeData[dKey] || {};
         const myRecord = dayData[currentUser.id]?.[0];
         const isAdmin = currentUser?.isAdmin;
+        const override = overrides.find(o => o.date_key === dKey);
 
         // For non-admins: only show their own items
         // For admins: show all items (will be marked in the modal)
@@ -82,7 +85,8 @@ function CalendarPage() {
             tasks,
             meetings,
             isAdmin,
-            isTrainingManager: currentUser?.isTrainingManager
+            isTrainingManager: currentUser?.isTrainingManager,
+            override // Pass override info
         };
     };
 
@@ -109,6 +113,7 @@ function CalendarPage() {
                     selectedDate={selectedDate}
                     onChangeMonth={setMonthDate}
                     onSelectDate={handleDateClick}
+                    overrides={overrides}
                 />
             </div>
 
@@ -118,6 +123,7 @@ function CalendarPage() {
                     date={selectedDate}
                     events={getDayEvents()}
                     onClose={() => setShowDayDetails(false)}
+                    onToggleDayStatus={toggleDayStatus} // Pass toggle function
                 />
             )}
         </div>

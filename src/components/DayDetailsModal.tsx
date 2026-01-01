@@ -14,6 +14,8 @@ import TaskDetailModal from './TaskDetailModal';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus } from '../types';
 
+import { CalendarOverride } from '../hooks/useCalendarOverrides';
+
 interface DayDetailsModalProps {
     date: Date;
     events: {
@@ -24,11 +26,13 @@ interface DayDetailsModalProps {
         timeEntry: TimeEntry | null;
         isAdmin?: boolean;
         isTrainingManager?: boolean;
+        override?: CalendarOverride;
     };
     onClose: () => void;
+    onToggleDayStatus?: (date: Date, isNonWorking: boolean) => Promise<void>;
 }
 
-export default function DayDetailsModal({ date, events, onClose }: DayDetailsModalProps) {
+export default function DayDetailsModal({ date, events, onClose, onToggleDayStatus }: DayDetailsModalProps) {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
     const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
@@ -76,12 +80,30 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                         <h2 className="text-2xl font-black text-gray-900 tracking-tight capitalize">
                             {formattedDate}
                         </h2>
-                        <button
-                            onClick={onClose}
-                            className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
-                        >
-                            <XCircle size={24} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {events.isAdmin && onToggleDayStatus && (
+                                <button
+                                    onClick={() => {
+                                        const isNonWorking = events.override ? events.override.is_non_working : (date.getDay() === 0 || date.getDay() === 6);
+                                        onToggleDayStatus(date, !isNonWorking);
+                                    }}
+                                    className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${(events.override?.is_non_working ?? (date.getDay() === 0 || date.getDay() === 6))
+                                        ? 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'
+                                        : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200'
+                                        }`}
+                                >
+                                    {(events.override?.is_non_working ?? (date.getDay() === 0 || date.getDay() === 6))
+                                        ? 'Marcar como Laborable'
+                                        : 'Marcar como Festivo/No Lab.'}
+                                </button>
+                            )}
+                            <button
+                                onClick={onClose}
+                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
+                            >
+                                <XCircle size={24} />
+                            </button>
+                        </div>
                     </div>
                     <p className="text-sm text-gray-500 font-medium">
                         {hasAnyEvents ? 'Detalles de actividad del día' : 'No hay eventos para este día'}
@@ -90,7 +112,17 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    {!hasAnyEvents ? (
+                    {events.override?.is_non_working && (
+                        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
+                            <AlertCircle className="text-red-500 shrink-0" />
+                            <div>
+                                <h4 className="font-bold text-red-800">Día No Laborable</h4>
+                                <p className="text-sm text-red-600">Este día ha sido marcado como no laborable.</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {!hasAnyEvents && !events.override?.is_non_working ? (
                         <div className="flex flex-col items-center justify-center py-12 text-center">
                             <div className="w-20 h-20 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mb-4">
                                 <Calendar size={40} />
@@ -110,8 +142,8 @@ export default function DayDetailsModal({ date, events, onClose }: DayDetailsMod
                                         Asistencia Bodega
                                     </h3>
                                     <div className={`p-4 rounded-xl border ${estebanStatus.status === 'in_person'
-                                            ? 'bg-teal-50 border-teal-200 text-teal-800'
-                                            : 'bg-gray-50 border-gray-200 text-gray-600'
+                                        ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                        : 'bg-gray-50 border-gray-200 text-gray-600'
                                         }`}>
                                         <div className="flex items-center gap-3">
                                             {estebanStatus.status === 'in_person' ? (

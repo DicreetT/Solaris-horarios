@@ -11,6 +11,7 @@ import { useMeetings } from '../hooks/useMeetings';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import DayHoverCard from './DayHoverCard';
 import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users, XCircle } from 'lucide-react';
+import { CalendarOverride } from '../hooks/useCalendarOverrides';
 
 /**
  * Calendario mensual rediseñado
@@ -23,11 +24,13 @@ export default function CalendarGrid({
     selectedDate,
     onChangeMonth,
     onSelectDate,
+    overrides = []
 }: {
     monthDate: Date;
     selectedDate: Date;
     onChangeMonth: (date: Date) => void;
     onSelectDate: (date: Date) => void;
+    overrides?: CalendarOverride[];
 }) {
     const { currentUser } = useAuth();
     const isAdminView = currentUser?.isAdmin;
@@ -107,7 +110,14 @@ export default function CalendarGrid({
                     const dKey = toDateKey(d);
                     const isSelected = selectedDate && toDateKey(selectedDate) === dKey;
                     const isToday = toDateKey(new Date()) === dKey;
-                    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                    const isOriginalWeekend = d.getDay() === 0 || d.getDay() === 6;
+
+                    const override = overrides.find(o => o.date_key === dKey);
+                    const isNonWorking = override ? override.is_non_working : isOriginalWeekend;
+
+                    // Admin can always click to change status. 
+                    // Normal users can click if it is working day.
+                    const isClickable = isAdminView || !isNonWorking;
 
                     // --- DATA GATHERING ---
                     const dayData = timeData[dKey] || {};
@@ -310,13 +320,13 @@ export default function CalendarGrid({
                     return (
                         <div
                             key={dKey}
-                            onClick={() => !isWeekend && onSelectDate(d)}
+                            onClick={() => isClickable && onSelectDate(d)}
                             className={`
                                 group relative flex flex-col p-3 transition-all overflow-hidden min-h-[120px]
                                 ${isSelected
                                     ? "bg-primary/5 shadow-[inset_0_0_0_2px_rgba(147,51,234,0.5)] z-10 cursor-pointer"
-                                    : isWeekend
-                                        ? "bg-gray-50/80 hover:bg-gray-100/80 cursor-not-allowed"
+                                    : isNonWorking
+                                        ? "bg-gray-100/80 hover:bg-gray-100 cursor-not-allowed text-gray-400"
                                         : "bg-white hover:bg-gray-50 cursor-pointer"
                                 }
                                 ${isToday && !isSelected ? "bg-blue-50/40" : ""}
@@ -329,8 +339,8 @@ export default function CalendarGrid({
                                         ? "bg-primary text-white shadow-lg shadow-primary/30 scale-110"
                                         : isSelected
                                             ? "text-primary bg-primary/10 font-black"
-                                            : isWeekend
-                                                ? "text-red-400/70"
+                                            : isNonWorking
+                                                ? "text-gray-400/70"
                                                 : "text-gray-700"
                                     }
                                 `}>
