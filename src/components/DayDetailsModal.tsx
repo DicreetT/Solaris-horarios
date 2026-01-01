@@ -12,6 +12,7 @@ import TaskDetailModal from './TaskDetailModal';
  * Includes quick action links to navigate to relevant pages
  */
 import { useDailyStatus } from '../hooks/useDailyStatus';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus } from '../types';
 
 import { CalendarOverride } from '../hooks/useCalendarOverrides';
@@ -37,6 +38,8 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
     const { currentUser } = useAuth();
     const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
+    const [processing, setProcessing] = useState(false);
+    const { addNotification } = useNotificationsContext();
 
     // Daily Status Logic
     const { dailyStatuses } = useDailyStatus(currentUser);
@@ -81,17 +84,33 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
                             {formattedDate}
                         </h2>
                         <div className="flex items-center gap-2">
+
+
+
                             {events.isAdmin && onToggleDayStatus && (
                                 <button
-                                    onClick={() => {
-                                        const isNonWorking = events.override ? events.override.is_non_working : (date.getDay() === 0 || date.getDay() === 6);
-                                        onToggleDayStatus(date, !isNonWorking);
+                                    disabled={processing}
+                                    onClick={async () => {
+                                        if (processing) return;
+                                        setProcessing(true);
+                                        try {
+                                            const isNonWorking = events.override ? events.override.is_non_working : (date.getDay() === 0 || date.getDay() === 6);
+                                            await onToggleDayStatus(date, !isNonWorking);
+                                            addNotification({ message: 'Estado del día actualizado correctamente', type: 'success' });
+                                        } catch (error) {
+                                            console.error(error);
+                                            addNotification({ message: 'Error al actualizar el estado.', type: 'error' });
+                                            alert('No se pudo guardar. Es posible que falte la tabla "calendar_overrides" en Supabase. Si eres el desarrollador, por favor ejecuta la migración.');
+                                        } finally {
+                                            setProcessing(false);
+                                        }
                                     }}
-                                    className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${(events.override?.is_non_working ?? (date.getDay() === 0 || date.getDay() === 6))
+                                    className={`px-3 py-1 text-xs font-bold rounded-full border transition-all flex items-center gap-2 ${(events.override?.is_non_working ?? (date.getDay() === 0 || date.getDay() === 6))
                                         ? 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'
                                         : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200'
-                                        }`}
+                                        } ${processing ? 'opacity-50 cursor-wait' : ''}`}
                                 >
+                                    {processing && <div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />}
                                     {(events.override?.is_non_working ?? (date.getDay() === 0 || date.getDay() === 6))
                                         ? 'Marcar como Laborable'
                                         : 'Marcar como Festivo/No Lab.'}
