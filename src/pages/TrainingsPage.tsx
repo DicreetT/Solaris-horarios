@@ -4,7 +4,7 @@ import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
-import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
+import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw, AlertTriangle, FileText, Pencil, Ban } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { FileUploader, Attachment } from '../components/FileUploader';
 import { Paperclip } from 'lucide-react';
@@ -21,12 +21,15 @@ function TrainingsPage() {
         createTrainingRequest,
         addTrainingComment,
         updateTrainingStatus,
+        updateTrainingRequest,
         deleteTrainingRequest
     } = useTraining(currentUser);
     const { addNotification } = useNotificationsContext();
 
     const [selectedDate, setSelectedDate] = useState(new Date());
+    const [reason, setReason] = useState('');
     const [showModal, setShowModal] = useState(false);
+    const [editingId, setEditingId] = useState<number | null>(null);
     const [messageDrafts, setMessageDrafts] = useState<Record<number, string>>({});
     const [attachments, setAttachments] = useState<Attachment[]>([]);
 
@@ -52,35 +55,88 @@ function TrainingsPage() {
         setSelectedDate(date);
     }
 
-    async function handleCreateTrainingRequest() {
-        // Check for existing request on the same day
-        const already = trainingRequests.find(
-            (r) => r.user_id === currentUser.id && r.scheduled_date_key === selectedDateKey
-        );
-        if (already) {
-            alert('Ya tienes una solicitud de formación para este día.');
+    function handleOpenCreate() {
+        setSelectedDate(new Date());
+        setReason('');
+        setAttachments([]);
+        setEditingId(null);
+        setShowModal(true);
+    }
+
+    function handleOpenEdit(req: any) {
+        // Parse date from key YYYY-MM-DD
+        const date = new Date(req.scheduled_date_key || req.requested_date_key + 'T00:00:00');
+        setSelectedDate(date);
+        setReason(req.reason || '');
+        setAttachments(req.attachments || []);
+        setEditingId(req.id);
+        setShowModal(true);
+    }
+
+    async function handleSubmitRequest() {
+        if (!reason.trim()) {
+            alert('Por favor escribe la razón de la solicitud.');
             return;
         }
 
-        try {
-            await createTrainingRequest({
-                requested_date_key: selectedDateKey,
-                comments: '',
-                attachments: attachments
-            });
-            await addNotification({
-                message: `Has solicitado formación para el día ${selectedDateKey}.`
-            });
-            setShowModal(false);
-            setAttachments([]);
-        } catch (e) {
-            console.error('Unexpected error creating training_request', e);
+        if (editingId) {
+            // Update
+            try {
+                await updateTrainingRequest({
+                    id: editingId,
+                    requested_date_key: selectedDateKey,
+                    reason: reason,
+                    attachments: attachments
+                });
+                await addNotification({
+                    message: `Has actualizado tu solicitud para el día ${selectedDateKey}.`
+                });
+                setShowModal(false);
+            } catch (e) {
+                console.error('Unexpected error updating training_request', e);
+                alert('Error al actualizar la solicitud.');
+            }
+        } else {
+            // Create
+            // Check for existing request on the same day if creating new
+            const already = trainingRequests.find(
+                (r) => r.user_id === currentUser.id && r.scheduled_date_key === selectedDateKey
+            );
+            if (already) {
+                alert('Ya tienes una solicitud de formación para este día.');
+                return;
+            }
+
+            try {
+                await createTrainingRequest({
+                    requested_date_key: selectedDateKey,
+                    reason: reason,
+                    comments: '',
+                    attachments: attachments
+                });
+                await addNotification({
+                    message: `Has solicitado formación para el día ${selectedDateKey}.`
+                });
+                setShowModal(false);
+            } catch (e) {
+                console.error('Unexpected error creating training_request', e);
+                alert('Error al crear la solicitud. Inténtalo de nuevo.');
+            }
         }
     }
 
     async function handleAcceptTraining(id: number) {
         try {
             await updateTrainingStatus({ id, status: 'accepted' });
+        } catch (e) {
+            console.error('Unexpected error updating training_request status', e);
+        }
+    }
+
+    async function handleDenyTraining(id: number) {
+        if (!window.confirm('¿Estás seguro de denegar esta solicitud?')) return;
+        try {
+            await updateTrainingStatus({ id, status: 'rejected' });
         } catch (e) {
             console.error('Unexpected error updating training_request status', e);
         }
@@ -151,7 +207,7 @@ function TrainingsPage() {
                 </div>
                 {!isTrainingManager && (
                     <button
-                        onClick={() => setShowModal(true)}
+                        onClick={handleOpenCreate}
                         className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                     >
                         <Plus size={20} />
@@ -196,23 +252,43 @@ function TrainingsPage() {
                                                             ${req.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
                                                             ${req.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200' : ''}
                                                             ${req.status === 'rescheduled' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}
+                                                            ${req.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
                                                         `}>
                                                             {req.status === 'pending' && <Clock size={12} />}
                                                             {req.status === 'accepted' && <CheckCircle size={12} />}
                                                             {req.status === 'rescheduled' && <RefreshCw size={12} />}
+                                                            {req.status === 'rejected' && <Ban size={12} />}
                                                             {req.status === 'pending' && 'Pendiente'}
                                                             {req.status === 'accepted' && 'Aceptada'}
                                                             {req.status === 'rescheduled' && 'Reprogramada'}
+                                                            {req.status === 'rejected' && 'Denegada'}
                                                         </span>
                                                     </div>
+                                                    {req.reason && (
+                                                        <div className="text-sm text-gray-600 mt-2 flex items-start gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                                            <FileText size={14} className="mt-0.5 text-gray-400" />
+                                                            <span>{req.reason}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <button
-                                                    onClick={() => handleDeleteTraining(req.id)}
-                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                                    title="Eliminar solicitud"
-                                                >
-                                                    <Trash2 size={18} />
-                                                </button>
+                                                <div className="flex gap-2">
+                                                    {req.status === 'pending' && (
+                                                        <button
+                                                            onClick={() => handleOpenEdit(req)}
+                                                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                                                            title="Editar solicitud"
+                                                        >
+                                                            <Pencil size={18} />
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => handleDeleteTraining(req.id)}
+                                                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                        title="Eliminar solicitud"
+                                                    >
+                                                        <Trash2 size={18} />
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             {req.attachments && req.attachments.length > 0 && (
@@ -346,16 +422,31 @@ function TrainingsPage() {
                                                             <span>Solicita: <strong>{req.requested_date_key}</strong></span>
                                                         </div>
                                                     </div>
+                                                    <div>
+                                                        <h3 className="font-bold text-gray-900 text-lg">{person?.name || req.user_id}</h3>
+                                                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                                                            <Calendar size={14} />
+                                                            <span>Solicita: <strong>{req.requested_date_key}</strong></span>
+                                                        </div>
+                                                        {req.reason && (
+                                                            <div className="text-sm text-gray-600 mt-2 flex items-start gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100 max-w-lg">
+                                                                <FileText size={14} className="mt-0.5 text-gray-400 shrink-0" />
+                                                                <span>{req.reason}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 <span className={`
                                                     inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border
                                                     ${req.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
                                                     ${req.status === 'accepted' ? 'bg-green-50 text-green-700 border-green-200' : ''}
                                                     ${req.status === 'rescheduled' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}
+                                                    ${req.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
                                                 `}>
                                                     {req.status === 'pending' && 'Pendiente'}
                                                     {req.status === 'accepted' && 'Aceptada'}
                                                     {req.status === 'rescheduled' && 'Reprogramada'}
+                                                    {req.status === 'rejected' && 'Denegada'}
                                                 </span>
                                             </div>
 
@@ -467,6 +558,12 @@ function TrainingsPage() {
                                                     Reprogramar
                                                 </button>
                                                 <button
+                                                    onClick={() => handleDenyTraining(req.id)}
+                                                    className="flex-1 py-2 px-3 rounded-xl bg-orange-50 text-orange-700 font-bold text-xs hover:bg-orange-100 transition-colors border border-orange-200"
+                                                >
+                                                    Denegar
+                                                </button>
+                                                <button
                                                     onClick={() => handleDeleteTraining(req.id)}
                                                     className="flex-1 py-2 px-3 rounded-xl bg-red-50 text-red-700 font-bold text-xs hover:bg-red-100 transition-colors border border-red-200"
                                                 >
@@ -493,7 +590,9 @@ function TrainingsPage() {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Solicitar formación</h2>
+                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+                                {editingId ? 'Editar solicitud' : 'Solicitar formación'}
+                            </h2>
                             <button
                                 type="button"
                                 className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
@@ -526,6 +625,25 @@ function TrainingsPage() {
                             </p>
                         </div>
 
+                        <div className="mb-6 bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3">
+                            <div className="text-amber-500 shrink-0 mt-0.5">
+                                <AlertTriangle size={20} />
+                            </div>
+                            <p className="text-sm text-amber-800 font-medium">
+                                La fecha deberá ser confirmada por el usuario Esteban.
+                            </p>
+                        </div>
+
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-gray-900 mb-2">Razón de la solicitud</label>
+                            <textarea
+                                value={reason}
+                                onChange={(e) => setReason(e.target.value)}
+                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors h-24 resize-none"
+                                placeholder="Describe por qué solicitas esta formación..."
+                            />
+                        </div>
+
                         <div className="mb-6">
                             <label className="block text-sm font-bold text-gray-900 mb-2">
                                 Adjuntar archivos (opcional)
@@ -547,10 +665,10 @@ function TrainingsPage() {
                             </button>
                             <button
                                 type="button"
-                                onClick={handleCreateTrainingRequest}
+                                onClick={handleSubmitRequest}
                                 className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95"
                             >
-                                Solicitar
+                                {editingId ? 'Guardar cambios' : 'Solicitar'}
                             </button>
                         </div>
                     </div>

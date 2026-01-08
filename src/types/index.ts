@@ -49,6 +49,7 @@ export interface Training {
     requested_date_key: string;
     scheduled_date_key: string | null;
     status: 'rescheduled' | 'accepted' | 'pending' | 'rejected';
+    reason?: string;
     comments: TrainingComment[]; // jsonb
     attachments?: Attachment[]; // jsonb
     created_at: string;

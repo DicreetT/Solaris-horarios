@@ -21,6 +21,7 @@ export function useTraining(currentUser: User | null) {
                 requested_date_key: row.requested_date_key,
                 scheduled_date_key: row.scheduled_date_key,
                 status: row.status,
+                reason: row.reason,
                 comments: row.comments || [],
                 attachments: row.attachments || [],
                 created_at: row.created_at,
@@ -29,8 +30,8 @@ export function useTraining(currentUser: User | null) {
         enabled: !!currentUser,
     });
 
-    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; comments: string; attachments?: any[] }>({
-        mutationFn: async ({ requested_date_key, comments, attachments }: { requested_date_key: string; comments: string; attachments?: any[] }) => {
+    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; reason: string; comments: string; attachments?: any[] }>({
+        mutationFn: async ({ requested_date_key, reason, comments, attachments }: { requested_date_key: string; reason: string; comments: string; attachments?: any[] }) => {
             const now = new Date().toISOString();
             const { data, error } = await supabase
                 .from('training_requests')
@@ -38,6 +39,7 @@ export function useTraining(currentUser: User | null) {
                     user_id: currentUser.id,
                     scheduled_date_key: requested_date_key,
                     requested_date_key: requested_date_key,
+                    reason: reason,
                     comments: comments ? [{ text: comments, by: currentUser.id, at: now }] : [],
                     status: 'pending',
                     attachments: attachments || [],
@@ -114,6 +116,31 @@ export function useTraining(currentUser: User | null) {
         },
     });
 
+    const updateTrainingRequestMutation = useMutation<void, Error, { id: number; requested_date_key?: string; reason?: string; attachments?: any[] }>({
+        mutationFn: async ({ id, requested_date_key, reason, attachments }: { id: number; requested_date_key?: string; reason?: string; attachments?: any[] }) => {
+            const updates: any = {};
+            if (requested_date_key) {
+                updates.requested_date_key = requested_date_key;
+                // updating requested date also resets scheduled date usually, but depends on logic. 
+                // Ensuring scheduled date matches requested if still pending, or maybe logic decides. 
+                // For now, let's update scheduled_date_key as well if it was same as requested.
+                updates.scheduled_date_key = requested_date_key;
+            }
+            if (reason) updates.reason = reason;
+            if (attachments) updates.attachments = attachments;
+
+            const { error } = await supabase
+                .from('training_requests')
+                .update(updates)
+                .eq('id', id);
+
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['training'] });
+        },
+    });
+
     const deleteTrainingMutation = useMutation<void, Error, number>({
         mutationFn: async (id: number) => {
             const { error } = await supabase
@@ -132,6 +159,7 @@ export function useTraining(currentUser: User | null) {
         isLoading,
         error,
         createTrainingRequest: createTrainingMutation.mutateAsync,
+        updateTrainingRequest: updateTrainingRequestMutation.mutateAsync,
         addTrainingComment: addCommentMutation.mutateAsync,
         updateTrainingStatus: updateStatusMutation.mutateAsync,
         deleteTrainingRequest: deleteTrainingMutation.mutateAsync,

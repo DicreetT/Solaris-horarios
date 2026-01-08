@@ -1,4 +1,4 @@
-import type { User, DriveFolder } from './types';
+import type { User, Folder } from './types';
 
 /**
  * Usuarios "reales" simulados.
