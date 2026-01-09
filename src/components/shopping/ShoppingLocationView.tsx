@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Plus, CheckCircle2, Circle, Trash2, FileText, Image as ImageIcon, ArrowLeft, ShoppingBag } from 'lucide-react';
+import { Plus, CheckCircle2, Circle, Trash2, FileText, Image as ImageIcon, ArrowLeft, ShoppingBag, Truck, MessageCircle } from 'lucide-react';
 import { ShoppingItem, User } from '../../types';
 import { useShoppingList } from '../../hooks/useShoppingList';
 import { UserAvatar } from '../UserAvatar';
 import ShoppingItemModal from './ShoppingItemModal';
+import PurchaseModal from './PurchaseModal';
 import { formatDatePretty } from '../../utils/dateUtils';
 import { ESTEBAN_ID } from '../../constants';
 
@@ -18,6 +19,10 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
     const [activeTab, setActiveTab] = useState<'pending' | 'purchased'>('pending');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<ShoppingItem | undefined>(undefined);
+
+    // Purchase Modal State
+    const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+    const [selectedItemForPurchase, setSelectedItemForPurchase] = useState<ShoppingItem | undefined>(undefined);
 
     const locationItems = shoppingItems.filter(item => item.location === location);
 
@@ -50,8 +55,31 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
     };
 
     const handleTogglePurchased = async (item: ShoppingItem) => {
+        if (!item.is_purchased) {
+            // Open modal to confirm purchase details
+            setSelectedItemForPurchase(item);
+            setIsPurchaseModalOpen(true);
+        } else {
+            // Simply untoggle (revert)
+            try {
+                await togglePurchased({ id: item.id, isPurchased: false });
+            } catch (error: any) {
+                alert(error.message);
+            }
+        }
+    };
+
+    const handleConfirmPurchase = async (data: { deliveryDate?: string; responseMessage?: string }) => {
+        if (!selectedItemForPurchase) return;
         try {
-            await togglePurchased({ id: item.id, isPurchased: !item.is_purchased });
+            await togglePurchased({
+                id: selectedItemForPurchase.id,
+                isPurchased: true,
+                deliveryDate: data.deliveryDate,
+                responseMessage: data.responseMessage
+            });
+            setIsPurchaseModalOpen(false);
+            setSelectedItemForPurchase(undefined);
         } catch (error: any) {
             alert(error.message);
         }
@@ -232,6 +260,28 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                                         </div>
                                     </div>
 
+                                    {/* Purchase Details (Only if purchased) */}
+                                    {item.is_purchased && (
+                                        <div className="mt-3 bg-green-50 rounded-xl p-3 border border-green-100 text-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                                            {item.delivery_date && (
+                                                <div className="flex items-center gap-2 text-green-800 mb-1">
+                                                    <Truck size={14} />
+                                                    <span className="font-bold">Llegada estimada:</span>
+                                                    <span>{formatDatePretty(new Date(item.delivery_date))}</span>
+                                                </div>
+                                            )}
+                                            {item.response_message && (
+                                                <div className="flex items-start gap-2 text-green-700">
+                                                    <MessageCircle size={14} className="mt-0.5 shrink-0" />
+                                                    <span className="italic">"{item.response_message}"</span>
+                                                </div>
+                                            )}
+                                            {!item.delivery_date && !item.response_message && (
+                                                <span className="text-green-600 italic text-xs">Comprado (sin detalles adicionales)</span>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <div className="flex items-center gap-4 mt-3 text-xs text-gray-400 font-medium">
                                         <div className="flex items-center gap-1.5">
                                             <UserAvatar name={item.created_by} size="xs" />
@@ -267,6 +317,16 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                 onDelete={editingItem && canDelete(editingItem) ? handleDelete : undefined}
                 initialData={editingItem}
                 location={location}
+            />
+
+            <PurchaseModal
+                isOpen={isPurchaseModalOpen}
+                onClose={() => {
+                    setIsPurchaseModalOpen(false);
+                    setSelectedItemForPurchase(undefined);
+                }}
+                onConfirm={handleConfirmPurchase}
+                item={selectedItemForPurchase}
             />
         </div>
     );

@@ -166,6 +166,8 @@ export interface ShoppingItem {
     is_purchased: boolean;
     created_by: string;
     purchased_by: string | null;
+    delivery_date?: string;
+    response_message?: string;
     attachments: Attachment[];
 }
 

@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, ShoppingItem, Attachment } from '../types';
 
@@ -8,6 +9,7 @@ import { ESTEBAN_ID } from '../constants';
 
 export function useShoppingList(currentUser: User | null) {
     const queryClient = useQueryClient();
+    const { addNotification } = useNotifications(currentUser);
 
     const { data: shoppingItems = EMPTY_ARRAY, isLoading, error } = useQuery({
         queryKey: ['shopping_items'],
@@ -78,7 +80,7 @@ export function useShoppingList(currentUser: User | null) {
     });
 
     const togglePurchasedMutation = useMutation({
-        mutationFn: async ({ id, isPurchased }: { id: number; isPurchased: boolean }) => {
+        mutationFn: async ({ id, isPurchased, deliveryDate, responseMessage }: { id: number; isPurchased: boolean; deliveryDate?: string; responseMessage?: string }) => {
             if (!currentUser) throw new Error('No user logged in');
 
             // Only Esteban can mark as purchased
@@ -86,12 +88,23 @@ export function useShoppingList(currentUser: User | null) {
                 throw new Error('Solo Esteban puede marcar ítems como comprados');
             }
 
+            const updates: any = {
+                is_purchased: isPurchased,
+                purchased_by: isPurchased ? currentUser.id : null,
+            };
+
+            if (isPurchased) {
+                if (deliveryDate !== undefined) updates.delivery_date = deliveryDate;
+                if (responseMessage !== undefined) updates.response_message = responseMessage;
+            } else {
+                // Reset fields if un-purchasing? Or keep history? Usually reset.
+                updates.delivery_date = null;
+                updates.response_message = null;
+            }
+
             const { data, error } = await supabase
                 .from('shopping_items')
-                .update({
-                    is_purchased: isPurchased,
-                    purchased_by: isPurchased ? currentUser.id : null
-                })
+                .update(updates)
                 .eq('id', id)
                 .select()
                 .single();
@@ -99,8 +112,26 @@ export function useShoppingList(currentUser: User | null) {
             if (error) throw error;
             return data;
         },
-        onSuccess: () => {
+        onSuccess: async (data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+
+            // Notify creator if purchased
+            if (variables.isPurchased && data) {
+                // If creator is not Esteban (avoid notifying self unnecessarily, though Esteban is manager)
+                if (data.created_by !== currentUser?.id) {
+                    let msg = `Tu ítem "${data.name}" ha sido comprado.`;
+                    if (variables.deliveryDate) {
+                        msg += ` Llega el: ${new Date(variables.deliveryDate).toLocaleDateString()}.`;
+                    }
+                    if (variables.responseMessage) {
+                        msg += ` Mensaje: ${variables.responseMessage}`;
+                    }
+                    await addNotification({
+                        message: msg,
+                        userId: data.created_by
+                    });
+                }
+            }
         },
     });
 
