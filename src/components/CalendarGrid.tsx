@@ -105,7 +105,7 @@ export default function CalendarGrid({
             </div>
 
             {/* Calendar Grid */}
-            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-0 bg-gray-200 gap-px overflow-hidden border-b border-gray-200">
+            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-0 bg-gray-200 gap-px overflow-y-auto border-b border-gray-200">
                 {daysArray.map((d, idx) => {
                     if (!d) return <div key={idx} className="bg-gray-50/30 aspect-square" />;
 
