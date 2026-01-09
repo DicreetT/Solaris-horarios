@@ -163,13 +163,16 @@ function MeetingsPage() {
                                                         ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
                                                         ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
                                                         ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                        ${m.status === 'completed' ? 'bg-gray-100 text-gray-600 border-gray-200 line-through' : ''}
                                                     `}>
                                                         {m.status === 'pending' && <Clock size={12} />}
                                                         {m.status === 'scheduled' && <CheckCircle size={12} />}
                                                         {m.status === 'rejected' && <XCircle size={12} />}
+                                                        {m.status === 'completed' && <CheckCircle size={12} />}
                                                         {m.status === 'pending' && "Pendiente"}
                                                         {m.status === 'scheduled' && "Programada"}
                                                         {m.status === 'rejected' && "Rechazada"}
+                                                        {m.status === 'completed' && "Realizada"}
                                                     </span>
                                                 </div>
 
@@ -289,10 +292,12 @@ function MeetingsPage() {
                                                     ${m.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}
                                                     ${m.status === 'scheduled' ? 'bg-green-50 text-green-700 border-green-200' : ''}
                                                     ${m.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : ''}
+                                                    ${m.status === 'completed' ? 'bg-gray-100 text-gray-600 border-gray-200' : ''}
                                                 `}>
                                                     {m.status === 'pending' && "Pendiente"}
                                                     {m.status === 'scheduled' && "Programada"}
                                                     {m.status === 'rejected' && "Rechazada"}
+                                                    {m.status === 'completed' && "Realizada"}
                                                 </span>
                                             </div>
 
@@ -332,6 +337,25 @@ function MeetingsPage() {
                                                     {participantsNames || "—"}
                                                 </div>
                                             </div>
+
+                                            {m.status === "scheduled" && (
+                                                <div className="flex gap-2 pt-3 border-t border-gray-100">
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-gray-50 text-gray-700 font-bold text-xs hover:bg-gray-100 transition-colors border border-gray-200 flex items-center justify-center gap-2"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            updateMeetingStatus({
+                                                                id: m.id,
+                                                                status: "completed",
+                                                            });
+                                                        }}
+                                                    >
+                                                        <CheckCircle size={14} />
+                                                        Marcar como Realizada
+                                                    </button>
+                                                </div>
+                                            )}
 
                                             {m.status === "pending" && (
                                                 <div className="flex gap-2 pt-3 border-t border-gray-100">

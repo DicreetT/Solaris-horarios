@@ -79,7 +79,8 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     // For now, "active" implies not rejected.
     const activeMeetingsCount = meetingRequests.filter(m =>
         m.participants?.includes(currentUser?.id || '') &&
-        m.status !== 'rejected'
+        m.status !== 'rejected' &&
+        m.status !== 'completed'
     ).length;
 
     // 3. Absences:

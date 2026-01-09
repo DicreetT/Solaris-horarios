@@ -63,7 +63,7 @@ export interface Meeting {
     preferred_date_key: string | null;
     preferred_slot: string | null;
     participants: string[]; // jsonb
-    status: 'pending' | 'rejected' | 'scheduled';
+    status: 'pending' | 'rejected' | 'scheduled' | 'completed';
     scheduled_date_key: string | null;
     scheduled_time: string | null;
     response_message: string | null;
