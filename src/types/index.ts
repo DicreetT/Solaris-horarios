@@ -188,3 +188,12 @@ export interface ShipmentFolder {
     created_at: string;
     clients?: ShipmentClient[]; // Joined data
 }
+
+export interface CalendarEvent {
+    id: number;
+    date_key: string;
+    title: string;
+    description: string | null;
+    created_by: string;
+    created_at: string;
+}

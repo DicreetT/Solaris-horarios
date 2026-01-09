@@ -10,8 +10,9 @@ import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import DayHoverCard from './DayHoverCard';
-import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users, XCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, ExternalLink, CheckSquare, Users, XCircle, MessageSquare } from 'lucide-react';
 import { CalendarOverride } from '../hooks/useCalendarOverrides';
+import { useCalendarEvents } from '../hooks/useCalendarEvents';
 
 /**
  * Calendario mensual rediseñado
@@ -40,6 +41,7 @@ export default function CalendarGrid({
     const { todos } = useTodos(currentUser);
     const { meetingRequests } = useMeetings(currentUser);
     const { dailyStatuses } = useDailyStatus(currentUser);
+    const { calendarEvents } = useCalendarEvents();
     const navigate = useNavigate();
 
     const year = monthDate.getFullYear();
@@ -120,6 +122,9 @@ export default function CalendarGrid({
                     const isClickable = isAdminView || !isNonWorking;
 
                     // --- DATA GATHERING ---
+                    // Global Day Events
+                    const dayEvents = calendarEvents.filter(e => e.date_key === dKey);
+
                     const dayData = timeData[dKey] || {};
                     let workEntries: { userId: string; record: any }[] = [];
 
@@ -301,8 +306,23 @@ export default function CalendarGrid({
                         }
                     });
 
-                    // 6. Esteban's Daily Status
+                    // 6. Global Day Events
+                    dayEvents.forEach(event => {
+                        badges.push({
+                            type: 'event',
+                            label: event.title,
+                            color: 'bg-blue-50 text-blue-700 border-blue-100',
+                            icon: <MessageSquare size={10} />,
+                            detail: event.title,
+                            link: '#'
+                        });
+                    });
+
+                    // 7. Esteban's Daily Status (Badge removed if we show icon in header, or keep both? Let's keep badge for detail but icon for quick view)
                     const estebanStatus = dailyStatuses.find(s => s.date_key === dKey && s.user_id === ESTEBAN_ID);
+                    const isEstebanPresent = estebanStatus?.status === 'in_person';
+                    const isEstebanRemote = estebanStatus?.status === 'remote';
+
                     if (estebanStatus) {
                         const isPresencial = estebanStatus.status === 'in_person';
                         badges.push({
@@ -313,7 +333,7 @@ export default function CalendarGrid({
                                 : 'bg-gray-100 text-gray-600 border-gray-200',
                             icon: isPresencial ? <Users size={10} /> : <XCircle size={10} />,
                             detail: isPresencial ? 'Esteban asistirá a la nave' : 'Esteban no asistirá a la nave',
-                            link: '#' // No link needed really
+                            link: '#'
                         });
                     }
 
@@ -346,6 +366,17 @@ export default function CalendarGrid({
                                 `}>
                                     {d.getDate()}
                                 </span>
+                                {/* Esteban Status Indicator (Icon only) */}
+                                {estebanStatus && (
+                                    <div className="flex items-center -space-x-1">
+                                        {isEstebanPresent && (
+                                            <div title="Esteban presencial" className="w-2.5 h-2.5 rounded-full bg-teal-500 ring-2 ring-white"></div>
+                                        )}
+                                        {isEstebanRemote && (
+                                            <div title="Esteban remoto/no presencial" className="w-2.5 h-2.5 rounded-full bg-gray-400 ring-2 ring-white"></div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Badges Container */}

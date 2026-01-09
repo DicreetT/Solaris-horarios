@@ -13,7 +13,9 @@ import TaskDetailModal from './TaskDetailModal';
  */
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus } from '../types';
+import { useCalendarEvents } from '../hooks/useCalendarEvents';
+import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus, CalendarEvent } from '../types';
+import { Calendar as CalendarIcon, MessageSquare, Plus, Trash2 } from 'lucide-react';
 
 import { CalendarOverride } from '../hooks/useCalendarOverrides';
 
@@ -43,9 +45,46 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
 
     // Daily Status Logic
     const { dailyStatuses } = useDailyStatus(currentUser);
+
+    // Day Events Logic
+    const { calendarEvents, createEvent, deleteEvent } = useCalendarEvents();
+    const [newEventTitle, setNewEventTitle] = useState('');
+    const [isAddingEvent, setIsAddingEvent] = useState(false);
     const dateKey = date ? date.toISOString().split('T')[0] : '';
-    // Find Esteban's status specifically (to show to everyone)
+
     const estebanStatus = dailyStatuses.find(s => s.user_id === ESTEBAN_ID && s.date_key === dateKey);
+
+    const dayEvents = calendarEvents.filter(e => e.date_key === dateKey);
+
+    const handleCreateEvent = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newEventTitle.trim() || !currentUser) return;
+
+        try {
+            await createEvent({
+                date_key: dateKey,
+                title: newEventTitle,
+                description: null,
+                created_by: currentUser.id
+            });
+            setNewEventTitle('');
+            setIsAddingEvent(false);
+            addNotification({ message: 'Evento añadido correctamente', type: 'success' });
+        } catch (error) {
+            console.error(error);
+            addNotification({ message: 'Error al añadir evento', type: 'error' });
+        }
+    };
+
+    const handleDeleteEvent = async (id: number) => {
+        if (!confirm('¿Estás seguro de eliminar este evento?')) return;
+        try {
+            await deleteEvent(id);
+            addNotification({ message: 'Evento eliminado', type: 'success' });
+        } catch (error) {
+            addNotification({ message: 'Error al eliminar evento', type: 'error' });
+        }
+    };
 
     if (!date || !events) return null;
 
@@ -53,8 +92,10 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
         events.trainings.length > 0 ||
         events.meetings.length > 0 ||
         events.tasks.length > 0 ||
+        events.tasks.length > 0 ||
         events.timeEntry ||
-        estebanStatus; // Include status in check
+        estebanStatus ||
+        dayEvents.length > 0; // Include status and events in check
 
     const formattedDate = new Date(date).toLocaleDateString('es-ES', {
         weekday: 'long',
@@ -140,6 +181,77 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
                             </div>
                         </div>
                     )}
+
+                    {/* Global Day Events Section (New Feature) */}
+                    <div className="mb-6">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+                                <MessageSquare size={16} className="text-blue-500" />
+                                Eventos del Día
+                            </h3>
+                            <button
+                                onClick={() => setIsAddingEvent(true)}
+                                className="w-6 h-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center justify-center transition-colors"
+                            >
+                                <Plus size={14} strokeWidth={3} />
+                            </button>
+                        </div>
+
+                        {isAddingEvent && (
+                            <form onSubmit={handleCreateEvent} className="mb-3 animate-[fadeIn_0.2s_ease-out]">
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        autoFocus
+                                        placeholder="Escribe un evento..."
+                                        className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                        value={newEventTitle}
+                                        onChange={e => setNewEventTitle(e.target.value)}
+                                    />
+                                    <button
+                                        type="submit"
+                                        className="px-3 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors"
+                                    >
+                                        Añadir
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsAddingEvent(false)}
+                                        className="px-3 py-2 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200 transition-colors"
+                                    >
+                                        Cancelar
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+
+                        {dayEvents.length > 0 ? (
+                            <div className="space-y-2">
+                                {dayEvents.map(event => (
+                                    <div key={event.id} className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl flex items-center justify-between group">
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                                            <span className="text-sm text-gray-700 font-medium">{event.title}</span>
+                                            {/* Show author if needed, but maybe keep it clean */}
+                                        </div>
+                                        {(currentUser?.id === event.created_by || events.isAdmin) && (
+                                            <button
+                                                onClick={() => handleDeleteEvent(event.id)}
+                                                className="opacity-0 group-hover:opacity-100 p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                                title="Eliminar"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            !isAddingEvent && (
+                                <p className="text-xs text-gray-400 italic pl-1">No hay eventos globales para este día.</p>
+                            )
+                        )}
+                    </div>
 
                     {!hasAnyEvents && !events.override?.is_non_working ? (
                         <div className="flex flex-col items-center justify-center py-12 text-center">
