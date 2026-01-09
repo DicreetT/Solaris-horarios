@@ -60,8 +60,26 @@ export function useShoppingList(currentUser: User | null) {
             if (error) throw error;
             return data;
         },
-        onSuccess: () => {
+        onSuccess: async (data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+
+            // Notify if marking as purchased via update (Edit Modal)
+            if (variables.updates.is_purchased && data) {
+                // If creator is not current user (Esteban)
+                if (data.created_by !== currentUser?.id) {
+                    let msg = `Tu ítem "${data.name}" ha sido actualizado a COMPRADO.`;
+                    if (variables.updates.delivery_date) {
+                        msg += ` Llega el: ${new Date(variables.updates.delivery_date as string).toLocaleDateString()}.`;
+                    }
+                    if (variables.updates.response_message) {
+                        msg += ` Mensaje: ${variables.updates.response_message}`;
+                    }
+                    await addNotification({
+                        message: msg,
+                        userId: data.created_by
+                    });
+                }
+            }
         },
     });
 

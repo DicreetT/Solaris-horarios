@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Trash2, ShoppingCart } from 'lucide-react';
+import { X, Save, Trash2, ShoppingCart, CheckCircle2, Calendar, MessageSquare } from 'lucide-react';
 import { ShoppingItem, Attachment } from '../../types';
 import { FileUploader } from '../FileUploader';
+import { useAuth } from '../../context/AuthContext';
+import { ESTEBAN_ID } from '../../constants';
 
 interface ShoppingItemModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (item: Omit<ShoppingItem, 'id' | 'created_at' | 'is_purchased' | 'purchased_by'>) => Promise<void>;
+    onSubmit: (item: any) => Promise<void>;
     onDelete?: () => Promise<void>;
     initialData?: ShoppingItem;
     location: 'canet' | 'huarte';
@@ -22,9 +24,17 @@ export default function ShoppingItemModal({
     location,
     isSubmitting = false
 }: ShoppingItemModalProps) {
+    const { currentUser } = useAuth();
+    const isEsteban = currentUser?.id === ESTEBAN_ID;
+
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [attachments, setAttachments] = useState<Attachment[]>([]);
+
+    // Purchase Fields
+    const [isPurchased, setIsPurchased] = useState(false);
+    const [deliveryDate, setDeliveryDate] = useState('');
+    const [responseMessage, setResponseMessage] = useState('');
 
     useEffect(() => {
         if (isOpen) {
@@ -32,10 +42,16 @@ export default function ShoppingItemModal({
                 setName(initialData.name);
                 setDescription(initialData.description || '');
                 setAttachments(initialData.attachments || []);
+                setIsPurchased(initialData.is_purchased);
+                setDeliveryDate(initialData.delivery_date ? initialData.delivery_date.split('T')[0] : '');
+                setResponseMessage(initialData.response_message || '');
             } else {
                 setName('');
                 setDescription('');
                 setAttachments([]);
+                setIsPurchased(false);
+                setDeliveryDate('');
+                setResponseMessage('');
             }
         }
     }, [isOpen, initialData]);
@@ -44,13 +60,34 @@ export default function ShoppingItemModal({
         e.preventDefault();
         if (!name.trim()) return;
 
-        await onSubmit({
+        const submitData: any = {
             name,
             description,
             location,
-            created_by: '', // Will be set by hook
             attachments
-        });
+        };
+
+        if (isEsteban) {
+            submitData.is_purchased = isPurchased;
+            if (isPurchased) {
+                // If purchased, include details
+                submitData.purchased_by = currentUser?.id;
+                submitData.delivery_date = deliveryDate || null;
+                submitData.response_message = responseMessage || null;
+            } else if (initialData?.is_purchased) {
+                // If unmarking as purchased, might want to clear these?
+                submitData.delivery_date = null;
+                submitData.response_message = null;
+                submitData.purchased_by = null;
+            }
+        }
+
+        // If creating new item, created_by is handled by hook, but fields above work for update too.
+        if (!initialData) {
+            submitData.created_by = ''; // Hook handles it
+        }
+
+        await onSubmit(submitData);
         onClose();
     };
 
@@ -117,6 +154,66 @@ export default function ShoppingItemModal({
                             existingFiles={attachments}
                         />
                     </div>
+
+                    {/* ESTEBAN ONLY: Purchase Controls */}
+                    {isEsteban && (
+                        <div className="pt-4 border-t border-gray-100 space-y-4">
+                            <h3 className="font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-2 uppercase text-xs tracking-wider">
+                                Gestión de Compra (Solo Administrador)
+                            </h3>
+
+                            <label className="flex items-center gap-3 p-3 rounded-xl border-2 transition-all cursor-pointer group bg-gray-50 border-gray-200 has-[:checked]:bg-green-50 has-[:checked]:border-green-500">
+                                <div className="relative flex items-center">
+                                    <input
+                                        type="checkbox"
+                                        checked={isPurchased}
+                                        onChange={(e) => setIsPurchased(e.target.checked)}
+                                        className="peer sr-only"
+                                    />
+                                    <div className="w-5 h-5 border-2 border-gray-300 rounded-full peer-checked:bg-green-500 peer-checked:border-green-500 transition-all"></div>
+                                    <CheckCircle2 size={12} className="absolute top-1 left-1 text-white opacity-0 peer-checked:opacity-100" />
+                                </div>
+                                <div className="flex-1">
+                                    <span className="font-bold text-gray-900 block group-has-[:checked]:text-green-800">
+                                        Marcar como COMPRADO
+                                    </span>
+                                    <span className="text-xs text-gray-500 block group-has-[:checked]:text-green-600">
+                                        El ítem se moverá a la lista de comprados y se notificará al usuario.
+                                    </span>
+                                </div>
+                            </label>
+
+                            {/* Details when purchased */}
+                            {isPurchased && (
+                                <div className="pl-4 border-l-2 border-green-200 space-y-3 animate-in fade-in slide-in-from-top-2">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-green-800 flex items-center gap-1">
+                                            <Calendar size={12} />
+                                            Fecha Estimada de Entrega
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={deliveryDate}
+                                            onChange={(e) => setDeliveryDate(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-green-800 flex items-center gap-1">
+                                            <MessageSquare size={12} />
+                                            Mensaje de Respuesta
+                                        </label>
+                                        <textarea
+                                            value={responseMessage}
+                                            onChange={(e) => setResponseMessage(e.target.value)}
+                                            placeholder="Ej: Comprado en Amazon, llega el martes."
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px]"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Footer Actions */}
                     <div className="pt-4 flex items-center gap-3">
