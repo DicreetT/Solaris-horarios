@@ -344,7 +344,7 @@ export default function CalendarGrid({
                             className={`
                                 group relative flex flex-col p-3 transition-all overflow-hidden min-h-[120px]
                                 ${isSelected
-                                    ? "bg-primary/5 shadow-[inset_0_0_0_2px_rgba(147,51,234,0.5)] z-10 cursor-pointer"
+                                    ? "bg-primary/5 shadow-[inset_0_0_0_2px_rgba(147,51,234,0.5)] cursor-pointer"
                                     : isNonWorking
                                         ? "bg-gray-100/80 hover:bg-gray-100 cursor-not-allowed text-gray-400"
                                         : "bg-white hover:bg-gray-50 cursor-pointer"

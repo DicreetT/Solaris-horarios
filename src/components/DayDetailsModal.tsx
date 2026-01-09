@@ -17,6 +17,7 @@ import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { Absence, Training, Meeting, Todo, TimeEntry, DailyStatus, CalendarEvent } from '../types';
 import { Calendar as CalendarIcon, MessageSquare, Plus, Trash2 } from 'lucide-react';
 
+import { toDateKey } from '../utils/dateUtils';
 import { CalendarOverride } from '../hooks/useCalendarOverrides';
 
 interface DayDetailsModalProps {
@@ -50,7 +51,7 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
     const { calendarEvents, createEvent, deleteEvent } = useCalendarEvents();
     const [newEventTitle, setNewEventTitle] = useState('');
     const [isAddingEvent, setIsAddingEvent] = useState(false);
-    const dateKey = date ? date.toISOString().split('T')[0] : '';
+    const dateKey = date ? toDateKey(date) : '';
 
     const estebanStatus = dailyStatuses.find(s => s.user_id === ESTEBAN_ID && s.date_key === dateKey);
 
