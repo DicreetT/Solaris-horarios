@@ -25,6 +25,10 @@ import NotificationBell from './NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useShoppingList } from '../hooks/useShoppingList';
+import { useTodos } from '../hooks/useTodos';
+import { useMeetings } from '../hooks/useMeetings';
+import { useAbsences } from '../hooks/useAbsences';
+import { useTraining } from '../hooks/useTraining';
 import { DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
 
 /**
@@ -45,17 +49,62 @@ interface SidebarProps {
 function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswordModal, onOpenNotificationsModal }: SidebarProps) {
     const { currentUser, logout } = useAuth();
     const { notifications } = useNotificationsContext();
-    const { shoppingItems } = useShoppingList(currentUser); // Fetch shopping items
+
+    // Data hooks for badges
+    const { shoppingItems } = useShoppingList(currentUser);
+    const { todos } = useTodos(currentUser);
+    const { meetingRequests } = useMeetings(currentUser);
+    const { absenceRequests } = useAbsences(currentUser);
+    const { trainingRequests } = useTraining(currentUser);
+
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);
     const userMenuRef = useRef(null);
 
     const isAdmin = currentUser?.isAdmin;
+    const isTrainingManager = currentUser?.isTrainingManager;
     const unreadCount = notifications.filter((n) => !n.read).length;
 
-    // Calculate pending shopping items (only relevant for Esteban)
-    const pendingShoppingCount = shoppingItems.filter(item => !item.is_purchased).length;
+    // --- BADGE CALCULATIONS ---
+
+    // 1. Tasks: Assigned to me AND incomplete
+    const pendingTasksCount = todos.filter(t =>
+        t.assigned_to?.includes(currentUser?.id || '') &&
+        !t.completed_by?.includes(currentUser?.id || '')
+    ).length;
+
+    // 2. Meetings: I am a participant AND status is not rejected (pending or scheduled)
+    // Note: You might want to filter only future meetings or pending ones. 
+    // For now, "active" implies not rejected.
+    const activeMeetingsCount = meetingRequests.filter(m =>
+        m.participants?.includes(currentUser?.id || '') &&
+        m.status !== 'rejected'
+    ).length;
+
+    // 3. Absences:
+    // If Admin: All pending requests.
+    // If User: My pending requests.
+    // Note: useAbsences hook already filters non-admin data to (my requests OR approved).
+    // So for non-admin, just filtering 'pending' should only show my pending ones (since approved aren't pending).
+    const pendingAbsencesCount = absenceRequests.filter(a => a.status === 'pending').length;
+
+    // 4. Trainings:
+    // If Training Manager: All pending requests.
+    // If User: My pending requests. (Hook returns all for manager, filtered for user usually? 
+    // Let's check hook: useTraining seems to return ALL for everyone? No, allowed to filter?
+    // Looking at useTraining: "const { data, error } = await supabase.from('training_requests').select('*');" -> It fetches ALL.
+    // So we must filter by user if not manager.
+    const pendingTrainingsCount = trainingRequests.filter(t => {
+        if (t.status !== 'pending') return false;
+        if (isTrainingManager) return true; // Manager sees all pending
+        return t.user_id === currentUser?.id; // User sees only theirs
+    }).length;
+
+    // 5. Shopping: Esteban sees unpurchased items
+    const pendingShoppingCount = (currentUser?.id === ESTEBAN_ID)
+        ? shoppingItems.filter(item => !item.is_purchased).length
+        : 0;
 
     // Close user menu when clicking outside
     useEffect(() => {
@@ -217,16 +266,52 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                             <span className={`text-sm ${isActive ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
                                             {item.isAdminItem && <RoleBadge role="admin" size="xs" />}
 
-                                            {/* Badge notification for Esteban on Shopping List */}
-                                            {item.path === '/shopping' && currentUser?.id === ESTEBAN_ID && pendingShoppingCount > 0 && (
+                                            {/* Badges */}
+                                            {item.path === '/tasks' && pendingTasksCount > 0 && (
+                                                <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
+                                                    {pendingTasksCount}
+                                                </span>
+                                            )}
+                                            {item.path === '/meetings' && activeMeetingsCount > 0 && (
+                                                <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
+                                                    {activeMeetingsCount}
+                                                </span>
+                                            )}
+                                            {item.path === '/absences' && pendingAbsencesCount > 0 && (
+                                                <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
+                                                    {pendingAbsencesCount}
+                                                </span>
+                                            )}
+                                            {item.path === '/trainings' && pendingTrainingsCount > 0 && (
+                                                <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
+                                                    {pendingTrainingsCount}
+                                                </span>
+                                            )}
+                                            {item.path === '/shopping' && pendingShoppingCount > 0 && (
                                                 <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
                                                     {pendingShoppingCount}
                                                 </span>
                                             )}
                                         </div>
                                     )}
-                                    {isCollapsed && item.path === '/shopping' && currentUser?.id === ESTEBAN_ID && pendingShoppingCount > 0 && (
-                                        <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                    {isCollapsed && (
+                                        <>
+                                            {item.path === '/tasks' && pendingTasksCount > 0 && (
+                                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                            )}
+                                            {item.path === '/meetings' && activeMeetingsCount > 0 && (
+                                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                            )}
+                                            {item.path === '/absences' && pendingAbsencesCount > 0 && (
+                                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                            )}
+                                            {item.path === '/trainings' && pendingTrainingsCount > 0 && (
+                                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                            )}
+                                            {item.path === '/shopping' && pendingShoppingCount > 0 && (
+                                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
+                                            )}
+                                        </>
                                     )}
                                     {isActive && !isCollapsed && (
                                         <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white/20 rounded-l-full" />
