@@ -24,7 +24,8 @@ import { RoleBadge } from './RoleBadge';
 import NotificationBell from './NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { DRIVE_FOLDERS } from '../constants';
+import { useShoppingList } from '../hooks/useShoppingList';
+import { DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
 
 /**
  * Sidebar navigation component
@@ -44,6 +45,7 @@ interface SidebarProps {
 function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswordModal, onOpenNotificationsModal }: SidebarProps) {
     const { currentUser, logout } = useAuth();
     const { notifications } = useNotificationsContext();
+    const { shoppingItems } = useShoppingList(currentUser); // Fetch shopping items
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -51,6 +53,9 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
 
     const isAdmin = currentUser?.isAdmin;
     const unreadCount = notifications.filter((n) => !n.read).length;
+
+    // Calculate pending shopping items (only relevant for Esteban)
+    const pendingShoppingCount = shoppingItems.filter(item => !item.is_purchased).length;
 
     // Close user menu when clicking outside
     useEffect(() => {
@@ -211,7 +216,17 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                         <div className="flex items-center gap-2 flex-1">
                                             <span className={`text-sm ${isActive ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
                                             {item.isAdminItem && <RoleBadge role="admin" size="xs" />}
+
+                                            {/* Badge notification for Esteban on Shopping List */}
+                                            {item.path === '/shopping' && currentUser?.id === ESTEBAN_ID && pendingShoppingCount > 0 && (
+                                                <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-sm">
+                                                    {pendingShoppingCount}
+                                                </span>
+                                            )}
                                         </div>
+                                    )}
+                                    {isCollapsed && item.path === '/shopping' && currentUser?.id === ESTEBAN_ID && pendingShoppingCount > 0 && (
+                                        <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></div>
                                     )}
                                     {isActive && !isCollapsed && (
                                         <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white/20 rounded-l-full" />
