@@ -26,6 +26,10 @@ export default function ShoppingItemModal({
 }: ShoppingItemModalProps) {
     const { currentUser } = useAuth();
     const isEsteban = currentUser?.id === ESTEBAN_ID;
+    const isCreator = currentUser?.id === initialData?.created_by;
+    const canEditPurchase = isEsteban;
+    // Show if Esteban OR (Creator and editing existing item)
+    const showPurchaseSection = isEsteban || (isCreator && !!initialData);
 
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
@@ -155,31 +159,42 @@ export default function ShoppingItemModal({
                         />
                     </div>
 
-                    {/* ESTEBAN ONLY: Purchase Controls */}
-                    {isEsteban && (
+                    {/* Purchase Controls (Visible to Admin and Creator) */}
+                    {showPurchaseSection && (
                         <div className="pt-4 border-t border-gray-100 space-y-4">
-                            <h3 className="font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-2 uppercase text-xs tracking-wider">
-                                Gestión de Compra
+                            <h3 className="font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-2 uppercase text-xs tracking-wider flex justify-between items-center">
+                                <span>Gestión de Compra</span>
+                                {!canEditPurchase && <span className="text-[10px] text-gray-400 normal-case">(Solo lectura)</span>}
                             </h3>
 
-                            <label className="flex items-center gap-3 p-3 rounded-xl border-2 transition-all cursor-pointer group bg-gray-50 border-gray-200 has-[:checked]:bg-green-50 has-[:checked]:border-green-500">
+                            <label className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all group bg-gray-50 border-gray-200 ${isPurchased ? 'bg-green-50 border-green-500' : ''} ${!canEditPurchase ? 'opacity-80 cursor-default' : 'cursor-pointer'}`}>
                                 <div className="relative flex items-center">
                                     <input
                                         type="checkbox"
                                         checked={isPurchased}
                                         onChange={(e) => setIsPurchased(e.target.checked)}
+                                        disabled={!canEditPurchase}
                                         className="peer sr-only"
                                     />
-                                    <div className="w-5 h-5 border-2 border-gray-300 rounded-full peer-checked:bg-green-500 peer-checked:border-green-500 transition-all"></div>
-                                    <CheckCircle2 size={12} className="absolute top-1 left-1 text-white opacity-0 peer-checked:opacity-100" />
+                                    <div className={`w-5 h-5 border-2 rounded-full transition-all ${isPurchased ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}></div>
+                                    <CheckCircle2 size={12} className={`absolute top-1 left-1 text-white transition-opacity ${isPurchased ? 'opacity-100' : 'opacity-0'}`} />
                                 </div>
                                 <div className="flex-1">
-                                    <span className="font-bold text-gray-900 block group-has-[:checked]:text-green-800">
-                                        Marcar como COMPRADO
+                                    <span className={`font-bold block ${isPurchased ? 'text-green-800' : 'text-gray-900'}`}>
+                                        {isPurchased ? 'COMPRADO' : 'Marcar como COMPRADO'}
                                     </span>
-                                    <span className="text-xs text-gray-500 block group-has-[:checked]:text-green-600">
-                                        El ítem se moverá a la lista de comprados y se notificará al usuario.
-                                    </span>
+                                    {isPurchased ? (
+                                        <span className="text-xs text-green-600 block">
+                                            ¡El ítem ya ha sido comprado!
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs text-gray-500 block">
+                                            {canEditPurchase
+                                                ? 'El ítem se moverá a la lista de comprados y se notificará al usuario.'
+                                                : 'Aún no se ha marcado como comprado.'
+                                            }
+                                        </span>
+                                    )}
                                 </div>
                             </label>
 
@@ -195,7 +210,8 @@ export default function ShoppingItemModal({
                                             type="date"
                                             value={deliveryDate}
                                             onChange={(e) => setDeliveryDate(e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none"
+                                            disabled={!canEditPurchase}
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
                                         />
                                     </div>
                                     <div className="space-y-1">
@@ -206,8 +222,9 @@ export default function ShoppingItemModal({
                                         <textarea
                                             value={responseMessage}
                                             onChange={(e) => setResponseMessage(e.target.value)}
-                                            placeholder="Ej: Comprado en Amazon, llega el martes."
-                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px]"
+                                            disabled={!canEditPurchase}
+                                            placeholder={canEditPurchase ? "Ej: Comprado en Amazon, llega el martes." : "Sin mensaje adjunto."}
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px] disabled:bg-gray-50 disabled:text-gray-500"
                                         />
                                     </div>
                                 </div>
