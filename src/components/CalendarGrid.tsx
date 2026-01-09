@@ -395,8 +395,8 @@ export default function CalendarGrid({
                                 ))}
                             </div>
 
-                            {/* Hover Card */}
-                            <DayHoverCard date={d} badges={badges} />
+                            {/* Hover Card (Only if not selected) */}
+                            {!isSelected && <DayHoverCard date={d} badges={badges} />}
                         </div>
                     );
                 })}
