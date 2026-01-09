@@ -159,7 +159,7 @@ export default function ShoppingItemModal({
                     {isEsteban && (
                         <div className="pt-4 border-t border-gray-100 space-y-4">
                             <h3 className="font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-2 uppercase text-xs tracking-wider">
-                                Gestión de Compra (Solo Administrador)
+                                Gestión de Compra
                             </h3>
 
                             <label className="flex items-center gap-3 p-3 rounded-xl border-2 transition-all cursor-pointer group bg-gray-50 border-gray-200 has-[:checked]:bg-green-50 has-[:checked]:border-green-500">
