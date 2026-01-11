@@ -10,6 +10,8 @@ import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
+import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
+
 export default function TimeTrackingPage() {
     const { currentUser } = useAuth();
     const isAdmin = currentUser?.isAdmin;
@@ -17,11 +19,37 @@ export default function TimeTrackingPage() {
     const { timeData, deleteTimeEntry, updateTimeEntry } = useTimeData();
     const { absenceRequests, createAbsence, deleteAbsenceByDate } = useAbsences(currentUser);
     const { userProfiles, updateProfile } = useWorkProfile();
+    const { overrides: calendarOverrides } = useCalendarOverrides();
 
     // UI States
     const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
     const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
     const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+
+    // Month Selection State (Defaults to current month)
+    const [selectedDate, setSelectedDate] = useState(new Date());
+
+    // Navigation Handlers
+    const handlePrevMonth = () => {
+        setSelectedDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(prev.getMonth() - 1);
+            return newDate;
+        });
+    };
+
+    const handleNextMonth = () => {
+        setSelectedDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(prev.getMonth() + 1);
+            return newDate;
+        });
+    };
+
+    const isCurrentMonth = () => {
+        const today = new Date();
+        return selectedDate.getMonth() === today.getMonth() && selectedDate.getFullYear() === today.getFullYear();
+    };
 
     // Edit Form for Profile + Adjustments
     const [editForm, setEditForm] = useState({
@@ -31,7 +59,7 @@ export default function TimeTrackingPage() {
         displayed_vacation_used: 0
     });
 
-    // Log Editing State (Admin only)
+    // Log Editing State (Admin only or Current Month)
     const [editingLogId, setEditingLogId] = useState<number | null>(null);
     const [logEditForm, setLogEditForm] = useState({
         entry: '',
@@ -51,9 +79,39 @@ export default function TimeTrackingPage() {
         };
     };
 
-    const calculateMonthlyWorkedHours = (userId: string) => {
-        const today = new Date();
-        const currentMonthPrefix = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    // Calculate expected hours accounting for HOLIDAYS and WEEKENDS
+    const calculateMonthlyExpectedHours = (userId: string, targetDate: Date) => {
+        const profile = getProfile(userId);
+        const dailyHours = profile.weekly_hours / 5;
+        if (dailyHours === 0) return 0;
+
+        const year = targetDate.getFullYear();
+        const month = targetDate.getMonth();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+        let workingDays = 0;
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const currentDay = new Date(year, month, day);
+            const dayOfWeek = currentDay.getDay();
+
+            // 1. Check Weekend (0=Sun, 6=Sat)
+            if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+            // 2. Check Calendar Overrides (Holidays)
+            const dateKey = toDateKey(currentDay);
+            const override = calendarOverrides.find(o => o.date_key === dateKey);
+            if (override?.is_non_working) continue;
+
+            workingDays++;
+        }
+
+        return parseFloat((workingDays * dailyHours).toFixed(1));
+    };
+
+    // Calculate worked hours for a SPECIFIC month
+    const calculateMonthlyWorkedHours = (userId: string, targetDate: Date) => {
+        const currentMonthPrefix = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
 
         let totalMinutes = 0;
 
@@ -86,9 +144,12 @@ export default function TimeTrackingPage() {
                     const dString = `${dYear}-${dMonth}`;
 
                     if (dString === currentMonthPrefix) {
-                        // Only count weekdays (Mon-Fri) for paid leave typically
+                        // Only count working days (Mon-Fri AND not Holiday)
                         const dayOfWeek = d.getDay();
-                        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                        const dateKey = toDateKey(d);
+                        const isHoliday = calendarOverrides.some(o => o.date_key === dateKey && o.is_non_working);
+
+                        if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isHoliday) {
                             totalMinutes += dailyHours * 60;
                         }
                     }
@@ -100,6 +161,9 @@ export default function TimeTrackingPage() {
     };
 
     const calculateVacationDaysUsed = (userId: string) => {
+        // Vacation is typically YEARLY accumulated, so we might keep this as yearly
+        // unless requested otherwise. The prompt says "solo ve el mes activo... horas trabajadas, horas esperadas".
+        // Vacation usually spans the year. I will leave it as "Yearly Used" for now unless filtered.
         return absenceRequests
             .filter(req => req.created_by === userId && req.type === 'vacation' && req.status !== 'rejected')
             .reduce((acc, req) => {
@@ -114,14 +178,23 @@ export default function TimeTrackingPage() {
 
     // --- Sub-Components ---
 
-    const DailyLogsTable = ({ userId, limit = 10, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
+    const DailyLogsTable = ({ userId, limit = 31, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
         const logs: any[] = [];
         const sortedDates = Object.keys(timeData).sort().reverse();
+
+        // Filter by SELECTED MONTH
+        const currentMonthPrefix = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
+
         sortedDates.forEach(dateKey => {
-            const entries = timeData[dateKey][userId] || [];
-            entries.forEach(e => logs.push({ ...e, date_key: dateKey }));
+            if (dateKey.startsWith(currentMonthPrefix)) {
+                const entries = timeData[dateKey][userId] || [];
+                entries.forEach(e => logs.push({ ...e, date_key: dateKey }));
+            }
         });
         const displayLogs = limit ? logs.slice(0, limit) : logs;
+
+        // Permission Check: Can edit if Admin OR (User AND Current Month)
+        const canEdit = isAdmin || isCurrentMonth();
 
         const handleSaveLog = async (id: number, dateKey: string) => {
             try {
@@ -189,7 +262,7 @@ export default function TimeTrackingPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                         {displayLogs.length === 0 ? (
-                            <tr><td colSpan={5} className="p-8 text-center text-gray-400 italic">No hay registros recientes.</td></tr>
+                            <tr><td colSpan={5} className="p-8 text-center text-gray-400 italic">No hay registros este mes.</td></tr>
                         ) : (
                             displayLogs.map(entry => {
                                 const isEditing = editingLogId === entry.id;
@@ -286,30 +359,33 @@ export default function TimeTrackingPage() {
                                                         </button>
                                                     </>
                                                 ) : (
-                                                    <>
-                                                        <button
-                                                            onClick={() => {
-                                                                setEditingLogId(entry.id);
-                                                                setLogEditForm({
-                                                                    entry: entry.entry || '',
-                                                                    exit: entry.exit || '',
-                                                                    type: getLogType(entry),
-                                                                    resolution_type: 'makeup'
-                                                                });
-                                                            }}
-                                                            className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-1 rounded"
-                                                        >
-                                                            <Edit2 size={16} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => {
-                                                                if (window.confirm('¿Borrar este registro?')) deleteTimeEntry(entry.id);
-                                                            }}
-                                                            className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </>
+                                                    // Only show edit buttons if permitted
+                                                    canEdit && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setEditingLogId(entry.id);
+                                                                    setLogEditForm({
+                                                                        entry: entry.entry || '',
+                                                                        exit: entry.exit || '',
+                                                                        type: getLogType(entry),
+                                                                        resolution_type: 'makeup'
+                                                                    });
+                                                                }}
+                                                                className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-1 rounded"
+                                                            >
+                                                                <Edit2 size={16} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (window.confirm('¿Borrar este registro?')) deleteTimeEntry(entry.id);
+                                                                }}
+                                                                className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded"
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        </>
+                                                    )
                                                 )}
                                             </td>
                                         )}
@@ -327,10 +403,12 @@ export default function TimeTrackingPage() {
 
     const renderUserDashboard = (userId: string) => {
         const profile = getProfile(userId);
-        const monthlyTarget = profile.weekly_hours * 4;
 
-        // Calculated + Adjusted
-        const workedHoursCalculated = calculateMonthlyWorkedHours(userId);
+        // DYNAMIC TARGET using calendar overrides
+        const monthlyTarget = calculateMonthlyExpectedHours(userId, selectedDate);
+
+        // Calculated + Adjusted (PASSED SELECTED DATE)
+        const workedHoursCalculated = calculateMonthlyWorkedHours(userId, selectedDate);
         const workedHoursTotal = workedHoursCalculated + (profile.hours_adjustment || 0);
 
         const vacationUsedCalculated = calculateVacationDaysUsed(userId);
@@ -346,7 +424,7 @@ export default function TimeTrackingPage() {
                     <div className="bg-white rounded-3xl p-6 shadow-lg border border-indigo-50 relative overflow-hidden">
                         <div className="relative z-10">
                             <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
-                                <Clock className="text-indigo-500" /> Control Horario (Mes)
+                                <Clock className="text-indigo-500" /> Control Horario ({selectedDate.toLocaleString('es-ES', { month: 'long' })})
                             </h3>
                             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
                                 <div>
@@ -405,7 +483,8 @@ export default function TimeTrackingPage() {
                     </div>
                 </div>
 
-                {userId === currentUser.id && (
+                {/* Tracking Widget - Only if CURRENT user and CURRENT month */}
+                {userId === currentUser.id && isCurrentMonth() && (
                     <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 text-center">
                         <h3 className="text-xl font-bold text-gray-900 mb-6">Fichar Ahora</h3>
                         <TimeTrackerWidget />
@@ -415,10 +494,10 @@ export default function TimeTrackingPage() {
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                            <History size={20} className="text-gray-400" /> Historial Reciente
+                            <History size={20} className="text-gray-400" /> Registro de {selectedDate.toLocaleString('es-ES', { month: 'long' })}
                         </h3>
                     </div>
-                    <DailyLogsTable userId={userId} limit={10} isEditable={false} />
+                    <DailyLogsTable userId={userId} limit={100} isEditable={true} />
                 </div>
             </div>
         );
@@ -433,7 +512,7 @@ export default function TimeTrackingPage() {
                             <tr>
                                 <th className="px-6 py-4">Usuario</th>
                                 <th className="px-6 py-4 text-center">Horas Sem.</th>
-                                <th className="px-6 py-4 text-center">Meta Mes</th>
+                                <th className="px-6 py-4 text-center">Meta ({selectedDate.toLocaleString('es-ES', { month: 'short' })})</th>
                                 <th className="px-6 py-4 text-center">Trabajadas</th>
                                 <th className="px-6 py-4 text-center">Pendientes</th>
                                 <th className="px-6 py-4 text-center">Vacaciones</th>
@@ -445,10 +524,14 @@ export default function TimeTrackingPage() {
                         <tbody className="divide-y divide-gray-100">
                             {USERS.map(user => {
                                 const profile = getProfile(user.id);
-                                const monthlyTarget = profile.weekly_hours * 4;
 
-                                const workedCalculated = calculateMonthlyWorkedHours(user.id);
+                                // DYNAMIC TARGET
+                                const monthlyTarget = calculateMonthlyExpectedHours(user.id, selectedDate);
+
+                                // Updated to use SELECTED DATE
+                                const workedCalculated = calculateMonthlyWorkedHours(user.id, selectedDate);
                                 const workedTotal = workedCalculated + (profile.hours_adjustment || 0);
+
 
                                 const vacationUsedCalculated = calculateVacationDaysUsed(user.id);
                                 const vacationUsedTotal = vacationUsedCalculated + (profile.vacation_adjustment || 0);
@@ -572,8 +655,8 @@ export default function TimeTrackingPage() {
                                                         <button
                                                             onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
                                                             className={`p-2 rounded-full transition-all ${isExpanded
-                                                                    ? 'text-indigo-600 bg-indigo-100 rotate-180'
-                                                                    : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                                                ? 'text-indigo-600 bg-indigo-100 rotate-180'
+                                                                : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
                                                                 }`}
                                                         >
                                                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
@@ -588,7 +671,7 @@ export default function TimeTrackingPage() {
                                                     <div className="bg-white rounded-2xl border border-gray-200 p-6">
                                                         <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
                                                             <Clock size={18} className="text-gray-400" />
-                                                            Registro de Jornadas: {user.name}
+                                                            Registro de {selectedDate.toLocaleString('es-ES', { month: 'long' })}: {user.name}
                                                         </h4>
                                                         <DailyLogsTable userId={user.id} limit={31} isEditable={true} />
                                                     </div>
@@ -607,7 +690,7 @@ export default function TimeTrackingPage() {
 
     return (
         <div className="max-w-6xl mx-auto pb-20">
-            <div className="mb-8 flex items-center justify-between">
+            <div className="mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-black text-gray-900 flex items-center gap-3">
                         Registro Horario
@@ -618,6 +701,19 @@ export default function TimeTrackingPage() {
                         )}
                     </h1>
                     <p className="text-gray-500 mt-1">Gestión de horas y vacaciones.</p>
+                </div>
+
+                {/* Month Selector */}
+                <div className="flex items-center gap-4 bg-white p-2 rounded-full shadow-sm border border-gray-200">
+                    <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+                    </button>
+                    <span className="font-bold text-gray-800 w-32 text-center capitalize">
+                        {selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' })}
+                    </span>
+                    <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+                    </button>
                 </div>
             </div>
 

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { toDateKey } from '../utils/dateUtils';
@@ -31,6 +32,24 @@ export function useTimeData() {
             return organized;
         },
     });
+
+    // Realtime Subscription
+    useEffect(() => {
+        const channel = supabase
+            .channel('time_entries_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'time_entries' },
+                () => {
+                    queryClient.invalidateQueries({ queryKey: ['timeData'] });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [queryClient]);
 
     // Create new time entry
     const createTimeEntryMutation = useMutation({

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
@@ -23,6 +24,24 @@ export function useWorkProfile() {
             return data as UserProfile[];
         },
     });
+
+    // Realtime Subscription
+    useEffect(() => {
+        const channel = supabase
+            .channel('user_profiles_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'user_profiles' },
+                () => {
+                    queryClient.invalidateQueries({ queryKey: ['user_profiles'] });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [queryClient]);
 
     const updateProfileMutation = useMutation({
         mutationFn: async ({ userId, updates }: { userId: string; updates: Partial<UserProfile> }) => {

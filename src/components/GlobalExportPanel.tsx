@@ -24,6 +24,72 @@ export default function GlobalExportPanel() {
     const [title, setTitle] = useState("Exportar CSV");
     const [copied, setCopied] = useState(false);
 
+    // Month Selector State
+    const [selectedDate, setSelectedDate] = useState(new Date());
+
+    const handlePrevMonth = () => {
+        setSelectedDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(prev.getMonth() - 1);
+            return newDate;
+        });
+    };
+
+    const handleNextMonth = () => {
+        setSelectedDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(prev.getMonth() + 1);
+            return newDate;
+        });
+    };
+
+    function calculateHours(entry: string, exit: string) {
+        if (!entry || !exit) return "";
+        const [h1, m1] = entry.split(':').map(Number);
+        const [h2, m2] = exit.split(':').map(Number);
+        const total = ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+        return total.toFixed(2);
+    }
+
+    function exportMonthlyTimes() {
+        const rows = [["Fecha", "Persona", "Entrada", "Salida", "Horas", "Estado", "Nota"]];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const sortedDates = Object.keys(timeData).sort();
+
+        const currentMonthPrefix = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
+
+        for (const dateKey of sortedDates) {
+            if (!dateKey.startsWith(currentMonthPrefix)) continue;
+
+            const dayData = timeData[dateKey];
+            for (const userId of Object.keys(dayData)) {
+                const entries = dayData[userId] || [];
+                // Typically one main entry per day, but handle list if cleaner
+                entries.forEach((r: TimeEntry) => {
+                    rows.push([
+                        dateKey,
+                        userMap[userId] || userId,
+                        r.entry || "",
+                        r.exit || "",
+                        (r.entry && r.exit) ? calculateHours(r.entry, r.exit) : "",
+                        r.status || "",
+                        (r.note || "").replace(/\n/g, " "),
+                    ]);
+                });
+            }
+        }
+        const csv = rows
+            .map((row) =>
+                row
+                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+                    .join(",")
+            )
+            .join("\n");
+
+        const monthName = selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
+        showCsv(csv, `horarios-${monthName.replace(/ /g, '-')}.csv`, `Exportar Horarios (${monthName})`);
+    }
+
     function downloadCsv() {
         const blob = new Blob([csvGenerated], {
             type: "text/csv;charset=utf-8;",
@@ -249,18 +315,60 @@ export default function GlobalExportPanel() {
                 </div>
 
                 <div className="p-8">
+                    {/* --- MONTHLY EXPORTS SECTION --- */}
+                    <div className="mb-12 bg-indigo-50/50 rounded-3xl p-6 border border-indigo-100">
+                        <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-6">
+                            <div className="flex items-start gap-4">
+                                <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl border border-indigo-200">
+                                    <FileText size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                                        Reportes Mensuales
+                                    </h3>
+                                    <p className="text-gray-500 text-sm leading-relaxed max-w-md">
+                                        Selecciona el mes para descargar el registro horario detallado de todo el equipo correspondiente a ese periodo.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Month Selector */}
+                            <div className="flex items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-indigo-200">
+                                <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+                                </button>
+                                <span className="font-bold text-gray-800 w-32 text-center capitalize">
+                                    {selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' })}
+                                </span>
+                                <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            className="w-full md:w-auto flex items-center justify-center gap-3 px-6 py-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+                            onClick={exportMonthlyTimes}
+                        >
+                            <Download size={20} />
+                            <span>Descargar Horarios de {selectedDate.toLocaleString('es-ES', { month: 'long' })}</span>
+                        </button>
+                    </div>
+
+                    <div className="border-t border-gray-100 my-8"></div>
+
+                    {/* --- GLOBAL EXPORTS SECTION --- */}
                     <div className="flex items-start gap-4 mb-8">
                         <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
                             <FileText size={24} />
                         </div>
                         <div>
                             <h3 className="text-lg font-bold text-gray-900 mb-1">
-                                Descarga de datos en CSV
+                                Descarga Global (Histórico Completo)
                             </h3>
-                            <p className="text-gray-500 leading-relaxed">
-                                Descarga en formato CSV todo lo que ocurre en Lunaris: horarios, formaciones,
-                                reuniones, permisos y tareas. Estos archivos son ideales para auditorías,
-                                informes externos o análisis de datos.
+                            <p className="text-gray-500 leading-relaxed text-sm">
+                                Descarga todo el histórico de datos acumulados desde el inicio.
                             </p>
                         </div>
                     </div>
@@ -271,7 +379,7 @@ export default function GlobalExportPanel() {
                             className="group flex items-center justify-between p-4 rounded-2xl border border-gray-200 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md transition-all duration-200 bg-white"
                             onClick={exportTimes}
                         >
-                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Horarios</span>
+                            <span className="font-bold text-gray-700 group-hover:text-amber-800">Horarios (Todos)</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
                         </button>
 

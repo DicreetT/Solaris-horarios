@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
+import { SidebarMoodBackground } from './SidebarMoodBackground';
 import NotificationBell from './NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -263,286 +264,177 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
           w-64
         `}
             >
-                {/* Dynamic Text Color Logic */}
+                {/* Content Logic */}
                 {(() => {
-                    const isDarkMood = myStatusToday?.custom_emoji === '⚡' || myStatusToday?.custom_emoji === '🌧️' || myStatusToday?.custom_emoji === '⛈️';
-                    const textColor = isDarkMood ? 'text-white' : 'text-gray-600';
-                    const hoverBg = isDarkMood ? 'hover:bg-white/10' : 'hover:bg-purple-50';
+                    const isDarkMood = false;
+                    const textColor = 'text-gray-600';
+                    const hoverBg = 'hover:bg-purple-50';
 
                     return (
                         <>
                             {/* Mood Background Layer */}
-                            <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-                                {myStatusToday?.custom_emoji === '☀️' && (
-                                    <motion.div
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        className="absolute inset-0 bg-gradient-to-br from-amber-200 via-orange-100 to-yellow-50"
-                                    >
-                                        <motion.div
-                                            animate={{ rotate: 360, scale: [1, 1.1, 1] }}
-                                            transition={{ rotate: { duration: 20, repeat: Infinity, ease: "linear" }, scale: { duration: 4, repeat: Infinity, ease: "easeInOut" } }}
-                                            className="absolute -top-20 -right-20 w-80 h-80 bg-gradient-to-br from-orange-400 to-yellow-300 rounded-full blur-3xl opacity-50"
-                                        />
-                                        {/* Sun Rays */}
-                                        <motion.div
-                                            animate={{ rotate: -360 }}
-                                            transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-                                            className="absolute -top-10 -right-10 w-60 h-60 border-4 border-dashed border-orange-300/30 rounded-full"
-                                        />
-                                    </motion.div>
-                                )}
-                                {myStatusToday?.custom_emoji === '⛅' && (
-                                    <motion.div
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        className="absolute inset-0 bg-gradient-to-b from-sky-200 to-white"
-                                    >
-                                        <motion.div
-                                            animate={{ x: [0, 40, 0] }}
-                                            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-                                            className="absolute top-10 -right-20 w-56 h-56 bg-white rounded-full blur-2xl opacity-60"
-                                        />
-                                    </motion.div>
-                                )}
-                                {myStatusToday?.custom_emoji === '☁️' && (
-                                    <motion.div
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        className="absolute inset-0 bg-slate-200"
-                                    >
-                                        <motion.div
-                                            animate={{ x: [-20, 20, -20], opacity: [0.3, 0.6, 0.3] }}
-                                            transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-                                            className="absolute inset-0 bg-gradient-to-tr from-gray-300/50 via-gray-100/50 to-transparent blur-xl"
-                                        />
-                                        {/* Fog Layers */}
-                                        <motion.div
-                                            animate={{ x: [0, -40, 0] }}
-                                            transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                                            className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-gray-300/40 to-transparent"
-                                        />
-                                        {/* Moving Clouds */}
-                                        <motion.div
-                                            initial={{ x: '-100%' }}
-                                            animate={{ x: '100%' }}
-                                            transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                                            className="absolute top-10 left-0 w-40 h-20 bg-white/80 rounded-full blur-xl border border-white/50"
-                                        />
-                                        <motion.div
-                                            initial={{ x: '-100%' }}
-                                            animate={{ x: '100%' }}
-                                            transition={{ duration: 25, repeat: Infinity, ease: "linear", delay: 5 }}
-                                            className="absolute top-32 left-0 w-32 h-16 bg-white/60 rounded-full blur-xl border border-white/40"
-                                        />
-                                    </motion.div>
-                                )}
-                                {(myStatusToday?.custom_emoji === '🌧️' || myStatusToday?.custom_emoji === '⛈️') && (
-                                    <motion.div
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        className="absolute inset-0 bg-gradient-to-b from-slate-800 to-slate-900"
-                                    >
-                                        {/* Heavy Rain */}
-                                        {Array.from({ length: 20 }).map((_, i) => (
-                                            <motion.div
-                                                key={i}
-                                                initial={{ y: -50, opacity: 0 }}
-                                                animate={{ y: '100vh', opacity: [0, 0.8, 0] }}
-                                                transition={{
-                                                    duration: 0.6 + Math.random() * 0.4,
-                                                    repeat: Infinity,
-                                                    delay: Math.random() * 2,
-                                                    ease: "linear"
+                            <SidebarMoodBackground emoji={myStatusToday?.custom_emoji} />
+
+                            {/* Sidebar Content */}
+                            <div className="relative z-10 flex flex-col h-full w-full">
+                                {/* Logo Area */}
+                                <div className="p-6 flex justify-center items-center shrink-0">
+                                    {!isCollapsed ? (
+                                        <div className="flex flex-col items-center w-full">
+                                            <img
+                                                src="/logo_text_trans.png"
+                                                alt="Lunaris Logo"
+                                                className="h-28 w-auto object-contain drop-shadow-md transition-transform duration-300 hover:scale-105"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="p-2 bg-gradient-to-tr from-primary to-purple-600 rounded-xl shadow-lg">
+                                            <img
+                                                src="/logo.png"
+                                                alt="L"
+                                                className="w-8 h-8 object-contain brightness-0 invert"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Navigation */}
+                                <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto relative scrollbar-hide">
+                                    {navigationItems.filter(item => item.show !== false).map((item) => {
+                                        const isActive = item.path ? location.pathname === item.path : false;
+                                        return (
+                                            <button
+                                                key={item.label}
+                                                onClick={() => {
+                                                    if (item.onClick) item.onClick();
+                                                    if (item.path) {
+                                                        navigate(item.path);
+                                                        if (window.innerWidth < 768) onClose();
+                                                    }
                                                 }}
-                                                className="absolute w-0.5 h-16 bg-blue-400/50 rounded-full"
-                                                style={{ left: `${Math.random() * 100}%` }}
-                                            />
-                                        ))}
-                                    </motion.div>
-                                )}
-                                {/* Dramatic Electric Mode */}
-                                {myStatusToday?.custom_emoji === '⚡' && myStatusToday?.custom_status === 'Eléctrico' && (
-                                    <motion.div
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        className="absolute inset-0 bg-indigo-950"
-                                    >
-                                        {/* Lightning Flashes */}
-                                        <motion.div
-                                            animate={{ opacity: [0, 0, 0.8, 0, 0, 0.5, 0] }}
-                                            transition={{ duration: 3, repeat: Infinity, times: [0, 0.8, 0.85, 0.9, 0.92, 0.95, 1] }}
-                                            className="absolute inset-0 bg-purple-500/30 mix-blend-overlay"
-                                        />
-                                        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-purple-900/60 via-transparent to-transparent" />
-                                    </motion.div>
-                                )}
-                            </div>
-
-                            {/* Logo area */}
-                            <div className="p-6 flex justify-center items-center relative z-10 shrink-0">
-                                {!isCollapsed ? (
-                                    <div className="flex flex-col items-center w-full">
-                                        <img
-                                            src="/logo_text_trans.png"
-                                            alt="Lunaris Logo"
-                                            className="h-28 w-auto object-contain drop-shadow-md transition-transform duration-300 hover:scale-105"
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="p-2 bg-gradient-to-tr from-primary to-purple-600 rounded-xl shadow-lg">
-                                        <img
-                                            src="/logo.png"
-                                            alt="L"
-                                            className="w-8 h-8 object-contain brightness-0 invert"
-                                        />
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Navigation */}
-                            <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto relative z-10 scrollbar-hide">
-                                {navigationItems.filter(item => item.show !== false).map((item) => {
-                                    const isActive = item.path ? location.pathname === item.path : false;
-                                    return (
-                                        <button
-                                            key={item.label}
-                                            onClick={() => {
-                                                if (item.onClick) item.onClick();
-                                                if (item.path) {
-                                                    navigate(item.path);
-                                                    if (window.innerWidth < 768) onClose();
-                                                }
-                                            }}
-                                            className={`
-                                                w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group
-                                                ${isActive
-                                                    ? 'bg-gradient-to-r from-primary to-purple-600 text-white shadow-md'
-                                                    : `${textColor} ${hoverBg} hover:shadow-sm`
-                                                }
-                                            `}
-                                        >
-                                            <item.icon
-                                                size={20}
                                                 className={`
-                                                    transition-transform duration-300 group-hover:scale-110
-                                                    ${isActive ? 'text-white' : (isDarkMood ? 'text-white/80' : 'text-gray-400 group-hover:text-primary')}
+                                                    w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
+                                                    ${isActive
+                                                        ? 'bg-gradient-to-r from-primary to-purple-600 text-white shadow-md'
+                                                        : `${textColor} ${hoverBg} hover:shadow-sm`
+                                                    }
                                                 `}
-                                            />
+                                            >
+                                                <item.icon
+                                                    size={20}
+                                                    className={`
+                                                        transition-transform duration-300 group-hover:scale-110 relative z-10
+                                                        ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-primary'}
+                                                    `}
+                                                />
 
+                                                {!isCollapsed && (
+                                                    <div className="flex-1 flex items-center justify-between text-sm font-bold relative z-10">
+                                                        <span>{item.label}</span>
+                                                        {item.shortcut && (
+                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isActive ? 'bg-white/20 border-white/20 text-white' : 'bg-gray-100 border-gray-200 text-gray-400'}`}>
+                                                                {item.shortcut}
+                                                            </span>
+                                                        )}
+                                                        {item.badge !== undefined && item.badge > 0 && (
+                                                            <span className="flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full shadow-sm animate-pulse">
+                                                                {item.badge > 99 ? '99+' : item.badge}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </nav>
+
+                                {/* User Profile (Footer) */}
+                                <div className="p-4 border-t border-gray-100/10 shrink-0">
+                                    <div className="relative" ref={userMenuRef}>
+                                        <button
+                                            onClick={() => setShowUserMenu(!showUserMenu)}
+                                            className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-all duration-200 bg-white/80 backdrop-blur-sm border-gray-100 hover:border-blue-200 hover:shadow-md`}
+                                        >
+                                            <UserAvatar name={currentUser?.name || 'User'} size="sm" />
                                             {!isCollapsed && (
-                                                <div className="flex-1 flex items-center justify-between text-sm font-bold">
-                                                    <span>{item.label}</span>
-                                                    {item.shortcut && (
-                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isActive ? 'bg-white/20 border-white/20 text-white' : (isDarkMood ? 'bg-white/10 border-white/10 text-white/50' : 'bg-gray-100 border-gray-200 text-gray-400')}`}>
-                                                            {item.shortcut}
-                                                        </span>
-                                                    )}
-                                                    {item.badge && (
-                                                        <span className="flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full shadow-sm animate-pulse">
-                                                            {item.badge > 99 ? '99+' : item.badge}
-                                                        </span>
-                                                    )}
+                                                <div className="flex-1 min-w-0 text-left">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-sm font-black truncate text-gray-900">{currentUser?.name}</p>
+                                                        {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
+                                                        {currentUser?.isTrainingManager && !currentUser?.isAdmin && <RoleBadge role="trainingManager" size="xs" />}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-xs truncate font-medium text-gray-500">{currentUser?.email}</p>
+                                                    </div>
                                                 </div>
                                             )}
+                                            <ChevronDown size={16} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
                                         </button>
-                                    );
-                                })}
 
-
-                            </nav>
-
-                            {/* User Profile (Footer) */}
-                            <div className="p-4 border-t border-gray-100/10 relative z-10 shrink-0">
-                                <div className="relative" ref={userMenuRef}>
-                                    <button
-                                        onClick={() => setShowUserMenu(!showUserMenu)}
-                                        className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-all duration-200 ${isDarkMood ? 'bg-white/10 border-white/20 hover:bg-white/20' : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-md'}`}
-                                    >
-                                        <UserAvatar name={currentUser?.name || 'User'} size="sm" />
-                                        {!isCollapsed && (
-                                            <div className="flex-1 min-w-0 text-left">
-                                                <div className="flex items-center gap-2">
-                                                    <p className={`text-sm font-black truncate ${isDarkMood ? 'text-white' : 'text-gray-900'}`}>{currentUser?.name}</p>
-                                                    {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
-                                                    {currentUser?.isTrainingManager && !currentUser?.isAdmin && <RoleBadge role="trainingManager" size="xs" />}
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <p className={`text-xs truncate font-medium ${isDarkMood ? 'text-white/60' : 'text-gray-500'}`}>{currentUser?.email}</p>
-                                                    {myStatusToday?.custom_status && !['Radiante', 'Nublado', 'Cubierto', 'Lluvioso', 'Tormentoso', 'Eléctrico'].includes(myStatusToday.custom_status) && (
-                                                        <span className="text-[10px] font-black text-primary uppercase tracking-widest bg-primary/5 px-1.5 py-0.5 rounded-full border border-primary/10">
-                                                            {myStatusToday.custom_status}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
-                                        <ChevronDown size={16} className={`${isDarkMood ? 'text-white/60' : 'text-gray-400'} transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
-                                    </button>
-
-                                    <AnimatePresence>
-                                        {showUserMenu && !isCollapsed && (
-                                            <motion.div
-                                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                className="absolute bottom-full left-0 w-full mb-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden"
-                                            >
-                                                <div className="p-1">
-                                                    <button
-                                                        onClick={() => {
-                                                            setShowUserMenu(false);
-                                                            onOpenNotificationsModal();
-                                                        }}
-                                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
-                                                    >
-                                                        <div className="relative">
-                                                            <Bell size={16} />
-                                                            {unreadCount > 0 && (
-                                                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
-                                                            )}
-                                                        </div>
-                                                        Notificaciones
-                                                        {unreadCount > 0 && <span className="ml-auto bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-bold">{unreadCount}</span>}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            setShowUserMenu(false);
-                                                            onOpenPasswordModal();
-                                                        }}
-                                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
-                                                    >
-                                                        <Lock size={16} />
-                                                        Cambiar contraseña
-                                                    </button>
-                                                    <div className="h-px bg-gray-100 my-1" />
-                                                    <div className="px-3 py-2 flex items-center justify-between">
-                                                        <span className="text-xs font-bold text-gray-400 uppercase">Tema</span>
+                                        <AnimatePresence>
+                                            {showUserMenu && !isCollapsed && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                    className="absolute bottom-full left-0 w-full mb-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50"
+                                                >
+                                                    <div className="p-1">
                                                         <button
-                                                            onClick={toggleTheme}
-                                                            className={`
-                                                                w-10 h-6 rounded-full transition-colors flex items-center px-1
-                                                                ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200'}
-                                                            `}
+                                                            onClick={() => {
+                                                                setShowUserMenu(false);
+                                                                onOpenNotificationsModal();
+                                                            }}
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
                                                         >
-                                                            <motion.div
-                                                                layout
-                                                                className="w-4 h-4 bg-white rounded-full shadow-sm"
-                                                            />
+                                                            <div className="relative">
+                                                                <Bell size={16} />
+                                                                {unreadCount > 0 && (
+                                                                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
+                                                                )}
+                                                            </div>
+                                                            Notificaciones
+                                                            {unreadCount > 0 && <span className="ml-auto bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-bold">{unreadCount}</span>}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setShowUserMenu(false);
+                                                                onOpenPasswordModal();
+                                                            }}
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+                                                        >
+                                                            <Lock size={16} />
+                                                            Cambiar contraseña
+                                                        </button>
+                                                        <div className="h-px bg-gray-100 my-1" />
+                                                        <div className="px-3 py-2 flex items-center justify-between">
+                                                            <span className="text-xs font-bold text-gray-400 uppercase">Tema</span>
+                                                            <button
+                                                                onClick={toggleTheme}
+                                                                className={`
+                                                                    w-10 h-6 rounded-full transition-colors flex items-center px-1
+                                                                    ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200'}
+                                                                `}
+                                                            >
+                                                                <motion.div
+                                                                    layout
+                                                                    className="w-4 h-4 bg-white rounded-full shadow-sm"
+                                                                />
+                                                            </button>
+                                                        </div>
+                                                        <div className="h-px bg-gray-100 my-1" />
+                                                        <button
+                                                            onClick={handleLogout}
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                        >
+                                                            <LogOut size={16} />
+                                                            Cerrar sesión
                                                         </button>
                                                     </div>
-                                                    <div className="h-px bg-gray-100 my-1" />
-                                                    <button
-                                                        onClick={logout}
-                                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                                    >
-                                                        <LogOut size={16} />
-                                                        Cerrar sesión
-                                                    </button>
-                                                </div>
-                                            </motion.div>
-                                        )}
-                                    </AnimatePresence>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
                                 </div>
                             </div>
                         </>
@@ -556,7 +448,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                 >
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </button>
-            </aside>
+            </aside >
 
         </>
     );

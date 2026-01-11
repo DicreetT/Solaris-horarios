@@ -14,6 +14,21 @@ export function useCalendarOverrides() {
 
     useEffect(() => {
         fetchOverrides();
+
+        const channel = supabase
+            .channel('calendar_overrides_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'calendar_overrides' },
+                () => {
+                    fetchOverrides();
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, []);
 
     async function fetchOverrides() {

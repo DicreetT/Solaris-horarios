@@ -133,7 +133,8 @@ export default function DailyBriefing() {
                         ].map((item) => {
                             const todayKey = toDateKey(new Date());
                             const myStatus = dailyStatuses.find(s => s.user_id === currentUser.id && s.date_key === todayKey);
-                            const isActive = myStatus?.custom_status === item.status;
+                            // Fix: Check if the full stored custom_status matches the label (e.g. "🔥 En racha")
+                            const isActive = myStatus?.custom_status === item.label;
 
                             return (
                                 <button
@@ -144,7 +145,7 @@ export default function DailyBriefing() {
                                             await setDailyStatus({
                                                 dateKey: todayKey,
                                                 status: currentBaseStatus,
-                                                customStatus: `${item.emoji} ${item.status}`, // Include emoji in text for display
+                                                customStatus: item.label, // Save the full label with emoji as custom status
                                                 customEmoji: myStatus?.custom_emoji // Preserve existing weather background
                                             });
                                             if (window.navigator?.vibrate) window.navigator.vibrate(10);

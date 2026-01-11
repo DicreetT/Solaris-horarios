@@ -1,3 +1,4 @@
+import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { User, DailyStatus } from '../types';
@@ -20,6 +21,28 @@ export function useDailyStatus(currentUser: User | null) {
         // Fetch for everyone so we can show it on the calendar
         enabled: !!currentUser,
     });
+
+    // Real-time subscription for daily status changes
+    React.useEffect(() => {
+        if (!currentUser) return;
+
+        console.log('🔄 Setting up realtime for daily_status...');
+        const channel = supabase
+            .channel('daily-status-updates')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'daily_status' },
+                (payload) => {
+                    console.log('🔄 Realtime daily_status change:', payload);
+                    queryClient.invalidateQueries({ queryKey: ['daily_status'] });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentUser, queryClient]);
 
     const setStatusMutation = useMutation({
         mutationFn: async ({ dateKey, status, customStatus, customEmoji }: {

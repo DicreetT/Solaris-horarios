@@ -163,11 +163,10 @@ function Dashboard() {
 
                     <div className="flex flex-wrap justify-center gap-3">
                         {[
-                            { emoji: '☀️', label: 'Radiante', color: 'hover:bg-yellow-100 hover:text-yellow-700 hover:border-yellow-200' },
-                            { emoji: '⛅', label: 'Calmado', color: 'hover:bg-blue-50 hover:text-blue-700 hover:border-blue-100' },
-                            { emoji: '☁️', label: 'Nublado', color: 'hover:bg-gray-100 hover:text-gray-700 hover:border-gray-200' },
-                            { emoji: '🌧️', label: 'Lluvioso', color: 'hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-100' },
-                            { emoji: '⚡', label: 'Eléctrico', color: 'hover:bg-purple-100 hover:text-purple-700 hover:border-purple-200' },
+                            { emoji: '✨', label: 'Protagonista', fullLabel: 'Nivel: protagonista', color: 'hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200' },
+                            { emoji: '🌸', label: 'Zen', fullLabel: 'Hoy nada me afecta', color: 'hover:bg-pink-50 hover:text-pink-700 hover:border-pink-200' },
+                            { emoji: '☁️', label: 'Paciencia', fullLabel: 'Paciencia nivel experto', tooltip: 'Respira profundo y no vayas a prisión 😅', color: 'hover:bg-gray-100 hover:text-gray-700 hover:border-gray-200' },
+                            { emoji: '🔥', label: 'Sin Paciencia', fullLabel: 'Modo: Sin Paciencia', color: 'hover:bg-orange-50 hover:text-orange-700 hover:border-orange-100' },
                         ].map((mood) => {
                             const isSelected = myStatusToday?.custom_emoji === mood.emoji;
                             return (
@@ -175,7 +174,8 @@ function Dashboard() {
                                     key={mood.emoji}
                                     whileHover={{ scale: 1.05, y: -2 }}
                                     whileTap={{ scale: 0.95 }}
-                                    onClick={() => handleMoodSelect(mood.emoji, mood.label)}
+                                    onClick={() => handleMoodSelect(mood.emoji, mood.fullLabel)}
+                                    title={mood.tooltip || mood.fullLabel}
                                     className={`
                                         flex flex-col items-center gap-1 px-4 py-3 border rounded-2xl shadow-sm transition-all group relative min-w-[70px]
                                         ${isSelected
