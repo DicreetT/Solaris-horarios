@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
@@ -48,6 +49,27 @@ export function useTodos(currentUser: User | null) {
         },
         enabled: !!currentUser,
     });
+
+    // Realtime Subscription for Todos
+    // This allows the sidebar badge (and task list) to update instantly when a new task is assigned.
+    useEffect(() => {
+        if (!currentUser) return;
+
+        const channel = supabase
+            .channel('todos_realtime')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'todos' },
+                () => {
+                    queryClient.invalidateQueries({ queryKey: ['todos'] });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentUser, queryClient]);
 
     const createTodoMutation = useMutation({
         mutationFn: async ({ title, description, assignedTo, dueDateKey, attachments, tags }: {

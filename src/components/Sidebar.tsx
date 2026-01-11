@@ -178,25 +178,29 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/tasks',
             label: 'Tareas',
             icon: CheckSquare,
-            show: true
+            show: true,
+            badge: pendingTasksCount
         },
         {
             path: '/meetings',
             label: 'Reuniones/Sugerencias',
             icon: Users,
-            show: true
+            show: true,
+            badge: activeMeetingsCount
         },
         {
             path: '/absences',
             label: 'Ausencias',
             icon: UserX,
-            show: true
+            show: true,
+            badge: pendingAbsencesCount
         },
         {
             path: '/trainings',
             label: 'Formaciones',
             icon: GraduationCap,
-            show: true
+            show: true,
+            badge: pendingTrainingsCount
         },
         {
             path: '/time-tracking',
@@ -214,7 +218,8 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/shopping',
             label: 'Lista de Compras',
             icon: ShoppingBag,
-            show: true
+            show: true,
+            badge: pendingShoppingCount
         },
         {
             path: '/exports',
