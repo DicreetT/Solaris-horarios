@@ -103,6 +103,7 @@ export interface Todo {
     attachments?: Attachment[]; // jsonb
     comments?: Comment[]; // jsonb
     tags?: string[]; // array of strings
+    shocked_users?: string[]; // array of UUIDs
     created_at: string;
 }
 
@@ -154,6 +155,8 @@ export interface DailyStatus {
     user_id: string;
     date_key: string;
     status: 'in_person' | 'remote';
+    custom_status?: string;
+    custom_emoji?: string;
     created_at: string;
 }
 

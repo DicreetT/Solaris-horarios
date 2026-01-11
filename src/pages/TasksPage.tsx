@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import TodoModal from '../components/TodoModal';
@@ -7,12 +8,30 @@ import { Todo } from '../types';
 import { TaskSection } from '../components/TaskSection';
 import { TaskCardRow } from '../components/TaskCardRow';
 import { CheckSquare, Plus, CheckCircle2, Circle, AlertCircle, UserCheck, Shield } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 function TasksPage() {
     const { currentUser } = useAuth();
     const { todos, toggleTodo } = useTodos(currentUser);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // Auto-open task if task ID is in URL
+    useEffect(() => {
+        const taskId = searchParams.get('task');
+        if (taskId && todos.length > 0) {
+            const task = todos.find(t => t.id.toString() === taskId);
+            if (task) {
+                setSelectedTask(task);
+                // Clear the param after opening to avoid re-opening on manual close if needed? 
+                // Or keep it. Usually clear is better to keep URL clean.
+                const newParams = new URLSearchParams(searchParams);
+                newParams.delete('task');
+                setSearchParams(newParams, { replace: true });
+            }
+        }
+    }, [searchParams, todos, setSearchParams]);
 
     // Determines which "Top Level" filters are active
     // "today" includes overdue implicitly for urgency
@@ -22,14 +41,22 @@ function TasksPage() {
 
     // --- Sorting Logic ---
     const getTaskPriority = (t: Todo) => {
-        const isDone = t.assigned_to.every(uid => t.completed_by.includes(uid));
-        if (isDone) return 3; // Completed lasts
+        const isDoneForMe = t.completed_by.includes(currentUser.id);
+        const isAssignedToMe = t.assigned_to.includes(currentUser.id);
+
+        // If it's assigned to me and I'm done, it's low priority (3)
+        if (isAssignedToMe && isDoneForMe) return 3;
+
+        // If it's NOT assigned to me but it's globally done, it's low priority
+        const isGloballyDone = t.assigned_to.length > 0 && t.assigned_to.every(uid => t.completed_by.includes(uid));
+        if (!isAssignedToMe && isGloballyDone) return 3;
 
         if (t.due_date_key) {
             const today = new Date().toISOString().split('T')[0];
-            if (t.due_date_key <= today) return 1; // Overdue or Today = Priority 1
+            // Only show as urgent (1) if I haven't finished it yet
+            if (t.due_date_key <= today && (!isAssignedToMe || !isDoneForMe)) return 1;
         }
-        return 2; // Future Pending
+        return 2;
     };
 
     const sortTasks = (taskList: Todo[]) => {
@@ -50,20 +77,32 @@ function TasksPage() {
 
     // --- Filtering Logic ---
     const filterByTopBar = (t: Todo) => {
-        const isDone = t.assigned_to.length > 0 && t.assigned_to.every(uid => t.completed_by.includes(uid));
+        const isDoneForMe = t.completed_by.includes(currentUser.id);
+        const isAssignedToMe = t.assigned_to.includes(currentUser.id);
+        const isCreator = t.created_by === currentUser.id;
+
+        // For filtering purposes, we consider "Done" if the current user finished their part
+        // OR if they are the creator and EVERYONE finished (global done)
+        const isGloballyDone = t.assigned_to.length > 0 && t.assigned_to.every(uid => t.completed_by.includes(uid));
+
+        // Done logic: 
+        // - If assigned: when I complete it.
+        // - If only creator (not assigned): when everyone completes it.
+        const isRelevantDone = isAssignedToMe ? isDoneForMe : isGloballyDone;
+
         const today = new Date().toISOString().split('T')[0];
-        const isDueTodayOrOverdue = t.due_date_key ? t.due_date_key <= today : false;
+        const isOverdue = t.due_date_key ? t.due_date_key <= today : false;
 
         switch (filterStatus) {
             case 'today':
-                return isDueTodayOrOverdue && !isDone;
+                return isOverdue && !isRelevantDone;
             case 'pending':
-                return !isDone;
+                return !isRelevantDone;
             case 'completed':
-                return isDone;
+                return isRelevantDone;
             case 'all':
             default:
-                return true;
+                return !isRelevantDone;
         }
     };
 
@@ -98,11 +137,11 @@ function TasksPage() {
             {/* Header & Main Action */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-3">
+                    <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight flex items-center gap-3">
                         <CheckSquare className="text-primary" size={28} />
                         Mis Tareas
                     </h1>
-                    <p className="text-gray-500 font-medium">
+                    <p className="text-gray-500 dark:text-gray-400 font-medium">
                         Gestiona y organiza tus pendientes.
                     </p>
                 </div>
@@ -119,27 +158,27 @@ function TasksPage() {
             <div className="flex flex-wrap gap-2">
                 <button
                     onClick={() => setFilterStatus('all')}
-                    className={`px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'all' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    className={`px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'all' ? 'bg-gray-800 text-white border-gray-800 dark:bg-white dark:text-gray-900 dark:border-white' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
                 >
                     Todas
                 </button>
                 <button
                     onClick={() => setFilterStatus('today')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'today' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'today' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
                 >
                     <AlertCircle size={14} />
                     Vencen Hoy
                 </button>
                 <button
                     onClick={() => setFilterStatus('pending')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'pending' ? 'bg-white border-primary text-primary ring-2 ring-primary/10' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'pending' ? 'bg-white border-primary text-primary ring-2 ring-primary/10 dark:bg-primary/20 dark:border-primary/50' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
                 >
                     <Circle size={14} />
                     Pendientes
                 </button>
                 <button
                     onClick={() => setFilterStatus('completed')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'completed' ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'completed' ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
                 >
                     <CheckCircle2 size={14} />
                     Completadas
@@ -156,21 +195,35 @@ function TasksPage() {
                     defaultOpen={true}
                     icon={<UserCheck size={20} className="text-blue-500" />}
                 >
-                    {lists.assigned.length > 0 ? (
-                        lists.assigned.map(task => (
-                            <TaskCardRow
-                                key={task.id}
-                                todo={task}
-                                currentUser={currentUser}
-                                onClick={setSelectedTask}
-                                onToggle={toggleTodo}
-                            />
-                        ))
-                    ) : (
-                        <div className="p-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
-                            <p className="text-gray-400 text-sm italic">No tienes tareas asignadas con este filtro.</p>
-                        </div>
-                    )}
+                    <AnimatePresence mode="popLayout">
+                        {lists.assigned.length > 0 ? (
+                            lists.assigned.map(task => (
+                                <motion.div
+                                    key={task.id}
+                                    layout
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95 }}
+                                    transition={{ duration: 0.2 }}
+                                >
+                                    <TaskCardRow
+                                        todo={task}
+                                        currentUser={currentUser}
+                                        onClick={setSelectedTask}
+                                        onToggle={toggleTodo}
+                                    />
+                                </motion.div>
+                            ))
+                        ) : (
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10"
+                            >
+                                <p className="text-gray-400 dark:text-gray-500 text-sm italic">No tienes tareas asignadas con este filtro.</p>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </TaskSection>
 
                 {/* 2. Created by Me */}
@@ -180,62 +233,88 @@ function TasksPage() {
                     defaultOpen={false}
                     icon={<Plus size={20} className="text-purple-500" />}
                 >
-                    {lists.created.length > 0 ? (
-                        lists.created.map(task => (
-                            <TaskCardRow
-                                key={task.id}
-                                todo={task}
-                                currentUser={currentUser}
-                                onClick={setSelectedTask}
-                                onToggle={toggleTodo}
-                            />
-                        ))
-                    ) : (
-                        <div className="p-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
-                            <p className="text-gray-400 text-sm italic">No has creado tareas con este filtro.</p>
-                        </div>
-                    )}
+                    <AnimatePresence mode="popLayout">
+                        {lists.created.length > 0 ? (
+                            lists.created.map(task => (
+                                <motion.div
+                                    key={task.id}
+                                    layout
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95 }}
+                                    transition={{ duration: 0.2 }}
+                                >
+                                    <TaskCardRow
+                                        todo={task}
+                                        currentUser={currentUser}
+                                        onClick={setSelectedTask}
+                                        onToggle={toggleTodo}
+                                    />
+                                </motion.div>
+                            ))
+                        ) : (
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10"
+                            >
+                                <p className="text-gray-400 dark:text-gray-500 text-sm italic">No has creado tareas con este filtro.</p>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </TaskSection>
 
                 {/* 3. Admin View (All) */}
-                {isAdmin && (
-                    <TaskSection
-                        title="Todas las tareas del equipo"
-                        count={lists.all.length}
-                        defaultOpen={false}
-                        icon={<Shield size={20} className="text-orange-500" />}
-                    >
-                        {lists.all.length > 0 ? (
-                            lists.all.map(task => (
-                                <TaskCardRow
-                                    key={task.id}
-                                    todo={task}
-                                    currentUser={currentUser}
-                                    onClick={setSelectedTask}
-                                    onToggle={toggleTodo}
-                                />
-                            ))
-                        ) : (
-                            <div className="p-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
-                                <p className="text-gray-400 text-sm italic">No hay tareas en el sistema.</p>
-                            </div>
-                        )}
-                    </TaskSection>
-                )}
+                {
+                    isAdmin && (
+                        <TaskSection
+                            title="Todas las tareas del equipo"
+                            count={lists.all.length}
+                            defaultOpen={false}
+                            icon={<Shield size={20} className="text-orange-500" />}
+                        >
+                            <AnimatePresence mode="popLayout">
+                                {lists.all.length > 0 ? (
+                                    lists.all.map(task => (
+                                        <motion.div
+                                            key={task.id}
+                                            layout
+                                            initial={{ opacity: 0, y: 20 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.95 }}
+                                            transition={{ duration: 0.2 }}
+                                        >
+                                            <TaskCardRow
+                                                todo={task}
+                                                currentUser={currentUser}
+                                                onClick={setSelectedTask}
+                                                onToggle={toggleTodo}
+                                            />
+                                        </motion.div>
+                                    ))
+                                ) : (
+                                    <div className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10">
+                                        <p className="text-gray-400 dark:text-gray-500 text-sm italic">No hay tareas en el sistema.</p>
+                                    </div>
+                                )}
+                            </AnimatePresence>
+                        </TaskSection>
+                    )}
             </div>
 
             {/* Modals */}
-            {showCreateModal && (
-                <TodoModal onClose={() => setShowCreateModal(false)} />
-            )}
-
-            {selectedTask && (
-                <TaskDetailModal
-                    task={selectedTask}
-                    onClose={() => setSelectedTask(null)}
-                />
-            )}
-        </div>
+            <AnimatePresence>
+                {showCreateModal && (
+                    <TodoModal onClose={() => setShowCreateModal(false)} />
+                )}
+                {selectedTask && (
+                    <TaskDetailModal
+                        task={selectedTask}
+                        onClose={() => setSelectedTask(null)}
+                    />
+                )}
+            </AnimatePresence>
+        </div >
     );
 }
 

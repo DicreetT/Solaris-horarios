@@ -19,17 +19,17 @@ export function TaskSection({ title, count, defaultOpen = false, children, icon 
         <div className="mb-4">
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full flex items-center justify-between p-3 bg-white hover:bg-gray-50 rounded-xl border border-gray-100 transition-all mb-2 group"
+                className="w-full flex items-center justify-between p-3 bg-white dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/10 rounded-xl border border-gray-100 dark:border-white/10 transition-all mb-2 group"
             >
                 <div className="flex items-center gap-3">
-                    <div className={`p-1.5 rounded-lg ${isOpen ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
+                    <div className={`p-1.5 rounded-lg ${isOpen ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-400 dark:bg-white/10 dark:text-gray-500 group-hover:bg-gray-200 dark:group-hover:bg-white/20'}`}>
                         {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                     </div>
 
                     <div className="flex items-center gap-2">
                         {icon}
-                        <h2 className="text-lg font-bold text-gray-800">{title}</h2>
-                        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-bold">
+                        <h2 className="text-lg font-bold text-gray-800 dark:text-white">{title}</h2>
+                        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300 text-xs font-bold">
                             {count}
                         </span>
                     </div>

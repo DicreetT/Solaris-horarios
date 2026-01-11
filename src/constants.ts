@@ -9,7 +9,7 @@ export const ESTEBAN_ID = "07d58adc-8c82-458d-ba48-f733ec706c7c";
 
 export const USERS: User[] = [
     {
-        id: "thalia",
+        id: "1c42e44a-7e58-4c86-94ca-404061f8863d", // thalia
         name: "Thalia",
         email: "thaliaoliveros.solaris@gmail.com",
         password: "Thalia123",
@@ -17,16 +17,15 @@ export const USERS: User[] = [
         isAdmin: true,
     },
     {
-        id: "contable",
+        id: "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", // contable
         name: "Heidy",
         email: "heidy.m.solaris@gmail.com",
         password: "heidy123",
         isTrainingManager: false,
     },
     {
-        id: "anabella",
+        id: "6bafcb97-6a1b-4224-adbb-1340b86ffeb9", // anabella
         name: "Anabella",
-
         email: "anabellas.solaris@gmail.com",
         password: "anabella123",
         isTrainingManager: false,
@@ -34,23 +33,20 @@ export const USERS: User[] = [
     {
         id: ESTEBAN_ID,
         name: "Esteban",
-
         email: "contacto@solaris.global",
         password: "esteban123",
         isTrainingManager: true,
     },
     {
-        id: "itzi",
+        id: "cb5d2e6e-9046-4b22-b509-469076999d78", // itzi
         name: "Itzi",
-
         email: "solarishuarte@gmail.com",
         password: "itziar123",
         isTrainingManager: false,
     },
     {
-        id: "fer",
+        id: "4ca49a9d-7ee5-4b54-8e93-bc4833de549a", // fer
         name: "Fer",
-
         email: "fadodami2503@gmail.com",
         password: "fer123",
         isTrainingManager: false,
@@ -65,7 +61,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Gestión y control de stock y existencias.",
         emoji: "📦",
         url: "https://drive.google.com/drive/folders/1TPqNMD5Yx6xYe0PuhjYRNLYrkT1KPSDL",
-        users: ["anabella", "itzi", ESTEBAN_ID, "contable", "thalia"],
+        users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", "cb5d2e6e-9046-4b22-b509-469076999d78", ESTEBAN_ID, "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
         id: "conteo",
@@ -73,7 +69,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Registro semanal de conteo en la sede Canet.",
         emoji: "📊",
         url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
-        users: ["anabella", "itzi", ESTEBAN_ID, "thalia"],
+        users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", "cb5d2e6e-9046-4b22-b509-469076999d78", ESTEBAN_ID, "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
         id: "etiquetas",
@@ -81,7 +77,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Archivos de impresión y diseño de etiquetas.",
         emoji: "🏷️",
         url: "https://drive.google.com/drive/folders/1jaojxGMiWLaLxNWKcEMXv4XKM6ary2Vg",
-        users: ["anabella", ESTEBAN_ID, "itzi", "fer", "thalia"],
+        users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", ESTEBAN_ID, "cb5d2e6e-9046-4b22-b509-469076999d78", "4ca49a9d-7ee5-4b54-8e93-bc4833de549a", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
         id: "facturacion",
@@ -89,7 +85,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Documentos, facturas y registros contables.",
         emoji: "📑",
         url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
-        users: [ESTEBAN_ID, "itzi", "contable", "thalia"],
+        users: [ESTEBAN_ID, "cb5d2e6e-9046-4b22-b509-469076999d78", "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
         id: "facturas_pagos",
@@ -97,7 +93,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Gestión de facturas y pagos a proveedores.",
         emoji: "🧾",
         url: "https://drive.google.com/drive/folders/1NWhx6o-Kqbd6m9xMXgbzVBtm0ny8e6zY?usp=sharing",
-        users: ["contable", "thalia"],
+        users: ["b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
         id: "protocolos",
@@ -105,6 +101,6 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Protocolos y procedimientos operativos.",
         emoji: "📋",
         url: "https://drive.google.com/drive/folders/1JoWr3w-anNkyrqGVTzZovTqK44ixm5c2?usp=sharing",
-        users: ["thalia", "contable", "anabella", ESTEBAN_ID, "itzi", "fer"],
+        users: ["1c42e44a-7e58-4c86-94ca-404061f8863d", "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "6bafcb97-6a1b-4224-adbb-1340b86ffeb9", ESTEBAN_ID, "cb5d2e6e-9046-4b22-b509-469076999d78", "4ca49a9d-7ee5-4b54-8e93-bc4833de549a"],
     },
 ];

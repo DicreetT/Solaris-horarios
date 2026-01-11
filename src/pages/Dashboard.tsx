@@ -11,9 +11,13 @@ import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
+import DailyBriefing from '../components/DailyBriefing';
+import { TeamHeartbeat } from '../components/TeamHeartbeat';
 import { toDateKey, formatDatePretty } from '../utils/dateUtils';
 import { calculateTotalHours, formatHours } from '../utils/timeUtils';
 import { USERS } from '../constants';
+import { motion } from 'framer-motion';
+import { haptics } from '../utils/haptics';
 
 /**
  * Dashboard page
@@ -26,6 +30,28 @@ function Dashboard() {
     const { timeData } = useTimeData();
     const { trainingRequests } = useTraining(currentUser);
     const { notifications } = useNotificationsContext();
+    const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
+
+    const todayKey = toDateKey(new Date());
+    const myStatusToday = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === todayKey);
+
+    const [savingMood, setSavingMood] = useState<string | null>(null);
+
+    const handleMoodSelect = async (emoji: string, label: string) => {
+        if (!currentUser) return;
+        setSavingMood(emoji);
+        haptics.medium();
+        try {
+            await setDailyStatus({
+                dateKey: todayKey,
+                status: myStatusToday?.status || 'in_person',
+                customEmoji: emoji,
+                customStatus: myStatusToday?.custom_status // Preserve existing social status (e.g. 'En racha')
+            });
+        } finally {
+            setTimeout(() => setSavingMood(null), 800); // Keep visual state for a moment
+        }
+    };
 
     const todayStats = React.useMemo(() => {
         if (!currentUser) return {
@@ -105,24 +131,93 @@ function Dashboard() {
         ) || [];
     }, [currentUser, todos]);
 
+    // activeUsers calculation removed - moved to Layout.tsx
+
     return (
-        <div className="max-w-6xl mx-auto pb-20">
-            {/* Welcome section */}
-            <div className="mb-8">
-                <div className="flex items-center gap-4 mb-2">
-                    <UserAvatar name={currentUser?.name} size="lg" />
-                    <div>
-                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
-                            ¡Hola, {currentUser?.name}! 👋
-                        </h1>
-                        <p className="text-gray-500 font-medium text-lg">
-                            {new Date().toLocaleDateString('es-ES', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric'
-                            })}
-                        </p>
+        <div className="max-w-6xl mx-auto pb-20 relative">
+            {/* Daily Briefing Intelligence */}
+            <DailyBriefing />
+
+
+
+            {/* Mood Diary Section (Phase 6) */}
+            <div className="mb-8 p-6 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 rounded-[2.5rem] border border-white shadow-sm overflow-hidden relative">
+                {/* Decorative particles */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-purple-200/20 blur-[60px] rounded-full -mr-16 -mt-16" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-200/20 blur-[60px] rounded-full -ml-16 -mb-16" />
+
+                <div className="relative flex flex-col md:flex-row items-center justify-between gap-8">
+                    <div className="flex items-center gap-5">
+                        <motion.div
+                            initial={{ scale: 0.8, rotate: -10 }}
+                            animate={{ scale: 1, rotate: 0 }}
+                            className="w-16 h-16 bg-white rounded-3xl shadow-xl flex items-center justify-center text-3xl shrink-0"
+                        >
+                            {myStatusToday?.custom_emoji || '🌈'}
+                        </motion.div>
+                        <div>
+                            <h2 className="text-xl font-black text-gray-900 leading-tight">¿Cómo está tu clima interior hoy?</h2>
+                            <p className="text-sm text-gray-500 font-medium tracking-tight">Tu equipo agradecerá saber cómo apoyarte mejor.</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap justify-center gap-3">
+                        {[
+                            { emoji: '☀️', label: 'Radiante', color: 'hover:bg-yellow-100 hover:text-yellow-700 hover:border-yellow-200' },
+                            { emoji: '⛅', label: 'Calmado', color: 'hover:bg-blue-50 hover:text-blue-700 hover:border-blue-100' },
+                            { emoji: '☁️', label: 'Nublado', color: 'hover:bg-gray-100 hover:text-gray-700 hover:border-gray-200' },
+                            { emoji: '🌧️', label: 'Lluvioso', color: 'hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-100' },
+                            { emoji: '⚡', label: 'Eléctrico', color: 'hover:bg-purple-100 hover:text-purple-700 hover:border-purple-200' },
+                        ].map((mood) => {
+                            const isSelected = myStatusToday?.custom_emoji === mood.emoji;
+                            return (
+                                <motion.button
+                                    key={mood.emoji}
+                                    whileHover={{ scale: 1.05, y: -2 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => handleMoodSelect(mood.emoji, mood.label)}
+                                    className={`
+                                        flex flex-col items-center gap-1 px-4 py-3 border rounded-2xl shadow-sm transition-all group relative min-w-[70px]
+                                        ${isSelected
+                                            ? 'bg-primary text-white border-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.4)] scale-110 z-10'
+                                            : 'bg-white border-gray-100 ' + mood.color}
+                                    `}
+                                >
+                                    <span className={`text-2xl transition-transform ${isSelected ? 'scale-125 mb-1' : 'group-hover:scale-110'}`}>{mood.emoji}</span>
+                                    <span className={`text-[9px] font-black uppercase tracking-widest ${isSelected ? 'text-white' : 'text-gray-400 group-hover:text-inherit'}`}>
+                                        {mood.label}
+                                    </span>
+                                    {isSelected && (
+                                        <>
+                                            <motion.div
+                                                layoutId="mood-active-glow"
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: [0.2, 0.5, 0.2] }}
+                                                transition={{ duration: 2, repeat: Infinity }}
+                                                className="absolute inset-0 bg-white/20 rounded-2xl blur-md pointer-events-none"
+                                            />
+                                            <motion.div
+                                                layoutId="mood-active"
+                                                initial={{ scale: 0 }}
+                                                animate={{ scale: 1 }}
+                                                className="absolute -top-1 -right-1 w-4 h-4 bg-white text-primary rounded-full border-2 border-primary shadow-lg flex items-center justify-center overflow-hidden"
+                                            >
+                                                <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                                            </motion.div>
+                                        </>
+                                    )}
+                                    {savingMood === mood.emoji && (
+                                        <motion.div
+                                            initial={{ opacity: 0, scale: 0.5 }}
+                                            animate={{ opacity: 1, scale: 1.2 }}
+                                            className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-2xl z-20"
+                                        >
+                                            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                        </motion.div>
+                                    )}
+                                </motion.button>
+                            );
+                        })}
                     </div>
                 </div>
             </div>
@@ -178,7 +273,7 @@ function Dashboard() {
                         );
                     })()}
                 </div>
-            </div>
+            </div >
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Left Column: Today's Status Summary */}
@@ -306,89 +401,152 @@ function Dashboard() {
 
                 {/* Right Column: Absences & Due Today */}
                 <div className="flex flex-col gap-8 h-full">
-                    {/* Absences Card */}
-                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col">
-                        <div className="p-6 border-b border-gray-100 bg-orange-50/50">
+                    {/* Absences Card (Team Pulse) */}
+                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col relative z-20">
+                        <div className="p-4 border-b border-gray-100 bg-orange-50/50">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                        Equipo ausente hoy
+                                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                        Pulso del Equipo
                                     </h2>
-                                    <p className="text-sm text-gray-500 mt-1">Personas que no están disponibles hoy</p>
+                                    <p className="text-xs text-gray-500 mt-1">Cómo se siente el equipo hoy</p>
                                 </div>
                             </div>
+
+
                         </div>
-                        <div className="p-6">
+                        <div className="p-4">
                             {(() => {
                                 const todayKey = toDateKey(new Date());
                                 const { absenceRequests } = useAbsences(currentUser);
                                 const { dailyStatuses } = useDailyStatus(currentUser);
 
-                                // 1. Absences filter (with range support)
-                                const todaysAbsences = absenceRequests?.filter(r => {
-                                    if (r.status !== 'approved') return false;
-                                    const start = r.date_key;
-                                    const end = r.end_date || r.date_key;
-                                    return todayKey >= start && todayKey <= end;
-                                }) || [];
+                                // Show EVERYONE from the USERS constant for a true collective board
+                                const teamItems = USERS.map(user => {
+                                    const userId = user.id;
+                                    const absence = absenceRequests.find(a => {
+                                        if (a.status !== 'approved') return false;
+                                        const start = a.date_key;
+                                        const end = a.end_date || a.date_key;
+                                        return a.created_by === userId && todayKey >= start && todayKey <= end;
+                                    });
+                                    const statusRow = dailyStatuses.find(s => s.user_id === userId && s.date_key === todayKey);
 
-                                // 2. Daily Status filter (Remote/Not in person)
-                                const todaysRemote = dailyStatuses?.filter(s =>
-                                    s.date_key === todayKey && s.status === 'remote'
-                                ) || [];
+                                    // Check if user is actively clocked in right now
+                                    const todayData = timeData[todayKey] || {};
+                                    const userEntries = todayData[userId] || [];
+                                    const isActive = userEntries.some(e => e.entry && !e.exit);
 
-                                // Combine and unique by user ID
-                                const absentUserIds = new Set([
-                                    ...todaysAbsences.map(a => a.created_by),
-                                    ...todaysRemote.map(s => s.user_id)
-                                ]);
-
-                                const absentItems = Array.from(absentUserIds).map(userId => {
-                                    const user = USERS.find(u => u.id === userId);
-                                    if (!user) return null;
-
-                                    // Determine reason/label
-                                    const absence = todaysAbsences.find(a => a.created_by === userId);
-                                    const remote = todaysRemote.find(s => s.user_id === userId);
-
-                                    let label = 'Ausente';
-                                    let style = 'bg-amber-100 text-amber-700 border-amber-200';
+                                    let label = '';
+                                    let style = '';
 
                                     if (absence) {
                                         if (absence.type === 'vacation') {
                                             label = 'Vacaciones';
                                             style = 'bg-purple-100 text-purple-700 border-purple-200';
                                         } else {
-                                            label = 'Ausencia / Baja';
+                                            label = 'Ausencia';
+                                            style = 'bg-amber-100 text-amber-700 border-amber-200';
                                         }
-                                    } else if (remote) {
-                                        label = 'No Presencial';
-                                        style = 'bg-gray-100 text-gray-700 border-gray-200';
+                                    } else if (statusRow?.status === 'remote') {
+                                        label = 'Remoto';
+                                        style = 'bg-blue-50 text-blue-700 border-blue-100';
+                                    } else if (isActive) {
+                                        label = 'Activo';
+                                        style = 'bg-emerald-50 text-emerald-700 border-emerald-100 animate-pulse';
+                                    } else {
+                                        label = 'Desconectado';
+                                        style = 'bg-gray-50 text-gray-400 border-gray-100 opacity-60';
                                     }
 
-                                    return { userId, user, label, style };
-                                }).filter(Boolean); // Filter out nulls from missing users
+                                    return { userId, user, label, style, statusRow, isActive };
+                                }).sort((a, b) => {
+                                    // Sort by active/status visibility
+                                    if (a.isActive && !b.isActive) return -1;
+                                    if (!a.isActive && b.isActive) return 1;
+                                    return a.user.name.localeCompare(b.user.name);
+                                });
 
-                                return absentItems.length > 0 ? (
-                                    <div className="space-y-3">
-                                        {absentItems.map((item: any) => (
-                                            <div key={item.userId} className="flex items-center gap-4 p-3 rounded-xl bg-orange-50/30 border border-orange-100">
-                                                <UserAvatar name={item.user.name} size="md" />
-                                                <div>
-                                                    <p className="font-bold text-gray-900">{item.user.name}</p>
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${item.style}`}>
-                                                        {item.label}
-                                                    </span>
+                                return (
+                                    <div className="space-y-2">
+                                        {teamItems.length > 0 ? (
+                                            teamItems.map((item: any) => {
+                                                const moodColors: Record<string, string> = {
+                                                    '☀️': 'from-yellow-50 to-orange-50 border-yellow-100',
+                                                    '⛅': 'from-blue-50 to-indigo-50 border-blue-100',
+                                                    '☁️': 'from-gray-50 to-slate-100 border-gray-200',
+                                                    '🌧️': 'from-indigo-50 to-blue-100 border-indigo-200',
+                                                    '⚡': 'from-purple-50 to-fuchsia-100 border-purple-200'
+                                                };
+                                                const isRestricted = item.statusRow?.custom_status?.toLowerCase().includes('comiendo') ||
+                                                    item.statusRow?.custom_status?.toLowerCase().includes('ocupado') ||
+                                                    item.statusRow?.custom_status?.toLowerCase().includes('concentrado');
+
+                                                const bgStyle = isRestricted
+                                                    ? 'from-red-50 to-orange-50 border-red-200 ring-2 ring-red-100 ring-offset-2'
+                                                    : item.statusRow?.custom_emoji ? moodColors[item.statusRow.custom_emoji] : 'from-gray-50 to-white border-gray-100';
+
+                                                return (
+                                                    <motion.div
+                                                        key={item.userId}
+                                                        initial={{ opacity: 0, x: -20 }}
+                                                        animate={{ opacity: item.isActive || item.statusRow ? 1 : 0.6, x: 0 }}
+                                                        whileHover={{ scale: 1.02, x: 4 }}
+                                                        className={`flex items-center gap-4 p-4 rounded-[2rem] bg-gradient-to-br border shadow-sm transition-all ${bgStyle} relative overflow-hidden`}
+                                                    >
+                                                        {isRestricted && (
+                                                            <div className="absolute top-0 right-0 p-2 opacity-10">
+                                                                <AlertCircle size={48} className="text-red-500" />
+                                                            </div>
+                                                        )}
+                                                        <div className="relative">
+                                                            <UserAvatar name={item.user.name} size="md" />
+                                                            {item.isActive && (
+                                                                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-sm flex items-center justify-center">
+                                                                    <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+                                                                </div>
+                                                            )}
+                                                            {item.statusRow?.custom_emoji && (
+                                                                <motion.span
+                                                                    animate={{ y: [0, -4, 0] }}
+                                                                    transition={{ repeat: Infinity, duration: 2 }}
+                                                                    className="absolute -top-3 -right-3 text-2xl drop-shadow-md"
+                                                                >
+                                                                    {item.statusRow.custom_emoji}
+                                                                </motion.span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2">
+                                                                <p className={`font-black tracking-tight leading-tight ${item.isActive ? 'text-gray-900' : 'text-gray-500'}`}>
+                                                                    {item.user.name}
+                                                                </p>
+                                                                {isRestricted && (
+                                                                    <span className="flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                                                                )}
+                                                            </div>
+                                                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black border uppercase tracking-wider ${item.style} shadow-sm`}>
+                                                                    {item.label}
+                                                                </span>
+                                                                {item.statusRow?.custom_status && (
+                                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${isRestricted ? 'bg-red-100/50 text-red-700 border-red-200' : 'bg-white/50 text-gray-600 border-white/50'}`}>
+                                                                        "{item.statusRow.custom_status}"
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </motion.div>
+                                                );
+                                            })
+                                        ) : (
+                                            <div className="text-center py-10 text-gray-400 text-sm italic">
+                                                <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-3xl flex items-center justify-center mx-auto mb-4 border-2 border-dashed border-gray-200">
+                                                    <Users size={32} />
                                                 </div>
+                                                Nadie ha compartido su estado hoy todavía.
                                             </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-6 text-gray-400 text-sm italic">
-                                        <div className="w-12 h-12 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <Users size={24} />
-                                        </div>
-                                        Todo el equipo está disponible hoy.
+                                        )}
                                     </div>
                                 );
                             })()}

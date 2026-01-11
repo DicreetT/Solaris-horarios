@@ -32,6 +32,7 @@ export function useTodos(currentUser: User | null) {
                 attachments: row.attachments || [],
                 comments: row.comments || [],
                 tags: row.tags || [],
+                shocked_users: row.shocked_users || [],
                 created_at: row.created_at,
             }));
 
@@ -96,19 +97,27 @@ export function useTodos(currentUser: User | null) {
     });
 
     const toggleTodoMutation = useMutation({
-        mutationFn: async (todo: { id: number; completed_by: string[] }) => {
+        mutationFn: async (todo: { id: number; completed_by: string[]; shocked_users?: string[] }) => {
             const isDone = todo.completed_by.includes(currentUser.id);
             const nextCompleted = isDone
                 ? todo.completed_by.filter((id: string) => id !== currentUser.id)
                 : [...todo.completed_by, currentUser.id];
 
+            // If marking as done, also remove from shocked_users
+            const nextShocked = !isDone
+                ? (todo.shocked_users || []).filter(uid => uid !== currentUser.id)
+                : (todo.shocked_users || []);
+
             const { error } = await supabase
                 .from('todos')
-                .update({ completed_by: nextCompleted })
+                .update({
+                    completed_by: nextCompleted,
+                    shocked_users: nextShocked
+                })
                 .eq('id', todo.id);
 
             if (error) throw error;
-            return nextCompleted;
+            return { nextCompleted, nextShocked };
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });

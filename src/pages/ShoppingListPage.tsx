@@ -21,13 +21,13 @@ export default function ShoppingListPage() {
         <div className="max-w-6xl mx-auto pb-20">
             {/* Header */}
             <div className="mb-12 text-center">
-                <div className="inline-flex p-4 bg-indigo-50 text-indigo-600 rounded-2xl mb-4 shadow-sm">
+                <div className="inline-flex p-4 bg-indigo-50 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-300 rounded-2xl mb-4 shadow-sm">
                     <ShoppingBag size={48} />
                 </div>
-                <h1 className="text-5xl font-black text-gray-900 tracking-tight mb-4">
+                <h1 className="text-5xl font-black text-gray-900 dark:text-white tracking-tight mb-4">
                     Lista de Compras
                 </h1>
-                <p className="text-xl text-gray-500 max-w-2xl mx-auto">
+                <p className="text-xl text-gray-500 dark:text-gray-400 max-w-2xl mx-auto">
                     Selecciona la ubicación para ver o añadir ítems a la lista de compra.
                 </p>
             </div>

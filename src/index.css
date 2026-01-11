@@ -1,18 +1,117 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #9333EA;
-  --color-primary-dark: #7E22CE;
-  --color-primary-light: #A855F7;
-  --color-bg: #F5F3FF;
-  --color-card: #F4F4E8;
-  --color-border: #000000;
-  --color-text: #000000;
+  --color-primary: var(--primary);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-light: var(--primary-light);
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-sidebar: var(--sidebar-bg);
 
   /* Layout variables */
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 64px;
   --header-height: 64px;
+}
+
+/* Base Themes */
+:root {
+  --primary: #9333EA;
+  --primary-dark: #7E22CE;
+  --primary-light: #A855F7;
+  --bg: #F8F7FF;
+  --card: #FFFFFF;
+  --border: #E9E4FF;
+  --text: #1A1625;
+  --sidebar-bg: rgba(255, 255, 255, 0.8);
+}
+
+/* Dynamic Themes (Phase 6) */
+[data-time='sunrise'] {
+  --primary: #F59E0B;
+  --primary-dark: #D97706;
+  --primary-light: #FBBF24;
+  --bg: #FFFBEB;
+  --card: #FFFFFF;
+  --border: #FEF3C7;
+  --text: #78350F;
+  --sidebar-bg: rgba(255, 251, 235, 0.8);
+}
+
+[data-time='sunset'] {
+  --primary: #EA580C;
+  --primary-dark: #C2410C;
+  --primary-light: #FB923C;
+  --bg: #FFF7ED;
+  --card: #FFFFFF;
+  --border: #FFEDD5;
+  --text: #7C2D12;
+  --sidebar-bg: rgba(255, 247, 237, 0.8);
+}
+
+/* Mood Themes (Phase 6+) - High Specificity Overrides */
+html[data-mood='Radiant'] {
+  --primary: #F59E0B;
+  --bg: #FFFBEB;
+  --border: #FEF3C7;
+  --text: #78350F;
+  --sidebar-bg: rgba(255, 251, 235, 0.9);
+}
+
+html[data-mood='Calmado'] {
+  --primary: #3B82F6;
+  --bg: #EFF6FF;
+  --border: #DBEAFE;
+  --text: #1E3A8A;
+  --sidebar-bg: rgba(239, 246, 255, 0.9);
+}
+
+html[data-mood='Nublado'] {
+  --primary: #6366F1;
+  --bg: #F5F3FF;
+  --border: #EDE9FE;
+  --text: #4338CA;
+  --sidebar-bg: rgba(245, 243, 255, 0.9);
+}
+
+html[data-mood='Lluvioso'] {
+  --primary: #64748B;
+  --bg: #F1F5F9;
+  --border: #E2E8F0;
+  --text: #1E293B;
+  --sidebar-bg: rgba(241, 245, 249, 0.9);
+}
+
+html[data-mood='Eléctrico'] {
+  --primary: #8B5CF6;
+  --bg: #FAF5FF;
+  --border: #F3E8FF;
+  --text: #581C87;
+  --sidebar-bg: rgba(250, 245, 255, 0.9);
+}
+
+[data-time='night'] {
+  --primary: #818CF8;
+  --primary-dark: #4F46E5;
+  --primary-light: #A5B4FC;
+  --bg: #020617;
+  --card: #0F172A;
+  --border: #1E293B;
+  --text: #F1F5F9;
+  --sidebar-bg: rgba(15, 23, 42, 0.8);
+}
+
+.dark {
+  --primary: #A855F7;
+  --primary-dark: #9333EA;
+  --primary-light: #C084FC;
+  --bg: #0F0D15;
+  --card: #1C1926;
+  --border: #2D293D;
+  --text: #F4F3F9;
+  --sidebar-bg: rgba(28, 25, 38, 0.8);
 }
 
 @layer base {
@@ -27,6 +126,7 @@
     @apply text-text font-sans m-0 p-0;
     background-color: var(--color-bg);
     font-family: 'Quicksand', sans-serif;
+    transition: background-color 2s ease, color 2s ease, border-color 2s ease;
   }
 
   h1,

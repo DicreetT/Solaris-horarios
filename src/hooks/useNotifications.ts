@@ -38,6 +38,7 @@ export function useNotifications(currentUser: User | null) {
             const { error } = await supabase.from('notifications').insert({
                 user_id: targetUserId,
                 message,
+                type: type || 'info',
                 created_at: now,
                 read: false,
             });
@@ -86,6 +87,33 @@ export function useNotifications(currentUser: User | null) {
         isLoading,
         error,
         addNotification: addNotificationMutation.mutateAsync,
+        sendNudge: async (todoTitle: string, userIds: string[]) => {
+            if (!currentUser) return;
+            const message = `⚡ ¡Electrocutada! Se ha activado el MODO TORMENTA ⛈️ por la tarea: "${todoTitle}". ¡Complétala para que vuelva a salir el sol! ☀️`;
+
+            // Send to each user who hasn't finished
+            const promises = userIds.map(uid =>
+                addNotificationMutation.mutateAsync({
+                    message,
+                    userId: uid,
+                    type: 'shock'
+                })
+            );
+            await Promise.all(promises);
+        },
+        sendCaffeineBoost: async (userName: string, userIds: string[]) => {
+            if (!currentUser) return;
+            const message = `☕ ¡Cafeína Lunar! ${userName} te ha enviado un chute de energía positiva. 🚀✨ ¡Vamos que tú puedes!`;
+
+            const promises = userIds.map(uid =>
+                addNotificationMutation.mutateAsync({
+                    message,
+                    userId: uid,
+                    type: 'caffeine'
+                })
+            );
+            await Promise.all(promises);
+        },
         markAllAsRead: markAllReadMutation.mutateAsync,
         markAsRead: markAsReadMutation.mutateAsync,
     };

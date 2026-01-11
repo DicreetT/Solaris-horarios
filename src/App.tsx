@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 // Components
 import LoginView from './components/LoginView';
@@ -47,61 +48,63 @@ function App() {
   };
 
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Login route */}
-        <Route
-          path="/login"
-          element={
-            currentUser ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
-              <LoginView onLogin={handleLogin} />
-            )
-          }
-        />
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Login route */}
+          <Route
+            path="/login"
+            element={
+              currentUser ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <LoginView onLogin={handleLogin} />
+              )
+            }
+          />
 
-        {/* Redirect root to dashboard or login */}
-        <Route
-          path="/"
-          element={
-            <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
-          }
-        />
+          {/* Redirect root to dashboard or login */}
+          <Route
+            path="/"
+            element={
+              <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
+            }
+          />
 
-        {/* All authenticated routes use the Layout and ProtectedRoute */}
-        <Route element={
-          <ProtectedRoute>
-            <NotificationsProvider currentUser={currentUser}>
-              <Layout />
-            </NotificationsProvider>
-          </ProtectedRoute>
-        }>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/meetings" element={<MeetingsPage />} />
-          <Route path="/absences" element={<AbsencesPage />} />
-          <Route path="/trainings" element={<TrainingsPage />} />
-          <Route path="/time-tracking" element={<TimeTrackingPage />} />
-          <Route path="/exports" element={<ExportsPage />} />
-          <Route path="/folders" element={<FoldersPage />} />
-          <Route path="/shopping" element={<ShoppingListPage />} />
-          <Route path="/checklist" element={<DailyChecklistPage />} />
-        </Route>
+          {/* All authenticated routes use the Layout and ProtectedRoute */}
+          <Route element={
+            <ProtectedRoute>
+              <NotificationsProvider currentUser={currentUser}>
+                <Layout />
+              </NotificationsProvider>
+            </ProtectedRoute>
+          }>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/meetings" element={<MeetingsPage />} />
+            <Route path="/absences" element={<AbsencesPage />} />
+            <Route path="/trainings" element={<TrainingsPage />} />
+            <Route path="/time-tracking" element={<TimeTrackingPage />} />
+            <Route path="/exports" element={<ExportsPage />} />
+            <Route path="/folders" element={<FoldersPage />} />
+            <Route path="/shopping" element={<ShoppingListPage />} />
+            <Route path="/checklist" element={<DailyChecklistPage />} />
+          </Route>
 
-        {/* Catch all - redirect to dashboard or login */}
-        <Route
-          path="*"
-          element={
-            <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
-          }
-        />
-      </Routes>
+          {/* Catch all - redirect to dashboard or login */}
+          <Route
+            path="*"
+            element={
+              <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
+            }
+          />
+        </Routes>
 
-      {/* PWA Install Prompt */}
-      <InstallPWAPrompt />
-    </BrowserRouter>
+        {/* PWA Install Prompt */}
+        <InstallPWAPrompt />
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

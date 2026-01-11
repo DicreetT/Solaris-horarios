@@ -22,8 +22,15 @@ export function useDailyStatus(currentUser: User | null) {
     });
 
     const setStatusMutation = useMutation({
-        mutationFn: async ({ dateKey, status }: { dateKey: string; status: 'in_person' | 'remote' }) => {
+        mutationFn: async ({ dateKey, status, customStatus, customEmoji }: {
+            dateKey: string;
+            status: 'in_person' | 'remote';
+            customStatus?: string;
+            customEmoji?: string;
+        }) => {
             if (!currentUser) throw new Error('No user logged in');
+
+            console.log('🔄 Upserting daily status:', { dateKey, status, customStatus, customEmoji });
 
             // Upsert logic
             const { data, error } = await supabase
@@ -31,12 +38,18 @@ export function useDailyStatus(currentUser: User | null) {
                 .upsert({
                     user_id: currentUser.id,
                     date_key: dateKey,
-                    status: status
+                    status: status,
+                    custom_status: customStatus,
+                    custom_emoji: customEmoji
                 }, { onConflict: 'user_id,date_key' })
                 .select()
                 .single();
 
-            if (error) throw error;
+            if (error) {
+                console.error('❌ Upsert error:', error);
+                throw error;
+            }
+            console.log('✅ Upsert success, data:', data);
             return data;
         },
         onSuccess: () => {

@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send, Tag, Plus, X } from 'lucide-react';
 import { Todo, Attachment, Comment } from '../types';
+import { motion, AnimatePresence } from 'framer-motion';
 import { USERS } from '../constants';
 import { UserAvatar } from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import { FileUploader } from './FileUploader';
+import { Celebration } from './Celebration';
+import { haptics } from '../utils/haptics';
 
 interface TaskDetailModalProps {
     task: Todo;
@@ -18,6 +21,7 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
     const [newComment, setNewComment] = useState('');
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showCelebration, setShowCelebration] = useState(false);
 
     // Edit States
     const [isEditing, setIsEditing] = useState(false);
@@ -27,7 +31,11 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
     const [tagInput, setTagInput] = useState("");
 
     const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
-    const isCompleted = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
+    const isDoneForMe = task.completed_by.includes(currentUser.id);
+    const isGloballyDone = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
+
+    // Main badge/button state reflects the current user
+    const isCompleted = isDoneForMe;
 
     // Tag Helpers
     const handleAddTag = (e: React.KeyboardEvent | React.MouseEvent) => {
@@ -108,7 +116,12 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
     const handleToggleStatus = async () => {
         try {
             if (task.assigned_to.includes(currentUser.id)) {
+                haptics.medium();
+                const wasDone = isDoneForMe;
                 await toggleTodo(task);
+                if (!wasDone) {
+                    setShowCelebration(true);
+                }
             } else {
                 alert("Solo los asignados pueden cambiar el estado.");
             }
@@ -118,32 +131,45 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
     };
 
     return (
-        <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
             onClick={onClose}
         >
-            <div
-                className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] overflow-y-auto custom-scrollbar"
+            <motion.div
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white/90 backdrop-blur-xl rounded-[2.5rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar border border-white/20"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
                 <div className="flex items-start justify-between mb-6">
                     <div className="flex-1 pr-4">
                         <div className="flex items-center gap-3 mb-2 flex-wrap">
-                            <button
-                                onClick={handleToggleStatus}
-                                disabled={!task.assigned_to.includes(currentUser.id)}
-                                className={`
-                                    inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all
-                                    ${isCompleted
-                                        ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                                        : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'}
-                                    ${!task.assigned_to.includes(currentUser.id) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}
-                                `}
-                            >
-                                {isCompleted ? <CheckCircle2 size={14} /> : <Circle size={14} />}
-                                {isCompleted ? 'Completada' : 'Pendiente'}
-                            </button>
+                            <div className="relative">
+                                <Celebration
+                                    isVisible={showCelebration}
+                                    onComplete={() => setShowCelebration(false)}
+                                />
+                                <button
+                                    onClick={handleToggleStatus}
+                                    disabled={!task.assigned_to.includes(currentUser.id)}
+                                    className={`
+                                        inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all
+                                        ${isCompleted
+                                            ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                            : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'}
+                                        ${!task.assigned_to.includes(currentUser.id) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}
+                                    `}
+                                >
+                                    {isCompleted ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+                                    {isCompleted ? 'Mi parte: Terminada' : 'Mi parte: Pendiente'}
+                                </button>
+                            </div>
                             {task.due_date_key && (
                                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
                                     <Calendar size={14} />
@@ -447,7 +473,7 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                         Cerrar
                     </button>
                 </div>
-            </div>
-        </div>
+            </motion.div>
+        </motion.div>
     );
 }

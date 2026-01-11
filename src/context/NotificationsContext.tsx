@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
+import { CaffeineOverlay } from '../components/CaffeineOverlay';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { User, Notification as NotificationType } from '../types';
@@ -10,6 +12,8 @@ interface NotificationsContextType {
     isLoading: boolean;
     error: any;
     addNotification: (params: { message: string; userId?: string; type?: string }) => Promise<void>;
+    sendNudge: (todoTitle: string, userIds: string[]) => Promise<void>;
+    sendCaffeineBoost: (userName: string, userIds: string[]) => Promise<void>;
     markAllAsRead: () => Promise<void>;
     markAsRead: (notificationId: number) => Promise<void>;
     // Push notifications
@@ -17,6 +21,8 @@ interface NotificationsContextType {
     subscribeToPush: () => Promise<void>;
     unsubscribeFromPush: () => Promise<void>;
     pushError: string | null;
+    activeCaffeine: { sender: string } | null;
+    clearCaffeine: () => void;
 }
 
 const NotificationsContext = createContext<NotificationsContextType | null>(null);
@@ -25,6 +31,7 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
     const queryClient = useQueryClient();
     const notificationsQuery = useNotificationsQuery(currentUser);
     const pushNotifications = usePushNotifications(currentUser);
+    const [activeCaffeine, setActiveCaffeine] = useState<{ sender: string } | null>(null);
 
     // Single realtime subscription at the root level
     useEffect(() => {
@@ -47,6 +54,14 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
                     console.log('🔔 [NotificationsProvider] New notification data:', payload.new);
                     // Invalidate query to refetch notifications
                     queryClient.invalidateQueries({ queryKey: ['notifications', currentUser.id] });
+
+                    // Trigger Caffeine Overlay if type is caffeine
+                    if (payload.new.type === 'caffeine') {
+                        const message = payload.new.message;
+                        const senderMatch = message.match(/¡Cafeína Lunar! (.*?) te ha enviado/);
+                        const senderName = senderMatch ? senderMatch[1] : 'Un compañero';
+                        setActiveCaffeine({ sender: senderName });
+                    }
 
                     // Show system notification via Service Worker if available (PWA style)
                     if (Notification.permission === 'granted') {
@@ -93,12 +108,22 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
         isPushSubscribed: pushNotifications.isSubscribed,
         subscribeToPush: pushNotifications.subscribeToPush,
         unsubscribeFromPush: pushNotifications.unsubscribeFromPush,
-        pushError: pushNotifications.error
+        pushError: pushNotifications.error,
+        activeCaffeine,
+        clearCaffeine: () => setActiveCaffeine(null)
     };
 
     return (
         <NotificationsContext.Provider value={value}>
             {children}
+            <AnimatePresence>
+                {activeCaffeine && (
+                    <CaffeineOverlay
+                        senderName={activeCaffeine.sender}
+                        onComplete={() => setActiveCaffeine(null)}
+                    />
+                )}
+            </AnimatePresence>
         </NotificationsContext.Provider>
     );
 }
