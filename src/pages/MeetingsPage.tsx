@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useMeetings } from '../hooks/useMeetings';
 import { USERS } from '../constants';
 import { Meeting } from '../types';
+import { useSearchParams } from 'react-router-dom';
 import MeetingDetailModal from '../components/MeetingDetailModal';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, Users, Calendar, Clock, CheckCircle, XCircle, Trash2, MessageSquare, Paperclip } from 'lucide-react';
@@ -20,6 +21,7 @@ function MeetingsPage() {
     const { currentUser } = useAuth();
     const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
     const { addNotification } = useNotificationsContext();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const [showModal, setShowModal] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
@@ -32,6 +34,21 @@ function MeetingsPage() {
 
     const isAdmin = currentUser?.isAdmin;
     const selectedDateKey = toDateKey(selectedDate);
+
+    // Auto-open meeting if meeting ID is in URL
+    useEffect(() => {
+        const meetingId = searchParams.get('meeting');
+        if (meetingId && meetingRequests.length > 0) {
+            const meeting = meetingRequests.find(m => m.id.toString() === meetingId);
+            if (meeting) {
+                setSelectedMeeting(meeting);
+                // Clean URL
+                const newParams = new URLSearchParams(searchParams);
+                newParams.delete('meeting');
+                setSearchParams(newParams, { replace: true });
+            }
+        }
+    }, [searchParams, meetingRequests, setSearchParams]);
 
     // User's meetings sorted by creation date
     const userMeetings = meetingRequests

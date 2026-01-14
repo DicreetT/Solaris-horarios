@@ -134,11 +134,20 @@ export default function TimeTrackingPage() {
 
         absenceRequests.forEach(req => {
             if (req.created_by === userId && req.status === 'approved' && req.type === 'special_permit' && req.resolution_type === 'paid') {
-                const startDate = new Date(req.date_key);
-                const endDate = req.end_date ? new Date(req.end_date) : new Date(req.date_key);
+                if (!req.date_key) return; // Safety check
 
-                // Iterate days in range
+                const startDate = new Date(req.date_key);
+                if (isNaN(startDate.getTime())) return; // Safety check
+
+                const endDate = req.end_date ? new Date(req.end_date) : new Date(req.date_key);
+                if (isNaN(endDate.getTime())) return; // Safety check
+
+                // Max loop safety (e.g. 60 days) to prevent freeze if bad data
+                let loopCount = 0;
                 for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                    loopCount++;
+                    if (loopCount > 60) break; // Break if range is too large to prevent crash
+
                     const dMonth = String(d.getMonth() + 1).padStart(2, '0');
                     const dYear = d.getFullYear();
                     const dString = `${dYear}-${dMonth}`;
@@ -161,15 +170,14 @@ export default function TimeTrackingPage() {
     };
 
     const calculateVacationDaysUsed = (userId: string) => {
-        // Vacation is typically YEARLY accumulated, so we might keep this as yearly
-        // unless requested otherwise. The prompt says "solo ve el mes activo... horas trabajadas, horas esperadas".
-        // Vacation usually spans the year. I will leave it as "Yearly Used" for now unless filtered.
         return absenceRequests
             .filter(req => req.created_by === userId && req.type === 'vacation' && req.status !== 'rejected')
             .reduce((acc, req) => {
                 if (!req.end_date || req.end_date === req.date_key) return acc + 1;
                 const start = new Date(req.date_key);
                 const end = new Date(req.end_date);
+                if (isNaN(start.getTime()) || isNaN(end.getTime())) return acc;
+
                 const diffTime = Math.abs(end.getTime() - start.getTime());
                 const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
                 return acc + diffDays;
@@ -177,8 +185,11 @@ export default function TimeTrackingPage() {
     };
 
     // --- Sub-Components ---
+    // Moved DailyLogsTable outside or use directly here if we pass props.
+    // For simplicity, I will use the Render Prop or just refactor renderAdminTable to use a separate component file if I could,
+    // but here I will define the table rendering function *using* the props, avoiding component-inside-component.
 
-    const DailyLogsTable = ({ userId, limit = 31, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
+    const renderDailyLogsTable = ({ userId, limit = 31, isEditable = false }: { userId: string, limit?: number, isEditable?: boolean }) => {
         const logs: any[] = [];
         const sortedDates = Object.keys(timeData).sort().reverse();
 
@@ -497,7 +508,7 @@ export default function TimeTrackingPage() {
                             <History size={20} className="text-gray-400" /> Registro de {selectedDate.toLocaleString('es-ES', { month: 'long' })}
                         </h3>
                     </div>
-                    <DailyLogsTable userId={userId} limit={100} isEditable={true} />
+                    {renderDailyLogsTable({ userId, limit: 100, isEditable: true })}
                 </div>
             </div>
         );
@@ -673,7 +684,7 @@ export default function TimeTrackingPage() {
                                                             <Clock size={18} className="text-gray-400" />
                                                             Registro de {selectedDate.toLocaleString('es-ES', { month: 'long' })}: {user.name}
                                                         </h4>
-                                                        <DailyLogsTable userId={user.id} limit={31} isEditable={true} />
+                                                        {renderDailyLogsTable({ userId: user.id, limit: 31, isEditable: true })}
                                                     </div>
                                                 </td>
                                             </tr>

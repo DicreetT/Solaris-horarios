@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Command, X, MapPin, CheckSquare, Users, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTodos } from '../hooks/useTodos';
+import { useMeetings } from '../hooks/useMeetings';
 import { useAuth } from '../context/AuthContext';
 import { USERS } from '../constants';
 
@@ -36,6 +37,8 @@ const SearchPalette: React.FC = () => {
         };
     }, [isOpen, toggleOpen]);
 
+    const { meetingRequests } = useMeetings(currentUser);
+
     const navigationLinks = [
         { label: 'Calendario', path: '/calendar', icon: MapPin },
         { label: 'Tareas', path: '/tasks', icon: CheckSquare },
@@ -47,9 +50,15 @@ const SearchPalette: React.FC = () => {
         ...navigationLinks.filter(link => link.label.toLowerCase().includes(query.toLowerCase())),
         ...todos.filter(todo => todo.title.toLowerCase().includes(query.toLowerCase())).map(t => ({
             label: t.title,
-            path: '/tasks',
+            path: `/tasks?task=${t.id}`,
             icon: CheckSquare,
             isTodo: true
+        })),
+        ...meetingRequests.filter(meeting => meeting.title.toLowerCase().includes(query.toLowerCase())).map(m => ({
+            label: m.title,
+            path: `/meetings?meeting=${m.id}`,
+            icon: Users,
+            isMeeting: true
         })),
         ...USERS.filter(user => user.name.toLowerCase().includes(query.toLowerCase())).map(u => ({
             label: u.name,

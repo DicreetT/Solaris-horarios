@@ -269,16 +269,34 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
           w-64
         `}
             >
-                {/* Content Logic */}
+                {/* Dynamic Style Logic */}
                 {(() => {
-                    const isDarkMood = false;
-                    const textColor = 'text-gray-600';
-                    const hoverBg = 'hover:bg-purple-50';
+                    const currentEmoji = myStatusToday?.custom_emoji;
+                    // Moods predefined in SidebarMoodBackground are currently ALL Light-ish backgrounds.
+                    // So if a mood is active, we should force Dark Text to ensure contrast.
+                    const supportedMoods = ['✨', '🌸', '☁️', '🔥'];
+                    const isMoodActive = supportedMoods.includes(currentEmoji || '');
+
+                    // If Mood is active, use a dark text color (ignoring dark mode).
+                    // If Mood is NOT active, use adaptive text (Dark on Light, Light on Dark).
+                    const textColor = isMoodActive
+                        ? 'text-gray-900 font-medium' // Moods need strong contrast
+                        : 'text-gray-600 dark:text-gray-300';
+
+                    const hoverBg = isMoodActive
+                        ? 'hover:bg-white/40' // Glassy hover for moods
+                        : 'hover:bg-purple-50 dark:hover:bg-purple-900/20';
+
+                    const sidebarBg = isMoodActive
+                        ? 'bg-white' // Background behind mood (invisible mostly)
+                        : 'bg-white dark:bg-[#1C1926]'; // Default sidebar backgrounds
 
                     return (
                         <>
-                            {/* Mood Background Layer */}
-                            <SidebarMoodBackground emoji={myStatusToday?.custom_emoji} />
+                            {/* Background Layer */}
+                            <div className={`absolute inset-0 transition-colors duration-300 ${sidebarBg}`}>
+                                <SidebarMoodBackground emoji={currentEmoji} />
+                            </div>
 
                             {/* Sidebar Content */}
                             <div className="relative z-10 flex flex-col h-full w-full">
@@ -329,7 +347,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                     size={20}
                                                     className={`
                                                         transition-transform duration-300 group-hover:scale-110 relative z-10
-                                                        ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-primary'}
+                                                        ${isActive ? 'text-white' : (isMoodActive ? 'text-gray-800' : 'text-gray-400 dark:text-gray-500') + ' group-hover:text-primary'}
                                                     `}
                                                 />
 
@@ -337,7 +355,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                     <div className="flex-1 flex items-center justify-between text-sm font-bold relative z-10">
                                                         <span>{item.label}</span>
                                                         {item.shortcut && (
-                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isActive ? 'bg-white/20 border-white/20 text-white' : 'bg-gray-100 border-gray-200 text-gray-400'}`}>
+                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isActive ? 'bg-white/20 border-white/20 text-white' : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500'}`}>
                                                                 {item.shortcut}
                                                             </span>
                                                         )}
@@ -358,18 +376,18 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                     <div className="relative" ref={userMenuRef}>
                                         <button
                                             onClick={() => setShowUserMenu(!showUserMenu)}
-                                            className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-all duration-200 bg-white/80 backdrop-blur-sm border-gray-100 hover:border-blue-200 hover:shadow-md`}
+                                            className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-all duration-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-gray-100 dark:border-gray-700 hover:border-blue-200 hover:shadow-md`}
                                         >
                                             <UserAvatar name={currentUser?.name || 'User'} size="sm" />
                                             {!isCollapsed && (
                                                 <div className="flex-1 min-w-0 text-left">
                                                     <div className="flex items-center gap-2">
-                                                        <p className="text-sm font-black truncate text-gray-900">{currentUser?.name}</p>
+                                                        <p className={`text-sm font-black truncate ${isMoodActive ? 'text-gray-900' : 'text-gray-900 dark:text-white'}`}>{currentUser?.name}</p>
                                                         {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
                                                         {currentUser?.isTrainingManager && !currentUser?.isAdmin && <RoleBadge role="trainingManager" size="xs" />}
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <p className="text-xs truncate font-medium text-gray-500">{currentUser?.email}</p>
+                                                        <p className={`text-xs truncate font-medium ${isMoodActive ? 'text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>{currentUser?.email}</p>
                                                     </div>
                                                 </div>
                                             )}
@@ -382,7 +400,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                     initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                                     exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                    className="absolute bottom-full left-0 w-full mb-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50"
+                                                    className="absolute bottom-full left-0 w-full mb-2 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden z-50"
                                                 >
                                                     <div className="p-1">
                                                         <button
@@ -390,7 +408,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                                 setShowUserMenu(false);
                                                                 onOpenNotificationsModal();
                                                             }}
-                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl transition-colors"
                                                         >
                                                             <div className="relative">
                                                                 <Bell size={16} />
@@ -406,19 +424,19 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                                 setShowUserMenu(false);
                                                                 onOpenPasswordModal();
                                                             }}
-                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl transition-colors"
                                                         >
                                                             <Lock size={16} />
                                                             Cambiar contraseña
                                                         </button>
-                                                        <div className="h-px bg-gray-100 my-1" />
+                                                        <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                                                         <div className="px-3 py-2 flex items-center justify-between">
                                                             <span className="text-xs font-bold text-gray-400 uppercase">Tema</span>
                                                             <button
                                                                 onClick={toggleTheme}
                                                                 className={`
                                                                     w-10 h-6 rounded-full transition-colors flex items-center px-1
-                                                                    ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200'}
+                                                                    ${theme === 'dark' ? 'bg-gray-800 border border-gray-600' : 'bg-gray-200'}
                                                                 `}
                                                             >
                                                                 <motion.div
@@ -427,10 +445,10 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                                 />
                                                             </button>
                                                         </div>
-                                                        <div className="h-px bg-gray-100 my-1" />
+                                                        <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                                                         <button
                                                             onClick={handleLogout}
-                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
                                                         >
                                                             <LogOut size={16} />
                                                             Cerrar sesión
