@@ -190,7 +190,7 @@ export default function DailyChecklistPage() {
         <div className="max-w-5xl mx-auto pb-20">
             <div className="flex items-center justify-between mb-8">
                 <div>
-                    <h1 className="text-3xl font-black text-gray-900">Check-list Diario ✅</h1>
+                    <h1 className="text-3xl font-black text-[var(--color-text)]">Check-list Diario ✅</h1>
                     <p className="text-gray-500">Organiza y registra tus tareas diarias.</p>
                 </div>
             </div>

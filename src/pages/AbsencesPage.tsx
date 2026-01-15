@@ -220,7 +220,7 @@ function AbsencesPage() {
                         <UserX size={32} />
                     </div>
                     <div>
-                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                        <h1 className="text-4xl font-black text-[var(--color-text)] tracking-tight">
                             Ausencias
                         </h1>
                         <p className="text-gray-500 font-medium">
@@ -592,7 +592,8 @@ function AbsencesPage() {
                                         type="date"
                                         value={selectedDateKey}
                                         onChange={handleDateChange}
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                        style={{ color: '#000000' }}
                                     />
                                 </div>
 
@@ -620,7 +621,8 @@ function AbsencesPage() {
                                                 value={endDateKey || ''}
                                                 onChange={handleEndDateChange}
                                                 min={selectedDateKey}
-                                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                                style={{ color: '#000000' }}
                                             />
                                         </div>
                                     )}
@@ -633,7 +635,8 @@ function AbsencesPage() {
                                     <select
                                         value={absenceType}
                                         onChange={(e) => setAbsenceType(e.target.value)}
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors !text-black"
+                                        style={{ color: '#000000' }}
                                     >
                                         <option value="vacation">Vacaciones</option>
                                         <option value="special_permit">Permiso especial</option>

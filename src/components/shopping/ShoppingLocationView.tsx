@@ -108,7 +108,7 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                 </button>
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-4xl font-black text-gray-900 tracking-tight capitalize flex items-center gap-3">
+                        <h1 className="text-4xl font-black text-[var(--color-text)] tracking-tight capitalize flex items-center gap-3">
                             <span className="text-indigo-600">
                                 {location === 'canet' ? '🌊' : '🏭'}
                             </span>

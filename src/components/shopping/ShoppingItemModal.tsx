@@ -128,7 +128,8 @@ export default function ShoppingItemModal({
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             placeholder="Ej: Papel higiénico, Café..."
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium !text-black"
+                            style={{ color: '#000000' }}
                             required
                             autoFocus
                         />
@@ -212,7 +213,8 @@ export default function ShoppingItemModal({
                                             value={deliveryDate}
                                             onChange={(e) => setDeliveryDate(e.target.value)}
                                             disabled={!canEditPurchase}
-                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none disabled:bg-gray-50 disabled:text-gray-500 !text-black"
+                                            style={{ color: '#000000' }}
                                         />
                                     </div>
                                     <div className="space-y-1">
@@ -225,7 +227,8 @@ export default function ShoppingItemModal({
                                             onChange={(e) => setResponseMessage(e.target.value)}
                                             disabled={!canEditPurchase}
                                             placeholder={canEditPurchase ? "Ej: Comprado en Amazon, llega el martes." : "Sin mensaje adjunto."}
-                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px] disabled:bg-gray-50 disabled:text-gray-500"
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px] disabled:bg-gray-50 disabled:text-gray-500 !text-black"
+                                            style={{ color: '#000000' }}
                                         />
                                     </div>
                                 </div>
