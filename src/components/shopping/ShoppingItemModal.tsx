@@ -143,7 +143,7 @@ export default function ShoppingItemModal({
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             placeholder="Marca específica, cantidad, etc."
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
                         />
                     </div>
 
@@ -224,7 +224,7 @@ export default function ShoppingItemModal({
                                             onChange={(e) => setResponseMessage(e.target.value)}
                                             disabled={!canEditPurchase}
                                             placeholder={canEditPurchase ? "Ej: Comprado en Amazon, llega el martes." : "Sin mensaje adjunto."}
-                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px] disabled:bg-gray-50 disabled:text-gray-500"
+                                            className="w-full px-3 py-2 bg-white border border-green-200 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none min-h-[60px] disabled:bg-gray-50 disabled:text-gray-500"
                                         />
                                     </div>
                                 </div>

@@ -371,6 +371,24 @@ function MeetingsPage() {
                                                         <CheckCircle size={14} />
                                                         Marcar como Realizada
                                                     </button>
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-orange-50 text-orange-700 font-bold text-xs hover:bg-orange-100 transition-colors border border-orange-200"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const newDate = window.prompt("Nueva fecha (AAAA-MM-DD):", m.scheduled_date_key || "");
+                                                            if (newDate) {
+                                                                updateMeetingStatus({
+                                                                    id: m.id,
+                                                                    status: "scheduled",
+                                                                    scheduled_date_key: newDate,
+                                                                    response_message: "Fecha actualizada por un administrador."
+                                                                });
+                                                            }
+                                                        }}
+                                                    >
+                                                        Reprogramar
+                                                    </button>
                                                 </div>
                                             )}
 
@@ -389,6 +407,25 @@ function MeetingsPage() {
                                                         }}
                                                     >
                                                         Aceptar y Programar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 py-2 px-3 rounded-xl bg-orange-50 text-orange-700 font-bold text-xs hover:bg-orange-100 transition-colors border border-orange-200"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const current = m.status === 'scheduled' ? m.scheduled_date_key : m.preferred_date_key;
+                                                            const newDate = window.prompt("Nueva fecha (AAAA-MM-DD):", current || "");
+                                                            if (newDate) {
+                                                                updateMeetingStatus({
+                                                                    id: m.id,
+                                                                    status: "scheduled",
+                                                                    scheduled_date_key: newDate,
+                                                                    response_message: "Fecha actualizada por un administrador."
+                                                                });
+                                                            }
+                                                        }}
+                                                    >
+                                                        Reprogramar
                                                     </button>
                                                     <button
                                                         type="button"
@@ -480,7 +517,7 @@ function MeetingsPage() {
                                         value={meetingDescription}
                                         onChange={(e) => setMeetingDescription(e.target.value)}
                                         placeholder="¿Qué quieres tratar en la reunión?"
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white text-gray-900 resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
                                     />
                                 </div>
 

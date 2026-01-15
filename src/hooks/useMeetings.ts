@@ -115,7 +115,7 @@ export function useMeetings(currentUser: User | null) {
             // 1. Get current comments
             const { data: meeting, error: fetchError } = await supabase
                 .from('meeting_requests')
-                .select('comments')
+                .select('comments, participants, created_by, title')
                 .eq('id', meetingId)
                 .single();
 
@@ -141,6 +141,24 @@ export function useMeetings(currentUser: User | null) {
                 .eq('id', meetingId);
 
             if (updateError) throw updateError;
+
+            // Notify participants
+            const participants: string[] = meeting.participants || [];
+            // Also notify the creator if they are not a participant (edge case, usually creator is implied or added?)
+            // Meeting logic usually implies creator + participants.
+            // Let's add creator to notification list if not in participants?
+            // Existing logic: "created_by" + "participants".
+            // Let's notify everyone involved.
+            const involvedUsers = new Set([...participants, meeting.created_by]);
+
+            for (const userId of involvedUsers) {
+                if (userId !== currentUser.id) {
+                    await addNotification({
+                        message: `Nuevo comentario en reunión "${meeting.title}": ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
+                        userId
+                    });
+                }
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });

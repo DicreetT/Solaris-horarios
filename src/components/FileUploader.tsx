@@ -116,6 +116,7 @@ export function FileUploader({
         <div className="w-full space-y-3">
             <div className="flex items-center gap-3">
                 <button
+                    type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
                     className={`

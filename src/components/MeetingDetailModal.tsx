@@ -246,7 +246,7 @@ export default function MeetingDetailModal({ meeting, onClose }: MeetingDetailMo
                                     value={newComment}
                                     onChange={(e) => setNewComment(e.target.value)}
                                     placeholder="Escribe un comentario..."
-                                    className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+                                    className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
                                     rows={3}
                                 />
                             </div>

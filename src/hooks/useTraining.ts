@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Training, TrainingComment } from '../types';
+import { ESTEBAN_ID } from '../constants';
 
 export function useTraining(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -76,6 +77,25 @@ export function useTraining(currentUser: User | null) {
                 .eq('id', requestId);
 
             if (error) throw error;
+
+            // Notify logic
+            const isManager = currentUser.id === ESTEBAN_ID || currentUser.isAdmin; // Identify manager/admin roughly
+
+            // If user comments, notify Esteban (Manager)
+            if (req.user_id === currentUser.id) {
+                if (currentUser.id !== ESTEBAN_ID) {
+                    await addNotification({
+                        message: `Nuevo comentario en solicitud de formación de ${currentUser.name}: ${text.substring(0, 50)}...`,
+                        userId: ESTEBAN_ID // Notify Esteban specifically as Training Manager
+                    });
+                }
+            } else {
+                // If it's not the request owner (assumed manager/admin), notify the request owner
+                await addNotification({
+                    message: `Nuevo mensaje en tu solicitud de formación: ${text.substring(0, 50)}...`,
+                    userId: req.user_id
+                });
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });

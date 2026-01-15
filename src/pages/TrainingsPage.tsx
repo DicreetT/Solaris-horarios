@@ -639,7 +639,7 @@ function TrainingsPage() {
                             <textarea
                                 value={reason}
                                 onChange={(e) => setReason(e.target.value)}
-                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors h-24 resize-none"
+                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white text-gray-900 focus:border-primary focus:outline-none transition-colors h-24 resize-none"
                                 placeholder="Describe por qué solicitas esta formación..."
                             />
                         </div>

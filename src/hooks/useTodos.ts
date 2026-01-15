@@ -158,10 +158,10 @@ export function useTodos(currentUser: User | null) {
 
     const addCommentMutation = useMutation({
         mutationFn: async ({ todoId, text, attachments }: { todoId: number; text: string; attachments: any[] }) => {
-            // 1. Get current comments
+            // 1. Get current comments and assigned users
             const { data: currentTodo, error: fetchError } = await supabase
                 .from('todos')
-                .select('comments')
+                .select('comments, title, assigned_to')
                 .eq('id', todoId)
                 .single();
 
@@ -183,6 +183,18 @@ export function useTodos(currentUser: User | null) {
                 .eq('id', todoId);
 
             if (updateError) throw updateError;
+
+            // Notify assigned users (except the commenter)
+            const assignedIds: string[] = currentTodo.assigned_to || [];
+            for (const userId of assignedIds) {
+                if (userId !== currentUser.id) {
+                    await addNotification({
+                        message: `Nuevo comentario en tarea "${currentTodo.title}": ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
+                        userId
+                    });
+                }
+            }
+
             return nextComments;
         },
         onSuccess: () => {
