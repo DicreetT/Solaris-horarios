@@ -143,7 +143,7 @@ export default function ShoppingItemModal({
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             placeholder="Añade detalles (marca, cantidad, etc)..."
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl !text-black focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl !text-black dark:text-black dark:bg-gray-50 dark:border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
                             style={{ color: '#000000' }}
                         />
                     </div>
