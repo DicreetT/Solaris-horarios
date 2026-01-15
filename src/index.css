@@ -56,7 +56,7 @@ html[data-mood='Radiant'] {
   --primary: #F59E0B;
   --bg: #FFFBEB;
   --border: #FEF3C7;
-  --text: #78350F;
+  --text: #78350F !important;
   --sidebar-bg: rgba(255, 251, 235, 0.9);
 }
 
@@ -64,7 +64,7 @@ html[data-mood='Calmado'] {
   --primary: #3B82F6;
   --bg: #EFF6FF;
   --border: #DBEAFE;
-  --text: #1E3A8A;
+  --text: #1E3A8A !important;
   --sidebar-bg: rgba(239, 246, 255, 0.9);
 }
 
@@ -72,7 +72,7 @@ html[data-mood='Nublado'] {
   --primary: #6366F1;
   --bg: #F5F3FF;
   --border: #EDE9FE;
-  --text: #4338CA;
+  --text: #4338CA !important;
   --sidebar-bg: rgba(245, 243, 255, 0.9);
 }
 
@@ -80,7 +80,7 @@ html[data-mood='Lluvioso'] {
   --primary: #64748B;
   --bg: #F1F5F9;
   --border: #E2E8F0;
-  --text: #1E293B;
+  --text: #1E293B !important;
   --sidebar-bg: rgba(241, 245, 249, 0.9);
 }
 
@@ -88,7 +88,7 @@ html[data-mood='Eléctrico'] {
   --primary: #8B5CF6;
   --bg: #FAF5FF;
   --border: #F3E8FF;
-  --text: #581C87;
+  --text: #581C87 !important;
   --sidebar-bg: rgba(250, 245, 255, 0.9);
 }
 

@@ -137,11 +137,11 @@ function TasksPage() {
             {/* Header & Main Action */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight flex items-center gap-3">
+                    <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight flex items-center gap-3">
                         <CheckSquare className="text-primary" size={28} />
                         Mis Tareas
                     </h1>
-                    <p className="text-gray-500 dark:text-gray-400 font-medium">
+                    <p className="text-[var(--color-text)] opacity-70 font-medium">
                         Gestiona y organiza tus pendientes.
                     </p>
                 </div>

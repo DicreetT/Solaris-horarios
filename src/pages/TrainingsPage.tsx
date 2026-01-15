@@ -195,7 +195,7 @@ function TrainingsPage() {
                         <GraduationCap size={32} />
                     </div>
                     <div>
-                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                        <h1 className="text-4xl font-black text-[var(--color-text)] tracking-tight">
                             Formaciones
                         </h1>
                         <p className="text-gray-500 font-medium">
