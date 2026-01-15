@@ -672,7 +672,8 @@ function AbsencesPage() {
                                         value={reason}
                                         onChange={(e) => setReason(e.target.value)}
                                         placeholder="Describe brevemente el motivo..."
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white text-gray-900 resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white !text-black resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        style={{ color: '#000000' }}
                                     />
                                 </div>
 

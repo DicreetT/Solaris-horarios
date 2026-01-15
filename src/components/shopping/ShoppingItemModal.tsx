@@ -142,8 +142,9 @@ export default function ShoppingItemModal({
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Marca específica, cantidad, etc."
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
+                            placeholder="Añade detalles (marca, cantidad, etc)..."
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl !text-black focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
+                            style={{ color: '#000000' }}
                         />
                     </div>
 

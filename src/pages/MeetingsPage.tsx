@@ -517,7 +517,8 @@ function MeetingsPage() {
                                         value={meetingDescription}
                                         onChange={(e) => setMeetingDescription(e.target.value)}
                                         placeholder="¿Qué quieres tratar en la reunión?"
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white text-gray-900 resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white !text-black resize-y min-h-[80px] focus:border-primary focus:outline-none transition-colors"
+                                        style={{ color: '#000000' }}
                                     />
                                 </div>
 

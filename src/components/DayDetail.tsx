@@ -224,10 +224,11 @@ export default function DayDetail({
             <div className="mt-1.5">
                 <div className="text-xs font-semibold mt-1">Nota / motivo (opcional)</div>
                 <textarea
-                    className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-[0.85rem] font-inherit bg-white text-gray-900 resize-y min-h-[40px] max-h-[120px]"
+                    className="w-full rounded-[10px] border border-[#ccc] p-1.5 text-[0.85rem] font-inherit bg-white !text-black resize-y min-h-[40px] max-h-[120px]"
                     value={record.note || ""}
                     onChange={(e) => handleUpdateNote(e.target.value)}
                     placeholder="Ej.: cita médica, visita familiar, retraso por tráfico…"
+                    style={{ color: '#000000' }}
                 />
             </div>
 
