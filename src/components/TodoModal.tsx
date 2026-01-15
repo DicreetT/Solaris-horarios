@@ -99,7 +99,8 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                 Título de la tarea *
                             </label>
                             <input
-                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                style={{ color: '#000000' }}
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
                                 placeholder="Ej.: Revisar inventario mensual"
@@ -113,7 +114,8 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                             </label>
                             <div className="flex gap-2 mb-2">
                                 <input
-                                    className="flex-1 rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                    className="flex-1 rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                    style={{ color: '#000000' }}
                                     value={tagInput}
                                     onChange={(e) => setTagInput(e.target.value)}
                                     onKeyDown={handleAddTag}
@@ -163,7 +165,8 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                 Fecha objetivo
                             </label>
                             <input
-                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                style={{ color: '#000000' }}
                                 type="date"
                                 value={dueDate}
                                 onChange={(e) => setDueDate(e.target.value)}

@@ -491,7 +491,8 @@ function MeetingsPage() {
                                         type="date"
                                         value={selectedDateKey}
                                         onChange={handleDateChange}
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                        style={{ color: '#000000' }}
                                     />
                                 </div>
 
@@ -504,7 +505,8 @@ function MeetingsPage() {
                                         value={meetingTitle}
                                         onChange={(e) => setMeetingTitle(e.target.value)}
                                         placeholder="Ej.: Reunión de seguimiento..."
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium focus:border-primary focus:outline-none transition-colors !text-black"
+                                        style={{ color: '#000000' }}
                                         required
                                     />
                                 </div>
@@ -529,7 +531,8 @@ function MeetingsPage() {
                                     <select
                                         value={meetingPreferredSlot}
                                         onChange={(e) => setMeetingPreferredSlot(e.target.value)}
-                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors"
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium bg-white focus:border-primary focus:outline-none transition-colors !text-black"
+                                        style={{ color: '#000000' }}
                                     >
                                         <option value="mañana">Mañana</option>
                                         <option value="tarde">Tarde</option>
