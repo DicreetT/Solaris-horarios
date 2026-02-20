@@ -1,6 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { AnimatePresence } from 'framer-motion';
-import { CaffeineOverlay } from '../components/CaffeineOverlay';
+import React, { createContext, useContext, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { User, Notification as NotificationType } from '../types';
@@ -21,8 +19,6 @@ interface NotificationsContextType {
     subscribeToPush: () => Promise<void>;
     unsubscribeFromPush: () => Promise<void>;
     pushError: string | null;
-    activeCaffeine: { sender: string } | null;
-    clearCaffeine: () => void;
 }
 
 const NotificationsContext = createContext<NotificationsContextType | null>(null);
@@ -31,13 +27,10 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
     const queryClient = useQueryClient();
     const notificationsQuery = useNotificationsQuery(currentUser);
     const pushNotifications = usePushNotifications(currentUser);
-    const [activeCaffeine, setActiveCaffeine] = useState<{ sender: string } | null>(null);
 
     // Single realtime subscription at the root level
     useEffect(() => {
         if (!currentUser) return;
-
-        console.log('🔔 [NotificationsProvider] Setting up realtime subscription for user:', currentUser.id);
 
         const channel = supabase
             .channel('notifications-changes')
@@ -50,18 +43,8 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
                     filter: `user_id=eq.${currentUser.id}`,
                 },
                 (payload: any) => {
-                    console.log('🔔 [NotificationsProvider] Realtime INSERT event received:', payload);
-                    console.log('🔔 [NotificationsProvider] New notification data:', payload.new);
                     // Invalidate query to refetch notifications
                     queryClient.invalidateQueries({ queryKey: ['notifications', currentUser.id] });
-
-                    // Trigger Caffeine Overlay if type is caffeine
-                    if (payload.new.type === 'caffeine') {
-                        const message = payload.new.message;
-                        const senderMatch = message.match(/¡Cafeína Lunar! (.*?) te ha enviado/);
-                        const senderName = senderMatch ? senderMatch[1] : 'Un compañero';
-                        setActiveCaffeine({ sender: senderName });
-                    }
 
                     // Show system notification via Service Worker if available (PWA style)
                     if (Notification.permission === 'granted') {
@@ -84,21 +67,9 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
                     }
                 }
             )
-            .subscribe((status) => {
-                console.log('🔔 [NotificationsProvider] Subscription status:', status);
-                if (status === 'SUBSCRIBED') {
-                    console.log('✅ [NotificationsProvider] Successfully subscribed to realtime updates');
-                } else if (status === 'CHANNEL_ERROR') {
-                    console.error('❌ [NotificationsProvider] Channel error occurred');
-                } else if (status === 'TIMED_OUT') {
-                    console.error('⏱️ [NotificationsProvider] Subscription timed out');
-                } else if (status === 'CLOSED') {
-                    console.log('🔌 [NotificationsProvider] Channel closed');
-                }
-            });
+            .subscribe();
 
         return () => {
-            console.log('🔌 [NotificationsProvider] Cleaning up realtime subscription');
             supabase.removeChannel(channel);
         };
     }, [currentUser, queryClient]);
@@ -109,21 +80,11 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
         subscribeToPush: pushNotifications.subscribeToPush,
         unsubscribeFromPush: pushNotifications.unsubscribeFromPush,
         pushError: pushNotifications.error,
-        activeCaffeine,
-        clearCaffeine: () => setActiveCaffeine(null)
     };
 
     return (
         <NotificationsContext.Provider value={value}>
             {children}
-            <AnimatePresence>
-                {activeCaffeine && (
-                    <CaffeineOverlay
-                        senderName={activeCaffeine.sender}
-                        onComplete={() => setActiveCaffeine(null)}
-                    />
-                )}
-            </AnimatePresence>
         </NotificationsContext.Provider>
     );
 }
