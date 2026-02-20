@@ -22,6 +22,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        const loadingFallback = window.setTimeout(() => {
+            setLoading(false);
+        }, 5000);
+
         // Check active session
         async function loadAuthUser() {
             try {
@@ -59,6 +63,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         });
 
         return () => {
+            window.clearTimeout(loadingFallback);
             subscription.unsubscribe();
         };
     }, []);
@@ -90,7 +95,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     return (
         <AuthContext.Provider value={{ currentUser, loading, login, logout, updatePassword }}>
-            {!loading && children}
+            {loading ? (
+                <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+                    <div className="text-center">
+                        <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
+                        <p className="text-sm font-semibold opacity-90">Cargando Lunaris...</p>
+                    </div>
+                </div>
+            ) : (
+                children
+            )}
         </AuthContext.Provider>
     );
 }
