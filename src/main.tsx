@@ -8,22 +8,37 @@ import './index.css'
 import { AuthProvider } from './context/AuthContext'
 
 // Prevent "white screen after refresh" caused by stale PWA chunks.
-// In localhost we unregister old Service Workers to avoid cache conflicts during rapid development.
+// Emergency cache recovery: unregister stale Service Workers and clear old caches once.
 if (typeof window !== 'undefined') {
     window.addEventListener('vite:preloadError', () => {
         window.location.reload()
     })
 
-    const isLocalhost =
-        window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1'
+    const SW_RESET_KEY = 'lunaris-sw-reset-v2'
+    const hasReset = (() => {
+        try {
+            return window.localStorage.getItem(SW_RESET_KEY) === '1'
+        } catch {
+            return false
+        }
+    })()
 
-    if (isLocalhost && 'serviceWorker' in navigator) {
+    if (!hasReset && 'serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then((registrations) => {
             registrations.forEach((registration) => {
                 registration.unregister()
             })
         })
+        if ('caches' in window) {
+            caches.keys().then((keys) => {
+                keys.forEach((key) => caches.delete(key))
+            })
+        }
+        try {
+            window.localStorage.setItem(SW_RESET_KEY, '1')
+        } catch {
+            // noop
+        }
     }
 }
 
