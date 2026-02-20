@@ -2,10 +2,14 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ShoppingBag, MapPin, ArrowRight } from 'lucide-react';
 import ShoppingLocationView from '../components/shopping/ShoppingLocationView';
+import { useShoppingList } from '../hooks/useShoppingList';
 
 export default function ShoppingListPage() {
     const { currentUser } = useAuth();
+    const { shoppingItems } = useShoppingList(currentUser);
     const [selectedLocation, setSelectedLocation] = useState<'canet' | 'huarte' | null>(null);
+    const pendingCanetCount = shoppingItems.filter(item => item.location === 'canet' && !item.is_purchased).length;
+    const pendingHuarteCount = shoppingItems.filter(item => item.location === 'huarte' && !item.is_purchased).length;
 
     if (selectedLocation) {
         return (
@@ -46,8 +50,15 @@ export default function ShoppingListPage() {
                             <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl group-hover:scale-110 transition-transform duration-300">
                                 <span className="text-4xl">🌊</span>
                             </div>
-                            <div className="p-2 bg-gray-50 rounded-full text-gray-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                                <ArrowRight size={24} />
+                            <div className="flex items-center gap-2">
+                                {pendingCanetCount > 0 && (
+                                    <span className="inline-flex min-w-7 h-7 px-2 items-center justify-center rounded-full bg-indigo-600 text-white text-xs font-black">
+                                        {pendingCanetCount > 99 ? '99+' : pendingCanetCount}
+                                    </span>
+                                )}
+                                <div className="p-2 bg-gray-50 rounded-full text-gray-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                    <ArrowRight size={24} />
+                                </div>
                             </div>
                         </div>
 
@@ -73,8 +84,15 @@ export default function ShoppingListPage() {
                             <div className="p-4 bg-amber-50 text-amber-600 rounded-2xl group-hover:scale-110 transition-transform duration-300">
                                 <span className="text-4xl">🏭</span>
                             </div>
-                            <div className="p-2 bg-gray-50 rounded-full text-gray-400 group-hover:bg-amber-600 group-hover:text-white transition-colors">
-                                <ArrowRight size={24} />
+                            <div className="flex items-center gap-2">
+                                {pendingHuarteCount > 0 && (
+                                    <span className="inline-flex min-w-7 h-7 px-2 items-center justify-center rounded-full bg-amber-500 text-white text-xs font-black">
+                                        {pendingHuarteCount > 99 ? '99+' : pendingHuarteCount}
+                                    </span>
+                                )}
+                                <div className="p-2 bg-gray-50 rounded-full text-gray-400 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                                    <ArrowRight size={24} />
+                                </div>
                             </div>
                         </div>
 

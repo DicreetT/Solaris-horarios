@@ -4,7 +4,6 @@ export interface User {
     id: string;
     name: string;
     email: string;
-    password?: string;
     isTrainingManager?: boolean;
     isAdmin?: boolean;
 }
@@ -111,6 +110,7 @@ export interface Notification {
     id: number;
     user_id: string;
     message: string;
+    type?: 'info' | 'success' | 'error' | 'action_required' | 'reminder' | 'recognition' | 'shock';
     read: boolean;
     created_at: string;
 }
@@ -199,4 +199,26 @@ export interface CalendarEvent {
     description: string | null;
     created_by: string;
     created_at: string;
+}
+
+export interface ChatMessage {
+    id: number;
+    channel: string;
+    sender_id: string;
+    message: string;
+    created_at: string;
+}
+
+export interface ChatConversation {
+    id: number;
+    kind: 'direct' | 'group';
+    title: string | null;
+    created_by: string;
+    created_at: string;
+}
+
+export interface ChatParticipant {
+    conversation_id: number;
+    user_id: string;
+    joined_at: string;
 }

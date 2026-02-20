@@ -7,8 +7,9 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { TaskSection } from '../components/TaskSection';
 import { TaskCardRow } from '../components/TaskCardRow';
-import { CheckSquare, Plus, CheckCircle2, Circle, AlertCircle, UserCheck, Shield } from 'lucide-react';
+import { CheckSquare, Plus, UserCheck, Shield, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { USERS } from '../constants';
 
 function TasksPage() {
     const { currentUser } = useAuth();
@@ -23,7 +24,7 @@ function TasksPage() {
         if (taskId && todos.length > 0) {
             const task = todos.find(t => t.id.toString() === taskId);
             if (task) {
-                setSelectedTask(task);
+                openTaskDetail(task);
                 // Clear the param after opening to avoid re-opening on manual close if needed? 
                 // Or keep it. Usually clear is better to keep URL clean.
                 const newParams = new URLSearchParams(searchParams);
@@ -33,11 +34,60 @@ function TasksPage() {
         }
     }, [searchParams, todos, setSearchParams]);
 
-    // Determines which "Top Level" filters are active
-    // "today" includes overdue implicitly for urgency
-    const [filterStatus, setFilterStatus] = useState<'all' | 'today' | 'pending' | 'completed'>('all');
+    const [taskTypeFilter, setTaskTypeFilter] = useState<'all' | 'today' | 'pending' | 'completed'>('pending');
+    const [assignedToFilter, setAssignedToFilter] = useState<string>('all');
+    const [assignedByFilter, setAssignedByFilter] = useState<string>('all');
+    const [monthFilter, setMonthFilter] = useState<string>('all');
+    const [titleSearch, setTitleSearch] = useState('');
+    const [commentSeenVersion, setCommentSeenVersion] = useState(0);
 
     const isAdmin = currentUser?.isAdmin;
+
+    const getSeenStorageKey = (taskId: number) => `task-comments-seen:${currentUser.id}:${taskId}`;
+    const getLatestForeignCommentAt = (task: Todo): string | null => {
+        const foreignComments = (task.comments || []).filter((c: any) => c.user_id !== currentUser.id);
+        if (foreignComments.length === 0) return null;
+        return foreignComments.reduce((max: string, c: any) => (c.created_at > max ? c.created_at : max), foreignComments[0].created_at);
+    };
+
+    // Seed initial "seen" baseline so old comments do not appear as new.
+    // Only new comments posted after this baseline will trigger unread state.
+    useEffect(() => {
+        todos.forEach((task) => {
+            const key = getSeenStorageKey(task.id);
+            const existing = localStorage.getItem(key);
+            if (existing) return;
+            const latest = getLatestForeignCommentAt(task);
+            if (latest) {
+                localStorage.setItem(key, latest);
+            }
+        });
+    }, [todos, currentUser.id]);
+
+    const unreadCommentsByTask = useMemo(() => {
+        const map = new Map<number, number>();
+        todos.forEach((task) => {
+            const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+            const unread = (task.comments || []).filter((c: any) => c.user_id !== currentUser.id && c.created_at > seenAt).length;
+            map.set(task.id, unread);
+        });
+        return map;
+    }, [todos, currentUser.id, commentSeenVersion]);
+
+    const markTaskCommentsAsSeen = (task: Todo) => {
+        const latest = getLatestForeignCommentAt(task);
+        if (!latest) return;
+        const key = getSeenStorageKey(task.id);
+        const seenAt = localStorage.getItem(key) || '';
+        if (latest <= seenAt) return;
+        localStorage.setItem(key, latest);
+        setCommentSeenVersion((v) => v + 1);
+    };
+
+    const openTaskDetail = (task: Todo) => {
+        markTaskCommentsAsSeen(task);
+        setSelectedTask(task);
+    };
 
     // --- Sorting Logic ---
     const getTaskPriority = (t: Todo) => {
@@ -75,11 +125,34 @@ function TasksPage() {
         });
     };
 
+    const sortTasksForView = (taskList: Todo[]) => {
+        const sorted = sortTasks(taskList);
+        if (taskTypeFilter !== 'pending') return sorted;
+
+        const getLatestUnreadTs = (task: Todo) => {
+            const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+            const unread = (task.comments || [])
+                .filter((c: any) => c.user_id !== currentUser.id && c.created_at > seenAt)
+                .map((c: any) => new Date(c.created_at).getTime());
+            if (unread.length === 0) return 0;
+            return Math.max(...unread);
+        };
+
+        return [...sorted].sort((a, b) => {
+            const unreadA = (unreadCommentsByTask.get(a.id) || 0) > 0;
+            const unreadB = (unreadCommentsByTask.get(b.id) || 0) > 0;
+            if (unreadA !== unreadB) return unreadA ? -1 : 1;
+            if (unreadA && unreadB) {
+                return getLatestUnreadTs(b) - getLatestUnreadTs(a);
+            }
+            return 0;
+        });
+    };
+
     // --- Filtering Logic ---
-    const filterByTopBar = (t: Todo) => {
+    const filterByCurrentCriteria = (t: Todo) => {
         const isDoneForMe = t.completed_by.includes(currentUser.id);
         const isAssignedToMe = t.assigned_to.includes(currentUser.id);
-        const isCreator = t.created_by === currentUser.id;
 
         // For filtering purposes, we consider "Done" if the current user finished their part
         // OR if they are the creator and EVERYONE finished (global done)
@@ -89,44 +162,71 @@ function TasksPage() {
         // - If assigned: when I complete it.
         // - If only creator (not assigned): when everyone completes it.
         const isRelevantDone = isAssignedToMe ? isDoneForMe : isGloballyDone;
-
+        const hasUnreadComments = (unreadCommentsByTask.get(t.id) || 0) > 0;
         const today = new Date().toISOString().split('T')[0];
         const isOverdue = t.due_date_key ? t.due_date_key <= today : false;
 
-        switch (filterStatus) {
+        switch (taskTypeFilter) {
             case 'today':
                 return isOverdue && !isRelevantDone;
             case 'pending':
-                return !isRelevantDone;
+                if (isRelevantDone && !hasUnreadComments) return false;
+                break;
             case 'completed':
-                return isRelevantDone;
+                if (!isRelevantDone || hasUnreadComments) return false;
+                break;
             case 'all':
             default:
-                return !isRelevantDone;
+                break;
         }
+
+        if (assignedToFilter === 'me' && !isAssignedToMe) return false;
+        if (assignedToFilter !== 'all' && assignedToFilter !== 'me' && !t.assigned_to.includes(assignedToFilter)) return false;
+
+        if (assignedByFilter === 'me' && t.created_by !== currentUser.id) return false;
+        if (assignedByFilter !== 'all' && assignedByFilter !== 'me' && t.created_by !== assignedByFilter) return false;
+
+        if (monthFilter !== 'all') {
+            if (!t.due_date_key || !t.due_date_key.startsWith(monthFilter)) return false;
+        }
+
+        const query = titleSearch.trim().toLowerCase();
+        if (query && !t.title.toLowerCase().includes(query)) return false;
+
+        return true;
     };
 
     // --- Derived Lists ---
     const lists = useMemo(() => {
         // Base filter
-        const base = todos.filter(filterByTopBar);
+        const base = todos.filter(filterByCurrentCriteria);
 
         // 1. Assigned to Me
-        const assigned = sortTasks(base.filter(t => t.assigned_to.includes(currentUser.id)));
+        const assigned = sortTasksForView(base.filter(t => t.assigned_to.includes(currentUser.id)));
 
         // 2. Created by Me (Exclude those assigned to me to avoid duplication in view? 
         // Request says "Tareas creadas por mi". Typically if I create and assign to self, it appears in both? 
         // Let's keep it in both sections as they have different contexts, OR filter out. 
         // User didn't specify duplication handling. Let's keep distinct sets logic if possible 
         // or just show all my created ones in "Created".
-        const created = sortTasks(base.filter(t => t.created_by === currentUser.id));
+        const created = sortTasksForView(base.filter(t => t.created_by === currentUser.id));
 
         // 3. Admin View (All tasks)
         // Only relevant if Admin
-        const all = isAdmin ? sortTasks(base) : [];
+        const all = isAdmin ? sortTasksForView(base) : [];
 
         return { assigned, created, all };
-    }, [todos, filterStatus, currentUser.id, isAdmin]);
+    }, [todos, taskTypeFilter, assignedToFilter, assignedByFilter, monthFilter, titleSearch, currentUser.id, isAdmin, unreadCommentsByTask]);
+
+    const monthOptions = useMemo(() => {
+        const unique = Array.from(new Set(
+            todos
+                .map((t) => t.due_date_key || '')
+                .filter(Boolean)
+                .map((d) => d.slice(0, 7)),
+        )).sort();
+        return unique;
+    }, [todos]);
 
     // Counts for badges
     // We want the counts to reflect the *current* filter state? or global state?
@@ -154,35 +254,80 @@ function TasksPage() {
                 </button>
             </div>
 
-            {/* Quick Filters */}
-            <div className="flex flex-wrap gap-2">
-                <button
-                    onClick={() => setFilterStatus('all')}
-                    className={`px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'all' ? 'bg-gray-800 text-white border-gray-800 dark:bg-white dark:text-gray-900 dark:border-white' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
-                >
-                    Todas
-                </button>
-                <button
-                    onClick={() => setFilterStatus('today')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'today' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
-                >
-                    <AlertCircle size={14} />
-                    Vencen Hoy
-                </button>
-                <button
-                    onClick={() => setFilterStatus('pending')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'pending' ? 'bg-white border-primary text-primary ring-2 ring-primary/10 dark:bg-primary/20 dark:border-primary/50' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
-                >
-                    <Circle size={14} />
-                    Pendientes
-                </button>
-                <button
-                    onClick={() => setFilterStatus('completed')}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all ${filterStatus === 'completed' ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-white/5 dark:text-gray-300 dark:border-white/10 dark:hover:bg-white/10'}`}
-                >
-                    <CheckCircle2 size={14} />
-                    Completadas
-                </button>
+            {/* Filters */}
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de tarea</label>
+                    <select
+                        value={taskTypeFilter}
+                        onChange={(e) => setTaskTypeFilter(e.target.value as 'all' | 'today' | 'pending' | 'completed')}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold bg-white"
+                    >
+                        <option value="all">Todas</option>
+                        <option value="today">Vencen hoy / vencidas</option>
+                        <option value="pending">Pendientes</option>
+                        <option value="completed">Completadas</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignada a</label>
+                    <select
+                        value={assignedToFilter}
+                        onChange={(e) => setAssignedToFilter(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold bg-white"
+                    >
+                        <option value="all">Cualquiera</option>
+                        <option value="me">A mí</option>
+                        {USERS.map((u) => (
+                            <option key={`to-${u.id}`} value={u.id}>{u.name}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignada por</label>
+                    <select
+                        value={assignedByFilter}
+                        onChange={(e) => setAssignedByFilter(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold bg-white"
+                    >
+                        <option value="all">Cualquiera</option>
+                        <option value="me">Por mí</option>
+                        {USERS.map((u) => (
+                            <option key={`by-${u.id}`} value={u.id}>{u.name}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Mes</label>
+                    <select
+                        value={monthFilter}
+                        onChange={(e) => setMonthFilter(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold bg-white"
+                    >
+                        <option value="all">Todos los meses</option>
+                        {monthOptions.map((m) => (
+                            <option key={m} value={m}>
+                                {new Date(`${m}-01T00:00:00`).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar por título</label>
+                    <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                            value={titleSearch}
+                            onChange={(e) => setTitleSearch(e.target.value)}
+                            placeholder="Ej. pedido, factura..."
+                            className="w-full rounded-xl border border-gray-200 pl-9 pr-3 py-2 text-sm font-medium"
+                        />
+                    </div>
+                </div>
             </div>
 
             {/* Sections */}
@@ -209,8 +354,10 @@ function TasksPage() {
                                     <TaskCardRow
                                         todo={task}
                                         currentUser={currentUser}
-                                        onClick={setSelectedTask}
+                                        unreadCommentsCount={unreadCommentsByTask.get(task.id) || 0}
+                                        onClick={openTaskDetail}
                                         onToggle={toggleTodo}
+                                        onMarkCommentsRead={markTaskCommentsAsSeen}
                                     />
                                 </motion.div>
                             ))
@@ -247,8 +394,10 @@ function TasksPage() {
                                     <TaskCardRow
                                         todo={task}
                                         currentUser={currentUser}
-                                        onClick={setSelectedTask}
+                                        unreadCommentsCount={unreadCommentsByTask.get(task.id) || 0}
+                                        onClick={openTaskDetail}
                                         onToggle={toggleTodo}
+                                        onMarkCommentsRead={markTaskCommentsAsSeen}
                                     />
                                 </motion.div>
                             ))
@@ -287,8 +436,10 @@ function TasksPage() {
                                             <TaskCardRow
                                                 todo={task}
                                                 currentUser={currentUser}
-                                                onClick={setSelectedTask}
+                                                unreadCommentsCount={unreadCommentsByTask.get(task.id) || 0}
+                                                onClick={openTaskDetail}
                                                 onToggle={toggleTodo}
+                                                onMarkCommentsRead={markTaskCommentsAsSeen}
                                             />
                                         </motion.div>
                                     ))
@@ -310,7 +461,9 @@ function TasksPage() {
                 {selectedTask && (
                     <TaskDetailModal
                         task={selectedTask}
-                        onClose={() => setSelectedTask(null)}
+                        onClose={() => {
+                            setSelectedTask(null);
+                        }}
                     />
                 )}
             </AnimatePresence>

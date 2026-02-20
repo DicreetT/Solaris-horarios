@@ -1,7 +1,10 @@
 import React from 'react';
-import { X, Bell, Check, BellRing, BellOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, Bell, Check, BellRing, BellOff, AlertTriangle, Info, Sparkles, CircleCheck, CircleX } from 'lucide-react';
 import { Notification as NotificationType } from '../types';
 import { useNotificationsContext } from '../context/NotificationsContext';
+import { useAuth } from '../context/AuthContext';
+import { useTodos } from '../hooks/useTodos';
 
 /**
  * NotificationsModal component
@@ -13,13 +16,76 @@ interface NotificationsModalProps {
 }
 
 export default function NotificationsModal({ isOpen, onClose }: NotificationsModalProps) {
-    const { notifications, markAsRead, isPushSubscribed, subscribeToPush, pushError } = useNotificationsContext();
+    const navigate = useNavigate();
+    const { currentUser } = useAuth();
+    const { todos } = useTodos(currentUser);
+    const { notifications, markAsRead, markAllAsRead, isPushSubscribed, subscribeToPush, pushError } = useNotificationsContext();
 
     const unreadCount = notifications.filter((n) => !n.read).length;
 
+    const categorizeNotification = (n: NotificationType): 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'recognition' | 'other' => {
+        if (n.type === 'recognition') return 'recognition';
+        const text = `${n.message || ''}`.toLowerCase();
+        if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea') || text.includes('comentario')) return 'tasks';
+        if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
+        if (text.includes('reunión') || text.includes('reunion')) return 'meetings';
+        if (text.includes('ausencia') || text.includes('vacacion') || text.includes('vacación')) return 'absences';
+        if (text.includes('formación') || text.includes('formacion')) return 'trainings';
+        return 'other';
+    };
+
+    const resolveTaskIdFromNotification = (notification: NotificationType): number | null => {
+        const message = `${notification.message || ''}`;
+        const idMatch = message.match(/\[#(\d+)\]/);
+        if (idMatch?.[1]) return Number(idMatch[1]);
+
+        const lower = message.toLowerCase();
+        const byTitle = todos.find((t) => lower.includes(t.title.toLowerCase()));
+        return byTitle ? byTitle.id : null;
+    };
+
     const handleNotificationClick = async (notification: NotificationType) => {
+        const category = categorizeNotification(notification);
+
+        if (category === 'recognition') return;
+
         if (!notification.read) {
             await markAsRead(notification.id);
+        }
+
+        if (category === 'tasks') {
+            const taskId = resolveTaskIdFromNotification(notification);
+            if (taskId) {
+                navigate(`/tasks?task=${taskId}`);
+            } else {
+                navigate('/tasks');
+            }
+            onClose();
+            return;
+        }
+
+        if (category === 'schedule') {
+            navigate('/dashboard#time-summary');
+            onClose();
+            return;
+        }
+
+        if (category === 'meetings') {
+            navigate('/dashboard');
+            onClose();
+            return;
+        }
+
+        if (category === 'absences') {
+            navigate('/dashboard');
+            onClose();
+            return;
+        }
+
+        if (category === 'trainings') {
+            navigate('/dashboard');
+            onClose();
+            return;
         }
     };
 
@@ -43,11 +109,49 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
         else if (diffHours < 24) timeAgo = `Hace ${diffHours}h`;
         else timeAgo = `Hace ${diffDays}d`;
 
+        const type = n.type || 'info';
+        const typeMeta = (() => {
+            if (type === 'action_required' || type === 'shock') {
+                return {
+                    icon: <AlertTriangle size={20} />,
+                    iconClass: isUnread ? 'bg-amber-100 text-amber-700' : 'bg-amber-50 text-amber-500',
+                    badge: 'Accion',
+                };
+            }
+            if (type === 'recognition') {
+                return {
+                    icon: <Sparkles size={20} />,
+                    iconClass: isUnread ? 'bg-sky-100 text-sky-700' : 'bg-sky-50 text-sky-500',
+                    badge: 'Reconocimiento',
+                };
+            }
+            if (type === 'success') {
+                return {
+                    icon: <CircleCheck size={20} />,
+                    iconClass: isUnread ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-50 text-emerald-500',
+                    badge: 'Exito',
+                };
+            }
+            if (type === 'error') {
+                return {
+                    icon: <CircleX size={20} />,
+                    iconClass: isUnread ? 'bg-red-100 text-red-700' : 'bg-red-50 text-red-500',
+                    badge: 'Error',
+                };
+            }
+            return {
+                icon: <Info size={20} />,
+                iconClass: isUnread ? 'bg-primary/10 text-primary' : 'bg-gray-50 text-gray-400',
+                badge: 'Info',
+            };
+        })();
+
+        const isClickable = type !== 'recognition';
         return (
             <div
                 key={n.id}
                 onClick={() => handleNotificationClick(n)}
-                className={`group relative flex gap-4 p-4 rounded-2xl border transition-all cursor-pointer ${isUnread
+                className={`group relative flex gap-4 p-4 rounded-2xl border transition-all ${isClickable ? 'cursor-pointer' : 'cursor-default'} ${isUnread
                     ? 'bg-primary/5 border-primary/30 hover:border-primary/40 shadow-sm'
                     : 'bg-white border-gray-100 hover:border-gray-200'
                     }`}
@@ -59,8 +163,8 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
 
                 {/* Icon */}
                 <div className={`flex-shrink-0 ${isUnread ? 'ml-4' : ''}`}>
-                    <div className={`p-2.5 rounded-xl ${isUnread ? 'bg-primary/10 text-primary' : 'bg-gray-50 text-gray-400'}`}>
-                        <Bell size={20} />
+                    <div className={`p-2.5 rounded-xl ${typeMeta.iconClass}`}>
+                        {typeMeta.icon}
                     </div>
                 </div>
 
@@ -71,6 +175,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
                     </p>
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-gray-500 font-medium">{timeAgo}</span>
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">{typeMeta.badge}</span>
                         {!isUnread && (
                             <div className="flex items-center gap-1 text-xs text-gray-400">
                                 <Check size={12} />
@@ -115,6 +220,16 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
+                            {unreadCount > 0 && (
+                                <button
+                                    onClick={markAllAsRead}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg text-xs font-medium transition-colors"
+                                    title="Marcar todas como leidas"
+                                >
+                                    <Check size={14} />
+                                    <span>Marcar todo</span>
+                                </button>
+                            )}
                             {!isPushSubscribed && (
                                 <button
                                     onClick={subscribeToPush}

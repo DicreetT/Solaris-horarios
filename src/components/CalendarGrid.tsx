@@ -35,7 +35,12 @@ export default function CalendarGrid({
 }) {
     const { currentUser } = useAuth();
     const isAdminView = currentUser?.isAdmin;
-    const { timeData } = useTimeData();
+    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+    const { timeData } = useTimeData({
+        from: monthStart,
+        to: monthEnd,
+    });
     const { trainingRequests } = useTraining(currentUser);
     const { absenceRequests } = useAbsences(currentUser);
     const { todos } = useTodos(currentUser);

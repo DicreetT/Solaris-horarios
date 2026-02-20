@@ -21,6 +21,7 @@ import TimeTrackingPage from './pages/TimeTrackingPage';
 import FoldersPage from './pages/FoldersPage';
 import ShoppingListPage from './pages/ShoppingListPage';
 import DailyChecklistPage from './pages/DailyChecklistPage';
+import ChatPage from './pages/ChatPage';
 
 /**
  * Protected Route wrapper
@@ -56,18 +57,18 @@ function App() {
             path="/login"
             element={
               currentUser ? (
-                <Navigate to="/dashboard" replace />
+                <Navigate to="/calendar" replace />
               ) : (
                 <LoginView onLogin={handleLogin} />
               )
             }
           />
 
-          {/* Redirect root to dashboard or login */}
+          {/* Redirect root to calendar or login */}
           <Route
             path="/"
             element={
-              <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
+              <Navigate to={currentUser ? "/calendar" : "/login"} replace />
             }
           />
 
@@ -90,13 +91,14 @@ function App() {
             <Route path="/folders" element={<FoldersPage />} />
             <Route path="/shopping" element={<ShoppingListPage />} />
             <Route path="/checklist" element={<DailyChecklistPage />} />
+            <Route path="/chat" element={<ChatPage />} />
           </Route>
 
-          {/* Catch all - redirect to dashboard or login */}
+          {/* Catch all - redirect to calendar or login */}
           <Route
             path="*"
             element={
-              <Navigate to={currentUser ? "/dashboard" : "/login"} replace />
+              <Navigate to={currentUser ? "/calendar" : "/login"} replace />
             }
           />
         </Routes>

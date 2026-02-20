@@ -3,6 +3,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { User, Notification } from '../types';
 
+type NotificationType = NonNullable<Notification['type']>;
+
+const normalizeType = (type?: string): NotificationType => {
+    const supported: NotificationType[] = ['info', 'success', 'error', 'action_required', 'reminder', 'recognition', 'shock'];
+    if (type && supported.includes(type as NotificationType)) {
+        return type as NotificationType;
+    }
+    return 'info';
+};
+
 export function useNotifications(currentUser: User | null) {
     const queryClient = useQueryClient();
 
@@ -22,6 +32,7 @@ export function useNotifications(currentUser: User | null) {
                 id: row.id,
                 user_id: row.user_id,
                 message: row.message,
+                type: normalizeType(row.type),
                 read: row.read,
                 created_at: row.created_at,
             }));
@@ -33,12 +44,25 @@ export function useNotifications(currentUser: User | null) {
         mutationFn: async ({ message, userId, type }: { message: string; userId?: string; type?: string }) => {
             const targetUserId = userId || currentUser?.id;
             if (!targetUserId) return;
+            const normalizedType = normalizeType(type);
+
+            // De-duplicate recent equal notifications to reduce spam.
+            const duplicateThreshold = new Date(Date.now() - 90 * 1000).toISOString();
+            const { data: existing } = await supabase
+                .from('notifications')
+                .select('id')
+                .eq('user_id', targetUserId)
+                .eq('message', message)
+                .eq('type', normalizedType)
+                .gte('created_at', duplicateThreshold)
+                .limit(1);
+            if (existing && existing.length > 0) return;
 
             const now = new Date().toISOString();
             const { error } = await supabase.from('notifications').insert({
                 user_id: targetUserId,
                 message,
-                type: type || 'info',
+                type: normalizedType,
                 created_at: now,
                 read: false,
             });
@@ -89,27 +113,27 @@ export function useNotifications(currentUser: User | null) {
         addNotification: addNotificationMutation.mutateAsync,
         sendNudge: async (todoTitle: string, userIds: string[]) => {
             if (!currentUser) return;
-            const message = `⚡ ¡Electrocutada! Se ha activado el MODO TORMENTA ⛈️ por la tarea: "${todoTitle}". ¡Complétala para que vuelva a salir el sol! ☀️`;
+            const message = `Accion requerida: tarea pendiente "${todoTitle}".`;
 
             // Send to each user who hasn't finished
             const promises = userIds.map(uid =>
                 addNotificationMutation.mutateAsync({
                     message,
                     userId: uid,
-                    type: 'shock'
+                    type: 'action_required'
                 })
             );
             await Promise.all(promises);
         },
         sendCaffeineBoost: async (userName: string, userIds: string[]) => {
             if (!currentUser) return;
-            const message = `☕ ¡Cafeína Lunar! ${userName} te ha enviado un chute de energía positiva. 🚀✨ ¡Vamos que tú puedes!`;
+            const message = `${userName} reconoce tu esfuerzo en esta tarea.`;
 
             const promises = userIds.map(uid =>
                 addNotificationMutation.mutateAsync({
                     message,
                     userId: uid,
-                    type: 'caffeine'
+                    type: 'recognition'
                 })
             );
             await Promise.all(promises);

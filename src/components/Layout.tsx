@@ -5,6 +5,7 @@ import Header from './Header';
 import ChangePasswordModal from './ChangePasswordModal';
 import NotificationsModal from './NotificationsModal';
 import SearchPalette from './SearchPalette';
+import { CaffeineOverlay } from './CaffeineOverlay';
 
 import { useAuth } from '../context/AuthContext';
 import { useRealtime } from '../hooks/useRealtime';
@@ -14,6 +15,7 @@ import { StormOverlay } from './StormOverlay';
 import { TeamHeartbeat } from './TeamHeartbeat';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { toDateKey } from '../utils/dateUtils';
+import { useNotificationsContext } from '../context/NotificationsContext';
 
 /**
  * Main layout component
@@ -25,12 +27,15 @@ function Layout() {
     const { todos } = useTodos(currentUser);
     const { timeData } = useTimeData();
     const { dailyStatuses } = useDailyStatus(currentUser);
+    const { notifications } = useNotificationsContext();
     const navigate = useNavigate();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+    const [pendingCaffeine, setPendingCaffeine] = useState<Array<{ id: number; senderName: string }>>([]);
+    const [activeCaffeine, setActiveCaffeine] = useState<{ id: number; senderName: string } | null>(null);
 
     const timeOfDay = React.useMemo(() => {
         const hour = new Date().getHours();
@@ -52,6 +57,48 @@ function Layout() {
             document.documentElement.classList.remove('dark');
         }
     }, [timeOfDay]);
+
+    React.useEffect(() => {
+        const openNotifications = () => setShowNotificationsModal(true);
+        window.addEventListener('open-notifications-modal', openNotifications);
+        return () => window.removeEventListener('open-notifications-modal', openNotifications);
+    }, []);
+
+    React.useEffect(() => {
+        if (!currentUser) return;
+        const storageKey = `caffeine-overlay-seen:${currentUser.id}`;
+        const saved = localStorage.getItem(storageKey);
+        let parsed: number[] = [];
+        try {
+            parsed = saved ? JSON.parse(saved) : [];
+        } catch {
+            parsed = [];
+        }
+        const seenIds = new Set<number>(parsed);
+
+        const newlyDetected = notifications
+            .filter((n) => !n.read && n.type === 'recognition' && !seenIds.has(n.id))
+            .map((n) => {
+                const match = (n.message || '').match(/^(.+?)\s+reconoce tu esfuerzo/i);
+                return {
+                    id: n.id,
+                    senderName: match?.[1] || 'Tu equipo',
+                };
+            });
+
+        if (newlyDetected.length === 0) return;
+
+        newlyDetected.forEach((n) => seenIds.add(n.id));
+        localStorage.setItem(storageKey, JSON.stringify(Array.from(seenIds)));
+        setPendingCaffeine((prev) => [...prev, ...newlyDetected]);
+    }, [notifications, currentUser]);
+
+    React.useEffect(() => {
+        if (activeCaffeine || pendingCaffeine.length === 0) return;
+        const [next, ...rest] = pendingCaffeine;
+        setActiveCaffeine(next);
+        setPendingCaffeine(rest);
+    }, [pendingCaffeine, activeCaffeine]);
 
     // Calculate if storm mode should be active and which tasks trigger it
     const { isStormActive, shockedTasks } = React.useMemo(() => {
@@ -144,6 +191,13 @@ function Layout() {
                 />
 
                 <SearchPalette />
+
+                {activeCaffeine && (
+                    <CaffeineOverlay
+                        senderName={activeCaffeine.senderName}
+                        onComplete={() => setActiveCaffeine(null)}
+                    />
+                )}
             </div>
         </StormOverlay>
     );

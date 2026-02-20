@@ -50,6 +50,23 @@ function MeetingsPage() {
         }
     }, [searchParams, meetingRequests, setSearchParams]);
 
+    useEffect(() => {
+        const shouldOpen = searchParams.get('open') === '1';
+        const dateParam = searchParams.get('date');
+        if (!shouldOpen) return;
+
+        if (dateParam) {
+            const parsed = new Date(`${dateParam}T00:00:00`);
+            if (!Number.isNaN(parsed.getTime())) setSelectedDate(parsed);
+        }
+
+        setShowModal(true);
+        const cleaned = new URLSearchParams(searchParams);
+        cleaned.delete('open');
+        cleaned.delete('date');
+        setSearchParams(cleaned, { replace: true });
+    }, [searchParams, setSearchParams]);
+
     // User's meetings sorted by creation date
     const userMeetings = meetingRequests
         .filter((m) => m.created_by === currentUser.id || (m.participants || []).includes(currentUser.id))

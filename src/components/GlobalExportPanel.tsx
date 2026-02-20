@@ -12,7 +12,6 @@ import RoleBadge from './RoleBadge';
 
 export default function GlobalExportPanel() {
     const { currentUser: user } = useAuth();
-    const { timeData } = useTimeData();
     const { trainingRequests } = useTraining(user);
     const { meetingRequests } = useMeetings(user);
     const { absenceRequests } = useAbsences(user);
@@ -26,6 +25,12 @@ export default function GlobalExportPanel() {
 
     // Month Selector State
     const [selectedDate, setSelectedDate] = useState(new Date());
+    const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    const { timeData } = useTimeData({
+        from: monthStart,
+        to: monthEnd,
+    });
 
     const handlePrevMonth = () => {
         setSelectedDate(prev => {

@@ -189,7 +189,7 @@ export function useTodos(currentUser: User | null) {
             for (const userId of assignedIds) {
                 if (userId !== currentUser.id) {
                     await addNotification({
-                        message: `Nuevo comentario en tarea "${currentTodo.title}": ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
+                        message: `Nuevo comentario en tarea [#${todoId}] "${currentTodo.title}": ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
                         userId
                     });
                 }

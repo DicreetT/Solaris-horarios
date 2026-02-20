@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Upload, X, FileText, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Upload, X, FileText, Image as ImageIcon, Loader2, Camera, Video } from 'lucide-react';
 
 export interface Attachment {
     name: string;
@@ -33,11 +33,11 @@ export function FileUploader({
     const [isUploading, setIsUploading] = useState(false);
     const [files, setFiles] = useState<Attachment[]>(existingFiles);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const cameraImageInputRef = useRef<HTMLInputElement>(null);
+    const cameraVideoInputRef = useRef<HTMLInputElement>(null);
 
-    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files || e.target.files.length === 0) return;
-
-        const selectedFiles = Array.from(e.target.files);
+    const processSelectedFiles = async (selectedFiles: File[]) => {
+        if (selectedFiles.length === 0) return;
         setIsUploading(true);
 
         const newAttachments: Attachment[] = [];
@@ -95,7 +95,19 @@ export function FileUploader({
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
+            if (cameraImageInputRef.current) {
+                cameraImageInputRef.current.value = '';
+            }
+            if (cameraVideoInputRef.current) {
+                cameraVideoInputRef.current.value = '';
+            }
         }
+    };
+
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || e.target.files.length === 0) return;
+        const selectedFiles = Array.from(e.target.files);
+        await processSelectedFiles(selectedFiles);
     };
 
     const handleRemoveFile = (index: number) => {
@@ -112,6 +124,9 @@ export function FileUploader({
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
+    const allowImageCapture = acceptedTypes.includes('image/*');
+    const allowVideoCapture = acceptedTypes.includes('video/*');
+
     return (
         <div className="w-full space-y-3">
             <div className="flex items-center gap-3">
@@ -127,6 +142,36 @@ export function FileUploader({
                     {isUploading ? <Loader2 size={compact ? 14 : 18} className="animate-spin" /> : <Upload size={compact ? 14 : 18} />}
                     {isUploading ? 'Subiendo...' : 'Adjuntar archivos'}
                 </button>
+                {allowImageCapture && (
+                    <button
+                        type="button"
+                        onClick={() => cameraImageInputRef.current?.click()}
+                        disabled={isUploading}
+                        className={`
+                    flex items-center gap-2 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-100 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed
+                    ${compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm bg-gray-50'}
+                `}
+                        title="Tomar foto"
+                    >
+                        <Camera size={compact ? 14 : 18} />
+                        {compact ? 'Foto' : 'Usar cámara'}
+                    </button>
+                )}
+                {allowVideoCapture && (
+                    <button
+                        type="button"
+                        onClick={() => cameraVideoInputRef.current?.click()}
+                        disabled={isUploading}
+                        className={`
+                    flex items-center gap-2 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-100 hover:border-gray-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed
+                    ${compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm bg-gray-50'}
+                `}
+                        title="Grabar video"
+                    >
+                        <Video size={compact ? 14 : 18} />
+                        {compact ? 'Video' : 'Grabar video'}
+                    </button>
+                )}
                 {!compact && <span className="text-xs text-gray-400">Máx. {maxSizeMB}MB</span>}
             </div>
 
@@ -138,6 +183,26 @@ export function FileUploader({
                 multiple
                 accept={acceptedTypes}
             />
+            {allowImageCapture && (
+                <input
+                    type="file"
+                    ref={cameraImageInputRef}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept="image/*"
+                    capture="environment"
+                />
+            )}
+            {allowVideoCapture && (
+                <input
+                    type="file"
+                    ref={cameraVideoInputRef}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept="video/*"
+                    capture="environment"
+                />
+            )}
 
             {files.length > 0 && (
                 <div className="grid gap-2">

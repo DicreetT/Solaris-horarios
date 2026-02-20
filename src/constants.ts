@@ -12,7 +12,6 @@ export const USERS: User[] = [
         id: "1c42e44a-7e58-4c86-94ca-404061f8863d", // thalia
         name: "Thalia",
         email: "thaliaoliveros.solaris@gmail.com",
-        password: "Thalia123",
         isTrainingManager: false,
         isAdmin: true,
     },
@@ -20,35 +19,30 @@ export const USERS: User[] = [
         id: "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", // contable
         name: "Heidy",
         email: "heidy.m.solaris@gmail.com",
-        password: "heidy123",
         isTrainingManager: false,
     },
     {
         id: "6bafcb97-6a1b-4224-adbb-1340b86ffeb9", // anabella
         name: "Anabella",
         email: "anabellas.solaris@gmail.com",
-        password: "anabella123",
         isTrainingManager: false,
     },
     {
         id: ESTEBAN_ID,
         name: "Esteban",
         email: "contacto@solaris.global",
-        password: "esteban123",
         isTrainingManager: true,
     },
     {
         id: "cb5d2e6e-9046-4b22-b509-469076999d78", // itzi
         name: "Itzi",
         email: "solarishuarte@gmail.com",
-        password: "itziar123",
         isTrainingManager: false,
     },
     {
         id: "4ca49a9d-7ee5-4b54-8e93-bc4833de549a", // fer
         name: "Fer",
         email: "fadodami2503@gmail.com",
-        password: "fer123",
         isTrainingManager: false,
     },
 ];

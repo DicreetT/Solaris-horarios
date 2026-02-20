@@ -1,18 +1,43 @@
-import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { toDateKey } from '../utils/dateUtils';
 import type { TimeDataByDate, TimeEntry } from '../types';
 
-export function useTimeData() {
+interface UseTimeDataOptions {
+    from?: Date | string;
+    to?: Date | string;
+}
+
+const toDateKeyFromInput = (value: Date | string): string => {
+    if (value instanceof Date) return toDateKey(value);
+    return value;
+};
+
+const getDefaultRange = () => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    return {
+        fromKey: toDateKey(from),
+        toKey: toDateKey(to),
+    };
+};
+
+export function useTimeData(options?: UseTimeDataOptions) {
     const queryClient = useQueryClient();
+    const defaults = getDefaultRange();
+    const fromKey = options?.from ? toDateKeyFromInput(options.from) : defaults.fromKey;
+    const toKey = options?.to ? toDateKeyFromInput(options.to) : defaults.toKey;
+    const queryKey = ['timeData', fromKey, toKey] as const;
 
     const { data: timeData = {}, isLoading, error } = useQuery<TimeDataByDate>({
-        queryKey: ['timeData'],
+        queryKey,
         queryFn: async (): Promise<TimeDataByDate> => {
             const { data, error } = await supabase
                 .from('time_entries')
                 .select('*')
+                .gte('date_key', fromKey)
+                .lte('date_key', toKey)
                 .order('inserted_at', { ascending: true });
 
             if (error) throw error;
@@ -32,24 +57,6 @@ export function useTimeData() {
             return organized;
         },
     });
-
-    // Realtime Subscription
-    useEffect(() => {
-        const channel = supabase
-            .channel('time_entries_changes')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'time_entries' },
-                () => {
-                    queryClient.invalidateQueries({ queryKey: ['timeData'] });
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [queryClient]);
 
     // Create new time entry
     const createTimeEntryMutation = useMutation({
@@ -79,7 +86,8 @@ export function useTimeData() {
             return { dateKey, userId, newEntry: data };
         },
         onSuccess: ({ dateKey, userId, newEntry }) => {
-            queryClient.setQueryData(['timeData'], (oldData: TimeDataByDate) => {
+            queryClient.setQueriesData({ queryKey: ['timeData'] }, (oldData: TimeDataByDate | undefined) => {
+                if (!oldData) return oldData;
                 const newData = { ...oldData };
                 if (!newData[dateKey]) newData[dateKey] = {};
                 if (!newData[dateKey][userId]) newData[dateKey][userId] = [];
@@ -103,7 +111,8 @@ export function useTimeData() {
             return data;
         },
         onSuccess: (updatedEntry: TimeEntry) => {
-            queryClient.setQueryData(['timeData'], (oldData: TimeDataByDate) => {
+            queryClient.setQueriesData({ queryKey: ['timeData'] }, (oldData: TimeDataByDate | undefined) => {
+                if (!oldData) return oldData;
                 const newData = { ...oldData };
                 const dateKey = updatedEntry.date_key;
                 const userId = updatedEntry.user_id;
@@ -130,7 +139,8 @@ export function useTimeData() {
             return id;
         },
         onSuccess: (id: number) => {
-            queryClient.setQueryData(['timeData'], (oldData: TimeDataByDate) => {
+            queryClient.setQueriesData({ queryKey: ['timeData'] }, (oldData: TimeDataByDate | undefined) => {
+                if (!oldData) return oldData;
                 const newData = { ...oldData };
                 // Find and remove the entry
                 Object.keys(newData).forEach(dateKey => {

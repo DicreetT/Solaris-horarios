@@ -1,610 +1,1410 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+    CalendarClock,
+    Coffee,
+    Clock3,
+    Edit2,
+    GraduationCap,
+    Info,
+    Save,
+    Sparkles,
+    UserX,
+    XCircle,
+    Users,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Calendar as CalendarIcon, Users, Clock, BookOpen, AlertCircle, LayoutGrid, Bell } from 'lucide-react';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
-import { useTimeData } from '../hooks/useTimeData';
-import { useAbsences } from '../hooks/useAbsences';
-import { UserAvatar } from '../components/UserAvatar';
 import { useTraining } from '../hooks/useTraining';
-import { useNotificationsContext } from '../context/NotificationsContext';
+import { useAbsences } from '../hooks/useAbsences';
+import { useTimeData } from '../hooks/useTimeData';
 import { useDailyStatus } from '../hooks/useDailyStatus';
+import { useCalendarEvents } from '../hooks/useCalendarEvents';
+import { useNotificationsContext } from '../context/NotificationsContext';
+import { useWorkProfile } from '../hooks/useWorkProfile';
+import { useChat } from '../hooks/useChat';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import DailyBriefing from '../components/DailyBriefing';
-import { TeamHeartbeat } from '../components/TeamHeartbeat';
-import { toDateKey, formatDatePretty } from '../utils/dateUtils';
-import { calculateTotalHours, formatHours } from '../utils/timeUtils';
+import { UserAvatar } from '../components/UserAvatar';
 import { USERS } from '../constants';
-import { motion } from 'framer-motion';
-import { haptics } from '../utils/haptics';
+import { formatDatePretty, toDateKey } from '../utils/dateUtils';
+import { calculateHours, formatHours } from '../utils/timeUtils';
+import { supabase } from '../lib/supabase';
+import { FileUploader, Attachment } from '../components/FileUploader';
+import TaskDetailModal from '../components/TaskDetailModal';
+import { Todo } from '../types';
 
-/**
- * Dashboard page
- * Home page with quick stats and recent activity
- */
+type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
+type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
+
+const notificationFilterLabels: Record<NotificationFilter, string> = {
+    all: 'Todas',
+    tasks: 'Tareas',
+    schedule: 'Horario',
+    meetings: 'Reuniones',
+    absences: 'Ausencias',
+    trainings: 'Formaciones',
+};
+
 function Dashboard() {
     const { currentUser } = useAuth();
+    const isAdmin = !!currentUser?.isAdmin;
+    const navigate = useNavigate();
+    const location = useLocation();
     const { todos } = useTodos(currentUser);
-    const { meetingRequests: meetings } = useMeetings(currentUser);
-    const { timeData } = useTimeData();
-    const { trainingRequests } = useTraining(currentUser);
-    const { notifications } = useNotificationsContext();
+    const { meetingRequests, createMeeting } = useMeetings(currentUser);
+    const { trainingRequests, createTrainingRequest } = useTraining(currentUser);
+    const { absenceRequests, createAbsence } = useAbsences(currentUser);
+    const { timeData, updateTimeEntry } = useTimeData();
+    const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
+    const { calendarEvents, createEvent } = useCalendarEvents();
+    const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
+    const { conversations: chatConversations } = useChat(currentUser, null);
 
-    const todayKey = toDateKey(new Date());
-    const myStatusToday = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === todayKey);
-
+    const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
+    const [eventDraft, setEventDraft] = useState('');
     const [savingMood, setSavingMood] = useState<string | null>(null);
+    const [editingDateKey, setEditingDateKey] = useState<string | null>(null);
+    const [timeEdit, setTimeEdit] = useState({ entry: '', exit: '' });
+    const [savingRow, setSavingRow] = useState(false);
 
-    const handleMoodSelect = async (emoji: string, label: string) => {
+    const [checklistLoading, setChecklistLoading] = useState(false);
+    const [checklistSaving, setChecklistSaving] = useState(false);
+    const [checklistTasks, setChecklistTasks] = useState<Array<{ id: string; text: string; completed: boolean }>>([]);
+    const [showAllTimeRows, setShowAllTimeRows] = useState(false);
+    const [activeRequestModal, setActiveRequestModal] = useState<QuickRequestType>(null);
+    const [requestDate, setRequestDate] = useState(toDateKey(new Date()));
+    const [requestEndDate, setRequestEndDate] = useState('');
+    const [requestIsDateRange, setRequestIsDateRange] = useState(false);
+    const [requestAbsenceType, setRequestAbsenceType] = useState<'special_permit' | 'absence'>('absence');
+    const [requestMakeUpHours, setRequestMakeUpHours] = useState(false);
+    const [requestReason, setRequestReason] = useState('');
+    const [requestTitle, setRequestTitle] = useState('');
+    const [requestDescription, setRequestDescription] = useState('');
+    const [requestSlot, setRequestSlot] = useState('indiferente');
+    const [requestParticipants, setRequestParticipants] = useState<string[]>([]);
+    const [requestAttachments, setRequestAttachments] = useState<Attachment[]>([]);
+    const [requestTargetUserId, setRequestTargetUserId] = useState<string>('');
+    const [requestSubmitting, setRequestSubmitting] = useState(false);
+    const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
+    const [sendingBoostTo, setSendingBoostTo] = useState<string | null>(null);
+    const [boostToastName, setBoostToastName] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (location.hash !== '#time-summary') return;
+        const timer = window.setTimeout(() => {
+            const block = document.getElementById('dashboard-time-summary');
+            if (block) {
+                block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            navigate('/dashboard', { replace: true });
+        }, 80);
+        return () => window.clearTimeout(timer);
+    }, [location.hash, navigate]);
+
+    const today = new Date();
+    const todayKey = toDateKey(today);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const { timeData: monthTimeData } = useTimeData({
+        from: monthStart,
+        to: monthEnd,
+    });
+
+    const weekStart = useMemo(() => {
+        const d = new Date(today);
+        const day = d.getDay();
+        const diff = day === 0 ? -6 : 1 - day;
+        d.setDate(d.getDate() + diff);
+        return d;
+    }, [todayKey]);
+
+    const weekEnd = useMemo(() => {
+        const d = new Date(weekStart);
+        d.setDate(d.getDate() + 6);
+        return d;
+    }, [weekStart]);
+
+    const weekStartKey = toDateKey(weekStart);
+    const weekEndKey = toDateKey(weekEnd);
+
+    const myProfile = userProfiles.find((p) => p.user_id === currentUser?.id);
+    const weeklyTargetHours = myProfile?.weekly_hours || 40;
+    const vacationTotal = myProfile?.vacation_days_total || 22;
+
+    const extractHHMM = (value: string | null | undefined): string | null => {
+        if (!value) return null;
+        if (value.includes('T')) return value.slice(11, 16);
+        if (value.length >= 5) return value.slice(0, 5);
+        return null;
+    };
+
+    const toMinutes = (value: string | null | undefined): number => {
+        const hhmm = extractHHMM(value);
+        if (!hhmm) return -1;
+        const [h, m] = hhmm.split(':').map(Number);
+        if (Number.isNaN(h) || Number.isNaN(m)) return -1;
+        return h * 60 + m;
+    };
+
+    const consolidateDailyEntries = (entries: any[]) => {
+        if (!entries || entries.length === 0) return null;
+
+        const withEntry = entries.filter((e) => !!extractHHMM(e.entry));
+        const withExit = entries.filter((e) => !!extractHHMM(e.exit));
+
+        const entrySource = withEntry.length > 0
+            ? withEntry.reduce((min, item) => (toMinutes(item.entry) < toMinutes(min.entry) ? item : min), withEntry[0])
+            : entries[0];
+
+        const exitSource = withExit.length > 0
+            ? withExit.reduce((max, item) => (toMinutes(item.exit) > toMinutes(max.exit) ? item : max), withExit[0])
+            : entries[0];
+
+        return {
+            id: entrySource?.id || entries[0].id,
+            date_key: entries[0].date_key,
+            entry: extractHHMM(entrySource?.entry),
+            exit: extractHHMM(exitSource?.exit),
+            status: entries[0].status,
+            note: entries[0].note,
+        };
+    };
+
+    const pendingTodos = useMemo(
+        () => todos.filter((t) => t.assigned_to.includes(currentUser?.id || '') && !t.completed_by.includes(currentUser?.id || '')),
+        [todos, currentUser],
+    );
+
+    const dueTodayTodos = pendingTodos.filter((t) => t.due_date_key === todayKey);
+    const nowHour = new Date().getHours();
+    const greeting = nowHour < 12 ? 'Buenos días' : nowHour < 20 ? 'Buenas tardes' : 'Buenas noches';
+
+    const weeklyMeetings = useMemo(
+        () =>
+            meetingRequests.filter((m) => {
+                const target = m.scheduled_date_key || m.preferred_date_key;
+                if (!target || m.status !== 'scheduled') return false;
+                const involved = m.created_by === currentUser?.id || (m.participants || []).includes(currentUser?.id || '');
+                return involved && target >= weekStartKey && target <= weekEndKey;
+            }),
+        [meetingRequests, currentUser, weekStartKey, weekEndKey],
+    );
+
+    const weeklyTrainings = useMemo(
+        () =>
+            trainingRequests.filter((t) => {
+                const target = t.scheduled_date_key || t.requested_date_key;
+                if (!target || t.status === 'rejected') return false;
+                const visible = currentUser?.isTrainingManager || t.user_id === currentUser?.id;
+                return visible && target >= weekStartKey && target <= weekEndKey;
+            }),
+        [trainingRequests, currentUser, weekStartKey, weekEndKey],
+    );
+
+    const weeklyAbsences = useMemo(
+        () =>
+            absenceRequests.filter((a) => {
+                if (a.status !== 'approved') return false;
+                const start = a.date_key;
+                const end = a.end_date || a.date_key;
+                return end >= weekStartKey && start <= weekEndKey;
+            }),
+        [absenceRequests, weekStartKey, weekEndKey],
+    );
+
+    const summaryTextLines = useMemo(() => {
+        const lines: string[] = [];
+
+        if (dueTodayTodos.length > 0) {
+            lines.push(`Hoy tienes ${dueTodayTodos.length} tarea(s) que vencen.`);
+        } else {
+            lines.push('Hoy no tienes tareas que venzan.');
+        }
+        lines.push(`Tareas pendientes totales: ${pendingTodos.length}.`);
+
+        const todayMeetings = weeklyMeetings.filter((m) => (m.scheduled_date_key || m.preferred_date_key) === todayKey);
+        if (todayMeetings.length > 0) {
+            lines.push(`Hoy tienes ${todayMeetings.length} reunión(es).`);
+        } else if (weeklyMeetings.length > 0) {
+            const nextMeeting = weeklyMeetings
+                .slice()
+                .sort((a, b) => `${a.scheduled_date_key || a.preferred_date_key}`.localeCompare(`${b.scheduled_date_key || b.preferred_date_key}`))[0];
+            const nextDate = nextMeeting.scheduled_date_key || nextMeeting.preferred_date_key;
+            lines.push(`Recuerda: tienes reunión el ${nextDate}.`);
+        }
+
+        const todayTrainings = weeklyTrainings.filter((t) => (t.scheduled_date_key || t.requested_date_key) === todayKey);
+        if (todayTrainings.length > 0) {
+            lines.push(`Hoy tienes ${todayTrainings.length} formación(es).`);
+        } else if (weeklyTrainings.length > 0) {
+            const nextTraining = weeklyTrainings
+                .slice()
+                .sort((a, b) => `${a.scheduled_date_key || a.requested_date_key}`.localeCompare(`${b.scheduled_date_key || b.requested_date_key}`))[0];
+            const nextDate = nextTraining.scheduled_date_key || nextTraining.requested_date_key;
+            lines.push(`Recuerda: tienes formación el ${nextDate}.`);
+        }
+
+        if (weeklyAbsences.length === 0) {
+            lines.push('Esta semana no hay ausencias.');
+        } else {
+            const todayAbsences = weeklyAbsences.filter((a) => {
+                const start = a.date_key;
+                const end = a.end_date || a.date_key;
+                return todayKey >= start && todayKey <= end;
+            });
+            if (todayAbsences.length > 0) {
+                const names = todayAbsences
+                    .map((a) => USERS.find((u) => u.id === a.created_by)?.name || 'Compañera/o')
+                    .join(', ');
+                lines.push(`Hoy está(n) ausente(s): ${names}.`);
+            } else {
+                const nextAbsence = weeklyAbsences
+                    .slice()
+                    .sort((a, b) => a.date_key.localeCompare(b.date_key))[0];
+                const name = USERS.find((u) => u.id === nextAbsence.created_by)?.name || 'Compañera/o';
+                lines.push(`Recuerda: ${name} estará ausente el ${nextAbsence.date_key}.`);
+            }
+        }
+
+        return lines;
+    }, [dueTodayTodos.length, pendingTodos.length, weeklyMeetings, weeklyTrainings, weeklyAbsences, todayKey]);
+
+    const vacationUsed = useMemo(() => {
+        return absenceRequests
+            .filter((a) => a.created_by === currentUser?.id && a.type === 'vacation' && a.status !== 'rejected')
+            .reduce((total, a) => {
+                if (!a.end_date || a.end_date === a.date_key) return total + 1;
+                const start = new Date(`${a.date_key}T00:00:00`);
+                const end = new Date(`${a.end_date}T00:00:00`);
+                const diff = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+                return total + diff + 1;
+            }, 0);
+    }, [absenceRequests, currentUser]);
+
+    const weeklyWorkedHours = useMemo(() => {
+        if (!currentUser) return 0;
+        let total = 0;
+        Object.keys(timeData)
+            .filter((dateKey) => dateKey >= weekStartKey && dateKey <= weekEndKey)
+            .forEach((dateKey) => {
+                const dayEntries = timeData[dateKey]?.[currentUser.id] || [];
+                const consolidated = consolidateDailyEntries(dayEntries);
+                if (!consolidated?.entry || !consolidated?.exit) return;
+                total += calculateHours(consolidated.entry, consolidated.exit);
+            });
+        return Number(total.toFixed(1));
+    }, [timeData, currentUser, weekStartKey, weekEndKey]);
+
+    const remainingWeeklyHours = Math.max(0, Number((weeklyTargetHours - weeklyWorkedHours).toFixed(1)));
+
+    const monthlyRows = useMemo(() => {
+        if (!currentUser) return [] as Array<{ dateKey: string; entry: string; exit: string; hours: number; status: string }>;
+        const rows: Array<{ dateKey: string; entry: string; exit: string; hours: number; status: string }> = [];
+        const cursor = new Date(monthStart);
+
+        while (cursor <= monthEnd) {
+            const dateKey = toDateKey(cursor);
+            const dayEntries = monthTimeData[dateKey]?.[currentUser.id] || [];
+            const consolidated = consolidateDailyEntries(dayEntries);
+            const hours = consolidated?.entry && consolidated?.exit ? calculateHours(consolidated.entry, consolidated.exit) : 0;
+
+            rows.push({
+                dateKey,
+                entry: consolidated?.entry || '-',
+                exit: consolidated?.exit || '-',
+                hours,
+                status: consolidated?.status || '-',
+            });
+            cursor.setDate(cursor.getDate() + 1);
+        }
+
+        return rows;
+    }, [currentUser, monthStart, monthEnd, monthTimeData]);
+
+    const monthlyWorkedHours = useMemo(
+        () => Number(monthlyRows.reduce((acc, row) => acc + row.hours, 0).toFixed(1)),
+        [monthlyRows],
+    );
+
+    const monthlyObjectiveHours = useMemo(() => {
+        const dailyTarget = weeklyTargetHours / 5;
+        let workingDays = 0;
+        const cursor = new Date(monthStart);
+        while (cursor <= monthEnd) {
+            const day = cursor.getDay();
+            if (day !== 0 && day !== 6) workingDays += 1;
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        return Number((workingDays * dailyTarget).toFixed(1));
+    }, [monthStart, monthEnd, weeklyTargetHours]);
+
+    const monthlyRemainingHours = Math.max(0, Number((monthlyObjectiveHours - monthlyWorkedHours).toFixed(1)));
+
+    const recentTimeRows = useMemo(() => {
+        if (!currentUser) return [] as any[];
+        return Object.keys(timeData)
+            .sort((a, b) => (a < b ? 1 : -1))
+            .slice(0, 14)
+            .map((dateKey) => {
+                const entries = timeData[dateKey]?.[currentUser.id] || [];
+                const consolidated = consolidateDailyEntries(entries);
+                if (!consolidated) return null;
+                const total = consolidated.entry && consolidated.exit
+                    ? calculateHours(consolidated.entry, consolidated.exit)
+                    : 0;
+                return { ...consolidated, total };
+            })
+            .filter(Boolean) as any[];
+    }, [timeData, currentUser]);
+
+    const myStatusToday = dailyStatuses.find((s) => s.user_id === currentUser?.id && s.date_key === todayKey);
+
+    const teamPulse = USERS.map((u) => {
+        const mood = dailyStatuses.find((s) => s.user_id === u.id && s.date_key === todayKey);
+        const entries = (timeData[todayKey] || {})[u.id] || [];
+        const isActive = (entries || []).some((e: any) => e.entry && !e.exit);
+        return { user: u, mood, isActive };
+    });
+
+    const todayEvents = calendarEvents.filter((e) => e.date_key === todayKey);
+
+    const categorizeNotification = (n: any): NotificationFilter => {
+        const text = `${n.message || ''}`.toLowerCase();
+        if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea')) return 'tasks';
+        if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
+        if (text.includes('reun')) return 'meetings';
+        if (text.includes('ausenc') || text.includes('vacaci') || text.includes('permiso')) return 'absences';
+        if (text.includes('formaci') || text.includes('training')) return 'trainings';
+        return 'schedule';
+    };
+
+    const unreadPendingNotifications = useMemo(() => {
+        return notifications.filter((n) => !n.read && n.type !== 'recognition');
+    }, [notifications]);
+
+    const notificationCounts = useMemo(() => {
+        const base: Record<NotificationFilter, number> = {
+            all: unreadPendingNotifications.length,
+            tasks: 0,
+            schedule: 0,
+            meetings: 0,
+            absences: 0,
+            trainings: 0,
+        };
+        unreadPendingNotifications.forEach((n) => {
+            base[categorizeNotification(n)] += 1;
+        });
+        return base;
+    }, [unreadPendingNotifications]);
+
+    const filteredNotifications = useMemo(() => {
+        return unreadPendingNotifications.filter((n) => {
+            if (notificationFilter !== 'all' && categorizeNotification(n) !== notificationFilter) return false;
+            if (notificationFilter === 'schedule') {
+                const text = `${n.message || ''}`.toLowerCase();
+                if (text.includes('has fichado') || text.includes('jornada iniciada') || text.includes('jornada finalizada')) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }, [unreadPendingNotifications, notificationFilter]);
+
+    const handleNotificationClick = (notification: any) => {
+        void markAsRead(notification.id);
+        const category = categorizeNotification(notification);
+        if (category === 'tasks') {
+            const task = todos.find((t) => {
+                const title = t.title.toLowerCase();
+                const message = `${notification.message || ''}`.toLowerCase();
+                return message.includes(title);
+            });
+            if (task) {
+                setSelectedTask(task);
+                return;
+            }
+            navigate('/tasks');
+        }
+        if (category === 'meetings') navigate('/meetings');
+        if (category === 'absences') navigate('/absences');
+        if (category === 'trainings') navigate('/trainings');
+        if (category === 'schedule') {
+            const block = document.getElementById('dashboard-time-summary');
+            if (block) {
+                block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+    };
+
+    const markFilteredAsRead = async () => {
+        if (notificationFilter === 'all') {
+            await markAllAsRead();
+            return;
+        }
+        await Promise.all(filteredNotifications.map((n: any) => markAsRead(n.id)));
+    };
+
+    const openRequestModal = (type: QuickRequestType) => {
+        setActiveRequestModal(type);
+        setRequestDate(todayKey);
+        setRequestEndDate('');
+        setRequestIsDateRange(false);
+        setRequestAbsenceType('absence');
+        setRequestMakeUpHours(false);
+        setRequestReason('');
+        setRequestTitle('');
+        setRequestDescription('');
+        setRequestSlot('indiferente');
+        setRequestParticipants([]);
+        setRequestAttachments([]);
+        setRequestTargetUserId(currentUser?.id || '');
+    };
+
+    const closeRequestModal = () => {
+        setActiveRequestModal(null);
+    };
+
+    const submitQuickRequest = async () => {
+        if (!currentUser || !activeRequestModal) return;
+        setRequestSubmitting(true);
+        try {
+            if (activeRequestModal === 'absence' || activeRequestModal === 'vacation') {
+                if (!requestReason.trim()) {
+                    alert('Escribe un motivo.');
+                    return;
+                }
+
+                const absenceType = activeRequestModal === 'vacation' ? 'vacation' : requestAbsenceType;
+                await createAbsence({
+                    reason: requestReason.trim(),
+                    date_key: requestDate,
+                    end_date: requestIsDateRange && requestEndDate ? requestEndDate : undefined,
+                    type: absenceType,
+                    makeUpHours: absenceType === 'special_permit' ? requestMakeUpHours : false,
+                    attachments: requestAttachments,
+                    userId: currentUser.isAdmin ? requestTargetUserId : undefined,
+                });
+            }
+
+            if (activeRequestModal === 'training') {
+                if (!requestReason.trim()) {
+                    alert('Escribe el motivo de la formación.');
+                    return;
+                }
+                await createTrainingRequest({
+                    requested_date_key: requestDate,
+                    reason: requestReason.trim(),
+                    comments: '',
+                    attachments: requestAttachments,
+                });
+            }
+
+            if (activeRequestModal === 'meeting') {
+                if (!requestTitle.trim() || !requestDescription.trim()) {
+                    alert('Completa título y descripción.');
+                    return;
+                }
+                await createMeeting({
+                    title: requestTitle.trim(),
+                    description: requestDescription.trim(),
+                    preferred_date_key: requestDate,
+                    preferred_slot: requestSlot,
+                    participants: requestParticipants,
+                    attachments: requestAttachments,
+                });
+            }
+            closeRequestModal();
+        } finally {
+            setRequestSubmitting(false);
+        }
+    };
+
+    const handleMoodSelect = async (emoji: string, customStatus: string) => {
         if (!currentUser) return;
         setSavingMood(emoji);
-        haptics.medium();
         try {
             await setDailyStatus({
                 dateKey: todayKey,
                 status: myStatusToday?.status || 'in_person',
                 customEmoji: emoji,
-                customStatus: myStatusToday?.custom_status // Preserve existing social status (e.g. 'En racha')
+                customStatus,
             });
         } finally {
-            setTimeout(() => setSavingMood(null), 800); // Keep visual state for a moment
+            setTimeout(() => setSavingMood(null), 500);
         }
     };
 
-    const todayStats = React.useMemo(() => {
-        if (!currentUser) return {
-            hoursLogged: 0,
-            isTrackingActive: false,
-            openTodosCount: 0,
-            upcomingMeetings: [],
-            upcomingTrainings: []
+    const handleSendCaffeineBoost = async (targetUserId: string, targetName: string) => {
+        if (!currentUser) return;
+        setSendingBoostTo(targetUserId);
+        try {
+            await sendCaffeineBoost(currentUser.name || 'Equipo', [targetUserId]);
+            setBoostToastName(targetName);
+            window.setTimeout(() => setBoostToastName(null), 2200);
+        } finally {
+            setSendingBoostTo(null);
+        }
+    };
+
+    const saveTimeRow = async (row: any) => {
+        if (!row?.id) return;
+        setSavingRow(true);
+        try {
+            await updateTimeEntry({
+                id: row.id,
+                updates: {
+                    entry: timeEdit.entry || null,
+                    exit: timeEdit.exit || null,
+                },
+            });
+            setEditingDateKey(null);
+        } finally {
+            setSavingRow(false);
+        }
+    };
+
+    const buildSimplePdf = (lines: string[]) => {
+        const cleanLines = lines.map((line) =>
+            line
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^\x20-\x7E]/g, ''),
+        );
+
+        const escapedLines = cleanLines.map((line) =>
+            line
+                .replace(/\\/g, '\\\\')
+                .replace(/\(/g, '\\(')
+                .replace(/\)/g, '\\)'),
+        );
+
+        const stream = [
+            'BT',
+            '/F1 10 Tf',
+            '40 800 Td',
+            '12 TL',
+            ...escapedLines.map((line, index) => (index === 0 ? `(${line}) Tj` : `T* (${line}) Tj`)),
+            'ET',
+        ].join('\n');
+
+        let pdf = '%PDF-1.4\n';
+        const offsets: number[] = [];
+        const encoder = new TextEncoder();
+
+        const appendObject = (id: number, content: string) => {
+            offsets[id] = encoder.encode(pdf).length;
+            pdf += `${id} 0 obj\n${content}\nendobj\n`;
         };
 
-        const now = new Date();
-        const todayKey = toDateKey(now);
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today for comparison
+        appendObject(1, '<< /Type /Catalog /Pages 2 0 R >>');
+        appendObject(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+        appendObject(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>');
+        appendObject(4, `<< /Length ${encoder.encode(stream).length} >>\nstream\n${stream}\nendstream`);
+        appendObject(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
 
-        // 1. Currently Tracking
-        const activeTrack = timeData[todayKey]?.[currentUser.id]?.find(entry => entry.entry && !entry.exit);
-        const isTrackingActive = !!activeTrack;
+        const xrefOffset = encoder.encode(pdf).length;
+        pdf += 'xref\n0 6\n0000000000 65535 f \n';
+        for (let id = 1; id <= 5; id += 1) {
+            pdf += `${String(offsets[id] || 0).padStart(10, '0')} 00000 n \n`;
+        }
+        pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
 
-        // 2. Hours Logged (today's completed time entry)
-        const todayEntries = timeData[todayKey]?.[currentUser.id] || [];
-        const hoursLogged = calculateTotalHours(todayEntries);
+        return encoder.encode(pdf);
+    };
 
-        // 3. Open Todos (assigned to current user and not completed by them)
-        const openTodos = todos?.filter(
-            t => t.assigned_to.includes(currentUser.id) && !t.completed_by.includes(currentUser.id)
-        ) || [];
-        const openTodosCount = openTodos.length;
+    const downloadMonthlyPdf = () => {
+        if (!currentUser) return;
 
-        // 4. Upcoming Meetings (Next 7 days, approved/scheduled, INCLUDING today)
-        const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const weekFromNowKey = toDateKey(weekFromNow);
+        const monthLabel = monthStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+        const vacationsLeft = Math.max(0, vacationTotal - vacationUsed);
 
-        const upcomingMeetings = meetings?.filter(m => {
-            const dateKey = m.scheduled_date_key || m.preferred_date_key;
-            if (!dateKey) return false;
+        const pad = (value: string, width: number) => value.slice(0, width).padEnd(width, ' ');
+        const separator = '-'.repeat(96);
+        const tableHeader = `${pad('Fecha', 12)}${pad('Entrada', 10)}${pad('Salida', 10)}${pad('Horas', 10)}${pad('Estado', 20)}`;
 
-            // Include both 'approved' and 'scheduled' statuses
-            const isValidStatus = m.status === 'scheduled';
-            const isWithinRange = dateKey >= todayKey && dateKey <= weekFromNowKey;
+        const rowLines = monthlyRows.map((row) => {
+            const hoursText = row.hours > 0 ? row.hours.toFixed(2) : '-';
+            return `${pad(row.dateKey, 12)}${pad(row.entry, 10)}${pad(row.exit, 10)}${pad(hoursText, 10)}${pad(row.status, 20)}`;
+        });
 
-            // Compare strings (YYYY-MM-DD) to avoid timezone issues and include today
-            return isWithinRange && isValidStatus;
-        }).sort((a, b) => {
-            const dateA = a.scheduled_date_key || a.preferred_date_key || '';
-            const dateB = b.scheduled_date_key || b.preferred_date_key || '';
-            return dateA.localeCompare(dateB);
-        }) || [];
+        const lines = [
+            'Registro horario mensual',
+            `Trabajador: ${currentUser.name}`,
+            `Mes: ${monthLabel}`,
+            '',
+            `Horas de este mes: ${monthlyWorkedHours.toFixed(1)}`,
+            `Objetivo mes: ${monthlyObjectiveHours.toFixed(1)} horas`,
+            `Faltan para objetivo mes: ${monthlyRemainingHours.toFixed(1)} horas`,
+            `Vacaciones restantes: ${vacationsLeft}`,
+            '',
+            separator,
+            tableHeader,
+            separator,
+            ...rowLines,
+            separator,
+            '',
+            '',
+            'Firma del trabajador:',
+            '',
+            '_______________________________',
+        ];
 
-        // 5. Upcoming Trainings (Pending or Approved, future, excluding today)
-        const upcomingTrainings = trainingRequests?.filter(t => {
-            const date = t.scheduled_date_key ? new Date(t.scheduled_date_key) : new Date(t.requested_date_key);
-            return date > today && (t.status === 'pending' || t.status === 'accepted');
-        }).sort((a, b) => {
-            const dateA = a.scheduled_date_key ? new Date(a.scheduled_date_key) : new Date(a.requested_date_key);
-            const dateB = b.scheduled_date_key ? new Date(b.scheduled_date_key) : new Date(b.requested_date_key);
-            return dateA.getTime() - dateB.getTime();
-        }) || [];
+        const bytes = buildSimplePdf(lines);
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `registro-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}-${toDateKey(monthStart)}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
-        return {
-            hoursLogged,
-            isTrackingActive,
-            openTodosCount,
-            upcomingMeetings,
-            upcomingTrainings
+    useEffect(() => {
+        const loadChecklist = async () => {
+            if (!currentUser) return;
+            setChecklistLoading(true);
+            try {
+                const [{ data: dailyData }, { data: templateData }] = await Promise.all([
+                    supabase
+                        .from('daily_checklists')
+                        .select('history')
+                        .eq('user_id', currentUser.id)
+                        .eq('date_key', todayKey)
+                        .single(),
+                    supabase
+                        .from('checklist_templates')
+                        .select('tasks')
+                        .eq('user_id', currentUser.id)
+                        .single(),
+                ]);
+
+                const completionMap = new Map<string, boolean>();
+                if (dailyData?.history) {
+                    (dailyData.history as any[]).forEach((task) => {
+                        completionMap.set(task.id, !!task.completed);
+                    });
+                }
+
+                const merged = ((templateData?.tasks || []) as any[]).map((task) => ({
+                    id: task.id,
+                    text: task.text,
+                    completed: completionMap.get(task.id) || false,
+                }));
+
+                setChecklistTasks(merged);
+            } finally {
+                setChecklistLoading(false);
+            }
         };
-    }, [currentUser, todos, meetings, timeData, trainingRequests]);
 
-    const dueTodayTodos = React.useMemo(() => {
-        if (!currentUser) return [];
-        const now = new Date();
-        const todayKey = toDateKey(now);
+        loadChecklist();
+    }, [currentUser, todayKey]);
 
-        return todos?.filter(
-            t => t.assigned_to.includes(currentUser.id) &&
-                !t.completed_by.includes(currentUser.id) &&
-                t.due_date_key === todayKey
-        ) || [];
-    }, [currentUser, todos]);
+    const saveChecklist = async (nextTasks: Array<{ id: string; text: string; completed: boolean }>) => {
+        if (!currentUser) return;
+        setChecklistSaving(true);
+        try {
+            await supabase
+                .from('daily_checklists')
+                .upsert({
+                    user_id: currentUser.id,
+                    date_key: todayKey,
+                    history: nextTasks,
+                    updated_at: new Date().toISOString(),
+                }, { onConflict: 'user_id,date_key' });
+        } finally {
+            setChecklistSaving(false);
+        }
+    };
 
-    // activeUsers calculation removed - moved to Layout.tsx
+    const toggleChecklistTask = async (taskId: string) => {
+        const next = checklistTasks.map((task) =>
+            task.id === taskId ? { ...task, completed: !task.completed } : task,
+        );
+        setChecklistTasks(next);
+        await saveChecklist(next);
+    };
+
+    const checklistDone = checklistTasks.filter((task) => task.completed).length;
 
     return (
-        <div className="max-w-6xl mx-auto pb-20 relative">
-            {/* Daily Briefing Intelligence */}
-            <DailyBriefing />
+        <div className="max-w-7xl mx-auto pb-16 space-y-6">
+            <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                <div className="flex flex-wrap items-center gap-3 mb-2">
+                    <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'equipo'}</h1>
+                    <span className="px-3 py-1 rounded-full bg-violet-700 text-white text-xs font-bold">
+                        {weeklyAbsences.length === 0 ? 'Equipo completo' : `${weeklyAbsences.length} ausencia(s) esta semana`}
+                    </span>
+                </div>
+                <p className="text-sm font-semibold text-violet-900/90 mb-2">
+                    Semana: {formatDatePretty(weekStart)} - {formatDatePretty(weekEnd)}.
+                </p>
+                <div className="space-y-1.5">
+                    {summaryTextLines.map((line, idx) => (
+                        <p key={idx} className="text-sm text-gray-700">{line}</p>
+                    ))}
+                </div>
+            </div>
 
+            <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-6">
+                <div className="space-y-6">
+                    <TimeTrackerWidget showEntries={false} />
 
-
-            {/* Mood Diary Section (Phase 6) */}
-            <div className="mb-8 p-6 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 rounded-[2.5rem] border border-white shadow-sm overflow-hidden relative">
-                {/* Decorative particles */}
-                <div className="absolute top-0 right-0 w-32 h-32 bg-purple-200/20 blur-[60px] rounded-full -mr-16 -mt-16" />
-                <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-200/20 blur-[60px] rounded-full -ml-16 -mb-16" />
-
-                <div className="relative flex flex-col md:flex-row items-center justify-between gap-8">
-                    <div className="flex items-center gap-5">
-                        <motion.div
-                            initial={{ scale: 0.8, rotate: -10 }}
-                            animate={{ scale: 1, rotate: 0 }}
-                            className="w-16 h-16 bg-white rounded-3xl shadow-xl flex items-center justify-center text-3xl shrink-0"
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-black text-violet-950">Eventos del día</h2>
+                            <span className="text-xs font-bold text-violet-600">{todayEvents.length} evento(s)</span>
+                        </div>
+                        <form
+                            onSubmit={async (e) => {
+                                e.preventDefault();
+                                if (!eventDraft.trim() || !currentUser) return;
+                                await createEvent({
+                                    date_key: todayKey,
+                                    title: eventDraft.trim(),
+                                    description: null,
+                                    created_by: currentUser.id,
+                                });
+                                setEventDraft('');
+                            }}
+                            className="flex gap-2 mb-3"
                         >
-                            {myStatusToday?.custom_emoji || '🌈'}
-                        </motion.div>
-                        <div>
-                            <h2 className="text-xl font-black text-gray-900 leading-tight">¿Cómo está tu clima interior hoy?</h2>
-                            <p className="text-sm text-gray-500 font-medium tracking-tight">Tu equipo agradecerá saber cómo apoyarte mejor.</p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap justify-center gap-3">
-                        {[
-                            { emoji: '✨', label: 'Protagonista', fullLabel: 'Nivel: protagonista', color: 'hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200' },
-                            { emoji: '🌸', label: 'Zen', fullLabel: 'Hoy nada me afecta', color: 'hover:bg-pink-50 hover:text-pink-700 hover:border-pink-200' },
-                            { emoji: '☁️', label: 'Paciencia', fullLabel: 'Paciencia nivel experto', tooltip: 'Respira profundo y no vayas a prisión 😅', color: 'hover:bg-gray-100 hover:text-gray-700 hover:border-gray-200' },
-                            { emoji: '🔥', label: 'Sin Paciencia', fullLabel: 'Modo: Sin Paciencia', color: 'hover:bg-orange-50 hover:text-orange-700 hover:border-orange-100' },
-                        ].map((mood) => {
-                            const isSelected = myStatusToday?.custom_emoji === mood.emoji;
-                            return (
-                                <motion.button
-                                    key={mood.emoji}
-                                    whileHover={{ scale: 1.05, y: -2 }}
-                                    whileTap={{ scale: 0.95 }}
-                                    onClick={() => handleMoodSelect(mood.emoji, mood.fullLabel)}
-                                    title={mood.tooltip || mood.fullLabel}
-                                    className={`
-                                        flex flex-col items-center gap-1 px-4 py-3 border rounded-2xl shadow-sm transition-all group relative min-w-[70px]
-                                        ${isSelected
-                                            ? 'bg-primary text-white border-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.4)] scale-110 z-10'
-                                            : 'bg-white border-gray-100 ' + mood.color}
-                                    `}
-                                >
-                                    <span className={`text-2xl transition-transform ${isSelected ? 'scale-125 mb-1' : 'group-hover:scale-110'}`}>{mood.emoji}</span>
-                                    <span className={`text-[9px] font-black uppercase tracking-widest ${isSelected ? 'text-white' : 'text-gray-400 group-hover:text-inherit'}`}>
-                                        {mood.label}
-                                    </span>
-                                    {isSelected && (
-                                        <>
-                                            <motion.div
-                                                layoutId="mood-active-glow"
-                                                initial={{ opacity: 0 }}
-                                                animate={{ opacity: [0.2, 0.5, 0.2] }}
-                                                transition={{ duration: 2, repeat: Infinity }}
-                                                className="absolute inset-0 bg-white/20 rounded-2xl blur-md pointer-events-none"
-                                            />
-                                            <motion.div
-                                                layoutId="mood-active"
-                                                initial={{ scale: 0 }}
-                                                animate={{ scale: 1 }}
-                                                className="absolute -top-1 -right-1 w-4 h-4 bg-white text-primary rounded-full border-2 border-primary shadow-lg flex items-center justify-center overflow-hidden"
-                                            >
-                                                <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-                                            </motion.div>
-                                        </>
-                                    )}
-                                    {savingMood === mood.emoji && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.5 }}
-                                            animate={{ opacity: 1, scale: 1.2 }}
-                                            className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-2xl z-20"
-                                        >
-                                            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                                        </motion.div>
-                                    )}
-                                </motion.button>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-
-            {/* Time tracker widget */}
-            <div className="mb-8">
-                <TimeTrackerWidget showEntries={false} />
-            </div>
-
-            {/* Notifications section */}
-            <div className="mb-8 bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden">
-                <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                        <Bell size={24} className="text-yellow-500" />
-                        Notificaciones Recientes
-                    </h2>
-                    <p className="text-sm text-gray-500 mt-1">Mantente al día con las últimas novedades</p>
-                </div>
-                <div className="p-6">
-                    {(() => {
-                        // Filter: only unread notifications less than 1 week old
-                        const oneWeekAgo = new Date();
-                        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-                        const recentUnreadNotifications = notifications?.filter(notification => {
-                            const notificationDate = new Date(notification.created_at);
-                            return !notification.read && notificationDate >= oneWeekAgo;
-                        }) || [];
-
-                        return recentUnreadNotifications.length > 0 ? (
-                            <div className="space-y-4">
-                                {recentUnreadNotifications.slice(0, 5).map(notification => ( // Show up to 5 recent notifications
-                                    <div key={notification.id} className="flex items-start gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors">
-                                        <div className="p-2 rounded-lg shrink-0 bg-blue-50 text-blue-600">
-                                            <Bell size={16} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="font-medium text-gray-800">{notification.message}</p>
-                                            <p className="text-xs text-gray-500 mt-1">
-                                                {formatDatePretty(new Date(notification.created_at))}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ))}
-                                <Link to="/notifications" className="block text-center text-sm font-bold text-blue-600 hover:text-blue-700 mt-4">
-                                    Ver todas las notificaciones
-                                </Link>
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-gray-400 text-sm italic">
-                                No hay notificaciones recientes sin leer.
-                            </div>
-                        );
-                    })()}
-                </div>
-            </div >
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Left Column: Today's Status Summary */}
-                <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col h-full">
-                    <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                    Estado de hoy
-                                </h2>
-                                <p className="text-sm text-gray-500 mt-1">Resumen de tu actividad diaria</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="p-6 flex-1 flex flex-col gap-6">
-                        {/* Hours & Active Status */}
-                        <div className="flex items-center justify-between bg-gray-50 p-5 rounded-2xl border border-gray-100">
-                            <div>
-                                <p className="text-sm text-gray-500 font-medium mb-1">Horas registradas</p>
-                                <p className="text-3xl font-black text-gray-900">{formatHours(todayStats.hoursLogged)}</p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-sm text-gray-500 font-medium mb-1">Estado</p>
-                                <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold ${todayStats.isTrackingActive
-                                    ? 'bg-green-100 text-green-700 border border-green-200'
-                                    : 'bg-gray-100 text-gray-600 border border-gray-200'
-                                    }`}>
-                                    <div className={`w-2.5 h-2.5 rounded-full ${todayStats.isTrackingActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-                                    {todayStats.isTrackingActive ? 'Activo' : 'Inactivo'}
+                            <input
+                                value={eventDraft}
+                                onChange={(e) => setEventDraft(e.target.value)}
+                                className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-sm"
+                                placeholder="Ej: Hoy llega Solar Vital"
+                            />
+                            <button className="px-3 py-2 bg-violet-700 text-white rounded-xl text-sm font-bold">
+                                Añadir
+                            </button>
+                        </form>
+                        <div className="space-y-2">
+                            {todayEvents.length > 0 ? todayEvents.map((event) => (
+                                <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900">
+                                    {event.title}
                                 </div>
+                            )) : <p className="text-sm text-violet-600 italic">Aún no hay eventos para hoy.</p>}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                            <h2 className="text-lg font-black text-violet-950 mb-3">Solicitudes rápidas</h2>
+                            <p className="text-sm text-violet-700 mb-4">Todo desde el dashboard, sin cambiar de página.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => openRequestModal('absence')}
+                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                >
+                                    <UserX size={16} />
+                                    Solicitar ausencia
+                                </button>
+                                <button
+                                    onClick={() => openRequestModal('vacation')}
+                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                >
+                                    <CalendarClock size={16} />
+                                    Solicitar vacaciones
+                                </button>
+                                <button
+                                    onClick={() => openRequestModal('meeting')}
+                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                >
+                                    <Users size={16} />
+                                    Solicitar reunión/sugerencia
+                                </button>
+                                <button
+                                    onClick={() => openRequestModal('training')}
+                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                >
+                                    <GraduationCap size={16} />
+                                    Solicitar formación
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        const block = document.getElementById('dashboard-time-summary');
+                                        if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                    }}
+                                    className="sm:col-span-2 p-3 rounded-xl border border-violet-300 bg-violet-700 hover:bg-violet-800 text-white flex items-center justify-center gap-2 text-sm font-black"
+                                >
+                                    <Clock3 size={16} />
+                                    Registro horario y edición
+                                </button>
                             </div>
                         </div>
 
-                        {/* Open Items List */}
-                        <div className="space-y-4">
-                            {/* Todos Summary */}
-                            <Link to="/tasks" className="flex items-center justify-between p-4 bg-white border border-gray-100 rounded-2xl hover:shadow-md hover:border-blue-200 transition-all group">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                                        <CheckSquare size={20} />
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-base font-black text-violet-950">Check-list diario</h3>
+                            <div className="text-xs font-bold text-violet-700">
+                                {checklistDone}/{checklistTasks.length} completadas {checklistSaving ? '· guardando...' : ''}
+                            </div>
+                        </div>
+                        {checklistLoading ? (
+                            <p className="text-sm text-violet-600">Cargando checklist...</p>
+                        ) : checklistTasks.length === 0 ? (
+                            <p className="text-sm text-violet-600 italic">No tienes tareas en tu checklist de hoy.</p>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {checklistTasks.slice(0, 8).map((task) => (
+                                    <label key={task.id} className="flex items-center gap-2 p-2 rounded-xl border border-violet-100 bg-violet-50/70 text-sm cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={task.completed}
+                                            onChange={() => toggleChecklistTask(task.id)}
+                                            className="accent-violet-700"
+                                        />
+                                        <span className={task.completed ? 'line-through text-violet-500' : 'text-violet-900'}>{task.text}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                        <div className="mt-3">
+                            <Link to="/checklist" className="text-xs font-bold text-violet-700">Abrir checklist completo</Link>
+                        </div>
+                    </div>
+
+                    <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                            <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
+                            <div className="flex items-center gap-3">
+                                {!isAdmin && (
+                                    <button
+                                        onClick={downloadMonthlyPdf}
+                                        className="text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                                    >
+                                        Descargar PDF del mes
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setShowAllTimeRows((prev) => !prev)}
+                                    className="text-xs font-bold text-violet-700"
+                                >
+                                    {showAllTimeRows ? 'Ver menos' : 'Ver todo el periodo'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+                            <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                <p className="text-xs font-bold text-violet-600">Horas esta semana</p>
+                                <p className="text-xl font-black text-violet-950">{formatHours(weeklyWorkedHours)}</p>
+                            </div>
+                            <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                <p className="text-xs font-bold text-violet-600">Faltan para objetivo</p>
+                                <p className="text-xl font-black text-violet-950">{formatHours(remainingWeeklyHours)}</p>
+                            </div>
+                            <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                <p className="text-xs font-bold text-violet-600">Vacaciones usadas</p>
+                                <p className="text-xl font-black text-violet-950">{vacationUsed} / {vacationTotal}</p>
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-left text-violet-700 border-b border-violet-200">
+                                        <th className="py-2">Fecha</th>
+                                        <th className="py-2">Entrada</th>
+                                        <th className="py-2">Salida</th>
+                                        <th className="py-2">Total</th>
+                                        <th className="py-2">Editar</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {recentTimeRows.length === 0 && (
+                                        <tr>
+                                            <td colSpan={5} className="py-3 text-violet-600 italic">No hay registros recientes.</td>
+                                        </tr>
+                                    )}
+                                    {(showAllTimeRows ? recentTimeRows : recentTimeRows.slice(0, 7)).map((row) => {
+                                        const isEditing = editingDateKey === row.date_key;
+                                        return (
+                                            <tr key={row.date_key} className="border-b border-violet-100">
+                                                <td className="py-2 text-violet-900 font-semibold">{row.date_key}</td>
+                                                <td className="py-2">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="time"
+                                                            value={timeEdit.entry}
+                                                            onChange={(e) => setTimeEdit((prev) => ({ ...prev, entry: e.target.value }))}
+                                                            className="px-2 py-1 rounded-lg border border-violet-200"
+                                                        />
+                                                    ) : (row.entry || '-')} 
+                                                </td>
+                                                <td className="py-2">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="time"
+                                                            value={timeEdit.exit}
+                                                            onChange={(e) => setTimeEdit((prev) => ({ ...prev, exit: e.target.value }))}
+                                                            className="px-2 py-1 rounded-lg border border-violet-200"
+                                                        />
+                                                    ) : (row.exit || '-')}
+                                                </td>
+                                                <td className="py-2 text-violet-900 font-bold">{formatHours(row.total || 0)}</td>
+                                                <td className="py-2">
+                                                    {isEditing ? (
+                                                        <button
+                                                            onClick={() => saveTimeRow(row)}
+                                                            disabled={savingRow}
+                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-700 text-white text-xs font-bold"
+                                                        >
+                                                            <Save size={12} /> Guardar
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingDateKey(row.date_key);
+                                                                setTimeEdit({ entry: row.entry || '', exit: row.exit || '' });
+                                                            }}
+                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-100 text-violet-700 text-xs font-bold"
+                                                        >
+                                                            <Edit2 size={12} /> Editar
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {isAdmin && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-base font-black text-violet-950">Ausencias</h3>
+                                <Link to="/absences" className="text-xs font-bold text-violet-700">Gestionar</Link>
+                            </div>
+                            <div className="space-y-2">
+                                {absenceRequests
+                                    .filter((a) => a.created_by === currentUser?.id || a.status === 'approved')
+                                    .slice(0, 4)
+                                    .map((absence) => (
+                                        <Link key={absence.id} to="/absences" className="block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
+                                            <p className="font-bold text-violet-900">{absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}</p>
+                                            <p className="text-xs text-violet-700">Estado: {absence.status}</p>
+                                        </Link>
+                                    ))}
+                                {absenceRequests.filter((a) => a.created_by === currentUser?.id || a.status === 'approved').length === 0 && (
+                                    <p className="text-sm text-violet-600 italic">No hay ausencias para mostrar.</p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-base font-black text-violet-950">Formaciones</h3>
+                                <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar</Link>
+                            </div>
+                            <div className="space-y-2">
+                                {trainingRequests
+                                    .filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected')
+                                    .slice(0, 4)
+                                    .map((training) => (
+                                        <Link key={training.id} to="/trainings" className="block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
+                                            <p className="font-bold text-violet-900">{training.scheduled_date_key || training.requested_date_key}</p>
+                                            <p className="text-xs text-violet-700">Estado: {training.status}</p>
+                                        </Link>
+                                    ))}
+                                {trainingRequests.filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected').length === 0 && (
+                                    <p className="text-sm text-violet-600 italic">No tienes formaciones pendientes.</p>
+                                )}
+                            </div>
+                        </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="space-y-6">
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
+                            <button
+                                type="button"
+                                onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
+                                className="text-xs font-bold text-violet-700"
+                            >
+                                Ver todas
+                            </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                            {(['all', 'tasks', 'schedule', 'meetings', 'absences', 'trainings'] as NotificationFilter[]).map((tab) => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setNotificationFilter(tab)}
+                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${
+                                        notificationFilter === tab ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'
+                                    }`}
+                                >
+                                    {notificationFilterLabels[tab]}
+                                    {notificationCounts[tab] > 0 && (
+                                        <span className={`w-4 h-4 rounded-full text-[10px] leading-4 text-center ${notificationFilter === tab ? 'bg-white text-violet-700' : 'bg-violet-700 text-white'}`}>
+                                            {notificationCounts[tab]}
+                                        </span>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={markFilteredAsRead}
+                            className="mb-3 inline-flex items-center gap-2 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5"
+                        >
+                            <span className="w-3.5 h-3.5 rounded border border-violet-400 bg-white" />
+                            Marcar filtro como leído
+                        </button>
+
+                        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                            {filteredNotifications.length > 0 ? filteredNotifications.map((notification) => (
+                                <div key={notification.id} className="p-3 rounded-xl border border-violet-100 bg-white">
+                                    <button
+                                        onClick={() => handleNotificationClick(notification)}
+                                        className="w-full text-left"
+                                    >
+                                        <p className="text-sm text-violet-900 font-medium">{notification.message}</p>
+                                        <p className="text-[11px] text-violet-500 mt-1">{formatDatePretty(new Date(notification.created_at))}</p>
+                                    </button>
+                                    {categorizeNotification(notification) === 'schedule' && (
+                                        <div className="mt-2">
+                                            <button
+                                                onClick={() => {
+                                                    const block = document.getElementById('dashboard-time-summary');
+                                                    if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                }}
+                                                className="text-xs px-2 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                                            >
+                                                Pausa / Retomar
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )) : (
+                                <p className="text-sm text-violet-600 italic">No hay notificaciones pendientes.</p>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                        <h2 className="text-lg font-black text-violet-950 mb-3">Pulso del equipo</h2>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            {[
+                                { emoji: '✨', label: 'Protagonista' },
+                                { emoji: '🌸', label: 'Zen' },
+                                { emoji: '☁️', label: 'Paciencia' },
+                                { emoji: '🔥', label: 'A tope' },
+                            ].map((mood) => (
+                                <button
+                                    key={mood.emoji}
+                                    onClick={() => handleMoodSelect(mood.emoji, mood.label)}
+                                    className={`px-2 py-2 rounded-xl border text-xs font-bold ${
+                                        myStatusToday?.custom_emoji === mood.emoji
+                                            ? 'bg-violet-700 text-white border-violet-700'
+                                            : 'bg-white border-violet-200 text-violet-700'
+                                    }`}
+                                >
+                                    <span className="mr-1">{mood.emoji}</span>
+                                    {mood.label}
+                                    {savingMood === mood.emoji ? ' ...' : ''}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="space-y-2">
+                            {teamPulse.map((item) => (
+                                <div key={item.user.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center gap-3">
+                                    <UserAvatar name={item.user.name} size="sm" />
+                                    <div className="flex-1">
+                                        <p className="text-sm font-bold text-violet-900">{item.user.name}</p>
+                                        <p className="text-xs text-violet-600">
+                                            {item.mood?.custom_emoji || '🙂'} {item.mood?.custom_status || (item.isActive ? 'Activo' : 'Sin estado')}
+                                        </p>
+                                    </div>
+                                    {item.user.id !== currentUser?.id && (
+                                        <button
+                                            onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
+                                            disabled={sendingBoostTo === item.user.id}
+                                            className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${
+                                                sendingBoostTo === item.user.id
+                                                    ? 'bg-violet-300 text-violet-900'
+                                                    : 'bg-violet-200 text-violet-800 hover:bg-violet-300 hover:scale-[1.03] active:scale-[0.98]'
+                                            }`}
+                                            title="Enviar chute de energía"
+                                        >
+                                            <Coffee size={14} />
+                                            {sendingBoostTo === item.user.id ? 'Enviando...' : 'Café'}
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                        <h2 className="text-lg font-black text-violet-950 mb-3">Accesos rápidos</h2>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                            <Link to="/tasks" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Tareas</Link>
+                            <Link to="/calendar" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Calendario</Link>
+                            <Link to="/shopping" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Compras</Link>
+                            <Link to="/folders" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Carpetas</Link>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-black text-violet-950">Chat interno</h2>
+                            <Link to="/chat" className="text-xs font-bold text-violet-700">Abrir</Link>
+                        </div>
+                        <div className="space-y-2">
+                            {chatConversations.slice(0, 3).map((conversation) => (
+                                <Link key={conversation.id} to="/chat" className="block p-2 rounded-xl border border-gray-200 hover:border-violet-200">
+                                    <p className="text-sm font-bold text-gray-900 truncate">{conversation.title || (conversation.kind === 'group' ? 'Grupo' : 'Chat directo')}</p>
+                                    <p className="text-xs text-gray-500 truncate">{conversation.last_message?.message || 'Sin mensajes'}</p>
+                                </Link>
+                            ))}
+                            {chatConversations.length === 0 && (
+                                <p className="text-sm text-gray-500 italic">No tienes chats activos todavía.</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {activeRequestModal && (
+                <div className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div
+                        className="w-full max-w-2xl bg-white rounded-3xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-hidden flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between p-6 pb-0">
+                            <h3 className="text-2xl font-black text-gray-900">
+                                {activeRequestModal === 'absence' && 'Solicitar ausencia'}
+                                {activeRequestModal === 'vacation' && 'Solicitar vacaciones'}
+                                {activeRequestModal === 'meeting' && 'Solicitar reunión/sugerencia'}
+                                {activeRequestModal === 'training' && 'Solicitar formación'}
+                            </h3>
+                            <button onClick={closeRequestModal} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
+                                <XCircle size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-5">
+                            {isAdmin && (
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">Persona objetivo</label>
+                                    <select
+                                        value={requestTargetUserId}
+                                        onChange={(e) => setRequestTargetUserId(e.target.value)}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                    >
+                                        {USERS.map((user) => (
+                                            <option key={user.id} value={user.id}>{user.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">Fecha</label>
+                                <input
+                                    type="date"
+                                    value={requestDate}
+                                    onChange={(e) => setRequestDate(e.target.value)}
+                                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                />
+                            </div>
+
+                            {(activeRequestModal === 'absence' || activeRequestModal === 'vacation') && (
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            id="req-is-range"
+                                            checked={requestIsDateRange}
+                                            onChange={(e) => setRequestIsDateRange(e.target.checked)}
+                                            className="w-4 h-4 rounded border-gray-300"
+                                        />
+                                        <label htmlFor="req-is-range" className="text-sm font-bold text-gray-900">
+                                            Seleccionar rango de fechas
+                                        </label>
+                                    </div>
+
+                                    {requestIsDateRange && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-900 mb-2">Fecha fin</label>
+                                            <input
+                                                type="date"
+                                                value={requestEndDate}
+                                                min={requestDate}
+                                                onChange={(e) => setRequestEndDate(e.target.value)}
+                                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {activeRequestModal === 'absence' && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-900 mb-2">Tipo de ausencia</label>
+                                            <select
+                                                value={requestAbsenceType}
+                                                onChange={(e) => setRequestAbsenceType(e.target.value as 'special_permit' | 'absence')}
+                                                className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                            >
+                                                <option value="special_permit">Permiso especial</option>
+                                                <option value="absence">Ausencia</option>
+                                            </select>
+                                        </div>
+                                    )}
+
+                                    {requestAbsenceType === 'special_permit' && (
+                                        <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                                            <div className="flex items-start gap-2 mb-2">
+                                                <Info size={16} className="text-indigo-600 mt-0.5" />
+                                                <p className="text-xs text-indigo-700">
+                                                    Los permisos especiales pueden requerir reponer horas.
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    id="req-makeup"
+                                                    checked={requestMakeUpHours}
+                                                    onChange={(e) => setRequestMakeUpHours(e.target.checked)}
+                                                    className="w-4 h-4 text-indigo-600 border-indigo-300 rounded"
+                                                />
+                                                <label htmlFor="req-makeup" className="text-sm font-bold text-indigo-900">
+                                                    Me comprometo a reponer estas horas.
+                                                </label>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {activeRequestModal === 'meeting' && (
+                                <>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-900 mb-2">Título *</label>
+                                        <input
+                                            type="text"
+                                            value={requestTitle}
+                                            onChange={(e) => setRequestTitle(e.target.value)}
+                                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                            placeholder="Ej.: Reunión de seguimiento"
+                                        />
                                     </div>
                                     <div>
-                                        <p className="font-bold text-gray-900">Tareas pendientes</p>
-                                        <p className="text-sm text-gray-500">{todayStats.openTodosCount} tareas sin completar</p>
+                                        <label className="block text-sm font-bold text-gray-900 mb-2">Motivo / Descripción</label>
+                                        <textarea
+                                            value={requestDescription}
+                                            onChange={(e) => setRequestDescription(e.target.value)}
+                                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium min-h-[90px]"
+                                            placeholder="¿Qué quieres tratar?"
+                                        />
                                     </div>
-                                </div>
-                                <div className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-50 text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
-                                    →
-                                </div>
-                            </Link>
-
-                            {/* Meetings Summary */}
-                            <div className="relative">
-                                <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                                    <div className="w-full border-t border-gray-100"></div>
-                                </div>
-                                <div className="relative flex justify-center">
-                                    <span className="bg-white px-2 text-xs text-gray-400 font-medium uppercase tracking-wider">Reuniones</span>
-                                </div>
-                            </div>
-
-                            {todayStats.upcomingMeetings.length > 0 ? (
-                                <div className="space-y-2">
-                                    {todayStats.upcomingMeetings.slice(0, 3).map(m => (
-                                        <div key={m.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
-                                            <div className="flex items-center gap-3 overflow-hidden">
-                                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
-                                                    <Users size={16} />
-                                                </div>
-                                                <span className="font-medium text-gray-700 truncate">{m.title}</span>
-                                            </div>
-                                            <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-md whitespace-nowrap ml-2">
-                                                {formatDatePretty(new Date(m.scheduled_date_key || m.preferred_date_key))}
-                                            </span>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-900 mb-2">Franja horaria preferida</label>
+                                        <select
+                                            value={requestSlot}
+                                            onChange={(e) => setRequestSlot(e.target.value)}
+                                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium"
+                                        >
+                                            <option value="mañana">Mañana</option>
+                                            <option value="tarde">Tarde</option>
+                                            <option value="indiferente">Indiferente</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-900 mb-2">Participantes</label>
+                                        <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border-2 border-gray-100 rounded-xl">
+                                            {USERS.filter((u) => u.id !== currentUser?.id).map((user) => (
+                                                <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={requestParticipants.includes(user.id)}
+                                                        onChange={() =>
+                                                            setRequestParticipants((prev) =>
+                                                                prev.includes(user.id) ? prev.filter((id) => id !== user.id) : [...prev, user.id],
+                                                            )
+                                                        }
+                                                        className="rounded border-gray-300"
+                                                    />
+                                                    <span className="text-sm font-medium text-gray-700">{user.name}</span>
+                                                </label>
+                                            ))}
                                         </div>
-                                    ))}
-                                    <Link to="/meetings" className="block text-center text-sm font-bold text-indigo-600 hover:text-indigo-700 mt-2">
-                                        Ver todas las reuniones
-                                    </Link>
-                                </div>
-                            ) : (
-                                <div className="text-center py-4 text-gray-400 text-sm italic">
-                                    No hay reuniones próximas
+                                    </div>
+                                </>
+                            )}
+
+                            {(activeRequestModal === 'absence' || activeRequestModal === 'vacation' || activeRequestModal === 'training') && (
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">
+                                        {activeRequestModal === 'training' ? 'Razón de la solicitud' : 'Motivo / Descripción *'}
+                                    </label>
+                                    <textarea
+                                        value={requestReason}
+                                        onChange={(e) => setRequestReason(e.target.value)}
+                                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-medium min-h-[90px]"
+                                        placeholder="Describe brevemente el motivo..."
+                                    />
                                 </div>
                             )}
 
-                            {/* Trainings Summary */}
-                            <div className="relative mt-4">
-                                <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                                    <div className="w-full border-t border-gray-100"></div>
-                                </div>
-                                <div className="relative flex justify-center">
-                                    <span className="bg-white px-2 text-xs text-gray-400 font-medium uppercase tracking-wider">Formaciones</span>
-                                </div>
+                            <div>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">Adjuntar archivos (opcional)</label>
+                                <FileUploader
+                                    onUploadComplete={setRequestAttachments}
+                                    existingFiles={requestAttachments}
+                                    folderPath={activeRequestModal === 'meeting' ? 'meetings' : activeRequestModal === 'training' ? 'trainings' : 'absences'}
+                                />
                             </div>
+                        </div>
 
-                            {todayStats.upcomingTrainings.length > 0 ? (
-                                <div className="space-y-2">
-                                    {todayStats.upcomingTrainings.slice(0, 3).map(t => (
-                                        <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
-                                            <div className="flex items-center gap-3 overflow-hidden">
-                                                <div className="p-2 bg-purple-50 text-purple-600 rounded-lg shrink-0">
-                                                    <BookOpen size={16} />
-                                                </div>
-                                                <span className="font-medium text-gray-700 truncate">Solicitud de formación</span>
-                                            </div>
-                                            <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-md whitespace-nowrap ml-2">
-                                                {formatDatePretty(new Date(t.scheduled_date_key || t.requested_date_key))}
-                                            </span>
-                                        </div>
-                                    ))}
-                                    <Link to="/trainings" className="block text-center text-sm font-bold text-purple-600 hover:text-purple-700 mt-2">
-                                        Ver formaciones
-                                    </Link>
-                                </div>
-                            ) : (
-                                <div className="text-center py-4 text-gray-400 text-sm italic">
-                                    No hay formaciones pendientes
-                                </div>
-                            )}
+                        <div className="p-6 border-t border-gray-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={closeRequestModal}
+                                className="px-3 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm font-bold"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={submitQuickRequest}
+                                disabled={requestSubmitting}
+                                className="px-3 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold"
+                            >
+                                {requestSubmitting ? 'Enviando...' : 'Solicitar'}
+                            </button>
                         </div>
                     </div>
                 </div>
-
-                {/* Right Column: Absences & Due Today */}
-                <div className="flex flex-col gap-8 h-full">
-                    {/* Absences Card (Team Pulse) */}
-                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col relative z-20">
-                        <div className="p-4 border-b border-gray-100 bg-orange-50/50">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                                        Pulso del Equipo
-                                    </h2>
-                                    <p className="text-xs text-gray-500 mt-1">Cómo se siente el equipo hoy</p>
-                                </div>
-                            </div>
-
-
-                        </div>
-                        <div className="p-4">
-                            {(() => {
-                                const todayKey = toDateKey(new Date());
-                                const { absenceRequests } = useAbsences(currentUser);
-                                const { dailyStatuses } = useDailyStatus(currentUser);
-
-                                // Show EVERYONE from the USERS constant for a true collective board
-                                const teamItems = USERS.map(user => {
-                                    const userId = user.id;
-                                    const absence = absenceRequests.find(a => {
-                                        if (a.status !== 'approved') return false;
-                                        const start = a.date_key;
-                                        const end = a.end_date || a.date_key;
-                                        return a.created_by === userId && todayKey >= start && todayKey <= end;
-                                    });
-                                    const statusRow = dailyStatuses.find(s => s.user_id === userId && s.date_key === todayKey);
-
-                                    // Check if user is actively clocked in right now
-                                    const todayData = timeData[todayKey] || {};
-                                    const userEntries = todayData[userId] || [];
-                                    const isActive = userEntries.some(e => e.entry && !e.exit);
-
-                                    let label = '';
-                                    let style = '';
-
-                                    if (absence) {
-                                        if (absence.type === 'vacation') {
-                                            label = 'Vacaciones';
-                                            style = 'bg-purple-100 text-purple-700 border-purple-200';
-                                        } else {
-                                            label = 'Ausencia';
-                                            style = 'bg-amber-100 text-amber-700 border-amber-200';
-                                        }
-                                    } else if (statusRow?.status === 'remote') {
-                                        label = 'Remoto';
-                                        style = 'bg-blue-50 text-blue-700 border-blue-100';
-                                    } else if (isActive) {
-                                        label = 'Activo';
-                                        style = 'bg-emerald-50 text-emerald-700 border-emerald-100 animate-pulse';
-                                    } else {
-                                        label = 'Desconectado';
-                                        style = 'bg-gray-50 text-gray-400 border-gray-100 opacity-60';
-                                    }
-
-                                    return { userId, user, label, style, statusRow, isActive };
-                                }).sort((a, b) => {
-                                    // Sort by active/status visibility
-                                    if (a.isActive && !b.isActive) return -1;
-                                    if (!a.isActive && b.isActive) return 1;
-                                    return a.user.name.localeCompare(b.user.name);
-                                });
-
-                                return (
-                                    <div className="space-y-2">
-                                        {teamItems.length > 0 ? (
-                                            teamItems.map((item: any) => {
-                                                const moodColors: Record<string, string> = {
-                                                    '☀️': 'from-yellow-50 to-orange-50 border-yellow-100',
-                                                    '⛅': 'from-blue-50 to-indigo-50 border-blue-100',
-                                                    '☁️': 'from-gray-50 to-slate-100 border-gray-200',
-                                                    '🌧️': 'from-indigo-50 to-blue-100 border-indigo-200',
-                                                    '⚡': 'from-purple-50 to-fuchsia-100 border-purple-200'
-                                                };
-                                                const isRestricted = item.statusRow?.custom_status?.toLowerCase().includes('comiendo') ||
-                                                    item.statusRow?.custom_status?.toLowerCase().includes('ocupado') ||
-                                                    item.statusRow?.custom_status?.toLowerCase().includes('concentrado');
-
-                                                const bgStyle = isRestricted
-                                                    ? 'from-red-50 to-orange-50 border-red-200 ring-2 ring-red-100 ring-offset-2'
-                                                    : item.statusRow?.custom_emoji ? moodColors[item.statusRow.custom_emoji] : 'from-gray-50 to-white border-gray-100';
-
-                                                return (
-                                                    <motion.div
-                                                        key={item.userId}
-                                                        initial={{ opacity: 0, x: -20 }}
-                                                        animate={{ opacity: item.isActive || item.statusRow ? 1 : 0.6, x: 0 }}
-                                                        whileHover={{ scale: 1.02, x: 4 }}
-                                                        className={`flex items-center gap-4 p-4 rounded-[2rem] bg-gradient-to-br border shadow-sm transition-all ${bgStyle} relative overflow-hidden`}
-                                                    >
-                                                        {isRestricted && (
-                                                            <div className="absolute top-0 right-0 p-2 opacity-10">
-                                                                <AlertCircle size={48} className="text-red-500" />
-                                                            </div>
-                                                        )}
-                                                        <div className="relative">
-                                                            <UserAvatar name={item.user.name} size="md" />
-                                                            {item.isActive && (
-                                                                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-sm flex items-center justify-center">
-                                                                    <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
-                                                                </div>
-                                                            )}
-                                                            {item.statusRow?.custom_emoji && (
-                                                                <motion.span
-                                                                    animate={{ y: [0, -4, 0] }}
-                                                                    transition={{ repeat: Infinity, duration: 2 }}
-                                                                    className="absolute -top-3 -right-3 text-2xl drop-shadow-md"
-                                                                >
-                                                                    {item.statusRow.custom_emoji}
-                                                                </motion.span>
-                                                            )}
-                                                        </div>
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="flex items-center gap-2">
-                                                                <p className={`font-black tracking-tight leading-tight ${item.isActive ? 'text-gray-900' : 'text-gray-500'}`}>
-                                                                    {item.user.name}
-                                                                </p>
-                                                                {isRestricted && (
-                                                                    <span className="flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                                                                )}
-                                                            </div>
-                                                            <div className="flex flex-wrap items-center gap-2 mt-1">
-                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black border uppercase tracking-wider ${item.style} shadow-sm`}>
-                                                                    {item.label}
-                                                                </span>
-                                                                {item.statusRow?.custom_status && (
-                                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${isRestricted ? 'bg-red-100/50 text-red-700 border-red-200' : 'bg-white/50 text-gray-600 border-white/50'}`}>
-                                                                        "{item.statusRow.custom_status}"
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </motion.div>
-                                                );
-                                            })
-                                        ) : (
-                                            <div className="text-center py-10 text-gray-400 text-sm italic">
-                                                <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-3xl flex items-center justify-center mx-auto mb-4 border-2 border-dashed border-gray-200">
-                                                    <Users size={32} />
-                                                </div>
-                                                Nadie ha compartido su estado hoy todavía.
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    </div>
-
-                    {/* Due Today Card */}
-                    <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden flex flex-col flex-1">
-                        <div className="p-6 border-b border-gray-100 bg-red-50/30">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                        Para hoy
-                                    </h2>
-                                    <p className="text-sm text-gray-500 mt-1">Tareas que vencen hoy</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-6 flex-1">
-                            {dueTodayTodos.length > 0 ? (
-                                <div className="space-y-3">
-                                    {dueTodayTodos.map(todo => (
-                                        <div key={todo.id} className="flex items-start gap-4 p-4 bg-white border border-red-100 rounded-2xl shadow-sm hover:shadow-md transition-all group">
-                                            <div className="mt-1">
-                                                <div className="w-6 h-6 rounded-full border-2 border-red-200 bg-red-50 flex items-center justify-center group-hover:border-red-400 transition-colors">
-                                                    <div className="w-2.5 h-2.5 rounded-full bg-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                </div>
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-bold text-gray-900 mb-1 truncate">{todo.title}</p>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full border border-red-100">
-                                                        VENCE HOY
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    <Link to="/tasks" className="block text-center w-full py-3 mt-6 bg-gray-50 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-colors">
-                                        Ir a Mis Tareas
-                                    </Link>
-                                </div>
-                            ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-center py-12">
-                                    <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center mb-6">
-                                        <CheckSquare size={40} />
-                                    </div>
-                                    <h3 className="text-xl font-black text-gray-900 mb-2">¡Todo al día!</h3>
-                                    <p className="text-gray-500 max-w-xs mx-auto">
-                                        No tienes tareas que venzan hoy. ¡Disfruta de tu día! 🌟
-                                    </p>
-                                </div>
-                            )}
+            )}
+            {selectedTask && (
+                <TaskDetailModal
+                    task={selectedTask}
+                    onClose={() => setSelectedTask(null)}
+                />
+            )}
+            {boostToastName && (
+                <div className="fixed right-5 bottom-5 z-[80] pointer-events-none">
+                    <div className="relative rounded-2xl border border-amber-200 bg-white/95 backdrop-blur px-4 py-3 shadow-2xl">
+                        <div className="absolute -inset-1 rounded-2xl bg-amber-200/40 blur-md" />
+                        <div className="relative flex items-center gap-2 text-sm font-black text-amber-900">
+                            <Coffee size={16} className="text-amber-700" />
+                            Chute enviado a {boostToastName}
+                            <Sparkles size={14} className="text-amber-600 animate-pulse" />
                         </div>
                     </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }

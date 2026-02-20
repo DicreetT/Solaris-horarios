@@ -82,12 +82,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 password: newPassword
             });
             if (error) throw error;
-
-            // Update local user data
-            if (currentUser) {
-                const updatedUser = { ...currentUser, password: newPassword };
-                setCurrentUser(updatedUser);
-            }
         } catch (error) {
             console.error('Error updating password:', error);
             throw error;

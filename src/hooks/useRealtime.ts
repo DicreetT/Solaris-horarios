@@ -27,18 +27,10 @@ export function useRealtime(currentUser: User | null) {
             )
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUser.id}` },
-                () => {
-                    console.log('Realtime update: notifications');
-                    queryClient.invalidateQueries({ queryKey: ['notifications', currentUser.id] });
-                }
-            )
-            .on(
-                'postgres_changes',
                 { event: '*', schema: 'public', table: 'shopping_items' },
                 () => {
                     console.log('Realtime update: shopping_items');
-                    queryClient.invalidateQueries({ queryKey: ['shopping-items'] });
+                    queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
                 }
             )
             .on(
@@ -51,10 +43,10 @@ export function useRealtime(currentUser: User | null) {
             )
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'time_entries', filter: `user_id=eq.${currentUser.id}` },
+                { event: '*', schema: 'public', table: 'time_entries' },
                 () => {
                     console.log('Realtime update: time_entries');
-                    queryClient.invalidateQueries({ queryKey: ['time_entries'] });
+                    queryClient.invalidateQueries({ queryKey: ['timeData'] });
                 }
             )
             .subscribe();

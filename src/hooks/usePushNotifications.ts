@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { User } from '../types';
-/// <reference types="vite/client" />
 import { supabase } from '../lib/supabase';
 
-const VAPID_PUBLIC_KEY = (import.meta as any).env.VITE_VAPID_PUBLIC_KEY;
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
 export function usePushNotifications(currentUser: User | null) {
     const [isSubscribed, setIsSubscribed] = useState(false);
@@ -94,7 +93,7 @@ export function usePushNotifications(currentUser: User | null) {
 
             if (dbError) throw dbError;
 
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to subscribe to push notifications:', err);
             setError(err.message);
         } finally {
@@ -122,7 +121,7 @@ export function usePushNotifications(currentUser: User | null) {
 
             setSubscription(null);
             setIsSubscribed(false);
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error unsubscribing', err);
             setError(err.message);
         } finally {

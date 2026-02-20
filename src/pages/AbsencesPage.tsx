@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useTimeData } from '../hooks/useTimeData';
@@ -17,8 +18,8 @@ import { FileUploader, Attachment } from '../components/FileUploader';
  */
 function AbsencesPage() {
     const { currentUser } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { absenceRequests, createAbsence, updateAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
-    const { createTimeEntry } = useTimeData();
     const { addNotification } = useNotificationsContext();
     const [showModal, setShowModal] = useState(false);
 
@@ -30,6 +31,10 @@ function AbsencesPage() {
     const [reason, setReason] = useState('');
     const [makeUpHours, setMakeUpHours] = useState(false); // New: User preference
     const [attachments, setAttachments] = useState<Attachment[]>([]);
+    const { timeData, createTimeEntry, updateTimeEntry } = useTimeData({
+        from: selectedDate,
+        to: selectedDate,
+    });
 
     const [editingId, setEditingId] = useState<number | null>(null);
     const [replyingId, setReplyingId] = useState<number | null>(null);
@@ -51,6 +56,29 @@ function AbsencesPage() {
     const userAbsences = absenceRequests
         .filter((r) => r.created_by === currentUser.id)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    useEffect(() => {
+        const shouldOpen = searchParams.get('open') === '1';
+        const dateParam = searchParams.get('date');
+        const typeParam = searchParams.get('type');
+        if (!shouldOpen) return;
+
+        if (dateParam) {
+            const parsed = new Date(`${dateParam}T00:00:00`);
+            if (!Number.isNaN(parsed.getTime())) setSelectedDate(parsed);
+        }
+
+        if (typeParam && ['vacation', 'absence', 'special_permit'].includes(typeParam)) {
+            setAbsenceType(typeParam);
+        }
+
+        setShowModal(true);
+        const cleaned = new URLSearchParams(searchParams);
+        cleaned.delete('open');
+        cleaned.delete('date');
+        cleaned.delete('type');
+        setSearchParams(cleaned, { replace: true });
+    }, [searchParams, setSearchParams]);
 
     async function handleUpdateStatus(id: number, status: 'approved' | 'rejected', message: string, resolutionType?: string) {
         try {
@@ -115,23 +143,45 @@ function AbsencesPage() {
 
                 // Create time entries logic (simplified logging)
                 if (absenceType === 'vacation') {
-                    createTimeEntry({
-                        date: selectedDate,
-                        userId: currentUser.id,
-                        entry: null,
-                        exit: null,
-                        status: 'vacation-request',
-                        note: 'Solicitud de vacaciones'
-                    });
+                    const existing = timeData[selectedDateKey]?.[currentUser.id]?.[0];
+                    if (existing) {
+                        await updateTimeEntry({
+                            id: existing.id,
+                            updates: {
+                                status: 'vacation-request',
+                                note: 'Solicitud de vacaciones'
+                            }
+                        });
+                    } else {
+                        await createTimeEntry({
+                            date: selectedDate,
+                            userId: currentUser.id,
+                            entry: null,
+                            exit: null,
+                            status: 'vacation-request',
+                            note: 'Solicitud de vacaciones'
+                        });
+                    }
                 } else if (absenceType === 'absence' || absenceType === 'special_permit') {
-                    createTimeEntry({
-                        date: selectedDate,
-                        userId: currentUser.id,
-                        entry: null,
-                        exit: null,
-                        status: 'absent',
-                        note: absenceType === 'special_permit' ? 'Permiso especial' : 'Ausencia registrada'
-                    });
+                    const existing = timeData[selectedDateKey]?.[currentUser.id]?.[0];
+                    if (existing) {
+                        await updateTimeEntry({
+                            id: existing.id,
+                            updates: {
+                                status: 'absent',
+                                note: absenceType === 'special_permit' ? 'Permiso especial' : 'Ausencia registrada'
+                            }
+                        });
+                    } else {
+                        await createTimeEntry({
+                            date: selectedDate,
+                            userId: currentUser.id,
+                            entry: null,
+                            exit: null,
+                            status: 'absent',
+                            note: absenceType === 'special_permit' ? 'Permiso especial' : 'Ausencia registrada'
+                        });
+                    }
                 }
 
                 let typeLabel = 'ausencia';

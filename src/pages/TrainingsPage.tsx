@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
@@ -16,6 +17,7 @@ import { Paperclip } from 'lucide-react';
  */
 function TrainingsPage() {
     const { currentUser } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
     const {
         trainingRequests,
         createTrainingRequest,
@@ -45,6 +47,23 @@ function TrainingsPage() {
     const userRequests = trainingRequests
         .filter((r) => r.user_id === currentUser.id)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    React.useEffect(() => {
+        const shouldOpen = searchParams.get('open') === '1';
+        const dateParam = searchParams.get('date');
+        if (!shouldOpen || isTrainingManager) return;
+
+        if (dateParam) {
+            const parsed = new Date(`${dateParam}T00:00:00`);
+            if (!Number.isNaN(parsed.getTime())) setSelectedDate(parsed);
+        }
+
+        setShowModal(true);
+        const cleaned = new URLSearchParams(searchParams);
+        cleaned.delete('open');
+        cleaned.delete('date');
+        setSearchParams(cleaned, { replace: true });
+    }, [searchParams, setSearchParams, isTrainingManager]);
 
     function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
         const date = new Date(e.target.value + 'T00:00:00');

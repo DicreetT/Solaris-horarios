@@ -81,35 +81,73 @@ export const SidebarMoodBackground: React.FC<SidebarMoodBackgroundProps> = ({ em
                             🌸
                         </motion.div>
                     ))}
+                    {[...Array(10)].map((_, i) => (
+                        <motion.div
+                            key={`zen-flower-${i}`}
+                            initial={{ opacity: 0, y: 40 }}
+                            animate={{
+                                opacity: [0, 0.55, 0],
+                                y: [40, -90],
+                                x: [0, (i % 2 === 0 ? 14 : -14), 0],
+                                rotate: [0, 180, 360],
+                            }}
+                            transition={{
+                                duration: 7 + (i % 4),
+                                repeat: Infinity,
+                                delay: i * 0.6,
+                                ease: 'easeInOut',
+                            }}
+                            className="absolute left-1/2 text-pink-300/90 text-xs"
+                            style={{ bottom: '-10%', marginLeft: `${(i - 5) * 8}px` }}
+                        >
+                            ✿
+                        </motion.div>
+                    ))}
                 </div>
             )}
 
             {/* 3. Paciencia nivel experto (☁️) */}
             {emoji === '☁️' && (
-                <div className="absolute inset-0 bg-gradient-to-b from-gray-200 to-blue-100/80">
+                <div className="absolute inset-0 bg-gradient-to-b from-slate-200 via-blue-100 to-sky-100/90">
                     {/* Cloud moving LEFT */}
                     <motion.div
-                        animate={{ x: ['120%', '-120%'] }}
-                        transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
-                        className="absolute top-[10%] opacity-40"
+                        animate={{ x: ['120%', '-130%'], y: [0, -6, 0] }}
+                        transition={{ duration: 13, repeat: Infinity, ease: "linear" }}
+                        className="absolute top-[8%] opacity-55"
                     >
-                        <div className="text-7xl text-gray-500 blur-sm">☁️</div>
+                        <div className="text-7xl text-slate-500">☁️</div>
                     </motion.div>
 
                     {/* Cloud moving RIGHT */}
                     <motion.div
-                        animate={{ x: ['-60%', '160%'] }}
-                        transition={{ duration: 10, repeat: Infinity, ease: "linear", delay: 1 }}
-                        className="absolute top-[30%] opacity-40"
+                        animate={{ x: ['-70%', '170%'], y: [0, 6, 0] }}
+                        transition={{ duration: 10.5, repeat: Infinity, ease: "linear", delay: 1 }}
+                        className="absolute top-[30%] opacity-60"
                     >
-                        <div className="text-6xl text-gray-600 scale-x-[-1] blur-sm">☁️</div>
+                        <div className="text-6xl text-slate-600 scale-x-[-1]">☁️</div>
                     </motion.div>
 
-                    {/* Tremor effect */}
+                    {[...Array(14)].map((_, i) => (
+                        <motion.div
+                            key={`rain-${i}`}
+                            initial={{ y: -20, opacity: 0 }}
+                            animate={{ y: [0, 120], opacity: [0, 0.45, 0] }}
+                            transition={{
+                                duration: 1.4 + (i % 3) * 0.3,
+                                repeat: Infinity,
+                                delay: i * 0.22,
+                                ease: 'easeIn',
+                            }}
+                            className="absolute w-[1.5px] h-5 rounded-full bg-sky-500/50"
+                            style={{ left: `${8 + i * 6.4}%`, top: '8%' }}
+                        />
+                    ))}
+
+                    {/* Breeze shimmer */}
                     <motion.div
-                        animate={{ x: [0, 2, -2, 0, 2, 0] }}
-                        transition={{ duration: 0.2, repeat: Infinity, repeatDelay: 2 }}
-                        className="absolute inset-0 bg-gray-600/10 mix-blend-overlay"
+                        animate={{ x: [0, 8, -8, 0], opacity: [0.1, 0.24, 0.1] }}
+                        transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent mix-blend-soft-light"
                     />
                 </div>
             )}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, CheckCircle2, Circle, Users, Zap, Coffee } from 'lucide-react';
+import { Calendar, CheckCircle2, Circle, Users, Zap, MessageCircle } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Todo } from '../types';
 import { USERS } from '../constants';
@@ -14,12 +14,14 @@ import { supabase } from '../lib/supabase';
 interface TaskCardRowProps {
     todo: Todo;
     currentUser: { id: string };
+    unreadCommentsCount?: number;
     onClick: (todo: Todo) => void;
     onToggle: (todo: Todo) => void;
+    onMarkCommentsRead?: (todo: Todo) => void;
 }
 
-export function TaskCardRow({ todo, currentUser, onClick, onToggle }: TaskCardRowProps) {
-    const { sendNudge, sendCaffeineBoost } = useNotificationsContext();
+export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClick, onToggle, onMarkCommentsRead }: TaskCardRowProps) {
+    const { sendNudge } = useNotificationsContext();
     const queryClient = useQueryClient();
     const [showCelebration, setShowCelebration] = React.useState(false);
     const isDoneForMe = todo.completed_by.includes(currentUser.id);
@@ -42,6 +44,10 @@ export function TaskCardRow({ todo, currentUser, onClick, onToggle }: TaskCardRo
         }
         onToggle(todo);
     };
+
+    const unreadLabel = unreadCommentsCount <= 2
+        ? 'Nuevo comentario'
+        : `${unreadCommentsCount} comentarios`;
 
     return (
         <div className="relative group overflow-visible">
@@ -73,6 +79,12 @@ export function TaskCardRow({ todo, currentUser, onClick, onToggle }: TaskCardRo
                         <h3 className={`font-bold text-gray-900 truncate ${isDoneForMe ? 'line-through text-gray-400' : ''}`}>
                             {todo.title}
                         </h3>
+                        {unreadCommentsCount > 0 && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-black whitespace-nowrap">
+                                <MessageCircle size={11} />
+                                {unreadLabel}
+                            </span>
+                        )}
                         {(isOverdue || isDueToday) && !isDoneForMe && (
                             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 text-[10px] font-black uppercase tracking-wider">
                                 {isOverdue ? 'Vencida' : 'Hoy'}
@@ -128,27 +140,18 @@ export function TaskCardRow({ todo, currentUser, onClick, onToggle }: TaskCardRo
 
                     {/* Action Buttons */}
                     <div className="flex items-center gap-1 ml-2">
-                        {/* Caffeine Button */}
-                        <motion.button
-                            whileHover={{ scale: 1.2, y: -2 }}
-                            whileTap={{ scale: 0.8 }}
-                            onClick={async (e) => {
-                                e.stopPropagation();
-                                haptics.light();
-                                const peopleToBoost = todo.assigned_to.filter(uid =>
-                                    !todo.completed_by.includes(uid)
-                                );
-                                if (peopleToBoost.length > 0) {
-                                    const myName = USERS.find(u => u.id === currentUser.id)?.name || 'Un compañero';
-                                    await sendCaffeineBoost(myName, peopleToBoost);
-                                }
-                            }}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition-colors shadow-sm"
-                            title="¡Enviar cafeína lunar! ☕"
-                        >
-                            <Coffee size={14} />
-                        </motion.button>
-
+                        {unreadCommentsCount > 0 && onMarkCommentsRead && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onMarkCommentsRead(todo);
+                                }}
+                                className="px-2 py-1 rounded-lg border border-primary/30 bg-primary/5 text-primary text-[10px] font-black hover:bg-primary/10 transition-colors"
+                                title="Marcar comentarios como leídos"
+                            >
+                                Marcar leído
+                            </button>
+                        )}
                         {/* Electrocutada Button */}
                         {!isGloballyDone && (
                             <motion.button

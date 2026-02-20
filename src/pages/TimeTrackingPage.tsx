@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
@@ -7,7 +8,7 @@ import { USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateTotalHours, calculateHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle } from 'lucide-react';
+import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle, Coffee } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
 import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
@@ -15,8 +16,7 @@ import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 export default function TimeTrackingPage() {
     const { currentUser } = useAuth();
     const isAdmin = currentUser?.isAdmin;
-
-    const { timeData, deleteTimeEntry, updateTimeEntry } = useTimeData();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { absenceRequests, createAbsence, deleteAbsenceByDate } = useAbsences(currentUser);
     const { userProfiles, updateProfile } = useWorkProfile();
     const { overrides: calendarOverrides } = useCalendarOverrides();
@@ -28,6 +28,12 @@ export default function TimeTrackingPage() {
 
     // Month Selection State (Defaults to current month)
     const [selectedDate, setSelectedDate] = useState(new Date());
+    const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    const { timeData, deleteTimeEntry, updateTimeEntry } = useTimeData({
+        from: monthStart,
+        to: monthEnd,
+    });
 
     // Navigation Handlers
     const handlePrevMonth = () => {
@@ -68,6 +74,19 @@ export default function TimeTrackingPage() {
         resolution_type: 'makeup' // makeup, paid, deducted
     });
 
+    useEffect(() => {
+        const dateParam = searchParams.get('date');
+        if (!dateParam) return;
+        const parsed = new Date(`${dateParam}T00:00:00`);
+        if (!Number.isNaN(parsed.getTime())) {
+            setSelectedDate(parsed);
+        }
+        const cleaned = new URLSearchParams(searchParams);
+        cleaned.delete('date');
+        cleaned.delete('open');
+        setSearchParams(cleaned, { replace: true });
+    }, [searchParams, setSearchParams]);
+
     // --- Helpers ---
 
     const getProfile = (userId: string) => {
@@ -76,6 +95,29 @@ export default function TimeTrackingPage() {
             vacation_days_total: 22,
             hours_adjustment: 0,
             vacation_adjustment: 0
+        };
+    };
+
+    const consolidateDailyEntries = (entries: any[]) => {
+        if (!entries || entries.length === 0) return null;
+        const withEntry = entries.filter(e => !!e.entry);
+        const withExit = entries.filter(e => !!e.exit);
+        const base = entries[0];
+
+        const minEntry = withEntry.length > 0
+            ? withEntry.reduce((min, e) => (e.entry < min ? e.entry : min), withEntry[0].entry)
+            : base.entry;
+        const maxExit = withExit.length > 0
+            ? withExit.reduce((max, e) => (e.exit > max ? e.exit : max), withExit[0].exit)
+            : base.exit;
+        const hasBreak = entries.some(e => e.status === 'break_paid' || (e.note || '').includes('PAUSA_INICIO:'));
+        const status = hasBreak ? 'break_paid' : (base.status || 'present');
+
+        return {
+            ...base,
+            entry: minEntry || null,
+            exit: maxExit || null,
+            status,
         };
     };
 
@@ -118,14 +160,12 @@ export default function TimeTrackingPage() {
         // 1. Time Entries (Worked Hours)
         Object.values(timeData).forEach(dayData => {
             const userEntries = dayData[userId] || [];
-            userEntries.forEach(entry => {
-                if (entry.date_key.startsWith(currentMonthPrefix)) {
-                    if (entry.entry && entry.exit) {
-                        const hours = calculateHours(entry.entry, entry.exit);
-                        totalMinutes += hours * 60;
-                    }
-                }
-            });
+            const consolidated = consolidateDailyEntries(userEntries);
+            if (!consolidated) return;
+            if (consolidated.date_key.startsWith(currentMonthPrefix) && consolidated.entry && consolidated.exit) {
+                const hours = calculateHours(consolidated.entry, consolidated.exit);
+                totalMinutes += hours * 60;
+            }
         });
 
         // 2. Paid Special Permissions (Virtual Hours)
@@ -199,7 +239,8 @@ export default function TimeTrackingPage() {
         sortedDates.forEach(dateKey => {
             if (dateKey.startsWith(currentMonthPrefix)) {
                 const entries = timeData[dateKey][userId] || [];
-                entries.forEach(e => logs.push({ ...e, date_key: dateKey }));
+                const consolidated = consolidateDailyEntries(entries);
+                if (consolidated) logs.push({ ...consolidated, date_key: dateKey });
             }
         });
         const displayLogs = limit ? logs.slice(0, limit) : logs;
@@ -253,6 +294,7 @@ export default function TimeTrackingPage() {
         };
 
         const getLogType = (entry: any) => {
+            if (entry.status === 'break_paid') return 'break_paid';
             if (entry.status === 'vacation') return 'vacation';
             if (entry.status === 'special_permit') return 'special_permit';
             if (entry.status === 'absent') return 'absence';
@@ -308,6 +350,7 @@ export default function TimeTrackingPage() {
                                             ) : (
                                                 <div className="font-medium text-gray-900">
                                                     {currentType === 'work' ? (entry.entry || '-') :
+                                                        currentType === 'break_paid' ? <span className="text-amber-600 flex items-center gap-1"><Coffee size={14} /> Pausa</span> :
                                                         currentType === 'vacation' ? <span className="text-teal-600 flex items-center gap-1"><Calendar size={14} /> Vacaciones</span> :
                                                             currentType === 'special_permit' ? <span className="text-indigo-600 flex items-center gap-1"><Briefcase size={14} /> Permiso</span> :
                                                                 <span className="text-red-500 flex items-center gap-1"><AlertTriangle size={14} /> Ausencia</span>

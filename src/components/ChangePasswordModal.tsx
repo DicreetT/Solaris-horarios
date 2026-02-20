@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Lock, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 /**
  * ChangePasswordModal component
@@ -38,12 +39,17 @@ export default function ChangePasswordModal({ isOpen, onClose }: { isOpen: boole
             return;
         }
 
-        if (currentPassword !== currentUser?.password) {
-            setError('La contraseña actual es incorrecta');
-            return;
-        }
-
         try {
+            // Re-authenticate to verify current password before password update.
+            const { error: verifyError } = await supabase.auth.signInWithPassword({
+                email: currentUser?.email || '',
+                password: currentPassword,
+            });
+            if (verifyError) {
+                setError('La contraseña actual es incorrecta');
+                return;
+            }
+
             await updatePassword(newPassword);
             setSuccess(true);
             setCurrentPassword('');

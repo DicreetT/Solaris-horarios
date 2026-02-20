@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { ESTEBAN_ID } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
@@ -7,6 +7,50 @@ import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { formatTimeNow, toDateKey, isWeekend } from '../utils/dateUtils';
 import { Clock, Play, Square, Edit2, Trash2, Timer, Info, Users, CheckSquare, XCircle, Coffee } from 'lucide-react';
+
+const ITZI_ID = 'cb5d2e6e-9046-4b22-b509-469076999d78';
+const ANABELLA_ID = '6bafcb97-6a1b-4224-adbb-1340b86ffeb9';
+const FER_ID = '4ca49a9d-7ee5-4b54-8e93-bc4833de549a';
+
+type BreakPolicy = {
+    startAfterMinutes: number;
+    breakMinutes: number;
+    label: string;
+};
+
+const BREAK_POLICIES: Record<string, BreakPolicy> = {
+    [ESTEBAN_ID]: {
+        startAfterMinutes: 240, // 4h after entry
+        breakMinutes: 90,
+        label: 'Comida',
+    },
+    [ITZI_ID]: {
+        startAfterMinutes: 240, // 4h after entry
+        breakMinutes: 90,
+        label: 'Comida',
+    },
+    [ANABELLA_ID]: {
+        startAfterMinutes: 150, // 2h30m after entry
+        breakMinutes: 10,
+        label: 'Pausa cafe',
+    },
+    [FER_ID]: {
+        startAfterMinutes: 150, // 2h30m after entry
+        breakMinutes: 10,
+        label: 'Pausa cafe',
+    },
+};
+
+const minutesSinceTime = (entry: string | null | undefined): number => {
+    if (!entry) return 0;
+    const [hours, minutes] = entry.split(':').map(Number);
+    const now = new Date();
+    const entryDate = new Date();
+    entryDate.setHours(hours, minutes, 0, 0);
+    let diffMinutes = Math.floor((now.getTime() - entryDate.getTime()) / 60000);
+    if (diffMinutes < 0) diffMinutes += 24 * 60;
+    return diffMinutes;
+};
 
 /**
  * Shared time tracker widget for clocking in/out
@@ -22,9 +66,13 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
 
     const targetDate = date;
     const dateKey = toDateKey(targetDate);
+    const breakPolicy = currentUser ? BREAK_POLICIES[currentUser.id] : undefined;
 
     const [elapsedTime, setElapsedTime] = useState('00:00:00');
     const [isEditing, setIsEditing] = useState(false);
+    const [snoozedUntil, setSnoozedUntil] = useState<number | null>(null);
+    const [reminderType, setReminderType] = useState<'start_break' | 'resume_break' | null>(null);
+    const announcedReminderRef = useRef<string | null>(null);
 
     // Daily Status Logic for Esteban
     const currentStatus = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === dateKey);
@@ -48,19 +96,26 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
             r.status === 'approved'
     );
 
-    // Find the active entry (has entry but no exit)
+    // Active records:
+    // Keep a single daily active session entry to avoid duplicated rows per day.
     const activeEntry = userEntries.find(e => e.entry && !e.exit);
-    const isClocked = !!activeEntry;
+    const isOnBreak = activeEntry?.status === 'break_paid';
+    const isClocked = !!activeEntry && !isOnBreak;
+    const hasActiveSession = !!activeEntry;
+    const hasBreakLoggedToday = userEntries.some(
+        (e) => e.status === 'break_paid' || (e.note || '').includes('PAUSA_INICIO:'),
+    );
 
-    // Calculate elapsed time if clocked in
+    // Calculate elapsed time for active work or break session
     useEffect(() => {
-        if (!isClocked || !activeEntry?.entry) {
+        const sessionEntry = activeEntry?.entry;
+        if (!sessionEntry) {
             setElapsedTime('00:00:00');
             return;
         }
 
         const calculateElapsed = () => {
-            const entryTime = new Date(`1970-01-01T${activeEntry.entry}`);
+            const entryTime = new Date(`1970-01-01T${sessionEntry}`);
             const now = new Date();
             const currentTime = new Date(`1970-01-01T${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`);
 
@@ -79,32 +134,141 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
         calculateElapsed();
         const interval = setInterval(calculateElapsed, 1000);
         return () => clearInterval(interval);
-    }, [isClocked, activeEntry?.entry]);
+    }, [activeEntry?.entry]);
+
+    useEffect(() => {
+        if (!breakPolicy || activeAbsence || isWeekend(targetDate)) {
+            setReminderType(null);
+            return;
+        }
+
+        if (snoozedUntil && Date.now() < snoozedUntil) {
+            return;
+        }
+
+        if (isOnBreak) {
+            const breakMinutes = minutesSinceTime(activeEntry?.entry);
+            if (breakMinutes >= breakPolicy.breakMinutes) {
+                setReminderType('resume_break');
+                return;
+            }
+        }
+
+        if (isClocked && !hasBreakLoggedToday) {
+            const workedMinutes = minutesSinceTime(activeEntry?.entry);
+            if (workedMinutes >= breakPolicy.startAfterMinutes) {
+                setReminderType('start_break');
+                return;
+            }
+        }
+
+        setReminderType(null);
+    }, [
+        breakPolicy,
+        activeAbsence,
+        targetDate,
+        snoozedUntil,
+        isOnBreak,
+        isClocked,
+        hasBreakLoggedToday,
+        activeEntry?.entry,
+    ]);
+
+    useEffect(() => {
+        if (!currentUser || !reminderType || !breakPolicy) return;
+        const reminderKey = `${currentUser.id}:${dateKey}:${reminderType}`;
+        if (announcedReminderRef.current === reminderKey) return;
+        announcedReminderRef.current = reminderKey;
+
+        if (reminderType === 'start_break') {
+            addNotification({
+                message: `Sugerencia: es buen momento para iniciar tu pausa de ${breakPolicy.breakMinutes} minutos (${breakPolicy.label}).`,
+            });
+        } else {
+            addNotification({
+                message: `Tu pausa recomendada de ${breakPolicy.breakMinutes} minutos ha terminado. Puedes retomar jornada.`,
+            });
+        }
+    }, [currentUser, reminderType, breakPolicy, dateKey, addNotification]);
 
     async function handleMarkEntry() {
+        if (activeEntry) return;
+        const now = formatTimeNow();
         try {
-            await createTimeEntry({
-                date: targetDate,
-                userId: currentUser.id,
-                entry: formatTimeNow(),
-                exit: null,
-                status: 'present',
-                note: '',
-            });
-            addNotification({ message: `Has fichado tu entrada (${formatTimeNow()}).` });
+            const primaryTodayEntry = userEntries[0];
+            if (primaryTodayEntry) {
+                await updateTimeEntry({
+                    id: primaryTodayEntry.id,
+                    updates: {
+                        entry: now,
+                        exit: null,
+                        status: 'present',
+                        note: primaryTodayEntry.note || '',
+                    },
+                });
+            } else {
+                await createTimeEntry({
+                    date: targetDate,
+                    userId: currentUser.id,
+                    entry: now,
+                    exit: null,
+                    status: 'present',
+                    note: '',
+                });
+            }
+            addNotification({ message: `Has fichado tu entrada (${now}).` });
         } catch (e) {
             console.error('Error creating entry:', e);
         }
     }
 
+    async function handleStartBreak() {
+        if (!activeEntry || isOnBreak) return;
+        const now = formatTimeNow();
+        try {
+            const currentNote = activeEntry.note || '';
+            await updateTimeEntry({
+                id: activeEntry.id,
+                updates: {
+                    status: 'break_paid',
+                    note: `${currentNote}${currentNote ? ' | ' : ''}PAUSA_INICIO:${now}`,
+                },
+            });
+            addNotification({ message: `Pausa iniciada (${now}).` });
+            setReminderType(null);
+        } catch (e) {
+            console.error('Error starting break:', e);
+        }
+    }
+
+    async function handleResumeFromBreak() {
+        if (!activeEntry || !isOnBreak) return;
+        const now = formatTimeNow();
+        try {
+            const currentNote = activeEntry.note || '';
+            await updateTimeEntry({
+                id: activeEntry.id,
+                updates: {
+                    status: 'present',
+                    note: `${currentNote}${currentNote ? ' | ' : ''}PAUSA_FIN:${now}`,
+                },
+            });
+            addNotification({ message: `Jornada retomada (${now}).` });
+            setReminderType(null);
+        } catch (e) {
+            console.error('Error resuming from break:', e);
+        }
+    }
+
     async function handleMarkExit() {
         if (!activeEntry) return;
+        const now = formatTimeNow();
         try {
             await updateTimeEntry({
                 id: activeEntry.id,
-                updates: { exit: formatTimeNow() },
+                updates: { exit: now, status: isOnBreak ? 'present' : activeEntry.status },
             });
-            addNotification({ message: `Has fichado tu salida (${formatTimeNow()}). ¡Hasta luego! 🌙` });
+            addNotification({ message: `Has fichado tu salida (${now}). ¡Hasta luego! 🌙` });
         } catch (e) {
             console.error('Error updating entry:', e);
         }
@@ -171,7 +335,9 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                         <p className="text-sm text-gray-500 mt-1">
                             {activeAbsence
                                 ? (activeAbsence.type === 'vacation' ? 'Disfrutando de vacaciones' : 'Ausencia justificada')
-                                : (isClocked ? 'Jornada en curso' : 'Jornada pausada')
+                                : isOnBreak
+                                    ? 'Pausa activa (tiempo incluido en jornada)'
+                                    : (isClocked ? 'Jornada en curso' : 'Jornada pausada')
                             }
                         </p>
                     </div>
@@ -200,24 +366,84 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                     </div>
                 ) : (
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+                        {reminderType && breakPolicy && (
+                            <div className="w-full mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col gap-3">
+                                <div>
+                                    <p className="text-sm font-bold text-amber-800">
+                                        {reminderType === 'start_break' ? 'Sugerencia de pausa' : 'Hora de retomar'}
+                                    </p>
+                                    <p className="text-sm text-amber-700">
+                                        {reminderType === 'start_break'
+                                            ? `Te recomendamos iniciar tu ${breakPolicy.label.toLowerCase()} (${breakPolicy.breakMinutes} min).`
+                                            : `Ya pasaron ${breakPolicy.breakMinutes} minutos. Puedes retomar jornada cuando quieras.`}
+                                    </p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    {reminderType === 'start_break' ? (
+                                        <button
+                                            onClick={handleStartBreak}
+                                            className="px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 transition-colors"
+                                        >
+                                            Iniciar pausa
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleResumeFromBreak}
+                                            className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-dark transition-colors"
+                                        >
+                                            Retomar jornada
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            setSnoozedUntil(Date.now() + 10 * 60 * 1000);
+                                            setReminderType(null);
+                                        }}
+                                        className="px-4 py-2 rounded-xl border border-amber-300 text-amber-700 text-sm font-bold hover:bg-amber-100 transition-colors"
+                                    >
+                                        Posponer 10 min
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Clock Display */}
                         <div className="flex items-center gap-4">
-                            <div className={`text-5xl font-black tracking-tighter font-mono ${isClocked ? 'text-gray-900' : 'text-gray-300'
+                            <div className={`text-5xl font-black tracking-tighter font-mono ${hasActiveSession ? 'text-gray-900' : 'text-gray-300'
                                 }`}>
                                 {elapsedTime}
                             </div>
-                            {isClocked && (
+                            {hasActiveSession && (
                                 <div className="flex flex-col">
-                                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse mb-1" />
-                                    <span className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Activo</span>
+                                    <span className={`w-2 h-2 rounded-full animate-pulse mb-1 ${isOnBreak ? 'bg-amber-500' : 'bg-green-500'}`} />
+                                    <span className={`text-[10px] font-bold uppercase tracking-wider ${isOnBreak ? 'text-amber-600' : 'text-green-600'}`}>
+                                        {isOnBreak ? 'Pausa' : 'Activo'}
+                                    </span>
                                 </div>
                             )}
                         </div>
 
-                        {isClocked ? (
+                        {isOnBreak ? (
                             <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                                 <button
+                                    onClick={handleResumeFromBreak}
+                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50"
+                                >
+                                    <Play size={18} fill="currentColor" />
+                                    <span>Retomar Jornada</span>
+                                </button>
+                                <button
                                     onClick={handleMarkExit}
+                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200"
+                                >
+                                    <Square size={18} fill="currentColor" />
+                                    <span>Finalizar Jornada</span>
+                                </button>
+                            </div>
+                        ) : isClocked ? (
+                            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                                <button
+                                    onClick={handleStartBreak}
                                     className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-amber-100 text-amber-700 hover:bg-amber-200 hover:shadow-amber-100"
                                 >
                                     <Coffee size={18} />
@@ -348,6 +574,16 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                         {/* Note */}
                                         <div className="flex items-center gap-3">
                                             <div className="flex-1">
+                                                <div className="mb-1">
+                                                    <span
+                                                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${entry.status === 'break_paid'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-gray-100 text-gray-600'
+                                                            }`}
+                                                    >
+                                                        {entry.status === 'break_paid' ? 'Pausa' : 'Trabajo'}
+                                                    </span>
+                                                </div>
                                                 {isEditing && isAdmin ? (
                                                     <input
                                                         type="text"
@@ -384,5 +620,3 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
         </div>
     );
 }
-
-

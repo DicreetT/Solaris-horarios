@@ -5,10 +5,7 @@ import {
     LayoutDashboard,
     Calendar,
     CheckSquare,
-    Users,
-    UserX,
-    GraduationCap,
-    Clock,
+    MessageCircle,
     FileText,
     Folder,
     LogOut,
@@ -18,28 +15,18 @@ import {
     ChevronLeft,
     ChevronRight,
     ShoppingBag,
-    ClipboardCheck,
-    Smartphone,
-    Sun,
-    Moon,
-    Search,
-    Heart
+    Search
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
 import { SidebarMoodBackground } from './SidebarMoodBackground';
-import NotificationBell from './NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useShoppingList } from '../hooks/useShoppingList';
 import { useTodos } from '../hooks/useTodos';
-import { useMeetings } from '../hooks/useMeetings';
-import { useAbsences } from '../hooks/useAbsences';
-import { useTraining } from '../hooks/useTraining';
 import { DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
-import { haptics } from '../utils/haptics';
 import { toDateKey } from '../utils/dateUtils';
 
 /**
@@ -60,32 +47,23 @@ interface SidebarProps {
 function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswordModal, onOpenNotificationsModal }: SidebarProps) {
     const { currentUser, logout } = useAuth();
     const {
-        notifications,
-        isPushSubscribed,
-        subscribeToPush,
-        unsubscribeFromPush,
-        pushError
+        notifications
     } = useNotificationsContext();
     const { theme, toggleTheme } = useTheme();
 
     // Data hooks for badges
     const { shoppingItems } = useShoppingList(currentUser);
     const { todos } = useTodos(currentUser);
-    const { meetingRequests } = useMeetings(currentUser);
-    const { absenceRequests } = useAbsences(currentUser);
-    const { trainingRequests } = useTraining(currentUser);
     const { dailyStatuses } = useDailyStatus(currentUser);
     const todayKey = toDateKey(new Date());
     const myStatusToday = dailyStatuses.find(s => s.user_id === currentUser?.id && s.date_key === todayKey);
-    console.log('Sidebar Debug:', { todayKey, myStatusToday, currentUser: currentUser?.id, statuses: dailyStatuses });
 
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);
     const userMenuRef = useRef(null);
 
-    const isAdmin = currentUser?.isAdmin;
-    const isTrainingManager = currentUser?.isTrainingManager;
+    const isAdmin = !!currentUser?.isAdmin;
     const unreadCount = notifications.filter((n) => !n.read).length;
 
     // --- BADGE CALCULATIONS ---
@@ -95,34 +73,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         t.assigned_to?.includes(currentUser?.id || '') &&
         !t.completed_by?.includes(currentUser?.id || '')
     ).length;
-
-    // 2. Meetings: I am a participant AND status is not rejected (pending or scheduled)
-    // Note: You might want to filter only future meetings or pending ones. 
-    // For now, "active" implies not rejected.
-    const activeMeetingsCount = meetingRequests.filter(m =>
-        m.participants?.includes(currentUser?.id || '') &&
-        m.status !== 'rejected' &&
-        m.status !== 'completed'
-    ).length;
-
-    // 3. Absences:
-    // If Admin: All pending requests.
-    // If User: My pending requests.
-    // Note: useAbsences hook already filters non-admin data to (my requests OR approved).
-    // So for non-admin, just filtering 'pending' should only show my pending ones (since approved aren't pending).
-    const pendingAbsencesCount = absenceRequests.filter(a => a.status === 'pending').length;
-
-    // 4. Trainings:
-    // If Training Manager: All pending requests.
-    // If User: My pending requests. (Hook returns all for manager, filtered for user usually? 
-    // Let's check hook: useTraining seems to return ALL for everyone? No, allowed to filter?
-    // Looking at useTraining: "const { data, error } = await supabase.from('training_requests').select('*');" -> It fetches ALL.
-    // So we must filter by user if not manager.
-    const pendingTrainingsCount = trainingRequests.filter(t => {
-        if (t.status !== 'pending') return false;
-        if (isTrainingManager) return true; // Manager sees all pending
-        return t.user_id === currentUser?.id; // User sees only theirs
-    }).length;
 
     // 5. Shopping: Esteban sees unpurchased items
     const pendingShoppingCount = (currentUser?.id === ESTEBAN_ID)
@@ -182,37 +132,10 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             badge: pendingTasksCount
         },
         {
-            path: '/meetings',
-            label: 'Reuniones/Sugerencias',
-            icon: Users,
+            path: '/chat',
+            label: 'Chat',
+            icon: MessageCircle,
             show: true,
-            badge: activeMeetingsCount
-        },
-        {
-            path: '/absences',
-            label: 'Ausencias',
-            icon: UserX,
-            show: true,
-            badge: pendingAbsencesCount
-        },
-        {
-            path: '/trainings',
-            label: 'Formaciones',
-            icon: GraduationCap,
-            show: true,
-            badge: pendingTrainingsCount
-        },
-        {
-            path: '/time-tracking',
-            label: 'Registro Horario',
-            icon: Clock,
-            show: true
-        },
-        {
-            path: '/checklist',
-            label: 'Check-list Diario',
-            icon: ClipboardCheck,
-            show: true
         },
         {
             path: '/shopping',
