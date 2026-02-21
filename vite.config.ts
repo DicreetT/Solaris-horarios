@@ -17,6 +17,8 @@ export default defineConfig({
         name: 'Lunaris',
         short_name: 'Lunaris',
         description: 'Aplicación de control horario y gestión de tareas',
+        start_url: '/calendar',
+        scope: '/',
         theme_color: '#ffffff',
         icons: [
           {
