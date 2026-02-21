@@ -22,6 +22,7 @@ import FoldersPage from './pages/FoldersPage';
 import ShoppingListPage from './pages/ShoppingListPage';
 import DailyChecklistPage from './pages/DailyChecklistPage';
 import ChatPage from './pages/ChatPage';
+import InventoryPage from './pages/InventoryPage';
 
 /**
  * Protected Route wrapper
@@ -92,6 +93,7 @@ function App() {
             <Route path="/shopping" element={<ShoppingListPage />} />
             <Route path="/checklist" element={<DailyChecklistPage />} />
             <Route path="/chat" element={<ChatPage />} />
+            <Route path="/inventory" element={<InventoryPage />} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}

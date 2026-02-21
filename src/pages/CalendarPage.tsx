@@ -9,7 +9,7 @@ import { useAbsences } from '../hooks/useAbsences';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { toDateKey } from '../utils/dateUtils';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, UserX, Palmtree, Users, GraduationCap, Lock, Sun, AlertCircle } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, UserX, Palmtree, Users, GraduationCap, Lock, Sun, AlertCircle, CheckSquare } from 'lucide-react';
 import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 import { USERS } from '../constants';
 import { Todo } from '../types';
@@ -234,10 +234,10 @@ function CalendarPage() {
                             <div
                                 key={dayKey}
                                 className={`
-                                    rounded-3xl border p-4 shadow-sm flex flex-col gap-4 min-h-[300px]
+                                    rounded-3xl border p-4 shadow-sm flex flex-col gap-4 min-h-[340px] transition-all
                                     ${isToday ? 'border-primary/60 ring-2 ring-primary/25 bg-white' : toneClass}
-                                    ${isPast ? 'opacity-75 saturate-75' : ''}
-                                    ${isFuture ? 'opacity-95' : ''}
+                                    ${isPast ? 'opacity-70 saturate-75' : ''}
+                                    ${isFuture ? 'opacity-90' : ''}
                                 `}
                             >
                                 <button
@@ -256,24 +256,44 @@ function CalendarPage() {
                                 </button>
 
                                 {currentUser?.isAdmin && (
-                                    <button
-                                        disabled={!!togglingDays[dayKey]}
-                                        onClick={async () => {
-                                            setTogglingDays((prev) => ({ ...prev, [dayKey]: true }));
-                                            try {
-                                                await toggleDayStatus(day, !isNonWorking);
-                                            } finally {
-                                                setTogglingDays((prev) => ({ ...prev, [dayKey]: false }));
-                                            }
-                                        }}
-                                        className={`self-start px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                                            isNonWorking
-                                                ? 'bg-red-100 border-red-200 text-red-700'
-                                                : 'bg-emerald-100 border-emerald-200 text-emerald-700'
-                                        }`}
-                                    >
-                                        {isNonWorking ? 'No laborable' : 'Laborable'}
-                                    </button>
+                                    <div className="self-start flex items-center gap-1.5">
+                                        <button
+                                            disabled={!!togglingDays[dayKey]}
+                                            onClick={async () => {
+                                                setTogglingDays((prev) => ({ ...prev, [dayKey]: true }));
+                                                try {
+                                                    await toggleDayStatus(day, false);
+                                                } finally {
+                                                    setTogglingDays((prev) => ({ ...prev, [dayKey]: false }));
+                                                }
+                                            }}
+                                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                                                !isNonWorking
+                                                    ? 'bg-amber-100 border-amber-300 text-amber-800'
+                                                    : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'
+                                            }`}
+                                        >
+                                            Laborable
+                                        </button>
+                                        <button
+                                            disabled={!!togglingDays[dayKey]}
+                                            onClick={async () => {
+                                                setTogglingDays((prev) => ({ ...prev, [dayKey]: true }));
+                                                try {
+                                                    await toggleDayStatus(day, true);
+                                                } finally {
+                                                    setTogglingDays((prev) => ({ ...prev, [dayKey]: false }));
+                                                }
+                                            }}
+                                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                                                isNonWorking
+                                                    ? 'bg-red-100 border-red-200 text-red-700'
+                                                    : 'bg-white border-red-200 text-red-700 hover:bg-red-50'
+                                            }`}
+                                        >
+                                            No laborable
+                                        </button>
+                                    </div>
                                 )}
 
                                 <div className="grid grid-cols-1 gap-2 text-xs">
@@ -283,16 +303,27 @@ function CalendarPage() {
                                             if (dayTaskCount === 0) return;
                                             setExpandedTasksByDay((prev) => ({ ...prev, [dayKey]: !prev[dayKey] }));
                                         }}
-                                        className={`rounded-xl border p-2 text-left ${dayTaskCount > 0 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}
+                                        className={`rounded-xl border p-2 text-left transition-all ${
+                                            dayTaskCount > 0
+                                                ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
+                                                : dayTaskTotal === 0
+                                                    ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                                                    : (isPast || isToday)
+                                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                                                        : 'bg-amber-50/70 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                        }`}
                                     >
-                                        <p className="font-bold">Tareas</p>
+                                        <p className="font-bold inline-flex items-center gap-1">
+                                            <CheckSquare size={12} />
+                                            Tareas
+                                        </p>
                                         <p className="mt-1 font-semibold">
                                             {dayTaskCount > 0
                                                 ? `${dayTaskCount} pendiente(s)`
                                                 : dayTaskTotal === 0
                                                     ? 'No hay tareas'
                                                     : (isPast || isToday)
-                                                        ? 'Todo al dia'
+                                                        ? 'Todo al día'
                                                         : 'Tareas programadas'}
                                         </p>
                                         {dayTaskCount > 0 && (
@@ -328,7 +359,7 @@ function CalendarPage() {
                                     {meetingsCount > 0 && (
                                         <button
                                             onClick={() => openQuickAction('/meetings', day)}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
                                         >
                                             <Users size={12} />
                                             Reunion {meetingsCount}
@@ -337,7 +368,7 @@ function CalendarPage() {
                                     {trainingsCount > 0 && (
                                         <button
                                             onClick={() => openQuickAction('/trainings', day)}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors"
                                         >
                                             <GraduationCap size={12} />
                                             Formacion {trainingsCount}
@@ -346,7 +377,7 @@ function CalendarPage() {
                                     {vacationsCount > 0 && (
                                         <button
                                             onClick={() => openQuickAction('/absences', day, { type: 'vacation' })}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
                                         >
                                             <Palmtree size={12} />
                                             Vacaciones {vacationsCount}
@@ -355,7 +386,7 @@ function CalendarPage() {
                                     {absencesCount > 0 && (
                                         <button
                                             onClick={() => openQuickAction('/absences', day, { type: 'absence' })}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 border border-red-200"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
                                         >
                                             <AlertCircle size={12} />
                                             Ausencias {absencesCount}
@@ -376,7 +407,7 @@ function CalendarPage() {
                                 <div className="mt-auto space-y-2">
                                     <button
                                         onClick={() => openQuickAction('/time-tracking', day)}
-                                        className="w-full inline-flex items-center justify-center gap-2 px-3 py-3 rounded-2xl text-sm font-black bg-indigo-100 text-indigo-800 hover:bg-indigo-200 border border-indigo-200"
+                                        className="w-full inline-flex items-center justify-center gap-2 px-3 py-3 rounded-2xl text-sm font-black bg-indigo-100 text-indigo-800 hover:bg-indigo-200 border border-indigo-200 hover:-translate-y-0.5 active:translate-y-0 transition-all"
                                     >
                                         <Clock size={16} />
                                         Fichar Jornada
@@ -384,28 +415,28 @@ function CalendarPage() {
                                     <div className="grid grid-cols-2 gap-2">
                                         <button
                                             onClick={() => openQuickAction('/absences', day, { type: 'absence' })}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-700 hover:bg-red-100"
+                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-700 hover:bg-red-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
                                         >
                                             <UserX size={12} />
                                             Solicitar Ausencia
                                         </button>
                                         <button
                                             onClick={() => openQuickAction('/absences', day, { type: 'vacation' })}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
                                         >
                                             <Palmtree size={12} />
                                             Solicitar Vacaciones
                                         </button>
                                         <button
                                             onClick={() => openQuickAction('/meetings', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
                                         >
                                             <Users size={12} />
                                             Solicitar Reunion
                                         </button>
                                         <button
                                             onClick={() => openQuickAction('/trainings', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-purple-50 text-purple-700 hover:bg-purple-100"
+                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
                                         >
                                             <GraduationCap size={12} />
                                             Solicitar Formacion
@@ -424,13 +455,13 @@ function CalendarPage() {
                         return (
                             <div
                                 key={dayKey}
-                                className={`rounded-2xl border bg-gray-50 p-3 flex items-center justify-between ${isToday ? 'border-primary/40' : 'border-gray-200'} opacity-80`}
+                                className={`rounded-xl border bg-gray-50 p-2.5 flex items-center justify-between ${isToday ? 'border-primary/40' : 'border-gray-200'} opacity-80`}
                             >
                                 <div>
                                     <p className="text-xs uppercase tracking-wider font-bold text-gray-500">
                                         {day.toLocaleDateString('es-ES', { weekday: 'long' })}
                                     </p>
-                                    <p className="text-lg font-black text-gray-700">
+                                    <p className="text-base font-black text-gray-700">
                                         {day.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
                                     </p>
                                     <p className="text-xs text-gray-500 font-medium">Dia no laboral</p>

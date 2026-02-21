@@ -57,7 +57,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                 onClick={() => onClick(todo)}
                 className={`
           flex items-center gap-4 p-4 mb-2 rounded-2xl border transition-all cursor-pointer bg-white
-          ${isDoneForMe ? 'opacity-60 border-gray-100 shadow-none grayscale' : 'border-gray-100 hover:border-primary/30 hover:shadow-md'}
+          ${isDoneForMe ? 'opacity-85 border-gray-100 shadow-none' : 'border-gray-100 hover:border-primary/30 hover:shadow-md'}
         `}
             >
                 {/* 1. Status Icon */}
@@ -80,7 +80,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                             {todo.title}
                         </h3>
                         {unreadCommentsCount > 0 && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-black whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/15 text-primary border border-primary/25 text-[11px] font-black whitespace-nowrap shadow-sm">
                                 <MessageCircle size={11} />
                                 {unreadLabel}
                             </span>
@@ -146,7 +146,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                     e.stopPropagation();
                                     onMarkCommentsRead(todo);
                                 }}
-                                className="px-2 py-1 rounded-lg border border-primary/30 bg-primary/5 text-primary text-[10px] font-black hover:bg-primary/10 transition-colors"
+                                className="px-2 py-1 rounded-lg border border-primary/40 bg-primary/10 text-primary text-[10px] font-black hover:bg-primary/20 transition-colors shadow-sm"
                                 title="Marcar comentarios como leídos"
                             >
                                 Marcar leído
@@ -182,7 +182,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                         }
                                     }
                                 }}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-yellow-400 text-black hover:bg-yellow-500 transition-colors shadow-sm"
+                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-yellow-400 text-black hover:bg-yellow-500 transition-colors shadow-sm ring-1 ring-yellow-500/40"
                                 title="¡Dar una electrocutada! ⚡"
                             >
                                 <Zap size={14} />

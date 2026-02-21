@@ -4,9 +4,11 @@ import {
     CalendarClock,
     Coffee,
     Clock3,
+    Download,
     Edit2,
     GraduationCap,
     Info,
+    MessageCircle,
     Save,
     Sparkles,
     UserX,
@@ -29,6 +31,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
+import { openPrintablePdfReport } from '../utils/pdfReport';
 import { supabase } from '../lib/supabase';
 import { FileUploader, Attachment } from '../components/FileUploader';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -36,6 +39,13 @@ import { Todo } from '../types';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
+type InventoryAlertsSummary = {
+    updatedAt?: string;
+    criticalProducts?: Array<{ producto: string; stockTotal: number; coberturaMeses: number }>;
+    caducity?: Array<{ producto: string; lote: string; fecha: string; days: number }>;
+};
+
+const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 
 const notificationFilterLabels: Record<NotificationFilter, string> = {
     all: 'Todas',
@@ -54,7 +64,7 @@ function Dashboard() {
     const { todos } = useTodos(currentUser);
     const { meetingRequests, createMeeting } = useMeetings(currentUser);
     const { trainingRequests, createTrainingRequest } = useTraining(currentUser);
-    const { absenceRequests, createAbsence } = useAbsences(currentUser);
+    const { absenceRequests, createAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
     const { timeData, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
@@ -90,6 +100,45 @@ function Dashboard() {
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
     const [sendingBoostTo, setSendingBoostTo] = useState<string | null>(null);
     const [boostToastName, setBoostToastName] = useState<string | null>(null);
+    const [inventoryAlerts, setInventoryAlerts] = useState<InventoryAlertsSummary | null>(null);
+    const [showAbsencesManageModal, setShowAbsencesManageModal] = useState(false);
+    const [expandedAbsenceId, setExpandedAbsenceId] = useState<number | null>(null);
+
+    useEffect(() => {
+        const loadAlerts = () => {
+            try {
+                const raw = window.localStorage.getItem(INVENTORY_ALERTS_KEY);
+                setInventoryAlerts(raw ? JSON.parse(raw) : null);
+            } catch {
+                setInventoryAlerts(null);
+            }
+        };
+
+        loadAlerts();
+
+        const onStorage = (event: StorageEvent) => {
+            if (event.key !== INVENTORY_ALERTS_KEY) return;
+            try {
+                setInventoryAlerts(event.newValue ? JSON.parse(event.newValue) : null);
+            } catch {
+                setInventoryAlerts(null);
+            }
+        };
+
+        const onFocus = () => loadAlerts();
+        const onVisibility = () => {
+            if (!document.hidden) loadAlerts();
+        };
+
+        window.addEventListener('storage', onStorage);
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+            window.removeEventListener('storage', onStorage);
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }, []);
 
     useEffect(() => {
         if (location.hash !== '#time-summary') return;
@@ -283,6 +332,14 @@ function Dashboard() {
             }, 0);
     }, [absenceRequests, currentUser]);
 
+    const managedAbsenceRows = useMemo(() => {
+        if (!currentUser) return [];
+        const visible = isAdmin
+            ? absenceRequests
+            : absenceRequests.filter((a) => a.created_by === currentUser.id);
+        return [...visible].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }, [absenceRequests, currentUser, isAdmin]);
+
     const weeklyWorkedHours = useMemo(() => {
         if (!currentUser) return 0;
         let total = 0;
@@ -411,6 +468,8 @@ function Dashboard() {
             return true;
         });
     }, [unreadPendingNotifications, notificationFilter]);
+
+    const compactNotifications = useMemo(() => filteredNotifications.slice(0, 4), [filteredNotifications]);
 
     const handleNotificationClick = (notification: any) => {
         void markAsRead(notification.id);
@@ -548,6 +607,10 @@ function Dashboard() {
         }
     };
 
+    const openDirectChat = (targetUserId: string) => {
+        navigate(`/chat?user=${targetUserId}`);
+    };
+
     const saveTimeRow = async (row: any) => {
         if (!row?.id) return;
         setSavingRow(true);
@@ -565,102 +628,52 @@ function Dashboard() {
         }
     };
 
-    const buildSimplePdf = (lines: string[]) => {
-        const cleanLines = lines.map((line) =>
-            line
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^\x20-\x7E]/g, ''),
-        );
-
-        const escapedLines = cleanLines.map((line) =>
-            line
-                .replace(/\\/g, '\\\\')
-                .replace(/\(/g, '\\(')
-                .replace(/\)/g, '\\)'),
-        );
-
-        const stream = [
-            'BT',
-            '/F1 10 Tf',
-            '40 800 Td',
-            '12 TL',
-            ...escapedLines.map((line, index) => (index === 0 ? `(${line}) Tj` : `T* (${line}) Tj`)),
-            'ET',
-        ].join('\n');
-
-        let pdf = '%PDF-1.4\n';
-        const offsets: number[] = [];
-        const encoder = new TextEncoder();
-
-        const appendObject = (id: number, content: string) => {
-            offsets[id] = encoder.encode(pdf).length;
-            pdf += `${id} 0 obj\n${content}\nendobj\n`;
-        };
-
-        appendObject(1, '<< /Type /Catalog /Pages 2 0 R >>');
-        appendObject(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-        appendObject(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>');
-        appendObject(4, `<< /Length ${encoder.encode(stream).length} >>\nstream\n${stream}\nendstream`);
-        appendObject(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-
-        const xrefOffset = encoder.encode(pdf).length;
-        pdf += 'xref\n0 6\n0000000000 65535 f \n';
-        for (let id = 1; id <= 5; id += 1) {
-            pdf += `${String(offsets[id] || 0).padStart(10, '0')} 00000 n \n`;
-        }
-        pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-        return encoder.encode(pdf);
-    };
-
     const downloadMonthlyPdf = () => {
         if (!currentUser) return;
 
         const monthLabel = monthStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
         const vacationsLeft = Math.max(0, vacationTotal - vacationUsed);
-
-        const pad = (value: string, width: number) => value.slice(0, width).padEnd(width, ' ');
-        const separator = '-'.repeat(96);
-        const tableHeader = `${pad('Fecha', 12)}${pad('Entrada', 10)}${pad('Salida', 10)}${pad('Horas', 10)}${pad('Estado', 20)}`;
-
-        const rowLines = monthlyRows.map((row) => {
-            const hoursText = row.hours > 0 ? row.hours.toFixed(2) : '-';
-            return `${pad(row.dateKey, 12)}${pad(row.entry, 10)}${pad(row.exit, 10)}${pad(hoursText, 10)}${pad(row.status, 20)}`;
+        openPrintablePdfReport({
+            title: 'Registro horario mensual',
+            fileName: `registro-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}-${toDateKey(monthStart)}.pdf`,
+            subtitle: `Trabajador: ${currentUser.name} · Mes: ${monthLabel} · Horas mes: ${monthlyWorkedHours.toFixed(1)} · Objetivo: ${monthlyObjectiveHours.toFixed(1)} · Restantes: ${monthlyRemainingHours.toFixed(1)} · Vacaciones restantes: ${vacationsLeft}`,
+            headers: ['Fecha', 'Entrada', 'Salida', 'Horas', 'Estado'],
+            rows: monthlyRows.map((row) => [row.dateKey, row.entry, row.exit, row.hours > 0 ? row.hours.toFixed(2) : '-', row.status]),
+            signatures: ['Firma trabajador', 'Firma responsable'],
         });
+    };
 
-        const lines = [
-            'Registro horario mensual',
-            `Trabajador: ${currentUser.name}`,
-            `Mes: ${monthLabel}`,
-            '',
-            `Horas de este mes: ${monthlyWorkedHours.toFixed(1)}`,
-            `Objetivo mes: ${monthlyObjectiveHours.toFixed(1)} horas`,
-            `Faltan para objetivo mes: ${monthlyRemainingHours.toFixed(1)} horas`,
-            `Vacaciones restantes: ${vacationsLeft}`,
-            '',
-            separator,
-            tableHeader,
-            separator,
-            ...rowLines,
-            separator,
-            '',
-            '',
-            'Firma del trabajador:',
-            '',
-            '_______________________________',
-        ];
+    const downloadAbsencesPdf = () => {
+        if (!currentUser) return;
+        const rows = managedAbsenceRows.map((r) => {
+            const owner = USERS.find((u) => u.id === r.created_by)?.name || r.created_by;
+            return [
+                owner,
+                r.type === 'vacation' ? 'Vacaciones' : r.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
+                r.date_key,
+                r.end_date || '-',
+                r.status,
+                r.resolution_type || '-',
+                r.reason || '-',
+            ];
+        });
+        openPrintablePdfReport({
+            title: isAdmin ? 'Gestión de ausencias del equipo' : 'Mis ausencias y vacaciones',
+            subtitle: `Usuario: ${currentUser.name} · Registros: ${rows.length}`,
+            fileName: `ausencias-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}.pdf`,
+            headers: ['Persona', 'Tipo', 'Inicio', 'Fin', 'Estado', 'Resolución', 'Motivo'],
+            rows,
+        });
+    };
 
-        const bytes = buildSimplePdf(lines);
-        const blob = new Blob([bytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `registro-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}-${toDateKey(monthStart)}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+    const handleResolveAbsence = async (id: number, status: 'approved' | 'rejected', resolutionType?: string) => {
+        const note = window.prompt('Nota para la solicitud (opcional):', '') || '';
+        await updateAbsenceStatus({
+            id,
+            status,
+            response_message: note,
+            resolution_type: resolutionType,
+        });
     };
 
     useEffect(() => {
@@ -730,6 +743,8 @@ function Dashboard() {
     };
 
     const checklistDone = checklistTasks.filter((task) => task.completed).length;
+    const criticalProductsFromInventory = inventoryAlerts?.criticalProducts || [];
+    const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
 
     return (
         <div className="max-w-7xl mx-auto pb-16 space-y-6">
@@ -976,29 +991,39 @@ function Dashboard() {
                         </div>
                     </div>
 
-                    {isAdmin && (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-2' : ''} gap-6`}>
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
                             <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-base font-black text-violet-950">Ausencias</h3>
-                                <Link to="/absences" className="text-xs font-bold text-violet-700">Gestionar</Link>
+                                <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Ausencias del equipo' : 'Mis ausencias y vacaciones'}</h3>
+                                <button
+                                    onClick={() => {
+                                        setExpandedAbsenceId(null);
+                                        setShowAbsencesManageModal(true);
+                                    }}
+                                    className="text-xs font-bold text-violet-700"
+                                >
+                                    Gestionar
+                                </button>
                             </div>
                             <div className="space-y-2">
-                                {absenceRequests
-                                    .filter((a) => a.created_by === currentUser?.id || a.status === 'approved')
+                                {managedAbsenceRows
                                     .slice(0, 4)
                                     .map((absence) => (
-                                        <Link key={absence.id} to="/absences" className="block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
+                                        <button key={absence.id} onClick={() => {
+                                            setExpandedAbsenceId(absence.id);
+                                            setShowAbsencesManageModal(true);
+                                        }} className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
                                             <p className="font-bold text-violet-900">{absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}</p>
-                                            <p className="text-xs text-violet-700">Estado: {absence.status}</p>
-                                        </Link>
+                                            <p className="text-xs text-violet-700">Estado: {absence.status}{isAdmin ? ` · ${USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by}` : ''}</p>
+                                        </button>
                                     ))}
-                                {absenceRequests.filter((a) => a.created_by === currentUser?.id || a.status === 'approved').length === 0 && (
+                                {managedAbsenceRows.length === 0 && (
                                     <p className="text-sm text-violet-600 italic">No hay ausencias para mostrar.</p>
                                 )}
                             </div>
                         </div>
 
+                        {isAdmin && (
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="text-base font-black text-violet-950">Formaciones</h3>
@@ -1019,11 +1044,54 @@ function Dashboard() {
                                 )}
                             </div>
                         </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
 
                 <div className="space-y-6">
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-black text-violet-950">Alertas de inventario</h2>
+                            <Link to="/inventory" className="text-xs font-bold text-violet-700">Abrir inventario</Link>
+                        </div>
+                        {criticalProductsFromInventory.length === 0 && caducityAlertsFromInventory.length === 0 ? (
+                            <p className="text-sm text-violet-600 italic">Sin alertas críticas de stock o caducidad por ahora.</p>
+                        ) : (
+                            <div className="space-y-3">
+                                {criticalProductsFromInventory.length > 0 && (
+                                    <div>
+                                        <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico</p>
+                                        <div className="space-y-1.5">
+                                            {criticalProductsFromInventory.slice(0, 4).map((item) => (
+                                                <div key={item.producto} className="p-2 rounded-xl border border-rose-100 bg-rose-50">
+                                                    <p className="text-sm font-bold text-rose-900">{item.producto}</p>
+                                                    <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {item.coberturaMeses.toFixed(2)} meses</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {caducityAlertsFromInventory.length > 0 && (
+                                    <div>
+                                        <p className="text-xs font-bold uppercase tracking-widest text-amber-600 mb-1.5">Caducidad próxima</p>
+                                        <div className="space-y-1.5">
+                                            {caducityAlertsFromInventory.slice(0, 4).map((item) => (
+                                                <div key={`${item.producto}-${item.lote}`} className="p-2 rounded-xl border border-amber-100 bg-amber-50">
+                                                    <p className="text-sm font-bold text-amber-900">{item.producto} · {item.lote}</p>
+                                                    <p className="text-xs text-amber-700">{item.days <= 0 ? 'Caducado' : `${item.days} días para caducar`} · {item.fecha}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        {inventoryAlerts?.updatedAt && (
+                            <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryAlerts.updatedAt))}</p>
+                        )}
+                    </div>
+
                     <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
@@ -1065,7 +1133,7 @@ function Dashboard() {
                         </button>
 
                         <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                            {filteredNotifications.length > 0 ? filteredNotifications.map((notification) => (
+                            {compactNotifications.length > 0 ? compactNotifications.map((notification) => (
                                 <div key={notification.id} className="p-3 rounded-xl border border-violet-100 bg-white">
                                     <button
                                         onClick={() => handleNotificationClick(notification)}
@@ -1090,6 +1158,14 @@ function Dashboard() {
                                 </div>
                             )) : (
                                 <p className="text-sm text-violet-600 italic">No hay notificaciones pendientes.</p>
+                            )}
+                            {filteredNotifications.length > compactNotifications.length && (
+                                <button
+                                    onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
+                                    className="w-full mt-1 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 hover:bg-violet-100 transition-colors"
+                                >
+                                    Ver {filteredNotifications.length - compactNotifications.length} mas
+                                </button>
                             )}
                         </div>
                     </div>
@@ -1130,6 +1206,15 @@ function Dashboard() {
                                     </div>
                                     {item.user.id !== currentUser?.id && (
                                         <button
+                                            onClick={() => openDirectChat(item.user.id)}
+                                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
+                                            title={`Abrir chat con ${item.user.name}`}
+                                        >
+                                            <MessageCircle size={14} />
+                                        </button>
+                                    )}
+                                    {item.user.id !== currentUser?.id && (
+                                        <button
                                             onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
                                             disabled={sendingBoostTo === item.user.id}
                                             className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${
@@ -1151,10 +1236,10 @@ function Dashboard() {
                     <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
                         <h2 className="text-lg font-black text-violet-950 mb-3">Accesos rápidos</h2>
                         <div className="grid grid-cols-2 gap-2 text-sm">
-                            <Link to="/tasks" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Tareas</Link>
-                            <Link to="/calendar" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Calendario</Link>
-                            <Link to="/shopping" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Compras</Link>
-                            <Link to="/folders" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold">Carpetas</Link>
+                            <Link to="/tasks" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Tareas</Link>
+                            <Link to="/calendar" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Calendario</Link>
+                            <Link to="/shopping" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Compras</Link>
+                            <Link to="/folders" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Carpetas</Link>
                         </div>
                     </div>
 
@@ -1177,6 +1262,101 @@ function Dashboard() {
                     </div>
                 </div>
             </div>
+
+            {showAbsencesManageModal && (
+                <div className="fixed inset-0 z-[220] bg-black/45 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3 md:pl-64" onClick={() => {
+                    setShowAbsencesManageModal(false);
+                    setExpandedAbsenceId(null);
+                }}>
+                    <div className="w-full max-w-[820px] max-h-[80vh] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+                            <h3 className="text-xl font-black text-gray-900">{isAdmin ? 'Gestionar ausencias y vacaciones' : 'Mis ausencias y vacaciones'}</h3>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={downloadAbsencesPdf}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700"
+                                >
+                                    <Download size={13} />
+                                    Descargar PDF
+                                </button>
+                                <button onClick={() => {
+                                    setShowAbsencesManageModal(false);
+                                    setExpandedAbsenceId(null);
+                                }} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                    <XCircle size={18} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-3 sm:p-4 overflow-y-auto space-y-3">
+                            {managedAbsenceRows.length === 0 ? (
+                                <p className="text-sm text-gray-500 italic">No hay registros de ausencias.</p>
+                            ) : managedAbsenceRows.map((absence: any) => {
+                                const ownerName = USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by;
+                                const canDelete = isAdmin || (absence.created_by === currentUser?.id && absence.status === 'pending');
+                                const isExpanded = expandedAbsenceId === absence.id;
+                                return (
+                                    <div key={absence.id} className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <button
+                                                onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
+                                                className="flex-1 text-left"
+                                            >
+                                                <p className="text-sm font-black text-violet-900">
+                                                    {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                                </p>
+                                                <p className="text-xs text-violet-700">
+                                                    {isAdmin ? `${ownerName} · ` : ''}Estado: {absence.status}{absence.resolution_type ? ` · ${absence.resolution_type}` : ''}
+                                                </p>
+                                            </button>
+                                            <div className="flex items-center gap-1.5">
+                                                <button
+                                                    onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
+                                                    className="px-2 py-1 rounded-lg border border-violet-200 bg-white text-violet-700 text-xs font-bold"
+                                                >
+                                                    {isExpanded ? 'Ocultar' : 'Ver'}
+                                                </button>
+                                                {canDelete && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            const ok = window.confirm('¿Eliminar esta solicitud?');
+                                                            if (!ok) return;
+                                                            await deleteAbsence(absence.id);
+                                                        }}
+                                                        className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold"
+                                                    >
+                                                        Eliminar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {isExpanded && (
+                                            <>
+                                                <p className="mt-2 text-sm text-gray-700"><span className="font-bold">Motivo:</span> {absence.reason || '-'}</p>
+
+                                                {isAdmin && absence.status === 'pending' && (
+                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                        {absence.type === 'special_permit' ? (
+                                                            <>
+                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'makeup')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar · Reponer horas</button>
+                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'paid')} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-bold">Aprobar · Cuenta trabajada</button>
+                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'deducted')} className="px-3 py-1.5 rounded-lg bg-emerald-400 text-white text-xs font-bold">Aprobar · Ausencia normal</button>
+                                                            </>
+                                                        ) : (
+                                                            <button onClick={() => handleResolveAbsence(absence.id, 'approved')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar</button>
+                                                        )}
+                                                        <button onClick={() => handleResolveAbsence(absence.id, 'rejected')} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Rechazar</button>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {activeRequestModal && (
                 <div className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">

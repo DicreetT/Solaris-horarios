@@ -15,7 +15,8 @@ import {
     ChevronLeft,
     ChevronRight,
     ShoppingBag,
-    Search
+    Search,
+    Boxes
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -143,6 +144,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             icon: ShoppingBag,
             show: true,
             badge: pendingShoppingCount
+        },
+        {
+            path: '/inventory',
+            label: 'Inventario',
+            icon: Boxes,
+            show: true,
         },
         {
             path: '/exports',

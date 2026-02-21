@@ -245,6 +245,24 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         },
     });
 
+    const removeConversationMutation = useMutation({
+        mutationFn: async (conversationId: number) => {
+            if (!currentUser) throw new Error('No user logged in');
+
+            const { error } = await supabase
+                .from('chat_participants')
+                .delete()
+                .eq('conversation_id', conversationId)
+                .eq('user_id', currentUser.id);
+
+            if (error) throw error;
+        },
+        onSuccess: (_, conversationId) => {
+            queryClient.invalidateQueries({ queryKey: conversationsKey });
+            queryClient.removeQueries({ queryKey: ['chat-messages', conversationId] });
+        },
+    });
+
     return {
         conversations,
         messages,
@@ -258,5 +276,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         sendMessageError: sendMessageMutation.error,
         createConversation: createConversationMutation.mutateAsync,
         sendMessage: sendMessageMutation.mutateAsync,
+        removingConversation: removeConversationMutation.isPending,
+        removeConversation: removeConversationMutation.mutateAsync,
     };
 }

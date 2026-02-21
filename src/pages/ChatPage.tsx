@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { MessageCircle, Mic, Plus, Reply, Send, Square } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { MessageCircle, Mic, Plus, Reply, Send, Square, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useChat } from '../hooks/useChat';
 import { USERS } from '../constants';
@@ -16,10 +16,11 @@ import { supabase } from '../lib/supabase';
 const userNameById = (id: string) => USERS.find((u) => u.id === id)?.name || `Usuario ${id.slice(0, 6)}`;
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-type LunarisAttachType = 'task' | 'meeting' | 'suggestion' | 'absence';
+type LunarisAttachType = 'task' | 'meeting_suggestion' | 'absence' | 'vacation';
 
 function ChatPage() {
     const { currentUser } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -32,6 +33,7 @@ function ChatPage() {
     const [linkedTaskId, setLinkedTaskId] = useState<number | null>(null);
     const [linkedMeetingId, setLinkedMeetingId] = useState<number | null>(null);
     const [linkedAbsenceId, setLinkedAbsenceId] = useState<number | null>(null);
+    const [linkedAbsenceKind, setLinkedAbsenceKind] = useState<'absence' | 'vacation' | null>(null);
 
     const [attachMode, setAttachMode] = useState<'none' | 'device' | 'lunaris'>('none');
     const [lunarisAttachType, setLunarisAttachType] = useState<LunarisAttachType>('task');
@@ -49,6 +51,7 @@ function ChatPage() {
     const [transcribingAudioAttachments, setTranscribingAudioAttachments] = useState(false);
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const recognitionRef = useRef<any>(null);
+    const openingDirectRef = useRef<string | null>(null);
 
     const { todos } = useTodos(currentUser);
     const { meetingRequests } = useMeetings(currentUser);
@@ -64,6 +67,8 @@ function ChatPage() {
         creatingConversation,
         createConversation,
         sendMessage,
+        removeConversation,
+        removingConversation,
     } = useChat(currentUser, selectedConversationId);
 
     const selectedConversation = conversations.find((c) => c.id === selectedConversationId) || null;
@@ -89,6 +94,47 @@ function ChatPage() {
             setSelectedConversationId(conversations[0].id);
         }
     }, [conversations, selectedConversationId]);
+
+    useEffect(() => {
+        const directUserId = searchParams.get('user');
+        if (!currentUser || !directUserId || directUserId === currentUser.id) return;
+
+        const clearUserParam = () => {
+            const params = new URLSearchParams(searchParams);
+            params.delete('user');
+            setSearchParams(params, { replace: true });
+        };
+
+        const existingDirect = conversations.find((conversation) => {
+            if (conversation.kind !== 'direct') return false;
+            const others = conversation.participants.filter((id) => id !== currentUser.id);
+            return others.length === 1 && others[0] === directUserId;
+        });
+
+        if (existingDirect) {
+            setSelectedConversationId(existingDirect.id);
+            clearUserParam();
+            return;
+        }
+
+        if (openingDirectRef.current === directUserId || creatingConversation) return;
+
+        openingDirectRef.current = directUserId;
+        createConversation({
+            kind: 'direct',
+            participantIds: [directUserId],
+        })
+            .then((conversationId) => {
+                setSelectedConversationId(conversationId);
+            })
+            .catch((error: any) => {
+                setChatActionError(error?.message || 'No se pudo abrir el chat directo.');
+            })
+            .finally(() => {
+                openingDirectRef.current = null;
+                clearUserParam();
+            });
+    }, [searchParams, setSearchParams, currentUser, conversations, createConversation, creatingConversation]);
 
     const createNewChat = async () => {
         if (!currentUser) return;
@@ -137,6 +183,19 @@ function ChatPage() {
         }
     };
 
+    const handleRemoveConversation = async (conversationId: number) => {
+        const ok = window.confirm('¿Seguro que quieres eliminar este chat de tu lista?');
+        if (!ok) return;
+        try {
+            await removeConversation(conversationId);
+            if (selectedConversationId === conversationId) {
+                setSelectedConversationId(null);
+            }
+        } catch (error: any) {
+            setChatActionError(error?.message || 'No se pudo eliminar el chat.');
+        }
+    };
+
     const selectedTasks = todos
         .filter((todo) => todo.assigned_to.includes(currentUser?.id || '') && !todo.completed_by.includes(currentUser?.id || ''))
         .slice(0, 30);
@@ -146,6 +205,12 @@ function ChatPage() {
         .slice(0, 30);
 
     const selectedAbsences = absenceRequests
+        .filter((absence: any) => absence.type !== 'vacation')
+        .filter((absence: any) => absence.created_by === currentUser?.id || currentUser?.isAdmin)
+        .slice(0, 30);
+
+    const selectedVacations = absenceRequests
+        .filter((absence: any) => absence.type === 'vacation')
         .filter((absence: any) => absence.created_by === currentUser?.id || currentUser?.isAdmin)
         .slice(0, 30);
 
@@ -197,7 +262,7 @@ function ChatPage() {
         if (!selectedConversationId) return;
 
         let messageWithAbsence = linkedAbsenceId
-            ? `${messageDraft}${messageDraft ? '\n' : ''}Ausencia vinculada #${linkedAbsenceId}`
+            ? `${messageDraft}${messageDraft ? '\n' : ''}Solicitud vinculada #${linkedAbsenceId} (${linkedAbsenceKind === 'vacation' ? 'vacaciones' : 'ausencia'})`
             : messageDraft;
 
         const audioAttachments = messageAttachments.filter((file) => file.type?.startsWith('audio/'));
@@ -247,6 +312,7 @@ function ChatPage() {
         setLinkedTaskId(null);
         setLinkedMeetingId(null);
         setLinkedAbsenceId(null);
+        setLinkedAbsenceKind(null);
         setAttachMode('none');
         setLunarisAttachType('task');
         setMentionOpen(false);
@@ -363,20 +429,34 @@ function ChatPage() {
                         )}
 
                         {conversations.map((conversation) => (
-                            <button
+                            <div
                                 key={conversation.id}
-                                onClick={() => setSelectedConversationId(conversation.id)}
-                                className={`w-full text-left p-3 rounded-2xl border transition ${
+                                className={`w-full p-2 rounded-2xl border transition ${
                                     selectedConversationId === conversation.id
                                         ? 'bg-violet-50 border-violet-200'
                                         : 'bg-white border-gray-200 hover:border-violet-200'
                                 }`}
                             >
-                                <p className="text-sm font-bold text-gray-900 truncate">{conversationName(conversation)}</p>
-                                <p className="text-xs text-gray-500 truncate mt-1">
-                                    {conversation.last_message?.message || 'Sin mensajes aún'}
-                                </p>
-                            </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setSelectedConversationId(conversation.id)}
+                                        className="flex-1 text-left p-1"
+                                    >
+                                        <p className="text-sm font-bold text-gray-900 truncate">{conversationName(conversation)}</p>
+                                        <p className="text-xs text-gray-500 truncate mt-1">
+                                            {conversation.last_message?.message || 'Sin mensajes aún'}
+                                        </p>
+                                    </button>
+                                    <button
+                                        onClick={() => void handleRemoveConversation(conversation.id)}
+                                        disabled={removingConversation}
+                                        className="p-2 rounded-xl border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-60"
+                                        title="Eliminar chat"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            </div>
                         ))}
                     </div>
                 </div>
@@ -446,9 +526,9 @@ function ChatPage() {
                                                         <Link to="/meetings" className="text-violet-700 font-bold">Reunión vinculada #{msg.linked_meeting_id}</Link>
                                                     </div>
                                                 )}
-                                                {msg.message.includes('Ausencia vinculada #') && (
+                                                {msg.message.includes('Solicitud vinculada #') && (
                                                     <div className="mt-1 text-xs">
-                                                        <Link to="/absences" className="text-violet-700 font-bold">Ver ausencia vinculada</Link>
+                                                        <Link to="/absences" className="text-violet-700 font-bold">Ver solicitud vinculada</Link>
                                                     </div>
                                                 )}
 
@@ -535,13 +615,14 @@ function ChatPage() {
                                                     setLinkedTaskId(null);
                                                     setLinkedMeetingId(null);
                                                     setLinkedAbsenceId(null);
+                                                    setLinkedAbsenceKind(null);
                                                 }}
                                                 className="rounded-xl border border-gray-200 px-3 py-2 text-sm"
                                             >
                                                 <option value="task">Adjuntar tarea</option>
-                                                <option value="meeting">Adjuntar reunión</option>
-                                                <option value="suggestion">Adjuntar sugerencia</option>
+                                                <option value="meeting_suggestion">Adjuntar reunión/sugerencia</option>
                                                 <option value="absence">Adjuntar ausencia</option>
+                                                <option value="vacation">Adjuntar vacaciones</option>
                                             </select>
 
                                             {lunarisAttachType === 'task' && (
@@ -552,20 +633,24 @@ function ChatPage() {
                                                 >
                                                     <option value="">Selecciona tarea pendiente</option>
                                                     {selectedTasks.map((todo) => (
-                                                        <option key={todo.id} value={todo.id}>{todo.title}</option>
+                                                        <option key={todo.id} value={todo.id}>
+                                                            {(USERS.find((u) => u.id === todo.created_by)?.name || 'Sin nombre')} · {todo.title}
+                                                        </option>
                                                     ))}
                                                 </select>
                                             )}
 
-                                            {(lunarisAttachType === 'meeting' || lunarisAttachType === 'suggestion') && (
+                                            {lunarisAttachType === 'meeting_suggestion' && (
                                                 <select
                                                     value={linkedMeetingId || ''}
                                                     onChange={(e) => setLinkedMeetingId(e.target.value ? Number(e.target.value) : null)}
                                                     className="rounded-xl border border-gray-200 px-3 py-2 text-sm"
                                                 >
-                                                    <option value="">Selecciona {lunarisAttachType === 'meeting' ? 'reunión' : 'sugerencia'}</option>
+                                                    <option value="">Selecciona reunión/sugerencia</option>
                                                     {selectedMeetings.map((meeting) => (
-                                                        <option key={meeting.id} value={meeting.id}>{meeting.title}</option>
+                                                        <option key={meeting.id} value={meeting.id}>
+                                                            {(USERS.find((u) => u.id === meeting.created_by)?.name || 'Sin nombre')} · {meeting.title}
+                                                        </option>
                                                     ))}
                                                 </select>
                                             )}
@@ -573,13 +658,34 @@ function ChatPage() {
                                             {lunarisAttachType === 'absence' && (
                                                 <select
                                                     value={linkedAbsenceId || ''}
-                                                    onChange={(e) => setLinkedAbsenceId(e.target.value ? Number(e.target.value) : null)}
+                                                    onChange={(e) => {
+                                                        setLinkedAbsenceId(e.target.value ? Number(e.target.value) : null);
+                                                        setLinkedAbsenceKind(e.target.value ? 'absence' : null);
+                                                    }}
                                                     className="rounded-xl border border-gray-200 px-3 py-2 text-sm"
                                                 >
                                                     <option value="">Selecciona ausencia</option>
                                                     {selectedAbsences.map((absence: any) => (
                                                         <option key={absence.id} value={absence.id}>
-                                                            {absence.date_key} · {absence.type}
+                                                            {(USERS.find((u) => u.id === absence.created_by)?.name || 'Sin nombre')} · {absence.date_key} · {absence.type}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            )}
+
+                                            {lunarisAttachType === 'vacation' && (
+                                                <select
+                                                    value={linkedAbsenceId || ''}
+                                                    onChange={(e) => {
+                                                        setLinkedAbsenceId(e.target.value ? Number(e.target.value) : null);
+                                                        setLinkedAbsenceKind(e.target.value ? 'vacation' : null);
+                                                    }}
+                                                    className="rounded-xl border border-gray-200 px-3 py-2 text-sm"
+                                                >
+                                                    <option value="">Selecciona vacaciones</option>
+                                                    {selectedVacations.map((absence: any) => (
+                                                        <option key={absence.id} value={absence.id}>
+                                                            {(USERS.find((u) => u.id === absence.created_by)?.name || 'Sin nombre')} · {absence.date_key}{absence.end_date ? ` a ${absence.end_date}` : ''} · vacaciones
                                                         </option>
                                                     ))}
                                                 </select>

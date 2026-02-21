@@ -1,14 +1,15 @@
 import { USERS } from '../constants';
-import { TimeEntry, Training } from '../types';
+import { TimeEntry } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useAbsences } from '../hooks/useAbsences';
 import { useMeetings } from '../hooks/useMeetings';
 import { useTimeData } from '../hooks/useTimeData';
 import { useTodos } from '../hooks/useTodos';
 import { useTraining } from '../hooks/useTraining';
-import { FileText, Download, XCircle, Check, Copy } from 'lucide-react';
+import { FileText, Download } from 'lucide-react';
 import { useState } from 'react';
 import RoleBadge from './RoleBadge';
+import { openPrintablePdfReport } from '../utils/pdfReport';
 
 export default function GlobalExportPanel() {
     const { currentUser: user } = useAuth();
@@ -16,12 +17,6 @@ export default function GlobalExportPanel() {
     const { meetingRequests } = useMeetings(user);
     const { absenceRequests } = useAbsences(user);
     const { todos } = useTodos(user);
-
-    const [showDialog, setShowDialog] = useState(false);
-    const [csvGenerated, setCsvGenerated] = useState("");
-    const [fileName, setFileName] = useState("export.csv");
-    const [title, setTitle] = useState("Exportar CSV");
-    const [copied, setCopied] = useState(false);
 
     // Month Selector State
     const [selectedDate, setSelectedDate] = useState(new Date());
@@ -49,15 +44,40 @@ export default function GlobalExportPanel() {
     };
 
     function calculateHours(entry: string, exit: string) {
-        if (!entry || !exit) return "";
+        if (!entry || !exit) return '';
         const [h1, m1] = entry.split(':').map(Number);
         const [h2, m2] = exit.split(':').map(Number);
         const total = ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
         return total.toFixed(2);
     }
 
+    const cmpEs = (a: string, b: string) => a.localeCompare(b, 'es', { sensitivity: 'base' });
+
+    const safeDate = (value?: string | null) => {
+        if (!value) return '';
+        const onlyDate = `${value}`.slice(0, 10);
+        return onlyDate;
+    };
+
+    function openPdf(
+        title: string,
+        headers: string[],
+        rows: Array<Array<string | number>>,
+        fileName: string,
+        subtitle: string,
+    ) {
+        openPrintablePdfReport({
+            title,
+            headers,
+            rows,
+            fileName,
+            subtitle,
+        });
+    }
+
     function exportMonthlyTimes() {
-        const rows = [["Fecha", "Persona", "Entrada", "Salida", "Horas", "Estado", "Nota"]];
+        const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Horas', 'Estado', 'Nota'];
+        const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
         const sortedDates = Object.keys(timeData).sort();
 
@@ -69,62 +89,39 @@ export default function GlobalExportPanel() {
             const dayData = timeData[dateKey];
             for (const userId of Object.keys(dayData)) {
                 const entries = dayData[userId] || [];
-                // Typically one main entry per day, but handle list if cleaner
                 entries.forEach((r: TimeEntry) => {
-                    rows.push([
+                    const persona = userMap[userId] || userId;
+                    const row: Array<string | number> = [
                         dateKey,
-                        userMap[userId] || userId,
-                        r.entry || "",
-                        r.exit || "",
-                        (r.entry && r.exit) ? calculateHours(r.entry, r.exit) : "",
-                        r.status || "",
-                        (r.note || "").replace(/\n/g, " "),
-                    ]);
+                        persona,
+                        r.entry || '',
+                        r.exit || '',
+                        (r.entry && r.exit) ? calculateHours(r.entry, r.exit) : '',
+                        r.status || '',
+                        (r.note || '').replace(/\n/g, ' '),
+                    ];
+                    flatRows.push({ persona, fecha: safeDate(dateKey), row });
                 });
             }
         }
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
+
+        const rows = flatRows
+            .sort((a, b) => cmpEs(a.persona, b.persona) || cmpEs(a.fecha, b.fecha))
+            .map((x) => x.row);
 
         const monthName = selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
-        showCsv(csv, `horarios-${monthName.replace(/ /g, '-')}.csv`, `Exportar Horarios (${monthName})`);
-    }
-
-    function downloadCsv() {
-        const blob = new Blob([csvGenerated], {
-            type: "text/csv;charset=utf-8;",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }
-
-    function copyToClipboard() {
-        navigator.clipboard.writeText(csvGenerated);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    }
-
-    function showCsv(csv: string, name: string, dialogTitle: string) {
-        setCsvGenerated(csv);
-        setFileName(name);
-        setTitle(dialogTitle);
-        setShowDialog(true);
-        setCopied(false);
+        openPdf(
+            `Horarios de ${monthName}`,
+            headers,
+            rows,
+            `horarios-${monthName.replace(/ /g, '-')}.pdf`,
+            `Registros del equipo para ${monthName}`,
+        );
     }
 
     function exportTimes() {
-        const rows = [["Fecha", "Persona", "Entrada", "Salida", "Estado", "Nota"]];
+        const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Estado', 'Nota'];
+        const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
         const sortedDates = Object.keys(timeData).sort();
         for (const dateKey of sortedDates) {
@@ -132,181 +129,142 @@ export default function GlobalExportPanel() {
             for (const userId of Object.keys(dayData)) {
                 const entries = dayData[userId] || [];
                 const r = (entries[0] || {}) as TimeEntry;
-                rows.push([
+                const persona = userMap[userId] || userId;
+                flatRows.push({
+                    persona,
+                    fecha: safeDate(dateKey),
+                    row: [
                     dateKey,
-                    userMap[userId] || userId,
-                    r.entry || "",
-                    r.exit || "",
-                    r.status || "",
-                    (r.note || "").replace(/\n/g, " "),
-                ]);
+                    persona,
+                    r.entry || '',
+                    r.exit || '',
+                    r.status || '',
+                    (r.note || '').replace(/\n/g, ' '),
+                    ],
+                });
             }
         }
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
-        showCsv(csv, "lunaris-horarios.csv", "Exportar horarios");
+        const rows = flatRows
+            .sort((a, b) => cmpEs(a.persona, b.persona) || cmpEs(a.fecha, b.fecha))
+            .map((x) => x.row);
+        openPdf('Histórico de horarios', headers, rows, 'lunaris-horarios.pdf', 'Exportación completa de horarios');
     }
 
     function exportTrainings() {
-        const rows = [
-            [
-                "ID",
-                "Persona",
-                "Fecha_solicitada",
-                "Fecha_programada",
-                "Estado",
-                "N_mensajes",
-            ],
-        ];
+        const headers = ['ID', 'Persona', 'Fecha solicitada', 'Fecha programada', 'Estado', 'N mensajes'];
+        const rows: Array<Array<string | number>> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
-        trainingRequests.forEach((r) => {
+        const ordered = [...trainingRequests].sort((a, b) => {
+            const personaA = userMap[a.user_id] || a.user_id;
+            const personaB = userMap[b.user_id] || b.user_id;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.requested_date_key), safeDate(b.requested_date_key));
+        });
+        ordered.forEach((r) => {
             rows.push([
                 r.id.toString(),
                 userMap[r.user_id] || r.user_id,
-                r.requested_date_key || "",
-                r.scheduled_date_key || "",
-                r.status || "",
+                r.requested_date_key || '',
+                r.scheduled_date_key || '',
+                r.status || '',
                 (r.comments || []).length.toString(),
             ]);
         });
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
-        showCsv(csv, "lunaris-formaciones.csv", "Exportar formaciones");
+        openPdf('Histórico de formaciones', headers, rows, 'lunaris-formaciones.pdf', 'Solicitudes y estados de formaciones');
     }
 
     function exportMeetings() {
-        const rows = [
-            [
-                "ID",
-                "Creada_por",
-                "Fecha_creación",
-                "Título",
-                "Descripción",
-                "Fecha_preferida",
-                "Franja",
-                "Participantes",
-                "Estado",
-                "Fecha_programada",
-                "Nota_respuesta",
-            ],
+        const headers = [
+            'ID',
+            'Creada por',
+            'Fecha creación',
+            'Título',
+            'Descripción',
+            'Fecha preferida',
+            'Franja',
+            'Participantes',
+            'Estado',
+            'Fecha programada',
+            'Nota respuesta',
         ];
+        const rows: Array<Array<string | number>> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
-        meetingRequests.forEach((m) => {
+        const ordered = [...meetingRequests].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.created_at), safeDate(b.created_at));
+        });
+        ordered.forEach((m) => {
             const participantsNames = (m.participants || [])
                 .map((id: string) => userMap[id] || id)
-                .join(" / ");
+                .join(' / ');
             rows.push([
                 m.id.toString(),
                 userMap[m.created_by] || m.created_by,
-                m.created_at || "",
-                m.title || "",
-                (m.description || "").replace(/\n/g, " "),
-                m.preferred_date_key || "",
-                m.preferred_slot || "",
+                m.created_at || '',
+                m.title || '',
+                (m.description || '').replace(/\n/g, ' '),
+                m.preferred_date_key || '',
+                m.preferred_slot || '',
                 participantsNames,
-                m.status || "",
-                m.scheduled_date_key || "",
-                (m.response_message || "").replace(/\n/g, " "),
+                m.status || '',
+                m.scheduled_date_key || '',
+                (m.response_message || '').replace(/\n/g, ' '),
             ]);
         });
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
-        showCsv(csv, "lunaris-reuniones.csv", "Exportar reuniones");
+        openPdf('Histórico de reuniones', headers, rows, 'lunaris-reuniones.pdf', 'Reuniones creadas, participantes y estados');
     }
 
     function exportAbsences() {
-        const rows = [
-            [
-                "ID",
-                "Persona",
-                "Fecha_permiso",
-                "Motivo",
-                "Estado",
-                "Nota_respuesta",
-                "Fecha_solicitud",
-            ],
-        ];
+        const headers = ['Solicitud ID', 'Persona', 'Fecha permiso', 'Motivo', 'Estado', 'Nota respuesta', 'Fecha solicitud'];
+        const rows: Array<Array<string | number>> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
-        absenceRequests.forEach((r) => {
+        const ordered = [...absenceRequests].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.date_key), safeDate(b.date_key));
+        });
+        ordered.forEach((r) => {
             rows.push([
                 r.id.toString(),
                 userMap[r.created_by] || r.created_by,
-                r.date_key || "",
-                (r.reason || "").replace(/\n/g, " "),
-                r.status || "",
-                (r.response_message || "").replace(/\n/g, " "),
-                r.created_at || "",
+                r.date_key || '',
+                (r.reason || '').replace(/\n/g, ' '),
+                r.status || '',
+                (r.response_message || '').replace(/\n/g, ' '),
+                r.created_at || '',
             ]);
         });
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
-        showCsv(
-            csv,
-            "lunaris-permisos-especiales.csv",
-            "Exportar permisos especiales"
-        );
+        openPdf('Histórico de permisos especiales', headers, rows, 'lunaris-permisos-especiales.pdf', 'Ausencias y permisos registrados');
     }
 
     function exportTodos() {
-        const rows = [
-            [
-                "ID",
-                "Título",
-                "Descripción",
-                "Creada_por",
-                "Asignada_a",
-                "Fecha_creación",
-                "Fecha_objetivo",
-                "Completada_por",
-            ],
-        ];
+        const headers = ['ID', 'Título', 'Descripción', 'Creada por', 'Asignada a', 'Fecha creación', 'Fecha objetivo', 'Completada por'];
+        const rows: Array<Array<string | number>> = [];
         const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
-        todos.forEach((t) => {
+        const ordered = [...todos].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.created_at), safeDate(b.created_at));
+        });
+        ordered.forEach((t) => {
             const assignedNames = (t.assigned_to || [])
                 .map((id: string) => userMap[id] || id)
-                .join(" / ");
+                .join(' / ');
             const completedNames = (t.completed_by || [])
                 .map((id: string) => userMap[id] || id)
-                .join(" / ");
+                .join(' / ');
             rows.push([
                 t.id,
-                t.title || "",
-                (t.description || "").replace(/\n/g, " "),
+                t.title || '',
+                (t.description || '').replace(/\n/g, ' '),
                 userMap[t.created_by] || t.created_by,
                 assignedNames,
-                t.created_at || "",
-                t.due_date_key || "",
+                t.created_at || '',
+                t.due_date_key || '',
                 completedNames,
             ]);
         });
-        const csv = rows
-            .map((row) =>
-                row
-                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-                    .join(",")
-            )
-            .join("\n");
-        showCsv(csv, "lunaris-tareas.csv", "Exportar tareas (To-Do)");
+        openPdf('Histórico de tareas', headers, rows, 'lunaris-tareas.pdf', 'Listado de tareas con asignaciones y estados');
     }
 
     return (
@@ -320,7 +278,6 @@ export default function GlobalExportPanel() {
                 </div>
 
                 <div className="p-8">
-                    {/* --- MONTHLY EXPORTS SECTION --- */}
                     <div className="mb-12 bg-indigo-50/50 rounded-3xl p-6 border border-indigo-100">
                         <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-6">
                             <div className="flex items-start gap-4">
@@ -337,7 +294,6 @@ export default function GlobalExportPanel() {
                                 </div>
                             </div>
 
-                            {/* Month Selector */}
                             <div className="flex items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-indigo-200">
                                 <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
@@ -363,7 +319,6 @@ export default function GlobalExportPanel() {
 
                     <div className="border-t border-gray-100 my-8"></div>
 
-                    {/* --- GLOBAL EXPORTS SECTION --- */}
                     <div className="flex items-start gap-4 mb-8">
                         <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
                             <FileText size={24} />
@@ -426,66 +381,6 @@ export default function GlobalExportPanel() {
                     </div>
                 </div>
             </div>
-
-            {showDialog && (
-                <div
-                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
-                    onClick={() => setShowDialog(false)}
-                >
-                    <div
-                        className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full animate-[popIn_0.2s_ease-out]"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-black text-gray-900 tracking-tight">{title}</h2>
-                            <button
-                                type="button"
-                                className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-900 transition-colors"
-                                onClick={() => setShowDialog(false)}
-                            >
-                                <XCircle size={24} />
-                            </button>
-                        </div>
-
-                        <p className="text-gray-500 mb-4 font-medium">
-                            Vista previa del archivo CSV. Puedes copiar el contenido o descargarlo directamente.
-                        </p>
-
-                        <div className="relative mb-6">
-                            <textarea
-                                readOnly
-                                className="w-full rounded-xl border-2 border-gray-100 p-4 text-xs font-mono text-gray-600 bg-gray-50 resize-y min-h-[150px] focus:outline-none"
-                                value={csvGenerated}
-                            />
-                            <button
-                                onClick={copyToClipboard}
-                                className="absolute top-2 right-2 p-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-colors text-gray-500"
-                                title="Copiar al portapapeles"
-                            >
-                                {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
-                            </button>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setShowDialog(false)}
-                                className="flex-1 py-3 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-colors"
-                            >
-                                Cerrar
-                            </button>
-                            <button
-                                type="button"
-                                onClick={downloadCsv}
-                                className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary-dark transition-all shadow-lg shadow-primary/25 hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
-                            >
-                                <Download size={18} />
-                                Descargar archivo
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </>
     );
 }

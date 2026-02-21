@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Command, X, MapPin, CheckSquare, Users, FileText } from 'lucide-react';
+import { Search, Command, X, MapPin, CheckSquare, Users, FileText, Boxes } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
@@ -43,6 +43,7 @@ const SearchPalette: React.FC = () => {
         { label: 'Calendario', path: '/calendar', icon: MapPin },
         { label: 'Tareas', path: '/tasks', icon: CheckSquare },
         { label: 'Reuniones', path: '/meetings', icon: Users },
+        { label: 'Inventario', path: '/inventory', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
     ];
 

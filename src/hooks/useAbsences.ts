@@ -42,23 +42,23 @@ export function useAbsences(currentUser: User | null) {
 
     const createAbsenceMutation = useMutation({
         mutationFn: async ({ reason, date_key, end_date, type, attachments, makeUpHours, status, resolution_type, userId }: { reason?: string; date_key: string; end_date?: string; type: 'absence' | 'vacation' | 'special_permit', attachments?: any[], makeUpHours?: boolean, status?: string, resolution_type?: string, userId?: string }) => {
+            if (!currentUser) throw new Error('No hay usuario autenticado.');
             const now = new Date().toISOString();
-            const targetUser = userId || currentUser.id; // Allow admin to create for others if userId passed
-
-            // Check if exists to update or insert? 
-            // Better to upsert if we want to overwrite, but ID is needed. 
-            // For now, let's just insert. Uniqueness is rarely enforced but should be.
-            // Let's assume the UI handles preventing dupes or we just add a new one.
+            const targetUser = userId || currentUser.id;
 
             const defaultReason = status === 'approved' ? 'Registrado por Admin' : '';
+            const { data: authData } = await supabase.auth.getUser();
+            const authUserId = authData.user?.id || currentUser.id;
+            const isCrossUserInsert = targetUser !== authUserId;
 
-            const { data, error } = await supabase
+            // First attempt: explicit created_by (for admin cross-user workflows where policy allows it)
+            const primaryInsert = await supabase
                 .from('absence_requests')
                 .insert({
                     created_by: targetUser,
                     created_at: now,
-                    date_key: date_key,
-                    end_date: end_date,
+                    date_key,
+                    end_date: end_date || null,
                     reason: reason || defaultReason,
                     type,
                     status: status || 'pending', // Allow override
@@ -69,8 +69,32 @@ export function useAbsences(currentUser: User | null) {
                 .select()
                 .single();
 
-            if (error) throw error;
-            return data;
+            if (!primaryInsert.error) return primaryInsert.data;
+
+            // RLS fallback: minimal insert relying on auth.uid()/DB defaults
+            const fallbackInsert = await supabase
+                .from('absence_requests')
+                .insert({
+                    created_by: authUserId,
+                    date_key,
+                    end_date: end_date || null,
+                    reason: reason || defaultReason,
+                    type,
+                    status: 'pending',
+                    attachments: attachments || [],
+                    makeup_preference: makeUpHours || false,
+                })
+                .select()
+                .single();
+
+            if (fallbackInsert.error) {
+                if (isCrossUserInsert) {
+                    throw new Error('No tienes permisos para crear ausencias en nombre de otra persona con la política actual de seguridad.');
+                }
+                throw fallbackInsert.error;
+            }
+
+            return fallbackInsert.data;
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
