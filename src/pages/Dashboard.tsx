@@ -60,6 +60,7 @@ type InventoryAlertsSummary = {
 
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
+const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 
 const notificationFilterLabels: Record<NotificationFilter, string> = {
     all: 'Todas',
@@ -921,16 +922,20 @@ function Dashboard() {
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
     const fallbackCriticalFromHuarte = useMemo(() => {
         try {
-            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
-            const parsed = raw ? JSON.parse(raw) : [];
-            const source = Array.isArray(parsed) && parsed.length > 0 ? parsed : (huarteSeed.movimientos as any[]);
+            const rawHuarte = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
+            const parsedHuarte = rawHuarte ? JSON.parse(rawHuarte) : [];
+            const huarteSource = Array.isArray(parsedHuarte) ? parsedHuarte : [];
+            const rawCanet = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY) : null;
+            const parsedCanet = rawCanet ? JSON.parse(rawCanet) : [];
+            const canetSource = Array.isArray(parsedCanet) ? parsedCanet : [];
+            const source = [...huarteSource, ...canetSource];
             const productRows = (huarteSeed.productos as any[]) || [];
             const lotRows = (huarteSeed.lotes as any[]) || [];
 
             const productMeta = new Map<string, { consumo: number; modo: string; vialesPorCaja: number }>();
             productRows.forEach((p: any) => {
                 const code = clean(p.producto);
-                if (!code) return;
+                if (!code || code.toUpperCase() === 'PRODUCTO') return;
                 productMeta.set(code, {
                     consumo: toNum(p.consumo_mensual_cajas),
                     modo: clean(p.modo_stock).toUpperCase(),
@@ -943,6 +948,7 @@ function Dashboard() {
                 const producto = clean(m?.producto);
                 const lote = clean(m?.lote);
                 const bodega = clean(m?.bodega);
+                if (producto.toUpperCase() === 'PRODUCTO') return;
                 if (!producto || !lote || !bodega) return;
                 const signed = Number(m?.cantidad_signed);
                 const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
@@ -952,6 +958,7 @@ function Dashboard() {
             const potentialByProduct = new Map<string, number>();
             lotRows.forEach((l: any) => {
                 const producto = clean(l.producto);
+                if (producto.toUpperCase() === 'PRODUCTO') return;
                 if (!producto) return;
                 const meta = productMeta.get(producto);
                 if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) return;
@@ -972,6 +979,7 @@ function Dashboard() {
                     const coberturaMeses = consumo > 0 ? stockTotal / consumo : 0;
                     return { producto, stockTotal, coberturaMeses };
                 })
+                .filter((r) => r.producto.toUpperCase() !== 'PRODUCTO')
                 .filter((r) => r.stockTotal > 0 && r.coberturaMeses > 0 && r.coberturaMeses < 2)
                 .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
                 .slice(0, 12);
@@ -983,6 +991,7 @@ function Dashboard() {
                     const coberturaMeses = consumo > 0 ? cajasPotenciales / consumo : 0;
                     return { producto, cajasPotenciales, coberturaMeses };
                 })
+                .filter((r) => r.producto.toUpperCase() !== 'PRODUCTO')
                 .filter((r) => r.cajasPotenciales >= 0 && r.coberturaMeses >= 0 && r.coberturaMeses < 2)
                 .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
                 .slice(0, 12);
