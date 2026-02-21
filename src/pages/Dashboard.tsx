@@ -28,7 +28,7 @@ import { useWorkProfile } from '../hooks/useWorkProfile';
 import { useChat } from '../hooks/useChat';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { UserAvatar } from '../components/UserAvatar';
-import { USERS } from '../constants';
+import { ESTEBAN_ID, USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
 import { openPrintablePdfReport } from '../utils/pdfReport';
@@ -37,6 +37,7 @@ import { FileUploader, Attachment } from '../components/FileUploader';
 import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { useDensityMode } from '../hooks/useDensityMode';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
@@ -104,6 +105,14 @@ function Dashboard() {
     const [inventoryAlerts, setInventoryAlerts] = useState<InventoryAlertsSummary | null>(null);
     const [showAbsencesManageModal, setShowAbsencesManageModal] = useState(false);
     const [expandedAbsenceId, setExpandedAbsenceId] = useState<number | null>(null);
+    const [showPendingAbsences, setShowPendingAbsences] = useState(true);
+    const [showResolvedAbsences, setShowResolvedAbsences] = useState(false);
+    const [showCompactTimeTracker, setShowCompactTimeTracker] = useState(false);
+    const densityMode = useDensityMode();
+    const isCompact = densityMode === 'compact';
+    const [compactSection, setCompactSection] = useState<
+        'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'shortcuts' | 'chat'
+    >('events');
 
     useEffect(() => {
         const loadAlerts = () => {
@@ -263,6 +272,8 @@ function Dashboard() {
             }),
         [absenceRequests, weekStartKey, weekEndKey],
     );
+    const isTrainingManagerUser = currentUser?.id === ESTEBAN_ID;
+    const canSeeTrainingsPanel = !!(isTrainingManagerUser || trainingRequests.some((t) => t.user_id === currentUser?.id));
 
     const summaryTextLines = useMemo(() => {
         const lines: string[] = [];
@@ -340,6 +351,15 @@ function Dashboard() {
             : absenceRequests.filter((a) => a.created_by === currentUser.id);
         return [...visible].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     }, [absenceRequests, currentUser, isAdmin]);
+
+    const pendingAbsenceRows = useMemo(
+        () => managedAbsenceRows.filter((a) => a.status === 'pending'),
+        [managedAbsenceRows],
+    );
+    const resolvedAbsenceRows = useMemo(
+        () => managedAbsenceRows.filter((a) => a.status !== 'pending'),
+        [managedAbsenceRows],
+    );
 
     const weeklyWorkedHours = useMemo(() => {
         if (!currentUser) return 0;
@@ -559,6 +579,7 @@ function Dashboard() {
                     reason: requestReason.trim(),
                     comments: '',
                     attachments: requestAttachments,
+                    userId: currentUser.isAdmin ? requestTargetUserId : undefined,
                 });
                 emitSuccessFeedback('Formación solicitada con éxito.');
             }
@@ -579,6 +600,10 @@ function Dashboard() {
                 emitSuccessFeedback('Reunión solicitada con éxito.');
             }
             closeRequestModal();
+        } catch (error: any) {
+            const message = error?.message || 'No se pudo enviar la solicitud. Revisa permisos de base de datos.';
+            alert(message);
+            console.error('submitQuickRequest error', error);
         } finally {
             setRequestSubmitting(false);
         }
@@ -684,6 +709,69 @@ function Dashboard() {
         emitSuccessFeedback('Resolución guardada con éxito.');
     };
 
+    const renderManagedAbsenceRow = (absence: any) => {
+        const ownerName = USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by;
+        const canDelete = isAdmin || (absence.created_by === currentUser?.id && absence.status === 'pending');
+        const isExpanded = expandedAbsenceId === absence.id;
+        return (
+            <div key={absence.id} className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button
+                        onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
+                        className="flex-1 text-left"
+                    >
+                        <p className="text-sm font-black text-violet-900">
+                            {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                        </p>
+                        <p className="text-xs text-violet-700">
+                            {isAdmin ? `${ownerName} · ` : ''}Estado: {absence.status}{absence.resolution_type ? ` · ${absence.resolution_type}` : ''}
+                        </p>
+                    </button>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
+                            className="px-2 py-1 rounded-lg border border-violet-200 bg-white text-violet-700 text-xs font-bold"
+                        >
+                            {isExpanded ? 'Ocultar' : 'Ver'}
+                        </button>
+                        {canDelete && (
+                            <button
+                                onClick={async () => {
+                                    const ok = window.confirm('¿Eliminar esta solicitud?');
+                                    if (!ok) return;
+                                    await deleteAbsence(absence.id);
+                                }}
+                                className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold"
+                            >
+                                Eliminar
+                            </button>
+                        )}
+                    </div>
+                </div>
+                {isExpanded && (
+                    <>
+                        <p className="mt-2 text-sm text-gray-700"><span className="font-bold">Motivo:</span> {absence.reason || '-'}</p>
+
+                        {isAdmin && absence.status === 'pending' && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {absence.type === 'special_permit' ? (
+                                    <>
+                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'makeup')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar · Reponer horas</button>
+                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'paid')} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-bold">Aprobar · Cuenta trabajada</button>
+                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'deducted')} className="px-3 py-1.5 rounded-lg bg-emerald-400 text-white text-xs font-bold">Aprobar · Ausencia normal</button>
+                                    </>
+                                ) : (
+                                    <button onClick={() => handleResolveAbsence(absence.id, 'approved')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar</button>
+                                )}
+                                <button onClick={() => handleResolveAbsence(absence.id, 'rejected')} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Rechazar</button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        );
+    };
+
     useEffect(() => {
         const loadChecklist = async () => {
             if (!currentUser) return;
@@ -754,10 +842,28 @@ function Dashboard() {
     const checklistDone = checklistTasks.filter((task) => task.completed).length;
     const criticalProductsFromInventory = inventoryAlerts?.criticalProducts || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
+    const compactTiles: Array<{
+        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'shortcuts' | 'chat';
+        label: string;
+        Icon: any;
+    }> = [
+        { key: 'events', label: 'Eventos', Icon: CalendarClock },
+        { key: 'quick', label: 'Solicitudes', Icon: Users },
+        { key: 'checklist', label: 'Checklist', Icon: Sparkles },
+        { key: 'time', label: 'Jornada', Icon: Clock3 },
+        { key: 'absences', label: 'Ausencias', Icon: UserX },
+        { key: 'trainings', label: 'Formaciones', Icon: GraduationCap },
+        { key: 'alerts', label: 'Inventario', Icon: Info },
+        { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
+        { key: 'pulse', label: 'Pulso', Icon: Coffee },
+        { key: 'shortcuts', label: 'Accesos', Icon: Download },
+        { key: 'chat', label: 'Chat', Icon: MessageCircle },
+    ];
+    const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
 
     return (
-        <div className="max-w-7xl mx-auto pb-16 space-y-6">
-            <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+        <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">
+            <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                 <div className="flex flex-wrap items-center gap-3 mb-2">
                     <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'equipo'}</h1>
                     <span className="px-3 py-1 rounded-full bg-violet-700 text-white text-xs font-bold">
@@ -776,9 +882,53 @@ function Dashboard() {
 
             <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-6">
                 <div className="space-y-6">
-                    <TimeTrackerWidget showEntries={false} />
+                    {isCompact && (
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                            {compactTilesVisible.map(({ key, label, Icon }) => (
+                                <button
+                                    key={key}
+                                    onClick={() => setCompactSection(key)}
+                                    className={`compact-card rounded-2xl border p-2 text-xs font-black transition ${
+                                        compactSection === key
+                                            ? 'border-violet-400 bg-violet-700 text-white'
+                                            : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+                                    }`}
+                                >
+                                    <div className="flex flex-col items-center gap-1">
+                                        <Icon size={16} />
+                                        <span>{label}</span>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                    {isCompact ? (
+                        <div className="bg-white border border-gray-200 rounded-3xl p-3 shadow-sm compact-card">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <h3 className="text-sm font-black text-violet-950">Registro de jornada</h3>
+                                    <p className="text-xs text-violet-700">Panel compacto</p>
+                                </div>
+                                <button
+                                    onClick={() => setShowCompactTimeTracker((prev) => !prev)}
+                                    className="px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold"
+                                >
+                                    {showCompactTimeTracker ? 'Ocultar' : 'Abrir'}
+                                </button>
+                            </div>
+                            {showCompactTimeTracker && (
+                                <div className="mt-3">
+                                    <TimeTrackerWidget showEntries={false} compact />
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <TimeTrackerWidget showEntries={false} />
+                    )}
+
+                    {(!isCompact || compactSection === 'events') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Eventos del día</h2>
                             <span className="text-xs font-bold text-violet-600">{todayEvents.length} evento(s)</span>
@@ -812,11 +962,13 @@ function Dashboard() {
                                 <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900">
                                     {event.title}
                                 </div>
-                            )) : <p className="text-sm text-violet-600 italic">Aún no hay eventos para hoy.</p>}
+                            )) : <div className="app-empty-card">Aún no hay eventos para hoy.</div>}
                         </div>
                     </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                    {(!isCompact || compactSection === 'quick') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <h2 className="text-lg font-black text-violet-950 mb-3">Solicitudes rápidas</h2>
                             <p className="text-sm text-violet-700 mb-4">Todo desde el dashboard, sin cambiar de página.</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -860,8 +1012,10 @@ function Dashboard() {
                                 </button>
                             </div>
                         </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                    {(!isCompact || compactSection === 'checklist') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h3 className="text-base font-black text-violet-950">Check-list diario</h3>
                             <div className="text-xs font-bold text-violet-700">
@@ -871,7 +1025,7 @@ function Dashboard() {
                         {checklistLoading ? (
                             <p className="text-sm text-violet-600">Cargando checklist...</p>
                         ) : checklistTasks.length === 0 ? (
-                            <p className="text-sm text-violet-600 italic">No tienes tareas en tu checklist de hoy.</p>
+                            <div className="app-empty-card">No tienes tareas en tu checklist de hoy.</div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                 {checklistTasks.slice(0, 8).map((task) => (
@@ -890,9 +1044,11 @@ function Dashboard() {
                         <div className="mt-3">
                             <Link to="/checklist" className="text-xs font-bold text-violet-700">Abrir checklist completo</Link>
                         </div>
-                    </div>
+                        </div>
+                    )}
 
-                    <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                    {(!isCompact || compactSection === 'time') && (
+                    <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                             <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
                             <div className="flex items-center gap-3">
@@ -928,8 +1084,8 @@ function Dashboard() {
                             </div>
                         </div>
 
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
+                        <div className="app-table-wrap">
+                            <table className="app-table">
                                 <thead>
                                     <tr className="text-left text-violet-700 border-b border-violet-200">
                                         <th className="py-2">Fecha</th>
@@ -942,7 +1098,9 @@ function Dashboard() {
                                 <tbody>
                                     {recentTimeRows.length === 0 && (
                                         <tr>
-                                            <td colSpan={5} className="py-3 text-violet-600 italic">No hay registros recientes.</td>
+                                            <td colSpan={5} className="py-3">
+                                                <div className="app-empty-card">No hay registros recientes.</div>
+                                            </td>
                                         </tr>
                                     )}
                                     {(showAllTimeRows ? recentTimeRows : recentTimeRows.slice(0, 7)).map((row) => {
@@ -999,9 +1157,11 @@ function Dashboard() {
                             </table>
                         </div>
                     </div>
+                    )}
 
+                    {(!isCompact || compactSection === 'absences' || compactSection === 'trainings') && (
                     <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-2' : ''} gap-6`}>
-                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Ausencias del equipo' : 'Mis ausencias y vacaciones'}</h3>
                                 <button
@@ -1027,13 +1187,13 @@ function Dashboard() {
                                         </button>
                                     ))}
                                 {managedAbsenceRows.length === 0 && (
-                                    <p className="text-sm text-violet-600 italic">No hay ausencias para mostrar.</p>
+                                    <div className="app-empty-card">No hay ausencias para mostrar.</div>
                                 )}
                             </div>
                         </div>
 
-                        {isAdmin && (
-                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+                        {canSeeTrainingsPanel && (!isCompact || compactSection === 'trainings') && (
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="text-base font-black text-violet-950">Formaciones</h3>
                                 <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar</Link>
@@ -1049,22 +1209,24 @@ function Dashboard() {
                                         </Link>
                                     ))}
                                 {trainingRequests.filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected').length === 0 && (
-                                    <p className="text-sm text-violet-600 italic">No tienes formaciones pendientes.</p>
+                                    <div className="app-empty-card">No tienes formaciones pendientes.</div>
                                 )}
                             </div>
                         </div>
                         )}
                     </div>
+                    )}
                 </div>
 
                 <div className="space-y-6">
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    {(!isCompact || compactSection === 'alerts') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Alertas de inventario</h2>
                             <Link to="/inventory" className="text-xs font-bold text-violet-700">Abrir inventario</Link>
                         </div>
                         {criticalProductsFromInventory.length === 0 && caducityAlertsFromInventory.length === 0 ? (
-                            <p className="text-sm text-violet-600 italic">Sin alertas críticas de stock o caducidad por ahora.</p>
+                            <div className="app-empty-card">Sin alertas críticas de stock o caducidad por ahora.</div>
                         ) : (
                             <div className="space-y-3">
                                 {criticalProductsFromInventory.length > 0 && (
@@ -1100,8 +1262,10 @@ function Dashboard() {
                             <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryAlerts.updatedAt))}</p>
                         )}
                     </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    {(!isCompact || compactSection === 'notifications') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
                             <button
@@ -1166,7 +1330,7 @@ function Dashboard() {
                                     )}
                                 </div>
                             )) : (
-                                <p className="text-sm text-violet-600 italic">No hay notificaciones pendientes.</p>
+                                <div className="app-empty-card">No hay notificaciones pendientes.</div>
                             )}
                             {filteredNotifications.length > compactNotifications.length && (
                                 <button
@@ -1178,8 +1342,10 @@ function Dashboard() {
                             )}
                         </div>
                     </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    {(!isCompact || compactSection === 'pulse') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <h2 className="text-lg font-black text-violet-950 mb-3">Pulso del equipo</h2>
                         <div className="grid grid-cols-2 gap-2 mb-3">
                             {[
@@ -1241,8 +1407,10 @@ function Dashboard() {
                             ))}
                         </div>
                     </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    {(!isCompact || compactSection === 'shortcuts') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <h2 className="text-lg font-black text-violet-950 mb-3">Accesos rápidos</h2>
                         <div className="grid grid-cols-2 gap-2 text-sm">
                             <Link to="/tasks" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Tareas</Link>
@@ -1251,8 +1419,10 @@ function Dashboard() {
                             <Link to="/folders" className="p-3 rounded-xl border border-violet-200 text-violet-800 font-bold hover:bg-violet-50 hover:-translate-y-0.5 transition-all">Carpetas</Link>
                         </div>
                     </div>
+                    )}
 
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    {(!isCompact || compactSection === 'chat') && (
+                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Chat interno</h2>
                             <Link to="/chat" className="text-xs font-bold text-violet-700">Abrir</Link>
@@ -1265,10 +1435,11 @@ function Dashboard() {
                                 </Link>
                             ))}
                             {chatConversations.length === 0 && (
-                                <p className="text-sm text-gray-500 italic">No tienes chats activos todavía.</p>
+                                <div className="app-empty-card">No tienes chats activos todavía.</div>
                             )}
                         </div>
                     </div>
+                    )}
                 </div>
             </div>
 
@@ -1300,68 +1471,43 @@ function Dashboard() {
                         <div className="p-3 sm:p-4 overflow-y-auto space-y-3">
                             {managedAbsenceRows.length === 0 ? (
                                 <p className="text-sm text-gray-500 italic">No hay registros de ausencias.</p>
-                            ) : managedAbsenceRows.map((absence: any) => {
-                                const ownerName = USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by;
-                                const canDelete = isAdmin || (absence.created_by === currentUser?.id && absence.status === 'pending');
-                                const isExpanded = expandedAbsenceId === absence.id;
-                                return (
-                                    <div key={absence.id} className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <button
-                                                onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
-                                                className="flex-1 text-left"
-                                            >
-                                                <p className="text-sm font-black text-violet-900">
-                                                    {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
-                                                </p>
-                                                <p className="text-xs text-violet-700">
-                                                    {isAdmin ? `${ownerName} · ` : ''}Estado: {absence.status}{absence.resolution_type ? ` · ${absence.resolution_type}` : ''}
-                                                </p>
-                                            </button>
-                                            <div className="flex items-center gap-1.5">
-                                                <button
-                                                    onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
-                                                    className="px-2 py-1 rounded-lg border border-violet-200 bg-white text-violet-700 text-xs font-bold"
-                                                >
-                                                    {isExpanded ? 'Ocultar' : 'Ver'}
-                                                </button>
-                                                {canDelete && (
-                                                    <button
-                                                        onClick={async () => {
-                                                            const ok = window.confirm('¿Eliminar esta solicitud?');
-                                                            if (!ok) return;
-                                                            await deleteAbsence(absence.id);
-                                                        }}
-                                                        className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold"
-                                                    >
-                                                        Eliminar
-                                                    </button>
-                                                )}
+                            ) : (
+                                <>
+                                    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-2">
+                                        <button
+                                            onClick={() => setShowPendingAbsences((prev) => !prev)}
+                                            className="w-full flex items-center justify-between px-2 py-1 text-left"
+                                        >
+                                            <span className="text-sm font-black text-amber-900">Pendientes ({pendingAbsenceRows.length})</span>
+                                            <span className="text-xs font-bold text-amber-700">{showPendingAbsences ? 'Ocultar' : 'Ver'}</span>
+                                        </button>
+                                        {showPendingAbsences && (
+                                            <div className="mt-2 space-y-2">
+                                                {pendingAbsenceRows.length === 0
+                                                    ? <p className="px-2 py-2 text-xs text-amber-800 italic">No hay solicitudes pendientes.</p>
+                                                    : pendingAbsenceRows.map(renderManagedAbsenceRow)}
                                             </div>
-                                        </div>
-                                        {isExpanded && (
-                                            <>
-                                                <p className="mt-2 text-sm text-gray-700"><span className="font-bold">Motivo:</span> {absence.reason || '-'}</p>
-
-                                                {isAdmin && absence.status === 'pending' && (
-                                                    <div className="mt-3 flex flex-wrap gap-2">
-                                                        {absence.type === 'special_permit' ? (
-                                                            <>
-                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'makeup')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar · Reponer horas</button>
-                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'paid')} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-bold">Aprobar · Cuenta trabajada</button>
-                                                                <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'deducted')} className="px-3 py-1.5 rounded-lg bg-emerald-400 text-white text-xs font-bold">Aprobar · Ausencia normal</button>
-                                                            </>
-                                                        ) : (
-                                                            <button onClick={() => handleResolveAbsence(absence.id, 'approved')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar</button>
-                                                        )}
-                                                        <button onClick={() => handleResolveAbsence(absence.id, 'rejected')} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Rechazar</button>
-                                                    </div>
-                                                )}
-                                            </>
                                         )}
                                     </div>
-                                );
-                            })}
+
+                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-2">
+                                        <button
+                                            onClick={() => setShowResolvedAbsences((prev) => !prev)}
+                                            className="w-full flex items-center justify-between px-2 py-1 text-left"
+                                        >
+                                            <span className="text-sm font-black text-emerald-900">Aprobadas y cerradas ({resolvedAbsenceRows.length})</span>
+                                            <span className="text-xs font-bold text-emerald-700">{showResolvedAbsences ? 'Ocultar' : 'Ver'}</span>
+                                        </button>
+                                        {showResolvedAbsences && (
+                                            <div className="mt-2 space-y-2">
+                                                {resolvedAbsenceRows.length === 0
+                                                    ? <p className="px-2 py-2 text-xs text-emerald-800 italic">No hay solicitudes resueltas.</p>
+                                                    : resolvedAbsenceRows.map(renderManagedAbsenceRow)}
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -39,6 +39,11 @@ function Layout() {
     const [showNotificationsModal, setShowNotificationsModal] = useState(false);
     const [pendingCaffeine, setPendingCaffeine] = useState<Array<{ id: number; senderName: string }>>([]);
     const [activeCaffeine, setActiveCaffeine] = useState<{ id: number; senderName: string } | null>(null);
+    const [uiDensity, setUiDensity] = useState<'comfortable' | 'compact'>(() => {
+        if (typeof window === 'undefined') return 'compact';
+        const saved = window.localStorage.getItem('lunaris-ui-density');
+        return saved === 'comfortable' ? 'comfortable' : 'compact';
+    });
 
     const timeOfDay = React.useMemo(() => {
         const hour = new Date().getHours();
@@ -60,6 +65,15 @@ function Layout() {
             document.documentElement.classList.remove('dark');
         }
     }, [timeOfDay]);
+
+    React.useEffect(() => {
+        document.documentElement.setAttribute('data-density', uiDensity);
+        try {
+            window.localStorage.setItem('lunaris-ui-density', uiDensity);
+        } catch {
+            // noop
+        }
+    }, [uiDensity]);
 
     React.useEffect(() => {
         const openNotifications = () => setShowNotificationsModal(true);
@@ -178,6 +192,15 @@ function Layout() {
 
                     {/* Page content */}
                     <main className="flex-1 p-4 md:p-8 overflow-y-auto relative z-10">
+                        <div className="pointer-events-none fixed right-4 top-4 z-[120] md:right-6 md:top-5">
+                            <button
+                                onClick={() => setUiDensity((prev) => (prev === 'compact' ? 'comfortable' : 'compact'))}
+                                className="density-toggle pointer-events-auto"
+                                title="Cambiar densidad visual"
+                            >
+                                {uiDensity === 'compact' ? 'Vista compacta' : 'Vista cómoda'}
+                            </button>
+                        </div>
                         <Outlet />
                     </main>
                 </div>

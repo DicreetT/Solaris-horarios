@@ -238,34 +238,65 @@ function TasksPage() {
         return unique;
     }, [todos]);
 
+    const activeFilterChips = useMemo(() => {
+        const chips: Array<{ key: string; label: string; clear: () => void }> = [];
+        if (taskTypeFilter !== 'pending') chips.push({
+            key: 'type',
+            label: `Tipo: ${taskTypeFilter === 'all' ? 'Todas' : taskTypeFilter === 'today' ? 'Vencen hoy' : taskTypeFilter === 'completed' ? 'Completadas' : 'Pendientes'}`,
+            clear: () => setTaskTypeFilter('pending'),
+        });
+        if (assignedToFilter !== 'all') chips.push({
+            key: 'to',
+            label: `Asignada a: ${assignedToFilter === 'me' ? 'Mí' : (USERS.find((u) => u.id === assignedToFilter)?.name || assignedToFilter)}`,
+            clear: () => setAssignedToFilter('all'),
+        });
+        if (assignedByFilter !== 'all') chips.push({
+            key: 'by',
+            label: `Asignada por: ${assignedByFilter === 'me' ? 'Mí' : (USERS.find((u) => u.id === assignedByFilter)?.name || assignedByFilter)}`,
+            clear: () => setAssignedByFilter('all'),
+        });
+        if (monthFilter !== 'all') chips.push({
+            key: 'month',
+            label: `Mes: ${monthFilter}`,
+            clear: () => setMonthFilter('all'),
+        });
+        if (titleSearch.trim()) chips.push({
+            key: 'search',
+            label: `Buscar: ${titleSearch.trim()}`,
+            clear: () => setTitleSearch(''),
+        });
+        return chips;
+    }, [taskTypeFilter, assignedToFilter, assignedByFilter, monthFilter, titleSearch]);
+
     // Counts for badges
     // We want the counts to reflect the *current* filter state? or global state?
     // Usually section counts reflect what's inside.
 
     return (
-        <div className="max-w-5xl mx-auto pb-20 space-y-8 animate-in fade-in duration-500">
-            {/* Header & Main Action */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div>
-                    <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight flex items-center gap-3">
-                        <CheckSquare className="text-primary" size={28} />
-                        Mis Tareas
-                    </h1>
-                    <p className="text-[var(--color-text)] opacity-70 font-medium">
-                        Gestiona y organiza tus pendientes.
-                    </p>
+        <div className="max-w-5xl mx-auto animate-in fade-in duration-500 h-[calc(100vh-7rem)] md:h-[calc(100vh-8rem)] min-h-[560px] flex flex-col gap-4 overflow-hidden app-page-shell">
+            <div className="shrink-0 space-y-4">
+                {/* Header & Main Action */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div>
+                        <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight flex items-center gap-3">
+                            <CheckSquare className="text-primary" size={28} />
+                            Mis Tareas
+                        </h1>
+                        <p className="text-[var(--color-text)] opacity-70 font-medium">
+                            Gestiona y organiza tus pendientes.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => setShowCreateModal(true)}
+                        className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0"
+                    >
+                        <Plus size={20} strokeWidth={3} />
+                        Nueva Tarea
+                    </button>
                 </div>
-                <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0"
-                >
-                    <Plus size={20} strokeWidth={3} />
-                    Nueva Tarea
-                </button>
-            </div>
 
-            {/* Filters */}
-            <div className="bg-white border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                {/* Filters */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de tarea</label>
                     <select
@@ -338,10 +369,33 @@ function TasksPage() {
                         />
                     </div>
                 </div>
+                {activeFilterChips.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        {activeFilterChips.map((chip) => (
+                            <span key={chip.key} className="app-filter-chip">
+                                {chip.label}
+                                <button className="app-filter-chip-x" onClick={chip.clear} title="Quitar filtro">x</button>
+                            </span>
+                        ))}
+                        <button
+                            onClick={() => {
+                                setTaskTypeFilter('pending');
+                                setAssignedToFilter('all');
+                                setAssignedByFilter('all');
+                                setMonthFilter('all');
+                                setTitleSearch('');
+                            }}
+                            className="text-xs font-bold text-violet-700 underline"
+                        >
+                            Limpiar todo
+                        </button>
+                    </div>
+                )}
+            </div>
             </div>
 
             {/* Sections */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-h-0 overflow-y-auto pr-1 pb-16">
 
                 {/* 1. Assigned to Me */}
                 <TaskSection
@@ -377,7 +431,9 @@ function TasksPage() {
                                 animate={{ opacity: 1 }}
                                 className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10"
                             >
-                                <p className="text-gray-400 dark:text-gray-500 text-sm italic">No tienes tareas asignadas con este filtro.</p>
+                                <div className="app-empty-card">
+                                    No tienes tareas asignadas con este filtro.
+                                </div>
                             </motion.div>
                         )}
                     </AnimatePresence>
@@ -417,7 +473,9 @@ function TasksPage() {
                                 animate={{ opacity: 1 }}
                                 className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10"
                             >
-                                <p className="text-gray-400 dark:text-gray-500 text-sm italic">No has creado tareas con este filtro.</p>
+                                <div className="app-empty-card">
+                                    No has creado tareas con este filtro.
+                                </div>
                             </motion.div>
                         )}
                     </AnimatePresence>
@@ -454,9 +512,7 @@ function TasksPage() {
                                         </motion.div>
                                     ))
                                 ) : (
-                                    <div className="p-8 text-center bg-gray-50/50 dark:bg-white/5 rounded-xl border border-dashed border-gray-200 dark:border-white/10">
-                                        <p className="text-gray-400 dark:text-gray-500 text-sm italic">No hay tareas en el sistema.</p>
-                                    </div>
+                                    <div className="app-empty-card">No hay tareas en el sistema.</div>
                                 )}
                             </AnimatePresence>
                         </TaskSection>

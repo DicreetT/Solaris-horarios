@@ -32,24 +32,38 @@ export function useTraining(currentUser: User | null) {
         enabled: !!currentUser,
     });
 
-    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; reason: string; comments: string; attachments?: any[] }>({
-        mutationFn: async ({ requested_date_key, reason, comments, attachments }: { requested_date_key: string; reason: string; comments: string; attachments?: any[] }) => {
+    const createTrainingMutation = useMutation<Training, Error, { requested_date_key: string; reason: string; comments: string; attachments?: any[]; userId?: string }>({
+        mutationFn: async ({ requested_date_key, reason, comments, attachments, userId }: { requested_date_key: string; reason: string; comments: string; attachments?: any[]; userId?: string }) => {
             const now = new Date().toISOString();
-            const { data, error } = await supabase
-                .from('training_requests')
-                .insert({
-                    user_id: currentUser.id,
-                    scheduled_date_key: requested_date_key,
-                    requested_date_key: requested_date_key,
-                    reason: reason,
-                    comments: comments ? [{ text: comments, by: currentUser.id, at: now }] : [],
-                    status: 'pending',
-                    attachments: attachments || [],
-                    created_at: now,
-                });
+            const basePayload: any = {
+                user_id: userId || currentUser.id,
+                scheduled_date_key: requested_date_key,
+                requested_date_key: requested_date_key,
+                reason: reason,
+                comments: comments ? [{ text: comments, by: currentUser.id, at: now }] : [],
+                status: 'pending',
+                created_at: now,
+            };
+            let insertPayload: any = { ...basePayload, attachments: attachments || [] };
 
-            if (error) throw error;
-            return data;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const { data, error } = await supabase
+                    .from('training_requests')
+                    .insert(insertPayload)
+                    .select('*')
+                    .single();
+
+                if (!error) return data;
+
+                const missingColumn = extractMissingColumn(`${error.message || ''}`);
+                if (!missingColumn || !(missingColumn in insertPayload)) {
+                    throw error;
+                }
+                const { [missingColumn]: _omit, ...nextPayload } = insertPayload;
+                insertPayload = nextPayload;
+            }
+
+            throw new Error('No se pudo crear la solicitud de formación.');
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
@@ -153,12 +167,25 @@ export function useTraining(currentUser: User | null) {
             if (reason) updates.reason = reason;
             if (attachments) updates.attachments = attachments;
 
-            const { error } = await supabase
-                .from('training_requests')
-                .update(updates)
-                .eq('id', id);
+            let updatePayload: any = { ...updates };
 
-            if (error) throw error;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const { error } = await supabase
+                    .from('training_requests')
+                    .update(updatePayload)
+                    .eq('id', id);
+
+                if (!error) return;
+
+                const missingColumn = extractMissingColumn(`${error.message || ''}`);
+                if (!missingColumn || !(missingColumn in updatePayload)) {
+                    throw error;
+                }
+                const { [missingColumn]: _omit, ...nextPayload } = updatePayload;
+                updatePayload = nextPayload;
+            }
+
+            throw new Error('No se pudo actualizar la solicitud de formación.');
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
@@ -191,3 +218,11 @@ export function useTraining(currentUser: User | null) {
         deleteTrainingRequest: deleteTrainingMutation.mutateAsync,
     };
 }
+    const extractMissingColumn = (message: string) => {
+        const lower = message.toLowerCase();
+        if (!lower.includes('column')) return null;
+        const quoted = message.match(/'([^']+)'/g);
+        if (!quoted || quoted.length === 0) return null;
+        const first = quoted[0]?.replace(/'/g, '');
+        return first || null;
+    };

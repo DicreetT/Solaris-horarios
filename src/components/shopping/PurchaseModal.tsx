@@ -35,8 +35,11 @@ export default function PurchaseModal({ isOpen, onClose, onConfirm, item }: Purc
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+        <div className="app-modal-overlay animate-in fade-in duration-200" onClick={onClose}>
+            <div
+                className="app-modal-panel bg-white rounded-3xl w-full max-w-lg shadow-2xl scale-100 animate-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="flex justify-between items-center p-6 border-b border-gray-100">
                     <div>
                         <h2 className="text-2xl font-black text-gray-900">Confirmar Compra</h2>

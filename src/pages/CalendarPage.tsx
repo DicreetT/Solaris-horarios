@@ -223,8 +223,19 @@ function CalendarPage() {
                         const isToday = dayKey === todayKey;
                         const isPast = dayKey < todayKey;
                         const isFuture = dayKey > todayKey;
-                        const dayTaskCount = events?.tasks.length || 0;
-                        const dayTaskTotal = events?.allTasks.length || 0;
+                        const basePendingTasks = todos.filter(
+                            (t) =>
+                                t.assigned_to.includes(currentUser?.id || '') &&
+                                !t.completed_by.includes(currentUser?.id || ''),
+                        );
+                        const dayTaskList = basePendingTasks
+                            .filter((task) => {
+                                if (!task.due_date_key) return isToday;
+                                return task.due_date_key <= dayKey;
+                            })
+                            .sort((a, b) => `${a.due_date_key || ''}`.localeCompare(`${b.due_date_key || ''}`));
+                        const dayTaskCount = dayTaskList.length;
+                        const dayTaskTotal = (events?.allTasks.length || 0);
                         const meetingsCount = events?.meetings.length || 0;
                         const trainingsCount = events?.trainings.length || 0;
                         const vacationsCount = (events?.absences || []).filter((a) => a.type === 'vacation').length;
@@ -333,24 +344,37 @@ function CalendarPage() {
                                         )}
                                     </button>
                                     {dayTaskCount > 0 && expandedTasksByDay[dayKey] && (
-                                        <div className="rounded-xl border border-amber-200 bg-white p-2 space-y-1">
-                                            {events?.tasks.slice(0, 4).map((task) => (
-                                                <button
-                                                    key={task.id}
-                                                    onClick={() => setSelectedTask(task)}
-                                                    className="w-full text-left text-[11px] font-semibold text-amber-900 hover:underline"
-                                                >
-                                                    • {task.title}
-                                                </button>
-                                            ))}
-                                            {dayTaskCount > 4 && (
-                                                <button
-                                                    onClick={() => navigate('/tasks')}
-                                                    className="text-[11px] font-bold text-amber-800 underline"
-                                                >
-                                                    Ver todas en tareas
-                                                </button>
-                                            )}
+                                        <div className="rounded-xl border border-amber-200 bg-white p-2">
+                                            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                                                {dayTaskList.map((task) => {
+                                                    const due = task.due_date_key || '';
+                                                    const label = due === dayKey ? 'Vence hoy' : (due && due < dayKey ? 'Atrasada' : 'Pendiente');
+                                                    const chipClass =
+                                                        label === 'Vence hoy'
+                                                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                            : label === 'Atrasada'
+                                                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                                : 'bg-amber-50 text-amber-700 border-amber-200';
+                                                    return (
+                                                        <button
+                                                            key={task.id}
+                                                            onClick={() => setSelectedTask(task)}
+                                                            className="w-full flex items-start justify-between gap-2 rounded-lg border border-gray-100 p-2 text-left hover:border-amber-200 hover:bg-amber-50/40"
+                                                        >
+                                                            <span className="text-[11px] font-semibold text-amber-900 line-clamp-2">{task.title}</span>
+                                                            <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${chipClass}`}>
+                                                                {label}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                            <button
+                                                onClick={() => navigate('/tasks')}
+                                                className="mt-2 text-[11px] font-bold text-amber-800 underline"
+                                            >
+                                                Ver panel de tareas
+                                            </button>
                                         </div>
                                     )}
                                 </div>

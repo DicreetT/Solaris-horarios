@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTraining } from '../hooks/useTraining';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { USERS } from '../constants';
+import { ESTEBAN_ID, USERS } from '../constants';
 import { toDateKey, isWeekend } from '../utils/dateUtils';
 import { Plus, GraduationCap, Calendar, MessageCircle, Trash2, XCircle, CheckCircle, Clock, RefreshCw, AlertTriangle, FileText, Pencil, Ban } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
@@ -35,7 +35,7 @@ function TrainingsPage() {
     const [messageDrafts, setMessageDrafts] = useState<Record<number, string>>({});
     const [attachments, setAttachments] = useState<Attachment[]>([]);
 
-    const isTrainingManager = !!currentUser?.isTrainingManager;
+    const isTrainingManager = !!currentUser?.isTrainingManager || currentUser?.id === ESTEBAN_ID;
     const selectedDateKey = toDateKey(selectedDate);
 
     // Admin view - all requests sorted by creation date

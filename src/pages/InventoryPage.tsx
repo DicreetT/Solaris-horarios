@@ -6,6 +6,7 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { useDensityMode } from '../hooks/useDensityMode';
 
 type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
@@ -71,12 +72,24 @@ const dateFromAny = (v: string): Date | null => {
     const d = new Date(`${v}T00:00:00`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
+  const slash = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const dd = Number(slash[1]);
+    const mm = Number(slash[2]);
+    const yy = Number(slash[3]);
+    const d = new Date(yy, mm - 1, dd, 0, 0, 0, 0);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
   return null;
 };
 const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const monthLabel = (key: string) => {
   const [year, month] = key.split('-').map(Number);
   return new Date(year, (month || 1) - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+};
+const movementDateMs = (fecha: string) => {
+  const d = dateFromAny(clean(fecha));
+  return d ? d.getTime() : 0;
 };
 
 const openTablePdf = (title: string, fileName: string, headers: string[], rows: Array<Array<string | number>>) => {
@@ -183,6 +196,7 @@ function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>('');
+  const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
 
   const [dashMoveProduct, setDashMoveProduct] = useState('');
@@ -196,7 +210,11 @@ function InventoryPage() {
   const [showClientsAll, setShowClientsAll] = useState(false);
   const [showAdjustAll, setShowAdjustAll] = useState(false);
   const [showOutputAll, setShowOutputAll] = useState(false);
+  const [showMovementsAll, setShowMovementsAll] = useState(false);
   const [riskModalOpen, setRiskModalOpen] = useState(false);
+  const densityMode = useDensityMode();
+  const isCompact = densityMode === 'compact';
+  const [compactInventoryPanel, setCompactInventoryPanel] = useState<'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'>('stock');
 
   const [movementModalOpen, setMovementModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -351,7 +369,7 @@ function InventoryPage() {
       .filter((m) => (dashMoveProduct ? clean(m.producto) === dashMoveProduct : true))
       .filter((m) => (dashMoveLot ? clean(m.lote) === dashMoveLot : true))
       .filter((m) => (dashMoveBodega ? clean(m.bodega) === dashMoveBodega : true))
-      .sort((a, b) => clean(a.fecha).localeCompare(clean(b.fecha)));
+      .sort((a, b) => movementDateMs(clean(b.fecha)) - movementDateMs(clean(a.fecha)));
   }, [monthMovements, dashMoveProduct, dashMoveLot, dashMoveBodega]);
 
   const stockByClient = useMemo(() => {
@@ -577,8 +595,9 @@ function InventoryPage() {
       })
       .filter(Boolean)
       .filter((r: any) => (productFilter ? r.producto === productFilter : true))
+      .filter((r: any) => (controlSemaforoFilter ? r.semaforo === controlSemaforoFilter : true))
       .sort((a: any, b: any) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
-  }, [lotes, productos, stockByPLB, productFilter]);
+  }, [lotes, productos, stockByPLB, productFilter, controlSemaforoFilter]);
 
   const riskyProductsSummary = useMemo(() => {
     const acc = new Map<string, { producto: string; stockTotal: number; coberturaMeses: number }>();
@@ -656,7 +675,34 @@ function InventoryPage() {
     return Array.from(new Set(rows.map((r) => r.lote))).sort();
   }, [lotes, movementForm.producto, stockByProductLot]);
 
-  const visibleMovements = useMemo(() => (monthFilter ? monthMovements : normalizedMovements.filter((m) => movementMatchesFilters(m, false))), [monthFilter, monthMovements, normalizedMovements, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  const visibleMovements = useMemo(() => {
+    const base = monthFilter ? monthMovements : normalizedMovements.filter((m) => movementMatchesFilters(m, false));
+    return [...base].sort((a, b) => {
+      const byDate = movementDateMs(clean(b.fecha)) - movementDateMs(clean(a.fecha));
+      if (byDate !== 0) return byDate;
+      return b.id - a.id;
+    });
+  }, [monthFilter, monthMovements, normalizedMovements, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+
+  const visibleMovementsLast7Days = useMemo(() => {
+    if (showMovementsAll) return visibleMovements;
+    const allowedDays = new Set<string>();
+    const rows: Movement[] = [];
+    for (const m of visibleMovements) {
+      const dateKey = clean(m.fecha);
+      if (!dateKey) continue;
+      if (!allowedDays.has(dateKey)) {
+        if (allowedDays.size >= 7) continue;
+        allowedDays.add(dateKey);
+      }
+      rows.push(m);
+    }
+    return rows;
+  }, [visibleMovements, showMovementsAll]);
+
+  useEffect(() => {
+    setShowMovementsAll(false);
+  }, [monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
 
   const notifyAnabela = async (message: string) => {
     if (!anabela?.id) return;
@@ -982,6 +1028,20 @@ function InventoryPage() {
 
   const isEditModeActive = accessMode === 'edit' && canEditNow;
   const activeMainFiltersCount = [productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter].filter(Boolean).length;
+  const compactInventoryTiles: Array<{ key: 'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'; label: string; Icon: any }> = [
+    { key: 'stock', label: 'Stock', Icon: Package },
+    { key: 'moves', label: 'Movimientos', Icon: ClipboardList },
+    { key: 'clients', label: 'Clientes', Icon: Users },
+    { key: 'adjust', label: 'Ajustes', Icon: Wrench },
+    { key: 'outputs', label: 'Salidas', Icon: ArrowDownCircle },
+  ];
+  const activeMainFilterChips = [
+    productFilter ? { key: 'producto', label: `Producto: ${productFilter}`, onClear: () => setProductFilter('') } : null,
+    lotFilter ? { key: 'lote', label: `Lote: ${lotFilter}`, onClear: () => setLotFilter('') } : null,
+    warehouseFilter ? { key: 'bodega', label: `Bodega: ${warehouseFilter}`, onClear: () => setWarehouseFilter('') } : null,
+    typeFilter ? { key: 'tipo', label: `Tipo: ${typeFilter}`, onClear: () => setTypeFilter('') } : null,
+    clientFilter ? { key: 'cliente', label: `Cliente: ${clientFilter}`, onClear: () => setClientFilter('') } : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; onClear: () => void }>;
 
   useEffect(() => {
     if (accessMode === 'edit' && !canEditNow) {
@@ -994,8 +1054,8 @@ function InventoryPage() {
   }, [accessMode]);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      <div className="rounded-2xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5 app-page-shell">
+      <div className="rounded-2xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">Inventario</p>
@@ -1076,7 +1136,7 @@ function InventoryPage() {
         </div>
       ) : (
         <>
-          <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
+          <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setAccessMode('consult')}
@@ -1125,7 +1185,7 @@ function InventoryPage() {
             </div>
           )}
 
-          <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
+          <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
             <div className="flex flex-wrap gap-2">
               {tabs.map((item) => {
                 const isActive = item.key === tab;
@@ -1141,7 +1201,7 @@ function InventoryPage() {
       )}
 
       {accessMode !== 'unset' && (tab === 'dashboard' || tab === 'movimientos') && (
-        <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
+        <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setShowMainFilters((prev) => !prev)}
@@ -1175,11 +1235,44 @@ function InventoryPage() {
               <SelectFilter label="Cliente" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
             </div>
           )}
+          {activeMainFilterChips.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {activeMainFilterChips.map((chip) => (
+                <span key={chip.key} className="app-filter-chip">
+                  {chip.label}
+                  <button className="app-filter-chip-x" onClick={chip.onClear}>x</button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {accessMode !== 'unset' && tab === 'dashboard' && (
         <div className="space-y-4">
+          {isCompact && (
+            <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {compactInventoryTiles.map(({ key, label, Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setCompactInventoryPanel(key)}
+                    className={`compact-card rounded-xl border p-2 text-xs font-black ${
+                      compactInventoryPanel === key
+                        ? 'border-violet-400 bg-violet-700 text-white'
+                        : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center gap-1">
+                      <Icon size={15} />
+                      <span>{label}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <section className="grid gap-2 md:grid-cols-3">
             <KpiCard
               title="Productos en riesgo"
@@ -1204,6 +1297,7 @@ function InventoryPage() {
             />
           </section>
 
+          {(!isCompact || compactInventoryPanel === 'stock') && (
           <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
             openTablePdf(
               'Inventario - Stock por producto/lote/bodega',
@@ -1246,7 +1340,9 @@ function InventoryPage() {
               ];
             })} />
           </DataSection>
+          )}
 
+          {(!isCompact || compactInventoryPanel === 'moves') && (
           <DataSection title="Movimientos por lote del mes" subtitle="Detalle filtrable de movimientos mensuales." tone="indigo" onDownload={async () => {
             openTablePdf(
               'Inventario - Movimientos por lote del mes',
@@ -1267,7 +1363,9 @@ function InventoryPage() {
               <ToggleRowsButton showAll={showMovesAll} onToggle={() => setShowMovesAll((v) => !v)} />
             )}
           </DataSection>
+          )}
 
+          {(!isCompact || compactInventoryPanel === 'clients') && (
           <DataSection title="Stock por cliente o bodega por producto y lote" subtitle="Solo ventas." tone="emerald" onDownload={async () => {
             openTablePdf(
               'Inventario - Stock por cliente o bodega',
@@ -1286,7 +1384,9 @@ function InventoryPage() {
               <ToggleRowsButton showAll={showClientsAll} onToggle={() => setShowClientsAll((v) => !v)} />
             )}
           </DataSection>
+          )}
 
+          {(!isCompact || compactInventoryPanel === 'adjust') && (
           <DataSection id="inventory-adjustments-section" title="Control de ajustes" subtitle="Ajustes positivos y negativos." tone="amber" onDownload={async () => {
             openTablePdf(
               'Inventario - Control de ajustes',
@@ -1302,7 +1402,9 @@ function InventoryPage() {
               <ToggleRowsButton showAll={showAdjustAll} onToggle={() => setShowAdjustAll((v) => !v)} />
             )}
           </DataSection>
+          )}
 
+          {(!isCompact || compactInventoryPanel === 'outputs') && (
           <DataSection id="inventory-output-section" title="Control de salidas por lote" subtitle="Traspaso, venta y envio." tone="rose" onDownload={async () => {
             openTablePdf(
               'Inventario - Control de salidas por lote',
@@ -1322,6 +1424,7 @@ function InventoryPage() {
               <ToggleRowsButton showAll={showOutputAll} onToggle={() => setShowOutputAll((v) => !v)} />
             )}
           </DataSection>
+          )}
         </div>
       )}
 
@@ -1351,6 +1454,14 @@ function InventoryPage() {
               appendAudit('Descarga PDF', `Control de stock (${monthFilter || 'todos'})`);
             }}
           >
+            <div className="mb-3 grid gap-2 md:grid-cols-3">
+              <SelectFilter
+                label="Semáforo"
+                value={controlSemaforoFilter}
+                onChange={setControlSemaforoFilter}
+                options={['AGOTADO', 'ROJO', 'AMARILLO', 'VERDE']}
+              />
+            </div>
             <SimpleDataTable
               headers={['Producto', 'Lote', 'Viales', 'Stock cajas', 'Potencial cajas', 'Consumo mes', 'Cobertura', 'Semáforo']}
               rows={controlStockRows.map((r: any) => [
@@ -1395,7 +1506,7 @@ function InventoryPage() {
 
           <SimpleDataTable
             headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Cliente', 'Destino', 'Notas', 'Acciones']}
-            rows={visibleMovements.map((m) => [
+            rows={visibleMovementsLast7Days.map((m) => [
               m.fecha,
               m.tipo_movimiento,
               <ProductPill key={`${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />,
@@ -1411,6 +1522,26 @@ function InventoryPage() {
               </div>,
             ])}
           />
+          {visibleMovements.length > visibleMovementsLast7Days.length && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setShowMovementsAll(true)}
+                className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"
+              >
+                Mostrar historial completo ({visibleMovements.length})
+              </button>
+            </div>
+          )}
+          {showMovementsAll && visibleMovements.length > 0 && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setShowMovementsAll(false)}
+                className="rounded-xl border border-violet-200 bg-white px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"
+              >
+                Mostrar solo últimos 7 días
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1679,7 +1810,7 @@ function DataSection({ id, title, subtitle, children, tone, onDownload }: { id?:
     rose: 'border-rose-200 bg-rose-50/30',
   };
   return (
-    <section id={id} className={`rounded-2xl border p-4 shadow-sm space-y-3 ${toneMap[tone]}`}>
+    <section id={id} className={`rounded-2xl border p-4 shadow-sm space-y-3 compact-card ${toneMap[tone]}`}>
       <div className="flex items-start justify-between gap-2">
         <div>
           <h2 className="text-base md:text-lg font-black text-violet-950">{title}</h2>
@@ -1694,7 +1825,7 @@ function DataSection({ id, title, subtitle, children, tone, onDownload }: { id?:
 
 function SelectFilter({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
   return (
-    <label className="flex flex-col gap-1 rounded-xl border border-violet-200 bg-violet-50 p-2 text-xs font-semibold uppercase tracking-wider text-violet-600">
+    <label className="flex flex-col gap-1 rounded-xl border border-violet-200 bg-violet-50 p-2 text-xs font-semibold uppercase tracking-wider text-violet-600 compact-card">
       {label}
       <select value={value} onChange={(e) => onChange(e.target.value)} className="bg-transparent text-sm text-violet-900 outline-none">
         <option value="">Todos</option>
@@ -1761,14 +1892,18 @@ function ProductColorSelect({
 
 function SimpleDataTable({ headers, rows }: { headers: string[]; rows: Array<Array<any>> }) {
   return (
-    <div className="overflow-x-auto rounded-2xl border border-violet-100 bg-white shadow-sm">
-      <table className="min-w-full text-sm">
+    <div className="app-table-wrap">
+      <table className="app-table">
         <thead className="bg-violet-50 text-violet-700">
           <tr>{headers.map((h) => <th key={h} className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-widest">{h}</th>)}</tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
-            <tr><td colSpan={headers.length} className="px-3 py-6 text-center text-sm text-violet-400">Sin datos para estos filtros.</td></tr>
+            <tr>
+              <td colSpan={headers.length} className="px-3 py-6">
+                <div className="app-empty-card">No hay datos para estos filtros. Prueba cambiarlos o limpiar filtros.</div>
+              </td>
+            </tr>
           ) : rows.map((row, idx) => (
             <tr key={idx} className="border-t border-violet-100 hover:bg-violet-50/60">
               {row.map((cell, i) => <td key={i} className="px-3 py-2.5 text-violet-900">{cell}</td>)}

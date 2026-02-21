@@ -186,7 +186,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
+            className="app-modal-overlay"
             onClick={onClose}
         >
             <motion.div
@@ -194,7 +194,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                 animate={{ scale: 1, opacity: 1, y: 0 }}
                 exit={{ scale: 0.9, opacity: 0, y: 20 }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="bg-white/90 backdrop-blur-xl rounded-[2.5rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar border border-white/20"
+                className="app-modal-panel bg-white/90 backdrop-blur-xl rounded-[2.5rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] p-6 sm:p-8 max-w-2xl w-full custom-scrollbar border border-white/20"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

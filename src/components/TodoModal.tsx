@@ -70,11 +70,11 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
 
     return (
         <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+            className="app-modal-overlay"
             onClick={onClose}
         >
             <div
-                className="bg-white rounded-3xl shadow-2xl max-w-md w-full animate-[popIn_0.2s_ease-out] max-h-[90vh] flex flex-col overflow-hidden"
+                className="app-modal-panel bg-white rounded-3xl shadow-2xl max-w-md w-full animate-[popIn_0.2s_ease-out] flex flex-col overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between p-6 pb-0 shrink-0">

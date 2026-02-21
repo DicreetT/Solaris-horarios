@@ -56,7 +56,7 @@ const minutesSinceTime = (entry: string | null | undefined): number => {
  * Shared time tracker widget for clocking in/out
  * Modern, sleek, and compact design with inline editing
  */
-export default function TimeTrackerWidget({ date = new Date(), showEntries = false }) {
+export default function TimeTrackerWidget({ date = new Date(), showEntries = false, compact = false }: { date?: Date; showEntries?: boolean; compact?: boolean }) {
     const { currentUser } = useAuth();
     const { timeData, createTimeEntry, updateTimeEntry, deleteTimeEntry } = useTimeData();
     const { addNotification } = useNotificationsContext();
@@ -310,11 +310,11 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
     const isAdmin = currentUser?.isAdmin;
 
     return (
-        <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-visible">
-            <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                <div className="flex items-center justify-between mb-6">
+        <div className={`bg-white border border-gray-200 rounded-3xl shadow-xl overflow-visible ${compact ? 'compact-card' : ''}`}>
+            <div className={`${compact ? 'p-3' : 'p-6'} border-b border-gray-100 bg-gray-50/50`}>
+                <div className={`flex items-center justify-between ${compact ? 'mb-3' : 'mb-6'}`}>
                     <div>
-                        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                        <h2 className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-gray-900 flex items-center gap-2`}>
                             Registro de Jornada
                             <div className="relative group">
                                 <Info
@@ -332,7 +332,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                                 </div>
                             </div>
                         </h2>
-                        <p className="text-sm text-gray-500 mt-1">
+                        <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 mt-1`}>
                             {activeAbsence
                                 ? (activeAbsence.type === 'vacation' ? 'Disfrutando de vacaciones' : 'Ausencia justificada')
                                 : isOnBreak
@@ -365,7 +365,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                         <p className="text-sm font-medium opacity-80">No se trabaja hoy.</p>
                     </div>
                 ) : (
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+                    <div className={`flex flex-col sm:flex-row items-center justify-between ${compact ? 'gap-3' : 'gap-6'}`}>
                         {reminderType && breakPolicy && (
                             <div className="w-full mb-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col gap-3">
                                 <div>
@@ -409,7 +409,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
 
                         {/* Clock Display */}
                         <div className="flex items-center gap-4">
-                            <div className={`text-5xl font-black tracking-tighter font-mono ${hasActiveSession ? 'text-gray-900' : 'text-gray-300'
+                            <div className={`${compact ? 'text-3xl' : 'text-5xl'} font-black tracking-tighter font-mono ${hasActiveSession ? 'text-gray-900' : 'text-gray-300'
                                 }`}>
                                 {elapsedTime}
                             </div>
@@ -427,14 +427,14 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                             <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                                 <button
                                     onClick={handleResumeFromBreak}
-                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50"
+                                    className={`group relative overflow-hidden rounded-2xl ${compact ? 'px-4 py-2.5 text-sm' : 'px-6 py-4 text-base'} font-bold transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50`}
                                 >
                                     <Play size={18} fill="currentColor" />
                                     <span>Retomar Jornada</span>
                                 </button>
                                 <button
                                     onClick={handleMarkExit}
-                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200"
+                                    className={`group relative overflow-hidden rounded-2xl ${compact ? 'px-4 py-2.5 text-sm' : 'px-6 py-4 text-base'} font-bold transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200`}
                                 >
                                     <Square size={18} fill="currentColor" />
                                     <span>Finalizar Jornada</span>
@@ -444,14 +444,14 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                             <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                                 <button
                                     onClick={handleStartBreak}
-                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-amber-100 text-amber-700 hover:bg-amber-200 hover:shadow-amber-100"
+                                    className={`group relative overflow-hidden rounded-2xl ${compact ? 'px-4 py-2.5 text-sm' : 'px-6 py-4 text-base'} font-bold transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-amber-100 text-amber-700 hover:bg-amber-200 hover:shadow-amber-100`}
                                 >
                                     <Coffee size={18} />
                                     <span>Pausar (Comida)</span>
                                 </button>
                                 <button
                                     onClick={handleMarkExit}
-                                    className="group relative overflow-hidden rounded-2xl px-6 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200"
+                                    className={`group relative overflow-hidden rounded-2xl ${compact ? 'px-4 py-2.5 text-sm' : 'px-6 py-4 text-base'} font-bold transition-all duration-300 shadow-lg active:scale-95 flex items-center justify-center gap-3 w-full sm:w-auto bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100 hover:border-red-200`}
                                 >
                                     <Square size={18} fill="currentColor" />
                                     <span>Finalizar Jornada</span>
@@ -460,7 +460,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
                         ) : (
                             <button
                                 onClick={handleMarkEntry}
-                                className="group relative overflow-hidden rounded-2xl px-8 py-4 font-bold text-base transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5"
+                                className={`group relative overflow-hidden rounded-2xl ${compact ? 'px-5 py-2.5 text-sm' : 'px-8 py-4 text-base'} font-bold transition-all duration-300 shadow-lg active:scale-95 flex items-center gap-3 w-full sm:w-auto justify-center bg-primary text-white hover:bg-primary-dark shadow-primary/30 hover:shadow-primary/50 hover:-translate-y-0.5`}
                             >
                                 <Play size={18} fill="currentColor" />
                                 <span>Iniciar Jornada</span>
