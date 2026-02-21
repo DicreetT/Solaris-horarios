@@ -60,6 +60,14 @@ const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
 const EDIT_GRANT_HOURS = 6;
+const HUARTE_PRODUCT_COLORS: Record<string, string> = {
+  SV: '#83b06f',
+  ENT: '#76a5af',
+  KL: '#f9a8d4',
+  ISO: '#fca5a5',
+  AV: '#f9cb9c',
+  RG: '#1e3a8a',
+};
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
 const toNum = (v: unknown) => {
@@ -171,6 +179,7 @@ export default function InventoryFacturacionPage() {
 
   const [monthFilter, setMonthFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
+  const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [lotFilter, setLotFilter] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -397,11 +406,29 @@ export default function InventoryFacturacionPage() {
       Array.from(new Set(productos.map((p) => clean(p.producto)).filter((p) => p && p.toLowerCase() !== 'producto'))).sort(),
     [productos],
   );
+  const addSelectedProduct = (value: string) => {
+    const v = clean(value);
+    if (!v) return;
+    if (!productOptions.includes(v)) return;
+    setSelectedProducts((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setProductFilter('');
+  };
+  const removeSelectedProduct = (value: string) => {
+    setSelectedProducts((prev) => prev.filter((p) => p !== value));
+  };
+  const productColorMap = useMemo(() => {
+    const palette = ['#7c3aed', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#14b8a6', '#e11d48'];
+    const map = new Map<string, string>();
+    productOptions.forEach((p, idx) => {
+      map.set(p, HUARTE_PRODUCT_COLORS[p] || palette[idx % palette.length]);
+    });
+    return map;
+  }, [productOptions]);
   const lotOptions = useMemo(() => {
     const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
-    if (!productFilter) return all;
-    return all.filter((lot) => lotes.some((l) => clean(l.lote) === lot && clean(l.producto) === productFilter));
-  }, [lotes, productFilter]);
+    if (selectedProducts.length === 0) return all;
+    return all.filter((lot) => lotes.some((l) => clean(l.lote) === lot && selectedProducts.includes(clean(l.producto))));
+  }, [lotes, selectedProducts]);
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
@@ -411,14 +438,14 @@ export default function InventoryFacturacionPage() {
       const d = parseDate(clean(m.fecha));
       if (!d || monthKeyFromDate(d) !== monthFilter) return false;
     }
-    if (productFilter && clean(m.producto) !== productFilter) return false;
+    if (selectedProducts.length > 0 && !selectedProducts.includes(clean(m.producto))) return false;
     if (lotFilter && clean(m.lote) !== lotFilter) return false;
     if (warehouseFilter && clean(m.bodega) !== warehouseFilter) return false;
     if (typeFilter && clean(m.tipo_movimiento) !== typeFilter) return false;
     return true;
   };
 
-  const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter]);
+  const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter]);
   const visibleMovementsLast7Days = useMemo(() => {
     if (showAllRows.movimientos) return filteredMovements;
     const allowedDays = new Set<string>();
@@ -478,7 +505,7 @@ export default function InventoryFacturacionPage() {
   }, [filteredMovements]);
   useEffect(() => {
     setStockSectionSelected(null);
-  }, [monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
+  }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
 
   const rectificativas = useMemo(() => filteredMovements.filter((m) => {
     const t = clean(m.tipo_movimiento).toLowerCase();
@@ -592,7 +619,7 @@ export default function InventoryFacturacionPage() {
       map.set(y, (map.get(y) || 0) + Math.abs(toNum(m.cantidad)));
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [monthSortedMovements, productFilter, lotFilter, warehouseFilter, typeFilter]);
+  }, [monthSortedMovements, selectedProducts, lotFilter, warehouseFilter, typeFilter]);
 
   const enviosMensuales = useMemo(() => {
     const map = new Map<string, number>();
@@ -603,7 +630,7 @@ export default function InventoryFacturacionPage() {
       map.set(mk, (map.get(mk) || 0) + Math.abs(toNum(m.cantidad)));
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [monthSortedMovements, productFilter, lotFilter, warehouseFilter, typeFilter]);
+  }, [monthSortedMovements, selectedProducts, lotFilter, warehouseFilter, typeFilter]);
 
   const ensamblajesAnuales = useMemo(() => {
     const map = new Map<string, number>();
@@ -966,35 +993,83 @@ export default function InventoryFacturacionPage() {
             <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
           </div>
 
-          <section className="rounded-2xl border border-violet-200 bg-white p-3">
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-              <DashSwitch label="Stock" active={dashboardSection === 'stock'} onClick={() => setDashboardSection('stock')} icon={<Boxes size={15} />} />
-              <DashSwitch label="Control lote" active={dashboardSection === 'control'} onClick={() => setDashboardSection('control')} icon={<Calculator size={15} />} />
-              <DashSwitch label="Rectificativas" active={dashboardSection === 'rect'} onClick={() => setDashboardSection('rect')} icon={<FileWarning size={15} />} />
-              <DashSwitch label="Ventas anual" active={dashboardSection === 'ventas_anual'} onClick={() => setDashboardSection('ventas_anual')} icon={<BarChart3 size={15} />} />
-              <DashSwitch label="Envíos mes" active={dashboardSection === 'envios_mes'} onClick={() => setDashboardSection('envios_mes')} icon={<BarChart3 size={15} />} />
-              <DashSwitch label="Ensamblajes anual" active={dashboardSection === 'ensam_anual'} onClick={() => setDashboardSection('ensam_anual')} icon={<BarChart3 size={15} />} />
-            </div>
-          </section>
+          {isCompact && (
+            <section className="rounded-2xl border border-violet-200 bg-white p-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+                <DashSwitch label="Stock" active={dashboardSection === 'stock'} onClick={() => setDashboardSection('stock')} icon={<Boxes size={15} />} />
+                <DashSwitch label="Control lote" active={dashboardSection === 'control'} onClick={() => setDashboardSection('control')} icon={<Calculator size={15} />} />
+                <DashSwitch label="Rectificativas" active={dashboardSection === 'rect'} onClick={() => setDashboardSection('rect')} icon={<FileWarning size={15} />} />
+                <DashSwitch label="Ventas anual" active={dashboardSection === 'ventas_anual'} onClick={() => setDashboardSection('ventas_anual')} icon={<BarChart3 size={15} />} />
+                <DashSwitch label="Envíos mes" active={dashboardSection === 'envios_mes'} onClick={() => setDashboardSection('envios_mes')} icon={<BarChart3 size={15} />} />
+                <DashSwitch label="Ensamblajes anual" active={dashboardSection === 'ensam_anual'} onClick={() => setDashboardSection('ensam_anual')} icon={<BarChart3 size={15} />} />
+              </div>
+            </section>
+          )}
 
           <section className="rounded-2xl border border-violet-200 bg-white p-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <AutocompleteFilter label="Producto" value={productFilter} onChange={setProductFilter} options={productOptions} />
-              <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
-              <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
-              <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => setShowMainFilters((s) => !s)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">
+                {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
+              </button>
+              {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
+                <button
+                  onClick={() => {
+                    setProductFilter('');
+                    setSelectedProducts([]);
+                    setLotFilter('');
+                    setWarehouseFilter('');
+                    setTypeFilter('');
+                  }}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Limpiar filtros
+                </button>
+              )}
             </div>
+            {showMainFilters && (
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
+                <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
+                <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
+                <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+              </div>
+            )}
+            {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selectedProducts.map((p) => (
+                  <button key={`fp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                    Producto: {p} ×
+                  </button>
+                ))}
+                {lotFilter && (
+                  <button onClick={() => setLotFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                    Lote: {lotFilter} ×
+                  </button>
+                )}
+                {warehouseFilter && (
+                  <button onClick={() => setWarehouseFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                    Bodega: {warehouseFilter} ×
+                  </button>
+                )}
+                {typeFilter && (
+                  <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                    Tipo: {typeFilter} ×
+                  </button>
+                )}
+              </div>
+            )}
           </section>
 
-          {dashboardSection === 'stock' && (
+          {(!isCompact || dashboardSection === 'stock') && (
             <Panel
               title="Stock por producto/lote/bodega"
               onDownload={() => exportPdf('Inventario Facturacion - Stock por Lote', ['Producto', 'Lote', 'Bodega', 'Stock'], controlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]))}
               actions={controlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock']} rows={limitRows('stock', controlByLot).map((r) => [r.producto, r.lote, r.bodega, r.stock])} />
+              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock']} rows={limitRows('stock', controlByLot).map((r, idx) => [<ProductPill key={`h-stock-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.stock])} />
               <StockVisual
                 rows={stockVisualRows}
+                colorMap={productColorMap}
                 onSelectSegment={(bodega, qty) => setStockSectionSelected({ bodega, qty: Math.round(qty) })}
               />
               {stockSectionSelected && (
@@ -1005,7 +1080,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {dashboardSection === 'control' && (
+          {(!isCompact || dashboardSection === 'control') && (
             <Panel
               title={`Control por lote${monthFilter ? ` · ${monthLabel(monthFilter)}` : ''}`}
               onDownload={() =>
@@ -1016,21 +1091,21 @@ export default function InventoryFacturacionPage() {
                 )
               }
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']} rows={controlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock])} />
+              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']} rows={controlByLot.map((r, idx) => [<ProductPill key={`h-control-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.stock])} />
             </Panel>
           )}
 
-          {dashboardSection === 'rect' && (
+          {(!isCompact || dashboardSection === 'rect') && (
             <Panel
               title="Rectificativas recientes"
               onDownload={() => exportPdf('Inventario Facturacion - Rectificativas', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc'], rectificativas.map((r) => [displayDate(r.fecha), r.tipo_movimiento, r.producto, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || '']))}
               actions={rectificativas.length > 6 ? <ToggleMore k="rect" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
-              <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc']} rows={limitRows('rect', rectificativas).map((r) => [displayDate(r.fecha), r.tipo_movimiento, r.producto, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || ''])} />
+              <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc']} rows={limitRows('rect', rectificativas).map((r, idx) => [displayDate(r.fecha), r.tipo_movimiento, <ProductPill key={`h-rect-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || ''])} />
             </Panel>
           )}
 
-          {dashboardSection === 'ventas_anual' && (
+          {(!isCompact || dashboardSection === 'ventas_anual') && (
             <Panel title="Ventas anuales" onDownload={() => exportPdf('Inventario Facturacion - Ventas anuales', ['Año', 'Cantidad'], ventasAnuales.map(([y, q]) => [y, q]))}>
               <DataTable
                 headers={['Año', 'Cantidad']}
@@ -1043,7 +1118,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {dashboardSection === 'envios_mes' && (
+          {(!isCompact || dashboardSection === 'envios_mes') && (
             <Panel title="Envíos mensuales" onDownload={() => exportPdf('Inventario Facturacion - Envios mensuales', ['Mes', 'Cantidad'], enviosMensuales.map(([m, q]) => [monthLabel(m), q]))}>
               <DataTable
                 headers={['Mes', 'Cantidad']}
@@ -1056,7 +1131,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {dashboardSection === 'ensam_anual' && (
+          {(!isCompact || dashboardSection === 'ensam_anual') && (
             <Panel title="Ensamblajes anuales" onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes anuales', ['Año', 'Cantidad'], ensamblajesAnuales.map(([y, q]) => [y, q]))}>
               <DataTable
                 headers={['Año', 'Cantidad']}
@@ -1080,10 +1155,11 @@ export default function InventoryFacturacionPage() {
             <button onClick={() => setShowMainFilters((s) => !s)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">
               {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
             </button>
-            {[productFilter, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
+            {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
               <button
                 onClick={() => {
                   setProductFilter('');
+                  setSelectedProducts([]);
                   setLotFilter('');
                   setWarehouseFilter('');
                   setTypeFilter('');
@@ -1096,7 +1172,7 @@ export default function InventoryFacturacionPage() {
           </div>
           {showMainFilters && (
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
-              <AutocompleteFilter label="Producto" value={productFilter} onChange={setProductFilter} options={productOptions} />
+              <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
               <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
               <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
               <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
@@ -1104,10 +1180,10 @@ export default function InventoryFacturacionPage() {
           )}
           {!showMainFilters && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {productFilter && <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Producto: {productFilter}</span>}
-              {lotFilter && <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Lote: {lotFilter}</span>}
-              {warehouseFilter && <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Bodega: {warehouseFilter}</span>}
-              {typeFilter && <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Tipo: {typeFilter}</span>}
+              {selectedProducts.map((p) => <button key={`pp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Producto: {p} ×</button>)}
+              {lotFilter && <button onClick={() => setLotFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Lote: {lotFilter} ×</button>}
+              {warehouseFilter && <button onClick={() => setWarehouseFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Bodega: {warehouseFilter} ×</button>}
+              {typeFilter && <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Tipo: {typeFilter} ×</button>}
             </div>
           )}
         </section>
@@ -1139,7 +1215,7 @@ export default function InventoryFacturacionPage() {
             rows={visibleMovementsLast7Days.map((m) => [
               displayDate(m.fecha),
               m.tipo_movimiento,
-              m.producto,
+              <ProductPill key={`h-mov-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />,
               m.lote,
               m.cantidad_signed || m.cantidad,
               m.bodega,
@@ -1171,10 +1247,10 @@ export default function InventoryFacturacionPage() {
             }
             onDownload={() => exportPdf('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
           <Panel title="Auditoría de rectificativas" onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}>
-            <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r, idx) => [r.fecha, r.tipo, r.factura, <ProductPill key={`h-ra-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
           </Panel>
         </section>
       )}
@@ -1186,7 +1262,7 @@ export default function InventoryFacturacionPage() {
             actions={canEdit ? <button onClick={() => openCreateWithType('ensamblaje_esp')} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Nuevo ensamblaje</button> : undefined}
             onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
 
           <Panel title="Archivos de ensamblaje importados (fase 0)">
@@ -1221,7 +1297,7 @@ export default function InventoryFacturacionPage() {
             >
               <DataTable
                 headers={['Producto', 'Activo']}
-                rows={limitRows('maestros_productos', productos.filter((p) => clean(p.producto).toLowerCase() !== 'producto')).map((p) => [clean(p.producto), clean(p.activo_si_no || 'SI')])}
+                rows={limitRows('maestros_productos', productos.filter((p) => clean(p.producto).toLowerCase() !== 'producto')).map((p, idx) => [<ProductPill key={`h-pm-${idx}-${clean(p.producto)}`} code={clean(p.producto)} colorMap={productColorMap} />, clean(p.activo_si_no || 'SI')])}
               />
               {productos.filter((p) => clean(p.producto).toLowerCase() !== 'producto').length > 6 && (
                 <div className="mt-2">
@@ -1245,7 +1321,7 @@ export default function InventoryFacturacionPage() {
                 ) : undefined
               }
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Estado', 'Fecha alta']} rows={limitRows('maestros_lotes', lotes).map((l) => [clean(l.producto), clean(l.lote), clean(l.bodega), clean(l.estado || 'ACTIVO'), clean(l.fecha_alta || '')])} />
+              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Estado', 'Fecha alta']} rows={limitRows('maestros_lotes', lotes).map((l, idx) => [<ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />, clean(l.lote), clean(l.bodega), clean(l.estado || 'ACTIVO'), clean(l.fecha_alta || '')])} />
               {lotes.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_lotes" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />
@@ -1439,6 +1515,16 @@ function KpiCard({
   );
 }
 
+function ProductPill({ code, colorMap }: { code: string; colorMap: Map<string, string> }) {
+  const color = colorMap.get(code) || '#7c3aed';
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-black" style={{ backgroundColor: `${color}22`, color }}>
+      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+      {code || '-'}
+    </span>
+  );
+}
+
 function ToggleMore({ k, showAllRows, setShowAllRows }: { k: string; showAllRows: Record<string, boolean>; setShowAllRows: React.Dispatch<React.SetStateAction<Record<string, boolean>>> }) {
   return (
     <button onClick={() => setShowAllRows((s) => ({ ...s, [k]: !s[k] }))} className="text-xs font-bold text-violet-700 underline">
@@ -1469,9 +1555,11 @@ function Panel({ title, children, actions, onDownload }: { title: string; childr
 
 function StockVisual({
   rows,
+  colorMap: productColorMap,
   onSelectSegment,
 }: {
   rows: Array<{ producto: string; lote: string; total: number; byBodega: Record<string, number> }>;
+  colorMap: Map<string, string>;
   onSelectSegment?: (bodega: string, qty: number) => void;
 }) {
   const bodegaColors = ['#4f46e5', '#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#84cc16'];
@@ -1482,8 +1570,8 @@ function StockVisual({
         .filter(Boolean),
     ),
   ).sort();
-  const colorMap = new Map<string, string>();
-  bodegas.forEach((b, idx) => colorMap.set(b, bodegaColors[idx % bodegaColors.length]));
+  const bodegaColorMap = new Map<string, string>();
+  bodegas.forEach((b, idx) => bodegaColorMap.set(b, bodegaColors[idx % bodegaColors.length]));
   const maxTotal = Math.max(1, ...rows.map((r) => r.total));
 
   if (rows.length === 0) {
@@ -1497,7 +1585,11 @@ function StockVisual({
         {rows.map((row) => (
           <div key={`${row.producto}|${row.lote}`} className="grid grid-cols-[120px_1fr_52px] items-center gap-2">
             <div className="truncate text-[11px] font-bold text-violet-900">
-              {row.producto} <span className="text-violet-600">· {row.lote}</span>
+                <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: productColorMap.get(row.producto) || '#7c3aed' }} />
+                {row.producto}
+              </span>{' '}
+              <span className="text-violet-600">· {row.lote}</span>
             </div>
             <div className="h-6 overflow-hidden rounded-md border border-violet-100 bg-white">
               <div className="flex h-full">
@@ -1512,7 +1604,7 @@ function StockVisual({
                       className="h-full cursor-pointer transition-opacity hover:opacity-80"
                       style={{
                         width: `${Math.max(2, (qty / maxTotal) * 100)}%`,
-                        backgroundColor: colorMap.get(bodega) || '#4f46e5',
+                        backgroundColor: bodegaColorMap.get(bodega) || '#4f46e5',
                       }}
                     />
                   ))}
@@ -1616,6 +1708,57 @@ function AutocompleteFilter({ label, value, onChange, options }: { label: string
         <div className="absolute z-20 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-violet-200 bg-white shadow-lg">
           {filtered.map((opt) => (
             <button key={`${label}-${opt}`} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onChange(opt); setOpen(false); }} className="block w-full px-2 py-2 text-left text-xs font-semibold text-violet-900 hover:bg-violet-50">
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </label>
+  );
+}
+
+function TagAutocompleteFilter({
+  label,
+  inputValue,
+  onInputChange,
+  onSelect,
+  options,
+}: {
+  label: string;
+  inputValue: string;
+  onInputChange: (v: string) => void;
+  onSelect: (v: string) => void;
+  options: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const filtered = options
+    .filter((opt) => suggestionMatches(opt, inputValue))
+    .sort((a, b) => rankSuggestion(a, inputValue) - rankSuggestion(b, inputValue) || clean(a).localeCompare(clean(b)))
+    .slice(0, 8);
+  return (
+    <label className="space-y-1 relative">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-violet-700">{label}</span>
+      <input
+        value={inputValue}
+        onChange={(e) => {
+          onInputChange(e.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSelect(inputValue);
+          }
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        placeholder="Escribe y selecciona..."
+        className="w-full rounded-lg border border-violet-200 px-2 py-2 text-sm font-semibold text-violet-900"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-violet-200 bg-white shadow-lg">
+          {filtered.map((opt) => (
+            <button key={`${label}-${opt}`} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onSelect(opt); setOpen(false); }} className="block w-full px-2 py-2 text-left text-xs font-semibold text-violet-900 hover:bg-violet-50">
               {opt}
             </button>
           ))}

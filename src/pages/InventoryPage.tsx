@@ -111,6 +111,14 @@ const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const EDIT_GRANT_HOURS = 6;
+const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
+  SV: '#83b06f',
+  ENT: '#76a5af',
+  KL: '#f9a8d4',
+  ISO: '#fca5a5',
+  AV: '#f9cb9c',
+  RG: '#1e3a8a',
+};
 
 const readLocalJson = <T,>(key: string, fallback: T): T => {
   if (typeof window === 'undefined') return fallback;
@@ -192,7 +200,8 @@ function InventoryPage() {
   const [tipos, setTipos] = useState<GenericRow[]>(seed.tipos_movimiento as GenericRow[]);
 
   const [monthFilter, setMonthFilter] = useState<string>('');
-  const [productFilter, setProductFilter] = useState<string>('');
+  const [productFilterInput, setProductFilterInput] = useState<string>('');
+  const [productFilters, setProductFilters] = useState<string[]>([]);
   const [lotFilter, setLotFilter] = useState<string>('');
   const [warehouseFilter, setWarehouseFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
@@ -213,6 +222,7 @@ function InventoryPage() {
   const [showOutputAll, setShowOutputAll] = useState(false);
   const [showMovementsAll, setShowMovementsAll] = useState(false);
   const [riskModalOpen, setRiskModalOpen] = useState(false);
+  const [stockLotSelected, setStockLotSelected] = useState<{ producto: string; lote: string; cantidad: number } | null>(null);
   const densityMode = useDensityMode();
   const isCompact = densityMode === 'compact';
   const [compactInventoryPanel, setCompactInventoryPanel] = useState<'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'>('stock');
@@ -229,6 +239,17 @@ function InventoryPage() {
   const [tipoModalOpen, setTipoModalOpen] = useState(false);
   const [tipoForm, setTipoForm] = useState({ tipo_movimiento: '', signo_1_1: '-1', afecta_stock_si_no: 'SI' });
   const [newClient, setNewClient] = useState('');
+
+  const addProductFilter = (value: string) => {
+    const v = clean(value);
+    if (!v) return;
+    if (!productOptions.includes(v)) return;
+    setProductFilters((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setProductFilterInput('');
+  };
+  const removeProductFilter = (value: string) => {
+    setProductFilters((prev) => prev.filter((p) => p !== value));
+  };
 
   const canApproveRequests = actorIsAdmin || actorIsAnabela;
   const canEditByDefault = actorIsAdmin || actorIsAnabela || actorIsFernando;
@@ -279,8 +300,13 @@ function InventoryPage() {
     const map = new Map<string, string>();
     for (const p of productos) {
       const code = clean(p.producto);
+      if (!code) continue;
+      if (INVENTORY_PRODUCT_COLORS[code]) {
+        map.set(code, INVENTORY_PRODUCT_COLORS[code]);
+        continue;
+      }
       const color = clean(p.color_hex_opcional);
-      if (code) map.set(code, isValidHexColor(color) ? color : '#7c3aed');
+      map.set(code, isValidHexColor(color) ? color : '#7c3aed');
     }
     return map;
   }, [productos]);
@@ -333,7 +359,7 @@ function InventoryPage() {
     if (monthFilter && monthExact) {
       if (!d || monthKeyFromDate(d) !== monthFilter) return false;
     }
-    if (productFilter && clean(m.producto) !== productFilter) return false;
+    if (productFilters.length > 0 && !productFilters.includes(clean(m.producto))) return false;
     if (lotFilter && clean(m.lote) !== lotFilter) return false;
     if (warehouseFilter && clean(m.bodega) !== warehouseFilter) return false;
     if (typeFilter && clean(m.tipo_movimiento) !== typeFilter) return false;
@@ -351,9 +377,9 @@ function InventoryPage() {
       if (!d) return true;
       return d <= monthEnd;
     });
-  }, [normalizedMovements, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd]);
+  }, [normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd]);
 
-  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
 
   const stockByPLB = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
@@ -364,6 +390,23 @@ function InventoryPage() {
     }
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [stockBase]);
+
+  const stockVisualByProduct = useMemo(() => {
+    const map = new Map<string, { producto: string; total: number; byLote: Record<string, number> }>();
+    for (const row of stockByPLB) {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      const qty = toNum(row.stock);
+      if (!producto || !lote || qty <= 0) continue;
+      if (!map.has(producto)) {
+        map.set(producto, { producto, total: 0, byLote: {} });
+      }
+      const item = map.get(producto)!;
+      item.total += qty;
+      item.byLote[lote] = (item.byLote[lote] || 0) + qty;
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [stockByPLB]);
 
   const movementByLotDetail = useMemo(() => {
     return monthMovements
@@ -463,9 +506,12 @@ function InventoryPage() {
 
   const lotOptions = useMemo(() => {
     const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
-    if (!productFilter) return all;
-    return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(productFilter));
-  }, [lotes, productFilter, productByLotMap]);
+    if (productFilters.length === 0) return all;
+    return all.filter((lot) => {
+      const set = productByLotMap.get(lot) || new Set<string>();
+      return productFilters.some((p) => set.has(p));
+    });
+  }, [lotes, productFilters, productByLotMap]);
 
   const dashMoveLotOptions = useMemo(() => {
     const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
@@ -487,20 +533,20 @@ function InventoryPage() {
     if (!lotFilter) return;
     const products = Array.from(productByLotMap.get(lotFilter) || []);
     if (products.length === 0) return;
-    if (!productFilter) {
-      if (products.length === 1) setProductFilter(products[0]);
+    if (productFilters.length === 0) {
+      if (products.length === 1) setProductFilters([products[0]]);
       return;
     }
-    if (!products.includes(productFilter)) {
-      setProductFilter(products[0]);
+    if (!productFilters.every((p) => products.includes(p))) {
+      setProductFilters((prev) => prev.filter((p) => products.includes(p)));
     }
-  }, [lotFilter, productFilter, productByLotMap]);
+  }, [lotFilter, productFilters, productByLotMap]);
 
   useEffect(() => {
     if (!lotFilter) return;
     if (lotOptions.includes(lotFilter)) return;
     setLotFilter('');
-  }, [productFilter, lotFilter, lotOptions]);
+  }, [productFilters, lotFilter, lotOptions]);
 
   useEffect(() => {
     if (!dashMoveLot) return;
@@ -595,10 +641,10 @@ function InventoryPage() {
         };
       })
       .filter(Boolean)
-      .filter((r: any) => (productFilter ? r.producto === productFilter : true))
+      .filter((r: any) => (productFilters.length > 0 ? productFilters.includes(r.producto) : true))
       .filter((r: any) => (controlSemaforoFilter ? r.semaforo === controlSemaforoFilter : true))
       .sort((a: any, b: any) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
-  }, [lotes, productos, stockByPLB, productFilter, controlSemaforoFilter]);
+  }, [lotes, productos, stockByPLB, productFilters, controlSemaforoFilter]);
 
   const riskyProductsSummary = useMemo(() => {
     const acc = new Map<string, { producto: string; stockTotal: number; coberturaMeses: number }>();
@@ -683,7 +729,7 @@ function InventoryPage() {
       if (byDate !== 0) return byDate;
       return b.id - a.id;
     });
-  }, [monthFilter, monthMovements, normalizedMovements, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  }, [monthFilter, monthMovements, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
 
   const visibleMovementsLast7Days = useMemo(() => {
     if (showMovementsAll) return visibleMovements;
@@ -703,7 +749,7 @@ function InventoryPage() {
 
   useEffect(() => {
     setShowMovementsAll(false);
-  }, [monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  }, [monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
 
   useEffect(() => {
     writeLocalJson(INVENTORY_CANET_MOVS_KEY, movimientos);
@@ -1032,7 +1078,7 @@ function InventoryPage() {
   };
 
   const isEditModeActive = accessMode === 'edit' && canEditNow;
-  const activeMainFiltersCount = [productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter].filter(Boolean).length;
+  const activeMainFiltersCount = [productFilters.length > 0, lotFilter, warehouseFilter, typeFilter, clientFilter].filter(Boolean).length;
   const compactInventoryTiles: Array<{ key: 'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'; label: string; Icon: any }> = [
     { key: 'stock', label: 'Stock', Icon: Package },
     { key: 'moves', label: 'Movimientos', Icon: ClipboardList },
@@ -1041,7 +1087,7 @@ function InventoryPage() {
     { key: 'outputs', label: 'Salidas', Icon: ArrowDownCircle },
   ];
   const activeMainFilterChips = [
-    productFilter ? { key: 'producto', label: `Producto: ${productFilter}`, onClear: () => setProductFilter('') } : null,
+    ...productFilters.map((p) => ({ key: `producto-${p}`, label: `Producto: ${p}`, onClear: () => removeProductFilter(p) })),
     lotFilter ? { key: 'lote', label: `Lote: ${lotFilter}`, onClear: () => setLotFilter('') } : null,
     warehouseFilter ? { key: 'bodega', label: `Bodega: ${warehouseFilter}`, onClear: () => setWarehouseFilter('') } : null,
     typeFilter ? { key: 'tipo', label: `Tipo: ${typeFilter}`, onClear: () => setTypeFilter('') } : null,
@@ -1218,7 +1264,8 @@ function InventoryPage() {
             {activeMainFiltersCount > 0 && (
               <button
                 onClick={() => {
-                  setProductFilter('');
+                  setProductFilterInput('');
+                  setProductFilters([]);
                   setLotFilter('');
                   setWarehouseFilter('');
                   setTypeFilter('');
@@ -1233,11 +1280,11 @@ function InventoryPage() {
 
           {showMainFilters && (
             <div className="mt-3 grid gap-2 md:grid-cols-5">
-              <SelectFilter label="Producto" value={productFilter} onChange={setProductFilter} options={productOptions} />
-              <SelectFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
-              <SelectFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
-              <SelectFilter label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
-              <SelectFilter label="Cliente" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
+              <InputDatalistTag label="Producto" value={productFilterInput} onChange={setProductFilterInput} onSelect={addProductFilter} listId="inv-filter-product" options={productOptions} placeholder="Escribe producto..." />
+              <InputDatalist label="Lote" value={lotFilter} onChange={setLotFilter} listId="inv-filter-lot" options={lotOptions} placeholder="Escribe lote..." />
+              <InputDatalist label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} listId="inv-filter-bodega" options={warehouseOptions} placeholder="Escribe bodega..." />
+              <InputDatalist label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} listId="inv-filter-type" options={typeOptions} placeholder="Escribe tipo..." />
+              <InputDatalist label="Cliente" value={clientFilter} onChange={setClientFilter} listId="inv-filter-client" options={clientOptions} placeholder="Escribe cliente..." />
             </div>
           )}
           {activeMainFilterChips.length > 0 && (
@@ -1344,6 +1391,16 @@ function InventoryPage() {
                 </span>,
               ];
             })} />
+            <StockByProductVisual
+              rows={stockVisualByProduct}
+              colorMap={productColorMap}
+              onSelectLot={(producto, lote, cantidad) => setStockLotSelected({ producto, lote, cantidad: Number(cantidad.toFixed(2)) })}
+            />
+            {stockLotSelected && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-800">
+                <ProductPill code={stockLotSelected.producto} colorMap={productColorMap} /> Lote {stockLotSelected.lote}: {stockLotSelected.cantidad}
+              </div>
+            )}
           </DataSection>
           )}
 
@@ -1759,6 +1816,7 @@ function InventoryPage() {
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -1766,6 +1824,57 @@ function InventoryPage() {
 function ProductPill({ code, colorMap }: { code: string; colorMap: Map<string, string> }) {
   const color = colorMap.get(code) || '#7c3aed';
   return <span className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-black" style={{ backgroundColor: `${color}22`, color }}><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />{code || '-'}</span>;
+}
+
+function StockByProductVisual({
+  rows,
+  colorMap,
+  onSelectLot,
+}: {
+  rows: Array<{ producto: string; total: number; byLote: Record<string, number> }>;
+  colorMap: Map<string, string>;
+  onSelectLot: (producto: string, lote: string, cantidad: number) => void;
+}) {
+  if (rows.length === 0) return null;
+  const maxTotal = Math.max(1, ...rows.map((r) => r.total));
+  const lotPalette = ['#4f46e5', '#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#84cc16', '#f97316', '#06b6d4'];
+  const allLots = Array.from(new Set(rows.flatMap((r) => Object.keys(r.byLote)).filter(Boolean))).sort();
+  const lotColorMap = new Map<string, string>();
+  allLots.forEach((l, i) => lotColorMap.set(l, lotPalette[i % lotPalette.length]));
+  return (
+    <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/40 p-3">
+      <h4 className="mb-2 text-xs font-black uppercase tracking-wide text-violet-700">Vista visual de stock por producto</h4>
+      <div className="mt-2 space-y-2">
+        {rows.map((row) => {
+          const total = Math.max(1, row.total);
+          const rowWidthPct = Math.max(6, (row.total / maxTotal) * 100);
+          const sortedLots = Object.entries(row.byLote).filter(([, qty]) => qty > 0).sort((a, b) => b[1] - a[1]);
+          return (
+            <div key={`stock-visual-${row.producto}`} className="grid w-full grid-cols-[120px_1fr_64px] items-center gap-2">
+              <div className="truncate">
+                <ProductPill code={row.producto} colorMap={colorMap} />
+              </div>
+              <div className="h-6 overflow-hidden rounded-md border border-violet-100 bg-white">
+                <div className="flex h-full" style={{ width: `${rowWidthPct}%` }}>
+                  {sortedLots.map(([lote, qty]) => (
+                    <div
+                      key={`${row.producto}-${lote}`}
+                      title={`Lote ${lote}: ${Math.round(qty)}`}
+                      onClick={() => onSelectLot(row.producto, lote, qty)}
+                      className="h-full cursor-pointer transition-opacity hover:opacity-80"
+                      style={{ width: `${(qty / total) * 100}%`, backgroundColor: lotColorMap.get(lote) || '#4f46e5' }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="text-right text-xs font-black text-violet-900">{Math.round(row.total)}</div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un color para ver el lote y la cantidad.</p>
+    </div>
+  );
 }
 
 function ToggleRowsButton({ showAll, onToggle }: { showAll: boolean; onToggle: () => void }) {
@@ -1855,6 +1964,50 @@ function InputDatalist({ label, value, onChange, listId, options, placeholder }:
       {label}
       <>
         <input list={listId} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none" />
+        <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
+      </>
+    </label>
+  );
+}
+
+function InputDatalistTag({
+  label,
+  value,
+  onChange,
+  onSelect,
+  listId,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (v: string) => void;
+  listId: string;
+  options: string[];
+  placeholder?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+      {label}
+      <>
+        <input
+          list={listId}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onSelect(value);
+            }
+          }}
+          onBlur={() => {
+            if (!value) return;
+            if (options.includes(value)) onSelect(value);
+          }}
+          placeholder={placeholder}
+          className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+        />
         <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
       </>
     </label>
