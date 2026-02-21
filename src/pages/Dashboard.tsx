@@ -111,6 +111,7 @@ const formatCoverageText = (months: number) => {
 };
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
+const productKey = (v: unknown) => clean(v).toUpperCase();
 const toNum = (v: unknown) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
@@ -1101,6 +1102,47 @@ function Dashboard() {
             }),
         [criticalProductsFromInventory, globalStockByProductLotFromInventory],
     );
+    const mountedCriticalDetailsFallback = useMemo(() => {
+        try {
+            if (typeof window === 'undefined') return [] as Array<{ producto: string; byBodega: Array<{ bodega: string; cantidad: number }>; byLote: Array<{ lote: string; cantidad: number }> }>;
+            const rawHuarte = window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY);
+            const parsedHuarte = rawHuarte ? JSON.parse(rawHuarte) : [];
+            const huarteSource = Array.isArray(parsedHuarte) ? parsedHuarte : [];
+            const rawCanet = window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY);
+            const parsedCanet = rawCanet ? JSON.parse(rawCanet) : [];
+            const canetSource = Array.isArray(parsedCanet) ? parsedCanet : [];
+            const source = huarteSource.length > 0 ? huarteSource : canetSource;
+
+            const acc = new Map<string, { byBodega: Map<string, number>; byLote: Map<string, number> }>();
+            source.forEach((m: any) => {
+                const producto = clean(m?.producto);
+                const lote = clean(m?.lote);
+                const bodega = clean(m?.bodega) || 'Sin bodega';
+                const qtyRaw = Number(m?.cantidad_signed);
+                const qty = Number.isFinite(qtyRaw) ? qtyRaw : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
+                if (!producto || !lote || qty <= 0) return;
+                const key = productKey(producto);
+                if (!acc.has(key)) {
+                    acc.set(key, { byBodega: new Map(), byLote: new Map() });
+                }
+                const row = acc.get(key)!;
+                row.byBodega.set(bodega, (row.byBodega.get(bodega) || 0) + qty);
+                row.byLote.set(lote, (row.byLote.get(lote) || 0) + qty);
+            });
+
+            return Array.from(acc.entries()).map(([key, row]) => ({
+                producto: key,
+                byBodega: Array.from(row.byBodega.entries())
+                    .map(([bodega, cantidad]) => ({ bodega, cantidad }))
+                    .sort((a, b) => b.cantidad - a.cantidad),
+                byLote: Array.from(row.byLote.entries())
+                    .map(([lote, cantidad]) => ({ lote, cantidad }))
+                    .sort((a, b) => b.cantidad - a.cantidad),
+            }));
+        } catch {
+            return [] as Array<{ producto: string; byBodega: Array<{ bodega: string; cantidad: number }>; byLote: Array<{ lote: string; cantidad: number }> }>;
+        }
+    }, []);
     const weeklyTeamAbsences = useMemo(
         () => weeklyAbsences.filter((a) => a.created_by !== currentUser?.id),
         [weeklyAbsences, currentUser?.id],
@@ -1606,7 +1648,9 @@ function Dashboard() {
                                                     key={`mounted-${item.producto}`}
                                                     type="button"
                                                     onClick={() => {
-                                                        const detail = mountedCriticalDetailsFromInventory.find((d) => d.producto === item.producto);
+                                                        const detail =
+                                                            mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto)) ||
+                                                            mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto));
                                                         setSelectedInventoryDetail({
                                                             tipo: 'mounted',
                                                             producto: item.producto,
@@ -1633,7 +1677,7 @@ function Dashboard() {
                                                     key={`potential-${item.producto}`}
                                                     type="button"
                                                     onClick={() => {
-                                                        const detail = potentialCriticalDetailsFromInventory.find((d) => d.producto === item.producto);
+                                                        const detail = potentialCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
                                                         setSelectedInventoryDetail({
                                                             tipo: 'potential',
                                                             producto: item.producto,
@@ -1659,7 +1703,7 @@ function Dashboard() {
                                                     key={`canet-${item.producto}`}
                                                     type="button"
                                                     onClick={() => {
-                                                        const detail = canetCriticalDetailsFromInventory.find((d) => d.producto === item.producto);
+                                                        const detail = canetCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
                                                         setSelectedInventoryDetail({
                                                             tipo: 'canet',
                                                             producto: item.producto,
