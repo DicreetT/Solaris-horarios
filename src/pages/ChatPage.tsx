@@ -8,7 +8,7 @@ import { FileUploader, Attachment } from '../components/FileUploader';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { useAbsences } from '../hooks/useAbsences';
-import { formatDatePretty } from '../utils/dateUtils';
+import { formatDateTimePretty } from '../utils/dateUtils';
 import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { supabase } from '../lib/supabase';
@@ -567,7 +567,7 @@ function ChatPage() {
                                                 )}
 
                                                 <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500">
-                                                    <span>{formatDatePretty(new Date(msg.created_at))}</span>
+                                                    <span>{formatDateTimePretty(new Date(msg.created_at))}</span>
                                                     <button
                                                         onClick={() => setReplyToId(msg.id)}
                                                         className="inline-flex items-center gap-1 text-violet-700 font-bold"

@@ -15,6 +15,17 @@ export function formatDatePretty(date: Date): string {
     });
 }
 
+export function formatDateTimePretty(date: Date): string {
+    return date.toLocaleString("es-ES", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 export function formatTimeNow(): string {
     const now = new Date();
     const h = String(now.getHours()).padStart(2, "0");
