@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
@@ -182,6 +183,7 @@ function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>('');
+  const [showMainFilters, setShowMainFilters] = useState(false);
 
   const [dashMoveProduct, setDashMoveProduct] = useState('');
   const [dashMoveLot, setDashMoveLot] = useState('');
@@ -419,10 +421,105 @@ function InventoryPage() {
   }, [adjustmentControl]);
 
   const productOptions = useMemo(() => Array.from(new Set(productos.map((p) => clean(p.producto)).filter(Boolean))).sort(), [productos]);
-  const lotOptions = useMemo(() => Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort(), [lotes]);
+  const productByLotMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto || !lote) continue;
+      const set = map.get(lote) || new Set<string>();
+      set.add(producto);
+      map.set(lote, set);
+    }
+    for (const m of normalizedMovements) {
+      const producto = clean(m.producto);
+      const lote = clean(m.lote);
+      if (!producto || !lote) continue;
+      const set = map.get(lote) || new Set<string>();
+      set.add(producto);
+      map.set(lote, set);
+    }
+    return map;
+  }, [lotes, normalizedMovements]);
+
+  const lotOptions = useMemo(() => {
+    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    if (!productFilter) return all;
+    return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(productFilter));
+  }, [lotes, productFilter, productByLotMap]);
+
+  const dashMoveLotOptions = useMemo(() => {
+    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    if (!dashMoveProduct) return all;
+    return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(dashMoveProduct));
+  }, [lotes, dashMoveProduct, productByLotMap]);
+
+  const dashOutLotOptions = useMemo(() => {
+    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    if (!dashOutProduct) return all;
+    return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(dashOutProduct));
+  }, [lotes, dashOutProduct, productByLotMap]);
+
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
+
+  useEffect(() => {
+    if (!lotFilter) return;
+    const products = Array.from(productByLotMap.get(lotFilter) || []);
+    if (products.length === 0) return;
+    if (!productFilter) {
+      if (products.length === 1) setProductFilter(products[0]);
+      return;
+    }
+    if (!products.includes(productFilter)) {
+      setProductFilter(products[0]);
+    }
+  }, [lotFilter, productFilter, productByLotMap]);
+
+  useEffect(() => {
+    if (!lotFilter) return;
+    if (lotOptions.includes(lotFilter)) return;
+    setLotFilter('');
+  }, [productFilter, lotFilter, lotOptions]);
+
+  useEffect(() => {
+    if (!dashMoveLot) return;
+    const products = Array.from(productByLotMap.get(dashMoveLot) || []);
+    if (products.length === 0) return;
+    if (!dashMoveProduct && products.length === 1) {
+      setDashMoveProduct(products[0]);
+      return;
+    }
+    if (dashMoveProduct && !products.includes(dashMoveProduct)) {
+      setDashMoveProduct(products[0]);
+    }
+  }, [dashMoveLot, dashMoveProduct, productByLotMap]);
+
+  useEffect(() => {
+    if (!dashMoveLot) return;
+    if (dashMoveLotOptions.includes(dashMoveLot)) return;
+    setDashMoveLot('');
+  }, [dashMoveProduct, dashMoveLot, dashMoveLotOptions]);
+
+  useEffect(() => {
+    if (!dashOutLot) return;
+    const products = Array.from(productByLotMap.get(dashOutLot) || []);
+    if (products.length === 0) return;
+    if (!dashOutProduct && products.length === 1) {
+      setDashOutProduct(products[0]);
+      return;
+    }
+    if (dashOutProduct && !products.includes(dashOutProduct)) {
+      setDashOutProduct(products[0]);
+    }
+  }, [dashOutLot, dashOutProduct, productByLotMap]);
+
+  useEffect(() => {
+    if (!dashOutLot) return;
+    if (dashOutLotOptions.includes(dashOutLot)) return;
+    setDashOutLot('');
+  }, [dashOutProduct, dashOutLot, dashOutLotOptions]);
 
   const controlStockRows = useMemo(() => {
     const productMeta = new Map<string, { vialesPorCaja: number; consumoMensual: number; modo: string }>();
@@ -723,6 +820,7 @@ function InventoryPage() {
       } : m));
       await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
       appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
+      emitSuccessFeedback('Movimiento actualizado con éxito.');
     } else {
       const next: Movement = {
         id: normalizedMovements.length ? Math.max(...normalizedMovements.map((m) => m.id || 0)) + 1 : 1,
@@ -742,6 +840,7 @@ function InventoryPage() {
       setMovimientos((prev) => [next, ...prev]);
       await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${next.tipo_movimiento} · ${next.producto} ${next.lote}.`);
       appendAudit('Creación de movimiento', `${next.tipo_movimiento} · ${next.producto} ${next.lote} · ${next.cantidad_signed}`);
+      emitSuccessFeedback('Movimiento creado con éxito.');
     }
 
     setMovementModalOpen(false);
@@ -755,6 +854,7 @@ function InventoryPage() {
     setMovimientos((prev) => prev.filter((m) => m.id !== id));
     await notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${id}).`);
     appendAudit('Eliminación de movimiento', `ID ${id}`);
+    emitSuccessFeedback('Movimiento eliminado con éxito.');
   };
 
   const getCaducitySemaforo = (dateKey: string) => {
@@ -801,10 +901,12 @@ function InventoryPage() {
       );
       await notifyAnabela(`${actorName} editó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
       appendAudit('Edición de lote', `${lotForm.producto} ${lotForm.lote}`);
+      emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
       setLotes((prev) => [{ ...lotForm, semaforo_caducidad: semaforo }, ...prev]);
       await notifyAnabela(`${actorName} creó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
       appendAudit('Creación de lote', `${lotForm.producto} ${lotForm.lote}`);
+      emitSuccessFeedback('Lote creado con éxito.');
     }
     setLotModalOpen(false);
     setEditingLotKey(null);
@@ -816,6 +918,7 @@ function InventoryPage() {
     setBodegas((prev) => [{ bodega: bodegaForm.bodega.trim(), activo_si_no: bodegaForm.activo_si_no }, ...prev]);
     await notifyAnabela(`${actorName} creó una bodega en Inventario: ${bodegaForm.bodega.trim()}.`);
     appendAudit('Creación de bodega', bodegaForm.bodega.trim());
+    emitSuccessFeedback('Bodega creada con éxito.');
     setBodegaForm({ bodega: '', activo_si_no: 'SI' });
     setBodegaModalOpen(false);
   };
@@ -836,6 +939,7 @@ function InventoryPage() {
     ]);
     await notifyAnabela(`${actorName} creó tipo de movimiento: ${tipoForm.tipo_movimiento.trim()}.`);
     appendAudit('Creación de tipo', `${tipoForm.tipo_movimiento.trim()} (signo ${tipoForm.signo_1_1})`);
+    emitSuccessFeedback('Tipo de movimiento creado con éxito.');
     setTipoForm({ tipo_movimiento: '', signo_1_1: '-1', afecta_stock_si_no: 'SI' });
     setTipoModalOpen(false);
   };
@@ -846,6 +950,7 @@ function InventoryPage() {
     setClientes((prev) => [{ cliente: newClient.trim() }, ...prev]);
     void notifyAnabela(`${actorName} creó un cliente en Inventario: ${newClient.trim()}.`);
     appendAudit('Creación de cliente', newClient.trim());
+    emitSuccessFeedback('Cliente creado con éxito.');
     setNewClient('');
   };
 
@@ -855,6 +960,7 @@ function InventoryPage() {
     openTablePdf('Inventario - Movimientos', `inventario-movimientos-${monthFilter || 'todos'}.pdf`, headers, rows);
     await notifyAnabela(`${actorName} descargó movimientos de Inventario (${monthFilter || 'todos'}).`);
     appendAudit('Descarga PDF', `Movimientos (${monthFilter || 'todos'})`);
+    emitSuccessFeedback('PDF generado con éxito.');
   };
 
   const tabs: Array<{ key: InventoryTab; label: string; icon: React.ElementType; compact?: boolean }> = [
@@ -875,12 +981,17 @@ function InventoryPage() {
   };
 
   const isEditModeActive = accessMode === 'edit' && canEditNow;
+  const activeMainFiltersCount = [productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter].filter(Boolean).length;
 
   useEffect(() => {
     if (accessMode === 'edit' && !canEditNow) {
       setAccessMode('consult');
     }
   }, [accessMode, canEditNow]);
+
+  useEffect(() => {
+    if (accessMode === 'unset') setShowMainFilters(false);
+  }, [accessMode]);
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
@@ -1030,12 +1141,40 @@ function InventoryPage() {
       )}
 
       {accessMode !== 'unset' && (tab === 'dashboard' || tab === 'movimientos') && (
-        <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm grid gap-2 md:grid-cols-5">
-          <SelectFilter label="Producto" value={productFilter} onChange={setProductFilter} options={productOptions} />
-          <SelectFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
-          <SelectFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
-          <SelectFilter label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
-          <SelectFilter label="Cliente" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
+        <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowMainFilters((prev) => !prev)}
+              className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"
+            >
+              {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
+              {activeMainFiltersCount > 0 ? ` (${activeMainFiltersCount})` : ''}
+            </button>
+            {activeMainFiltersCount > 0 && (
+              <button
+                onClick={() => {
+                  setProductFilter('');
+                  setLotFilter('');
+                  setWarehouseFilter('');
+                  setTypeFilter('');
+                  setClientFilter('');
+                }}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          {showMainFilters && (
+            <div className="mt-3 grid gap-2 md:grid-cols-5">
+              <SelectFilter label="Producto" value={productFilter} onChange={setProductFilter} options={productOptions} />
+              <SelectFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
+              <SelectFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
+              <SelectFilter label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+              <SelectFilter label="Cliente" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
+            </div>
+          )}
         </div>
       )}
 
@@ -1120,7 +1259,7 @@ function InventoryPage() {
           }}>
             <div className="grid gap-2 md:grid-cols-3 mb-3">
               <SelectFilter label="Producto" value={dashMoveProduct} onChange={setDashMoveProduct} options={productOptions} />
-              <SelectFilter label="Lote" value={dashMoveLot} onChange={setDashMoveLot} options={lotOptions} />
+              <SelectFilter label="Lote" value={dashMoveLot} onChange={setDashMoveLot} options={dashMoveLotOptions} />
               <SelectFilter label="Bodega" value={dashMoveBodega} onChange={setDashMoveBodega} options={warehouseOptions} />
             </div>
             <SimpleDataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad']} rows={takeRows(movementByLotDetail, showMovesAll).map((m) => [m.fecha, m.tipo_movimiento, <ProductPill key={`${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || 0])} />
@@ -1176,7 +1315,7 @@ function InventoryPage() {
           }}>
             <div className="grid gap-2 md:grid-cols-2 mb-3">
               <SelectFilter label="Producto" value={dashOutProduct} onChange={setDashOutProduct} options={productOptions} />
-              <SelectFilter label="Lote" value={dashOutLot} onChange={setDashOutLot} options={lotOptions} />
+              <SelectFilter label="Lote" value={dashOutLot} onChange={setDashOutLot} options={dashOutLotOptions} />
             </div>
             <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(outputControl, showOutputAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
             {outputControl.length > 5 && (
@@ -1355,7 +1494,7 @@ function InventoryPage() {
       )}
 
       {movementModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">{editingId ? 'Editar movimiento' : 'Crear movimiento'}</h3>
@@ -1387,7 +1526,7 @@ function InventoryPage() {
       )}
 
       {lotModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-2xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">{editingLotKey ? 'Editar lote' : 'Añadir lote'}</h3>
@@ -1408,7 +1547,7 @@ function InventoryPage() {
       )}
 
       {bodegaModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Añadir bodega</h3>
@@ -1433,7 +1572,7 @@ function InventoryPage() {
       )}
 
       {tipoModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Añadir tipo de movimiento</h3>
@@ -1465,7 +1604,7 @@ function InventoryPage() {
       )}
 
       {riskModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-2xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Productos en riesgo</h3>

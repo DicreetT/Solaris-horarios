@@ -11,6 +11,14 @@ interface StormOverlayProps {
 }
 
 export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTasks, onTaskClick, children }) => {
+    const [panelDismissed, setPanelDismissed] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!isActive) {
+            setPanelDismissed(false);
+        }
+    }, [isActive]);
+
     // Raindrops generation - more dense and visible
     const raindrops = React.useMemo(() => {
         return Array.from({ length: 80 }).map((_, i) => ({
@@ -56,11 +64,10 @@ export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTas
             {/* Main Content with Filter */}
             <motion.div
                 animate={{
-                    filter: isActive ? 'grayscale(0.8) brightness(0.6) contrast(1.2) saturate(0.5)' : 'grayscale(0) brightness(1) contrast(1) saturate(1)',
-                    scale: isActive ? 0.99 : 1, // Subtle "crashing" feel
+                    scale: 1,
                 }}
                 transition={{ duration: 2, ease: "easeInOut" }}
-                className="relative z-0 min-h-screen bg-white dark:bg-slate-900"
+                className="relative min-h-screen bg-white dark:bg-slate-900"
             >
                 {children}
             </motion.div>
@@ -76,10 +83,10 @@ export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTas
                         className="fixed inset-0 pointer-events-none z-[100] overflow-hidden"
                     >
                         {/* Gloomy Vignette */}
-                        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/60 via-transparent to-slate-950/80 shadow-[inset_0_0_200px_rgba(0,0,0,0.8)]" />
+                        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/65 via-slate-900/20 to-slate-950/80 shadow-[inset_0_0_220px_rgba(0,0,0,0.85)]" />
 
                         {/* Animated Clouds (SVG) - Top */}
-                        <div className="absolute top-0 left-0 right-0 overflow-hidden h-40">
+                        <div className="absolute top-0 left-0 right-0 overflow-hidden h-56">
                             {[1, 2, 3, 4, 5].map((i) => (
                                 <motion.div
                                     key={i}
@@ -91,11 +98,13 @@ export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTas
                                         ease: "linear",
                                         delay: i * -10
                                     }}
-                                    className="absolute opacity-40 blur-sm"
-                                    style={{ top: `${i * 10}%` }}
+                                    className="absolute opacity-45 blur-[2px]"
+                                    style={{ top: `${i * 8}%` }}
                                 >
-                                    <div className="w-64 h-24 bg-slate-700 rounded-full flex items-center justify-center">
-                                        <Zap size={40} className="text-yellow-500/20" />
+                                    <div className="relative w-72 h-28 rounded-[999px] bg-slate-700/80 border border-slate-500/20">
+                                        <div className="absolute -top-4 left-10 w-24 h-16 rounded-[999px] bg-slate-700/80" />
+                                        <div className="absolute -top-6 left-28 w-28 h-18 rounded-[999px] bg-slate-700/80" />
+                                        <div className="absolute -top-3 left-48 w-20 h-14 rounded-[999px] bg-slate-700/80" />
                                     </div>
                                 </motion.div>
                             ))}
@@ -139,9 +148,9 @@ export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTas
                         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-full max-w-sm px-6 pointer-events-auto">
                             <motion.div
                                 initial={{ y: 50, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
+                                animate={{ y: panelDismissed ? 16 : 0, opacity: panelDismissed ? 0 : 1 }}
                                 transition={{ delay: 1, type: "spring" }}
-                                className="bg-slate-900/90 backdrop-blur-xl border border-slate-700 p-5 rounded-3xl shadow-2xl space-y-4"
+                                className={`bg-slate-900/90 backdrop-blur-xl border border-slate-700 p-5 rounded-3xl shadow-2xl space-y-4 ${panelDismissed ? 'pointer-events-none' : ''}`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div className="p-2 bg-yellow-500/20 rounded-xl">
@@ -161,7 +170,10 @@ export const StormOverlay: React.FC<StormOverlayProps> = ({ isActive, shockedTas
                                                 key={t.id}
                                                 whileHover={{ scale: 1.02, x: 5 }}
                                                 whileTap={{ scale: 0.98 }}
-                                                onClick={() => onTaskClick?.(t.id)}
+                                                onClick={() => {
+                                                    setPanelDismissed(true);
+                                                    onTaskClick?.(t.id);
+                                                }}
                                                 className="flex items-center gap-2 text-xs text-slate-300 bg-slate-800/80 hover:bg-slate-700/80 p-2 rounded-lg border border-slate-700/50 cursor-pointer shadow-sm hover:text-white transition-colors group"
                                             >
                                                 <div className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-ping group-hover:bg-yellow-400" />

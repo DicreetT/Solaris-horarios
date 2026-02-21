@@ -13,15 +13,17 @@ import { haptics } from '../utils/haptics';
 interface TaskDetailModalProps {
     task: Todo;
     onClose: () => void;
+    onMarkCommentsRead?: (task: Todo) => void;
 }
 
-export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
+export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: TaskDetailModalProps) {
     const { currentUser } = useAuth();
     const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
     const [newComment, setNewComment] = useState('');
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showCelebration, setShowCelebration] = useState(false);
+    const [, setReadTick] = useState(0);
 
     // Edit States
     const [isEditing, setIsEditing] = useState(false);
@@ -36,6 +38,55 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
 
     // Main badge/button state reflects the current user
     const isCompleted = isDoneForMe;
+    const getSeenStorageKey = (taskId: number) => `task-comments-seen:${currentUser.id}:${taskId}`;
+    const toMillis = (value?: string | null) => {
+        if (!value) return 0;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const latestForeignComment = (task.comments || [])
+        .filter((c) => c.user_id !== currentUser.id)
+        .filter((c) => !!c.created_at)
+        .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))[0];
+    const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+    const seenAtMs = toMillis(seenAt);
+    const unreadForeignComments = (task.comments || []).filter((c) => (
+        c.user_id !== currentUser.id &&
+        toMillis(c.created_at) > seenAtMs
+    )).length;
+
+    const handleMarkCommentsRead = async () => {
+        const wasShocked = !!task.shocked_users?.includes(currentUser.id);
+        if (latestForeignComment?.created_at) {
+            localStorage.setItem(getSeenStorageKey(task.id), latestForeignComment.created_at);
+            onMarkCommentsRead?.(task);
+        }
+        if (task.shocked_users?.includes(currentUser.id)) {
+            const nextShocked = (task.shocked_users || []).filter((uid) => uid !== currentUser.id);
+            await updateTodo({
+                id: task.id,
+                updates: {
+                    shocked_users: nextShocked,
+                },
+            });
+        }
+        if (wasShocked) {
+            setShowCelebration(true);
+            window.setTimeout(() => onClose(), 350);
+        }
+        setReadTick((v) => v + 1);
+    };
+
+    const handleResolveByCompleting = async () => {
+        if (isCompleted) {
+            setShowCelebration(true);
+            window.setTimeout(() => onClose(), 250);
+            return;
+        }
+        await handleToggleStatus();
+        setShowCelebration(true);
+        window.setTimeout(() => onClose(), 350);
+    };
 
     // Tag Helpers
     const handleAddTag = (e: React.KeyboardEvent | React.MouseEvent) => {
@@ -253,6 +304,35 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                 </div>
 
                 <div className="space-y-8">
+                    {(task.shocked_users?.includes(currentUser.id) || unreadForeignComments > 0) && (
+                        <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm">
+                            <p className="text-sm font-black text-amber-900">
+                                Modo tormenta activo: completa una acción para volver al sol.
+                            </p>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleMarkCommentsRead}
+                                    className="inline-flex items-center gap-1 rounded-xl border border-primary/50 bg-primary px-3 py-2 text-xs font-black text-white shadow-[0_0_0_2px_rgba(147,51,234,0.15)] hover:bg-primary-dark transition-all"
+                                >
+                                    Marcar leído
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleResolveByCompleting}
+                                    disabled={!task.assigned_to.includes(currentUser.id)}
+                                    className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-black border transition-all ${
+                                        task.assigned_to.includes(currentUser.id)
+                                            ? 'border-emerald-300 bg-emerald-500 text-white shadow-[0_0_0_2px_rgba(16,185,129,0.2)] hover:bg-emerald-600'
+                                            : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {isCompleted ? 'Mi parte terminada' : 'Marcar mi parte terminada'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Description */}
                     <div>
                         <h3 className="text-sm font-bold text-gray-900 mb-3 uppercase tracking-wider">Descripción</h3>
@@ -364,10 +444,21 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
 
                     {/* Comments Section */}
                     <div className="pt-6 border-t border-gray-100">
-                        <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider flex items-center gap-2">
-                            <MessageSquare size={16} />
-                            Comentarios ({task.comments?.length || 0})
-                        </h3>
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+                                <MessageSquare size={16} />
+                                Comentarios ({task.comments?.length || 0})
+                            </h3>
+                            {(unreadForeignComments > 0 || task.shocked_users?.includes(currentUser.id)) && (
+                                <button
+                                    type="button"
+                                    onClick={handleMarkCommentsRead}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary ring-1 ring-primary/30 hover:bg-primary/20 hover:ring-primary/50 transition-all"
+                                >
+                                    Marcar leído
+                                </button>
+                            )}
+                        </div>
 
                         {/* Comments List */}
                         <div className="space-y-4 mb-6">

@@ -3,6 +3,7 @@ import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Training, TrainingComment } from '../types';
 import { ESTEBAN_ID } from '../constants';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 export function useTraining(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -52,6 +53,7 @@ export function useTraining(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+            emitSuccessFeedback('Solicitud de formación creada con éxito.');
         },
     });
 
@@ -99,6 +101,7 @@ export function useTraining(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+            emitSuccessFeedback('Comentario guardado con éxito.');
         },
     });
 
@@ -116,6 +119,7 @@ export function useTraining(currentUser: User | null) {
         },
         onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+            emitSuccessFeedback('Estado de formación actualizado con éxito.');
 
             // Notify user of status change
             const request = trainingRequests.find(r => r.id === variables.id);
@@ -158,6 +162,7 @@ export function useTraining(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+            emitSuccessFeedback('Solicitud de formación actualizada con éxito.');
         },
     });
 
@@ -171,6 +176,7 @@ export function useTraining(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['training'] });
+            emitSuccessFeedback('Solicitud de formación eliminada con éxito.');
         },
     });
 

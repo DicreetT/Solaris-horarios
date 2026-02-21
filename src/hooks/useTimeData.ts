@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { toDateKey } from '../utils/dateUtils';
 import type { TimeDataByDate, TimeEntry } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 interface UseTimeDataOptions {
     from?: Date | string;
@@ -94,6 +95,7 @@ export function useTimeData(options?: UseTimeDataOptions) {
                 newData[dateKey][userId] = [...newData[dateKey][userId], newEntry];
                 return newData;
             });
+            emitSuccessFeedback('Registro horario guardado con éxito.');
         },
     });
 
@@ -124,6 +126,7 @@ export function useTimeData(options?: UseTimeDataOptions) {
                 }
                 return newData;
             });
+            emitSuccessFeedback('Registro horario actualizado con éxito.');
         },
     });
 
@@ -160,6 +163,7 @@ export function useTimeData(options?: UseTimeDataOptions) {
                 });
                 return newData;
             });
+            emitSuccessFeedback('Registro horario eliminado con éxito.');
         },
     });
 

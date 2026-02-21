@@ -25,7 +25,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
     const queryClient = useQueryClient();
     const [showCelebration, setShowCelebration] = React.useState(false);
     const isDoneForMe = todo.completed_by.includes(currentUser.id);
-    const isGloballyDone = todo.assigned_to.length > 0 && todo.assigned_to.every(uid => todo.completed_by.includes(uid));
+    const hasPendingAssignees = (todo.assigned_to || []).some((uid) => !todo.completed_by.includes(uid));
 
     // Simple calculation for due date
     const today = new Date().toISOString().split('T')[0];
@@ -142,18 +142,28 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                     <div className="flex items-center gap-1 ml-2">
                         {unreadCommentsCount > 0 && onMarkCommentsRead && (
                             <button
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                     e.stopPropagation();
                                     onMarkCommentsRead(todo);
+                                    if (todo.shocked_users?.includes(currentUser.id)) {
+                                        const nextShocked = (todo.shocked_users || []).filter((uid) => uid !== currentUser.id);
+                                        const { error } = await supabase
+                                            .from('todos')
+                                            .update({ shocked_users: nextShocked })
+                                            .eq('id', todo.id);
+                                        if (!error) {
+                                            queryClient.invalidateQueries({ queryKey: ['todos'] });
+                                        }
+                                    }
                                 }}
-                                className="px-2 py-1 rounded-lg border border-primary/40 bg-primary/10 text-primary text-[10px] font-black hover:bg-primary/20 transition-colors shadow-sm"
+                                className="px-2 py-1 rounded-lg border border-primary/40 bg-primary/10 text-primary text-[10px] font-black hover:bg-primary/20 transition-colors shadow-sm ring-1 ring-primary/30 hover:ring-primary/50"
                                 title="Marcar comentarios como leídos"
                             >
                                 Marcar leído
                             </button>
                         )}
                         {/* Electrocutada Button */}
-                        {!isGloballyDone && (
+                        {hasPendingAssignees && (
                             <motion.button
                                 whileHover={{ scale: 1.2, rotate: 15 }}
                                 whileTap={{ scale: 0.8 }}
@@ -182,7 +192,7 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                         }
                                     }
                                 }}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-yellow-400 text-black hover:bg-yellow-500 transition-colors shadow-sm ring-1 ring-yellow-500/40"
+                                className="w-7 h-7 flex items-center justify-center rounded-lg bg-yellow-400 text-black hover:bg-yellow-500 transition-colors shadow-sm ring-1 ring-yellow-500/40 shadow-yellow-300/60"
                                 title="¡Dar una electrocutada! ⚡"
                             >
                                 <Zap size={14} />

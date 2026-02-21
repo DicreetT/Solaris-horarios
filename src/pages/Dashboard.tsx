@@ -36,6 +36,7 @@ import { supabase } from '../lib/supabase';
 import { FileUploader, Attachment } from '../components/FileUploader';
 import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
@@ -545,6 +546,7 @@ function Dashboard() {
                     attachments: requestAttachments,
                     userId: currentUser.isAdmin ? requestTargetUserId : undefined,
                 });
+                emitSuccessFeedback(activeRequestModal === 'vacation' ? 'Vacaciones solicitadas con éxito.' : 'Ausencia solicitada con éxito.');
             }
 
             if (activeRequestModal === 'training') {
@@ -558,6 +560,7 @@ function Dashboard() {
                     comments: '',
                     attachments: requestAttachments,
                 });
+                emitSuccessFeedback('Formación solicitada con éxito.');
             }
 
             if (activeRequestModal === 'meeting') {
@@ -573,6 +576,7 @@ function Dashboard() {
                     participants: requestParticipants,
                     attachments: requestAttachments,
                 });
+                emitSuccessFeedback('Reunión solicitada con éxito.');
             }
             closeRequestModal();
         } finally {
@@ -623,6 +627,7 @@ function Dashboard() {
                 },
             });
             setEditingDateKey(null);
+            emitSuccessFeedback('Registro horario guardado con éxito.');
         } finally {
             setSavingRow(false);
         }
@@ -641,6 +646,7 @@ function Dashboard() {
             rows: monthlyRows.map((row) => [row.dateKey, row.entry, row.exit, row.hours > 0 ? row.hours.toFixed(2) : '-', row.status]),
             signatures: ['Firma trabajador', 'Firma responsable'],
         });
+        emitSuccessFeedback('PDF mensual generado con éxito.');
     };
 
     const downloadAbsencesPdf = () => {
@@ -664,6 +670,7 @@ function Dashboard() {
             headers: ['Persona', 'Tipo', 'Inicio', 'Fin', 'Estado', 'Resolución', 'Motivo'],
             rows,
         });
+        emitSuccessFeedback('PDF de ausencias generado con éxito.');
     };
 
     const handleResolveAbsence = async (id: number, status: 'approved' | 'rejected', resolutionType?: string) => {
@@ -674,6 +681,7 @@ function Dashboard() {
             response_message: note,
             resolution_type: resolutionType,
         });
+        emitSuccessFeedback('Resolución guardada con éxito.');
     };
 
     useEffect(() => {
@@ -729,6 +737,7 @@ function Dashboard() {
                     history: nextTasks,
                     updated_at: new Date().toISOString(),
                 }, { onConflict: 'user_id,date_key' });
+            emitSuccessFeedback('Checklist guardado con éxito.');
         } finally {
             setChecklistSaving(false);
         }
@@ -1264,11 +1273,11 @@ function Dashboard() {
             </div>
 
             {showAbsencesManageModal && (
-                <div className="fixed inset-0 z-[220] bg-black/45 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3 md:pl-64" onClick={() => {
+                <div className="app-modal-overlay" onClick={() => {
                     setShowAbsencesManageModal(false);
                     setExpandedAbsenceId(null);
                 }}>
-                    <div className="w-full max-w-[820px] max-h-[80vh] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+                    <div className="app-modal-panel w-full max-w-[820px] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
                         <div className="p-5 border-b border-gray-100 flex items-center justify-between">
                             <h3 className="text-xl font-black text-gray-900">{isAdmin ? 'Gestionar ausencias y vacaciones' : 'Mis ausencias y vacaciones'}</h3>
                             <div className="flex items-center gap-2">
@@ -1359,9 +1368,9 @@ function Dashboard() {
             )}
 
             {activeRequestModal && (
-                <div className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="app-modal-overlay">
                     <div
-                        className="w-full max-w-2xl bg-white rounded-3xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-hidden flex flex-col"
+                        className="app-modal-panel w-full max-w-2xl bg-white rounded-3xl border border-gray-200 shadow-2xl overflow-hidden flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between p-6 pb-0">

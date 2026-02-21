@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, ShoppingItem, Attachment } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 const EMPTY_ARRAY: ShoppingItem[] = [];
 
@@ -45,6 +46,7 @@ export function useShoppingList(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+            emitSuccessFeedback('Ítem creado con éxito.');
         },
     });
 
@@ -62,6 +64,7 @@ export function useShoppingList(currentUser: User | null) {
         },
         onSuccess: async (data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+            emitSuccessFeedback('Ítem actualizado con éxito.');
 
             // Notify if marking as purchased via update (Edit Modal)
             if (variables.updates.is_purchased && data) {
@@ -94,6 +97,7 @@ export function useShoppingList(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+            emitSuccessFeedback('Ítem eliminado con éxito.');
         },
     });
 
@@ -132,6 +136,7 @@ export function useShoppingList(currentUser: User | null) {
         },
         onSuccess: async (data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['shopping_items'] });
+            emitSuccessFeedback(variables.isPurchased ? 'Compra marcada con éxito.' : 'Compra revertida con éxito.');
 
             // Notify creator if purchased
             if (variables.isPurchased && data) {

@@ -186,12 +186,18 @@ function ChatPage() {
     const handleRemoveConversation = async (conversationId: number) => {
         const ok = window.confirm('¿Seguro que quieres eliminar este chat de tu lista?');
         if (!ok) return;
+        setChatActionError(null);
         try {
             await removeConversation(conversationId);
             if (selectedConversationId === conversationId) {
                 setSelectedConversationId(null);
             }
         } catch (error: any) {
+            const message = `${error?.message || ''}`.toLowerCase();
+            if (message.includes('row-level security') || message.includes('policy')) {
+                setChatActionError('No se pudo eliminar por permisos de chat (RLS). Hay que aplicar la migración nueva de chat.');
+                return;
+            }
             setChatActionError(error?.message || 'No se pudo eliminar el chat.');
         }
     };
@@ -418,6 +424,11 @@ function ChatPage() {
                     </div>
 
                     <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
+                        {chatActionError && (
+                            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+                                {chatActionError}
+                            </p>
+                        )}
                         {conversationsError && (
                             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                 Error cargando chats: {(conversationsError as any)?.message || 'Revisa la configuración del chat.'}
@@ -755,8 +766,8 @@ function ChatPage() {
             </div>
 
             {showCreateModal && (
-                <div className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="w-full max-w-lg bg-white rounded-3xl border border-gray-200 shadow-2xl p-6">
+                <div className="app-modal-overlay">
+                    <div className="app-modal-panel w-full max-w-lg bg-white rounded-3xl border border-gray-200 shadow-2xl p-4 sm:p-6">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-xl font-black text-gray-900">Nuevo chat</h3>
                             <button onClick={() => setShowCreateModal(false)} className="text-sm font-bold text-violet-700">Cerrar</button>

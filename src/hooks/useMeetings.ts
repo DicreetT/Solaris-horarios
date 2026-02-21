@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Meeting, Comment, Attachment } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 export function useMeetings(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -66,6 +67,7 @@ export function useMeetings(currentUser: User | null) {
         },
         onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
+            emitSuccessFeedback('Solicitud de reunión creada con éxito.');
 
             // Notify participants
             if (variables.participants && variables.participants.length > 0) {
@@ -92,6 +94,7 @@ export function useMeetings(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
+            emitSuccessFeedback('Estado de reunión actualizado con éxito.');
         },
     });
 
@@ -105,6 +108,7 @@ export function useMeetings(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
+            emitSuccessFeedback('Reunión eliminada con éxito.');
         },
     });
 
@@ -162,6 +166,7 @@ export function useMeetings(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
+            emitSuccessFeedback('Comentario de reunión guardado con éxito.');
         },
     });
 

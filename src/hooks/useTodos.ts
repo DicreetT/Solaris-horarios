@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Todo } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 const EMPTY_ARRAY: Todo[] = [];
 
@@ -103,6 +104,7 @@ export function useTodos(currentUser: User | null) {
         },
         onSuccess: async (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+            emitSuccessFeedback('Tarea creada con éxito.');
 
             // Notify assigned users
             if (variables.assignedTo && variables.assignedTo.length > 0) {
@@ -139,10 +141,11 @@ export function useTodos(currentUser: User | null) {
                 .eq('id', todo.id);
 
             if (error) throw error;
-            return { nextCompleted, nextShocked };
+            return { nextCompleted, nextShocked, isNowCompleted: !isDone };
         },
-        onSuccess: () => {
+        onSuccess: (result) => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+            emitSuccessFeedback(result?.isNowCompleted ? 'Tarea finalizada con éxito.' : 'Tarea reabierta con éxito.');
         },
     });
 
@@ -153,6 +156,7 @@ export function useTodos(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+            emitSuccessFeedback('Tarea eliminada con éxito.');
         },
     });
 
@@ -199,6 +203,7 @@ export function useTodos(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+            emitSuccessFeedback('Comentario guardado con éxito.');
         },
     });
 
@@ -225,6 +230,7 @@ export function useTodos(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['todos'] });
+            emitSuccessFeedback('Tarea actualizada con éxito.');
         },
     });
 

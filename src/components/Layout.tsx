@@ -16,6 +16,8 @@ import { TeamHeartbeat } from './TeamHeartbeat';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { toDateKey } from '../utils/dateUtils';
 import { useNotificationsContext } from '../context/NotificationsContext';
+import { useDailyTeamGreeting } from '../hooks/useDailyTeamGreeting';
+import GlobalSuccessToast from './GlobalSuccessToast';
 
 /**
  * Main layout component
@@ -24,6 +26,7 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 function Layout() {
     const { currentUser } = useAuth();
     useRealtime(currentUser);
+    useDailyTeamGreeting(currentUser);
     const { todos } = useTodos(currentUser);
     const { timeData } = useTimeData();
     const { dailyStatuses } = useDailyStatus(currentUser);
@@ -198,6 +201,8 @@ function Layout() {
                         onComplete={() => setActiveCaffeine(null)}
                     />
                 )}
+
+                <GlobalSuccessToast />
             </div>
         </StormOverlay>
     );

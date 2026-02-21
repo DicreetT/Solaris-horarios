@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { User } from '../types';
+import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 export function useAbsences(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -98,6 +99,7 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            emitSuccessFeedback('Solicitud creada con éxito.');
         },
     });
 
@@ -112,6 +114,7 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            emitSuccessFeedback('Solicitud actualizada con éxito.');
         },
     });
 
@@ -131,6 +134,7 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            emitSuccessFeedback('Estado actualizado con éxito.');
         },
     });
 
@@ -144,6 +148,7 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            emitSuccessFeedback('Solicitud eliminada con éxito.');
         },
     });
 
@@ -161,6 +166,7 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            emitSuccessFeedback('Ausencia eliminada con éxito.');
         }
     })
 
