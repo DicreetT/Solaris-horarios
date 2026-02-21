@@ -913,25 +913,37 @@ function Dashboard() {
 
     const checklistDone = checklistTasks.filter((task) => task.completed).length;
     const criticalProductsFromInventory = inventoryAlerts?.criticalProducts || [];
-    const mountedCriticalFromInventoryRaw = inventoryAlerts?.mountedCritical || [];
     const potentialCriticalFromInventoryRaw = inventoryAlerts?.potentialCritical || [];
     const mountedVisualFromInventory = inventoryAlerts?.mountedVisual || [];
     const potentialVisualFromInventory = inventoryAlerts?.potentialVisual || [];
     const globalStockByProductLotFromInventory = inventoryAlerts?.globalStockByProductLot || [];
-    const globalStockByProductLotBodegaFromInventory = inventoryAlerts?.globalStockByProductLotBodega || [];
     const mountedCriticalDetailsFromInventory = inventoryAlerts?.mountedCriticalDetails || [];
     const potentialCriticalDetailsFromInventory = inventoryAlerts?.potentialCriticalDetails || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
+    const huarteMovementsSource = useMemo(() => {
+        try {
+            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
+            const parsed = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch {
+            // noop
+        }
+        return (huarteSeed.movimientos as any[]) || [];
+    }, []);
+    const canetMovementsSource = useMemo(() => {
+        try {
+            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY) : null;
+            const parsed = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch {
+            // noop
+        }
+        return (canetSeed.movimientos as any[]) || [];
+    }, []);
     const fallbackCriticalFromHuarte = useMemo(() => {
         try {
-            const rawHuarte = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
-            const parsedHuarte = rawHuarte ? JSON.parse(rawHuarte) : [];
-            const huarteSource = Array.isArray(parsedHuarte) ? parsedHuarte : [];
-            const rawCanet = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY) : null;
-            const parsedCanet = rawCanet ? JSON.parse(rawCanet) : [];
-            const canetSource = Array.isArray(parsedCanet) ? parsedCanet : [];
             // Montadas: fuente principal Huarte (incluye todas las bodegas).
-            const source = huarteSource.length > 0 ? huarteSource : canetSource;
+            const source = huarteMovementsSource;
             // Potenciales: fuente Canet (control de stock / viales).
             const productRows = (canetSeed.productos as any[]) || [];
             const lotRows = (canetSeed.lotes as any[]) || [];
@@ -984,7 +996,7 @@ function Dashboard() {
                     return { producto, stockTotal, coberturaMeses };
                 })
                 .filter((r) => r.producto.toUpperCase() !== 'PRODUCTO')
-                .filter((r) => r.stockTotal > 0 && r.coberturaMeses > 0 && r.coberturaMeses < 2)
+                .filter((r) => r.stockTotal > 0 && r.coberturaMeses > 0 && r.coberturaMeses < 3)
                 .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
                 .slice(0, 12);
 
@@ -1004,40 +1016,30 @@ function Dashboard() {
         } catch {
             return { mounted: [], potential: [] };
         }
-    }, []);
-    const mountedCriticalFromInventory =
-        mountedCriticalFromInventoryRaw.length > 0 ? mountedCriticalFromInventoryRaw : fallbackCriticalFromHuarte.mounted;
+    }, [huarteMovementsSource]);
+    const mountedCriticalFromInventory = fallbackCriticalFromHuarte.mounted;
     const potentialCriticalFromInventory =
         potentialCriticalFromInventoryRaw.length > 0 ? potentialCriticalFromInventoryRaw : fallbackCriticalFromHuarte.potential;
     const maxPotentialVisual = Math.max(1, ...potentialVisualFromInventory.map((row) => row.cajasPotenciales || 0));
     const generalStockRowsWithBodega = useMemo(() => {
-        if (globalStockByProductLotBodegaFromInventory.length > 0) return globalStockByProductLotBodegaFromInventory;
-        if (typeof window === 'undefined') return [];
-        try {
-            const raw = window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY);
-            const parsed = raw ? JSON.parse(raw) : [];
-            const source = Array.isArray(parsed) && parsed.length > 0 ? parsed : (huarteSeed.movimientos as any[]);
-            const map = new Map<string, number>();
-            source.forEach((m: any) => {
-                const producto = clean(m?.producto);
-                const lote = clean(m?.lote);
-                const bodega = clean(m?.bodega);
-                if (!producto || !lote || !bodega) return;
-                const signed = Number(m?.cantidad_signed);
-                const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
-                const key = `${producto}|${lote}|${bodega}`;
-                map.set(key, (map.get(key) || 0) + qty);
-            });
-            return Array.from(map.entries())
-                .map(([key, stockTotal]) => {
-                    const [producto, lote, bodega] = key.split('|');
-                    return { producto, lote, bodega, stockTotal: Math.max(0, toNum(stockTotal)) };
-                })
-                .filter((r) => r.stockTotal > 0);
-        } catch {
-            return [];
-        }
-    }, [globalStockByProductLotBodegaFromInventory]);
+        const map = new Map<string, number>();
+        huarteMovementsSource.forEach((m: any) => {
+            const producto = clean(m?.producto);
+            const lote = clean(m?.lote);
+            const bodega = clean(m?.bodega);
+            if (!producto || !lote || !bodega || producto.toUpperCase() === 'PRODUCTO') return;
+            const signed = Number(m?.cantidad_signed);
+            const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
+            const key = `${producto}|${lote}|${bodega}`;
+            map.set(key, (map.get(key) || 0) + qty);
+        });
+        return Array.from(map.entries())
+            .map(([key, stockTotal]) => {
+                const [producto, lote, bodega] = key.split('|');
+                return { producto, lote, bodega, stockTotal: Math.max(0, toNum(stockTotal)) };
+            })
+            .filter((r) => r.stockTotal > 0);
+    }, [huarteMovementsSource]);
 
     const generalStockByProduct = useMemo(() => {
         const sourceRows = generalStockRowsWithBodega;
@@ -1089,29 +1091,69 @@ function Dashboard() {
             }))
             .sort((a, b) => b.total - a.total);
     }, [generalStockRowsWithBodega]);
-    const canetCriticalDetailsFromInventory = useMemo(
-        () =>
-            criticalProductsFromInventory.map((item) => {
-                const rows = globalStockByProductLotFromInventory
-                    .filter((r) => r.producto === item.producto)
-                    .sort((a, b) => b.stockTotal - a.stockTotal);
-                return {
-                    producto: item.producto,
-                    byLote: rows.map((r) => ({ lote: r.lote, cantidad: r.stockTotal })),
-                };
-            }),
-        [criticalProductsFromInventory, globalStockByProductLotFromInventory],
-    );
+    const fallbackCanetCritical = useMemo(() => {
+        const consumoByProduct = new Map<string, number>();
+        ((canetSeed.productos as any[]) || []).forEach((p: any) => {
+            const code = clean(p.producto);
+            if (!code || code.toUpperCase() === 'PRODUCTO') return;
+            consumoByProduct.set(productKey(code), toNum(p.consumo_mensual_cajas));
+        });
+
+        const byProduct = new Map<string, number>();
+        const byProductLote = new Map<string, Map<string, number>>();
+        canetMovementsSource.forEach((m: any) => {
+            const producto = clean(m?.producto);
+            const lote = clean(m?.lote);
+            const bodega = clean(m?.bodega);
+            if (!producto || !lote || !bodega || productKey(producto) === 'PRODUCTO') return;
+            const qtyRaw = Number(m?.cantidad_signed);
+            const qty = Number.isFinite(qtyRaw) ? qtyRaw : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
+            const key = productKey(producto);
+            byProduct.set(key, (byProduct.get(key) || 0) + qty);
+            if (!byProductLote.has(key)) byProductLote.set(key, new Map());
+            const lotes = byProductLote.get(key)!;
+            lotes.set(lote, (lotes.get(lote) || 0) + qty);
+        });
+
+        const items = Array.from(byProduct.entries())
+            .map(([producto, stockTotal]) => {
+                const consumo = consumoByProduct.get(producto) || 0;
+                const total = Math.max(0, toNum(stockTotal));
+                const coberturaMeses = consumo > 0 ? total / consumo : 0;
+                return { producto, stockTotal: total, coberturaMeses };
+            })
+            .filter((r) => r.stockTotal > 0 && r.coberturaMeses > 0 && r.coberturaMeses < 3)
+            .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
+            .slice(0, 12);
+
+        const details = Array.from(byProductLote.entries()).map(([producto, lotes]) => ({
+            producto,
+            byLote: Array.from(lotes.entries())
+                .map(([lote, cantidad]) => ({ lote, cantidad }))
+                .filter((r) => r.cantidad > 0)
+                .sort((a, b) => b.cantidad - a.cantidad),
+        }));
+
+        return { items, details };
+    }, [canetMovementsSource]);
+    const canetCriticalFromInventory =
+        criticalProductsFromInventory.length > 0 ? criticalProductsFromInventory : fallbackCanetCritical.items;
+    const canetCriticalDetailsFromInventory = useMemo(() => {
+        const summaryDetails = canetCriticalFromInventory.map((item) => {
+            const rows = globalStockByProductLotFromInventory
+                .filter((r) => productKey(r.producto) === productKey(item.producto))
+                .sort((a, b) => b.stockTotal - a.stockTotal);
+            return {
+                producto: productKey(item.producto),
+                byLote: rows.map((r) => ({ lote: r.lote, cantidad: r.stockTotal })),
+            };
+        });
+        const hasSummaryRows = summaryDetails.some((r) => r.byLote.length > 0);
+        return hasSummaryRows ? summaryDetails : fallbackCanetCritical.details;
+    }, [canetCriticalFromInventory, globalStockByProductLotFromInventory, fallbackCanetCritical.details]);
     const mountedCriticalDetailsFallback = useMemo(() => {
         try {
-            if (typeof window === 'undefined') return [] as Array<{ producto: string; byBodega: Array<{ bodega: string; cantidad: number }>; byLote: Array<{ lote: string; cantidad: number }> }>;
-            const rawHuarte = window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY);
-            const parsedHuarte = rawHuarte ? JSON.parse(rawHuarte) : [];
-            const huarteSource = Array.isArray(parsedHuarte) ? parsedHuarte : [];
-            const rawCanet = window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY);
-            const parsedCanet = rawCanet ? JSON.parse(rawCanet) : [];
-            const canetSource = Array.isArray(parsedCanet) ? parsedCanet : [];
-            const source = huarteSource.length > 0 ? huarteSource : canetSource;
+            const source = huarteMovementsSource;
 
             const acc = new Map<string, { byBodega: Map<string, number>; byLote: Map<string, number> }>();
             source.forEach((m: any) => {
@@ -1120,7 +1162,7 @@ function Dashboard() {
                 const bodega = clean(m?.bodega) || 'Sin bodega';
                 const qtyRaw = Number(m?.cantidad_signed);
                 const qty = Number.isFinite(qtyRaw) ? qtyRaw : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
-                if (!producto || !lote || qty <= 0) return;
+                if (!producto || !lote || productKey(producto) === 'PRODUCTO') return;
                 const key = productKey(producto);
                 if (!acc.has(key)) {
                     acc.set(key, { byBodega: new Map(), byLote: new Map() });
@@ -1134,15 +1176,17 @@ function Dashboard() {
                 producto: key,
                 byBodega: Array.from(row.byBodega.entries())
                     .map(([bodega, cantidad]) => ({ bodega, cantidad }))
+                    .filter((r) => r.cantidad > 0)
                     .sort((a, b) => b.cantidad - a.cantidad),
                 byLote: Array.from(row.byLote.entries())
                     .map(([lote, cantidad]) => ({ lote, cantidad }))
+                    .filter((r) => r.cantidad > 0)
                     .sort((a, b) => b.cantidad - a.cantidad),
             }));
         } catch {
             return [] as Array<{ producto: string; byBodega: Array<{ bodega: string; cantidad: number }>; byLote: Array<{ lote: string; cantidad: number }> }>;
         }
-    }, []);
+    }, [huarteMovementsSource]);
     const weeklyTeamAbsences = useMemo(
         () => weeklyAbsences.filter((a) => a.created_by !== currentUser?.id),
         [weeklyAbsences, currentUser?.id],
@@ -1159,9 +1203,9 @@ function Dashboard() {
         const set = new Set<string>();
         mountedCriticalFromInventory.forEach((r) => set.add(r.producto));
         potentialCriticalFromInventory.forEach((r) => set.add(r.producto));
-        criticalProductsFromInventory.forEach((r) => set.add(r.producto));
+        canetCriticalFromInventory.forEach((r) => set.add(r.producto));
         return set.size;
-    }, [mountedCriticalFromInventory, potentialCriticalFromInventory, criticalProductsFromInventory]);
+    }, [mountedCriticalFromInventory, potentialCriticalFromInventory, canetCriticalFromInventory]);
     const chatBadgeCount = useMemo(
         () =>
             unreadPendingNotifications.filter((n) => {
@@ -1632,7 +1676,7 @@ function Dashboard() {
                         {mountedVisualFromInventory.length === 0 &&
                         potentialVisualFromInventory.length === 0 &&
                         globalStockByProductLotFromInventory.length === 0 &&
-                        criticalProductsFromInventory.length === 0 &&
+                        canetCriticalFromInventory.length === 0 &&
                         mountedCriticalFromInventory.length === 0 &&
                         potentialCriticalFromInventory.length === 0 &&
                         caducityAlertsFromInventory.length === 0 ? (
@@ -1649,8 +1693,8 @@ function Dashboard() {
                                                     type="button"
                                                     onClick={() => {
                                                         const detail =
-                                                            mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto)) ||
-                                                            mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto));
+                                                            mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto)) ||
+                                                            mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
                                                         setSelectedInventoryDetail({
                                                             tipo: 'mounted',
                                                             producto: item.producto,
@@ -1694,11 +1738,11 @@ function Dashboard() {
                                     </div>
                                 )}
 
-                                {inventoryPanelMode === 'critical' && criticalProductsFromInventory.length > 0 && (
+                                {inventoryPanelMode === 'critical' && canetCriticalFromInventory.length > 0 && (
                                     <div>
                                         <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
                                         <div className="space-y-1.5">
-                                            {criticalProductsFromInventory.slice(0, 6).map((item) => (
+                                            {canetCriticalFromInventory.slice(0, 6).map((item) => (
                                                 <button
                                                     key={`canet-${item.producto}`}
                                                     type="button"
