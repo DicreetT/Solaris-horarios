@@ -41,6 +41,7 @@ import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
+import canetSeed from '../data/inventory_seed.json';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
@@ -928,9 +929,11 @@ function Dashboard() {
             const rawCanet = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY) : null;
             const parsedCanet = rawCanet ? JSON.parse(rawCanet) : [];
             const canetSource = Array.isArray(parsedCanet) ? parsedCanet : [];
-            const source = [...huarteSource, ...canetSource];
-            const productRows = (huarteSeed.productos as any[]) || [];
-            const lotRows = (huarteSeed.lotes as any[]) || [];
+            // Montadas: fuente principal Huarte (incluye todas las bodegas).
+            const source = huarteSource.length > 0 ? huarteSource : canetSource;
+            // Potenciales: fuente Canet (control de stock / viales).
+            const productRows = (canetSeed.productos as any[]) || [];
+            const lotRows = (canetSeed.lotes as any[]) || [];
 
             const productMeta = new Map<string, { consumo: number; modo: string; vialesPorCaja: number }>();
             productRows.forEach((p: any) => {
@@ -2208,12 +2211,15 @@ function Dashboard() {
                 />
             )}
             {(selectedInventoryDetail || selectedGeneralLotDetail) && (
-                <div className="fixed inset-0 z-[220] bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-4" onClick={() => {
+                <div
+                    className="fixed inset-y-0 right-0 left-0 md:left-[var(--layout-sidebar-current-width)] z-[9999] bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4"
+                    onClick={() => {
                     setSelectedInventoryDetail(null);
                     setSelectedGeneralLotDetail(null);
-                }}>
+                }}
+                >
                     <div
-                        className="w-full max-w-[calc(100vw-2rem)] md:max-w-[min(42rem,calc(100vw-22rem))] rounded-2xl border border-violet-200 bg-white shadow-2xl"
+                        className="w-full max-w-[min(46rem,96vw)] rounded-2xl border border-violet-200 bg-white shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="p-4 border-b border-violet-100 flex items-center justify-between gap-2">
