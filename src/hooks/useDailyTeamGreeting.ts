@@ -3,21 +3,34 @@ import { supabase } from '../lib/supabase';
 import { User } from '../types';
 import { USERS } from '../constants';
 
-const DAILY_GREETING_MESSAGE = 'Buenos días, equipo ☀️';
+const SPAIN_TIMEZONE = 'Europe/Madrid';
+const DAILY_GREETING_MESSAGE = 'Buenos días, equipo ☀️ · 09:00 (España)';
 const CHECK_INTERVAL_MS = 60 * 1000;
 
-const dayKey = (date = new Date()) => {
-    const y = date.getFullYear();
-    const m = `${date.getMonth() + 1}`.padStart(2, '0');
-    const d = `${date.getDate()}`.padStart(2, '0');
-    return `${y}-${m}-${d}`;
-};
+const getSpainDayKey = (date = new Date()) =>
+    date.toLocaleDateString('en-CA', { timeZone: SPAIN_TIMEZONE }); // YYYY-MM-DD
+
+const getSpainWeekday = (date = new Date()) =>
+    new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: SPAIN_TIMEZONE }).format(date);
+
+const getSpainTime = (date = new Date()) =>
+    new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: SPAIN_TIMEZONE,
+    }).format(date);
 
 const greetingSentStorageKey = (userId: string, key: string) => `daily-team-greeting:${userId}:${key}`;
 
 const isPreferredGroupTitle = (title?: string | null) => {
     const value = `${title || ''}`.toLowerCase();
     return value.includes('equipo') || value.includes('solaris') || value.includes('general');
+};
+
+const isWeekendInSpain = (date = new Date()) => {
+    const weekday = getSpainWeekday(date).toLowerCase();
+    return weekday === 'sat' || weekday === 'sun';
 };
 
 export function useDailyTeamGreeting(currentUser: User | null) {
@@ -33,7 +46,9 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                 .eq('user_id', currentUser.id);
             if (membershipError) throw membershipError;
 
-            const conversationIds = Array.from(new Set((memberships || []).map((row: any) => Number(row.conversation_id)).filter(Boolean)));
+            const conversationIds = Array.from(
+                new Set((memberships || []).map((row: any) => Number(row.conversation_id)).filter(Boolean)),
+            );
             if (conversationIds.length === 0) return null;
 
             const { data: conversations, error: conversationsError } = await supabase
@@ -42,7 +57,6 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                 .in('id', conversationIds)
                 .eq('kind', 'group');
             if (conversationsError) throw conversationsError;
-
             if (!conversations || conversations.length === 0) return null;
 
             const groupIds = conversations.map((conversation: any) => conversation.id);
@@ -70,48 +84,58 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                 return {
                     id: conversation.id as number,
                     score,
-                    includesWholeTeam,
-                    titlePreferred,
-                    participantCount,
                 };
             });
 
             scored.sort((a, b) => b.score - a.score);
-            const best = scored[0];
-            if (!best) return null;
+            return scored[0]?.id || null;
+        };
 
-            const bestMembers = participantsByConversation.get(best.id) || new Set<string>();
-            const hasAtLeastTeamCore = Array.from(allTeamUserIds).some((id) => bestMembers.has(id));
-            if (!hasAtLeastTeamCore) return null;
+        const isWorkingDay = async (dayKey: string, date = new Date()) => {
+            const weekend = isWeekendInSpain(date);
+            const { data: override, error } = await supabase
+                .from('calendar_overrides')
+                .select('is_non_working')
+                .eq('date_key', dayKey)
+                .maybeSingle();
 
-            return best.id;
+            if (error) {
+                // fallback conservative: weekend no laborable, resto laborable
+                return !weekend;
+            }
+
+            if (!override) return !weekend;
+            return !override.is_non_working;
         };
 
         const run = async () => {
             if (cancelled) return;
             const now = new Date();
-            if (now.getHours() < 9) return;
+            const spainDayKey = getSpainDayKey(now);
+            const spainTime = getSpainTime(now);
 
-            const today = dayKey(now);
-            const sentKey = greetingSentStorageKey(currentUser.id, today);
+            // Solo a las 09:00 en punto, hora España.
+            if (spainTime !== '09:00') return;
+
+            const sentKey = greetingSentStorageKey(currentUser.id, spainDayKey);
             if (localStorage.getItem(sentKey) === '1') return;
 
             try {
+                const laborable = await isWorkingDay(spainDayKey, now);
+                if (!laborable) {
+                    localStorage.setItem(sentKey, '1');
+                    return;
+                }
+
                 const conversationId = await findTeamConversationId();
                 if (!conversationId) return;
-
-                const dayStart = new Date();
-                dayStart.setHours(0, 0, 0, 0);
-                const dayEnd = new Date();
-                dayEnd.setHours(23, 59, 59, 999);
 
                 const { data: existingMessage, error: existingError } = await supabase
                     .from('chat_messages')
                     .select('id')
                     .eq('conversation_id', conversationId)
                     .eq('message', DAILY_GREETING_MESSAGE)
-                    .gte('created_at', dayStart.toISOString())
-                    .lte('created_at', dayEnd.toISOString())
+                    .gte('created_at', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
                     .limit(1);
                 if (existingError) throw existingError;
 
