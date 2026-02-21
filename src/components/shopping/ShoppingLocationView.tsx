@@ -220,7 +220,7 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                                                 {item.name}
                                             </h3>
                                             {item.description && (
-                                                <p className="text-gray-600 text-sm mb-2 line-clamp-2">
+                                                <p className="text-gray-600 text-sm mb-2 line-clamp-2 break-all">
                                                     {item.description}
                                                 </p>
                                             )}

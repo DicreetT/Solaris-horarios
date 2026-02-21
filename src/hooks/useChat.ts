@@ -156,7 +156,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
 
             const { data, error } = await supabase
                 .from('chat_messages')
-                .select('*')
+                .select('id, conversation_id, sender_id, message, attachments, mentions, reply_to, linked_task_id, linked_meeting_id, created_at')
                 .eq('conversation_id', selectedConversationId)
                 .order('created_at', { ascending: true })
                 .limit(300);
@@ -227,7 +227,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     title: title?.trim() || null,
                     created_by: currentUser.id,
                 })
-                .select('*')
+                .select('id')
                 .single();
 
             if (conversationError) throw conversationError;

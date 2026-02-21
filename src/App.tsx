@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -10,19 +10,19 @@ import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { NotificationsProvider } from './context/NotificationsContext';
 
 // Pages
-import Dashboard from './pages/Dashboard';
-import CalendarPage from './pages/CalendarPage';
-import TasksPage from './pages/TasksPage';
-import MeetingsPage from './pages/MeetingsPage';
-import AbsencesPage from './pages/AbsencesPage';
-import TrainingsPage from './pages/TrainingsPage';
-import ExportsPage from './pages/ExportsPage';
-import TimeTrackingPage from './pages/TimeTrackingPage';
-import FoldersPage from './pages/FoldersPage';
-import ShoppingListPage from './pages/ShoppingListPage';
-import DailyChecklistPage from './pages/DailyChecklistPage';
-import ChatPage from './pages/ChatPage';
-import InventoryPage from './pages/InventoryPage';
+const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+const CalendarPage = React.lazy(() => import('./pages/CalendarPage'));
+const TasksPage = React.lazy(() => import('./pages/TasksPage'));
+const MeetingsPage = React.lazy(() => import('./pages/MeetingsPage'));
+const AbsencesPage = React.lazy(() => import('./pages/AbsencesPage'));
+const TrainingsPage = React.lazy(() => import('./pages/TrainingsPage'));
+const ExportsPage = React.lazy(() => import('./pages/ExportsPage'));
+const TimeTrackingPage = React.lazy(() => import('./pages/TimeTrackingPage'));
+const FoldersPage = React.lazy(() => import('./pages/FoldersPage'));
+const ShoppingListPage = React.lazy(() => import('./pages/ShoppingListPage'));
+const DailyChecklistPage = React.lazy(() => import('./pages/DailyChecklistPage'));
+const ChatPage = React.lazy(() => import('./pages/ChatPage'));
+const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
 
 /**
  * Protected Route wrapper
@@ -38,6 +38,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 import { User } from './types';
+
+function RouteLoadingFallback() {
+  return (
+    <div className="min-h-[40vh] flex items-center justify-center px-4">
+      <div className="rounded-2xl border border-violet-200 bg-white px-5 py-3 text-sm font-semibold text-violet-700 shadow-sm">
+        Cargando módulo...
+      </div>
+    </div>
+  );
+}
+
+function withLazyPage(page: React.ReactElement) {
+  return <Suspense fallback={<RouteLoadingFallback />}>{page}</Suspense>;
+}
 
 /**
  * App principal with routing
@@ -81,19 +95,19 @@ function App() {
               </NotificationsProvider>
             </ProtectedRoute>
           }>
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/calendar" element={<CalendarPage />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/meetings" element={<MeetingsPage />} />
-            <Route path="/absences" element={<AbsencesPage />} />
-            <Route path="/trainings" element={<TrainingsPage />} />
-            <Route path="/time-tracking" element={<TimeTrackingPage />} />
-            <Route path="/exports" element={<ExportsPage />} />
-            <Route path="/folders" element={<FoldersPage />} />
-            <Route path="/shopping" element={<ShoppingListPage />} />
-            <Route path="/checklist" element={<DailyChecklistPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="/inventory" element={<InventoryPage />} />
+            <Route path="/dashboard" element={withLazyPage(<Dashboard />)} />
+            <Route path="/calendar" element={withLazyPage(<CalendarPage />)} />
+            <Route path="/tasks" element={withLazyPage(<TasksPage />)} />
+            <Route path="/meetings" element={withLazyPage(<MeetingsPage />)} />
+            <Route path="/absences" element={withLazyPage(<AbsencesPage />)} />
+            <Route path="/trainings" element={withLazyPage(<TrainingsPage />)} />
+            <Route path="/time-tracking" element={withLazyPage(<TimeTrackingPage />)} />
+            <Route path="/exports" element={withLazyPage(<ExportsPage />)} />
+            <Route path="/folders" element={withLazyPage(<FoldersPage />)} />
+            <Route path="/shopping" element={withLazyPage(<ShoppingListPage />)} />
+            <Route path="/checklist" element={withLazyPage(<DailyChecklistPage />)} />
+            <Route path="/chat" element={withLazyPage(<ChatPage />)} />
+            <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}

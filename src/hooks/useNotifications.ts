@@ -22,7 +22,7 @@ export function useNotifications(currentUser: User | null) {
             if (!currentUser) return [];
             const { data, error } = await supabase
                 .from('notifications')
-                .select('*')
+                .select('id, user_id, message, type, read, created_at')
                 .eq('user_id', currentUser.id)
                 .order('created_at', { ascending: false });
 

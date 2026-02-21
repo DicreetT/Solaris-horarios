@@ -14,6 +14,7 @@
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 64px;
   --header-height: 64px;
+  --layout-sidebar-current-width: 256px;
 }
 
 /* Base Themes */
@@ -165,15 +166,22 @@ html[data-mood='Eléctrico'] {
 
   @media (min-width: 768px) {
     .app-modal-overlay {
-      padding-left: calc(var(--sidebar-width) + 0.75rem);
+      padding-left: calc(var(--layout-sidebar-current-width, 256px) + 0.75rem);
       padding-right: 0.75rem;
     }
   }
 
   .app-modal-panel {
+    width: min(100%, calc(100vw - var(--layout-sidebar-current-width, 256px) - 1.5rem));
     max-height: calc(100vh - 1rem);
     overflow-y: auto;
     overflow-x: hidden;
+  }
+
+  @media (max-width: 767px) {
+    .app-modal-panel {
+      width: 100%;
+    }
   }
 
   /* Shared clarity shell */

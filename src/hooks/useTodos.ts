@@ -17,7 +17,7 @@ export function useTodos(currentUser: User | null) {
             if (!currentUser) return [];
             const { data, error } = await supabase
                 .from('todos')
-                .select('*')
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
                 .order('due_date_key', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: false });
 

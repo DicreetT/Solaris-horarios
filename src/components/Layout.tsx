@@ -76,6 +76,11 @@ function Layout() {
     }, [uiDensity]);
 
     React.useEffect(() => {
+        const sidebarWidth = sidebarCollapsed ? '80px' : '256px';
+        document.documentElement.style.setProperty('--layout-sidebar-current-width', sidebarWidth);
+    }, [sidebarCollapsed]);
+
+    React.useEffect(() => {
         const openNotifications = () => setShowNotificationsModal(true);
         window.addEventListener('open-notifications-modal', openNotifications);
         return () => window.removeEventListener('open-notifications-modal', openNotifications);
