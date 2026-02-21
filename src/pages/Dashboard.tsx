@@ -910,8 +910,8 @@ function Dashboard() {
 
     const checklistDone = checklistTasks.filter((task) => task.completed).length;
     const criticalProductsFromInventory = inventoryAlerts?.criticalProducts || [];
-    const mountedCriticalFromInventory = inventoryAlerts?.mountedCritical || [];
-    const potentialCriticalFromInventory = inventoryAlerts?.potentialCritical || [];
+    const mountedCriticalFromInventoryRaw = inventoryAlerts?.mountedCritical || [];
+    const potentialCriticalFromInventoryRaw = inventoryAlerts?.potentialCritical || [];
     const mountedVisualFromInventory = inventoryAlerts?.mountedVisual || [];
     const potentialVisualFromInventory = inventoryAlerts?.potentialVisual || [];
     const globalStockByProductLotFromInventory = inventoryAlerts?.globalStockByProductLot || [];
@@ -919,6 +919,83 @@ function Dashboard() {
     const mountedCriticalDetailsFromInventory = inventoryAlerts?.mountedCriticalDetails || [];
     const potentialCriticalDetailsFromInventory = inventoryAlerts?.potentialCriticalDetails || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
+    const fallbackCriticalFromHuarte = useMemo(() => {
+        try {
+            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
+            const parsed = raw ? JSON.parse(raw) : [];
+            const source = Array.isArray(parsed) && parsed.length > 0 ? parsed : (huarteSeed.movimientos as any[]);
+            const productRows = (huarteSeed.productos as any[]) || [];
+            const lotRows = (huarteSeed.lotes as any[]) || [];
+
+            const productMeta = new Map<string, { consumo: number; modo: string; vialesPorCaja: number }>();
+            productRows.forEach((p: any) => {
+                const code = clean(p.producto);
+                if (!code) return;
+                productMeta.set(code, {
+                    consumo: toNum(p.consumo_mensual_cajas),
+                    modo: clean(p.modo_stock).toUpperCase(),
+                    vialesPorCaja: toNum(p.viales_por_caja),
+                });
+            });
+
+            const mountedByProduct = new Map<string, number>();
+            source.forEach((m: any) => {
+                const producto = clean(m?.producto);
+                const lote = clean(m?.lote);
+                const bodega = clean(m?.bodega);
+                if (!producto || !lote || !bodega) return;
+                const signed = Number(m?.cantidad_signed);
+                const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
+                mountedByProduct.set(producto, (mountedByProduct.get(producto) || 0) + qty);
+            });
+
+            const potentialByProduct = new Map<string, number>();
+            lotRows.forEach((l: any) => {
+                const producto = clean(l.producto);
+                if (!producto) return;
+                const meta = productMeta.get(producto);
+                if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) return;
+                const potential = toNum(l.viales_recibidos) / meta.vialesPorCaja;
+                potentialByProduct.set(producto, (potentialByProduct.get(producto) || 0) + Math.max(0, potential));
+            });
+
+            const allProducts = new Set<string>([
+                ...Array.from(mountedByProduct.keys()),
+                ...Array.from(potentialByProduct.keys()),
+                ...Array.from(productMeta.keys()),
+            ]);
+
+            const mounted = Array.from(allProducts)
+                .map((producto) => {
+                    const consumo = productMeta.get(producto)?.consumo || 0;
+                    const stockTotal = Math.max(0, toNum(mountedByProduct.get(producto) || 0));
+                    const coberturaMeses = consumo > 0 ? stockTotal / consumo : 0;
+                    return { producto, stockTotal, coberturaMeses };
+                })
+                .filter((r) => r.stockTotal > 0 && r.coberturaMeses > 0 && r.coberturaMeses < 2)
+                .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
+                .slice(0, 12);
+
+            const potential = Array.from(allProducts)
+                .map((producto) => {
+                    const consumo = productMeta.get(producto)?.consumo || 0;
+                    const cajasPotenciales = Math.max(0, toNum(potentialByProduct.get(producto) || 0));
+                    const coberturaMeses = consumo > 0 ? cajasPotenciales / consumo : 0;
+                    return { producto, cajasPotenciales, coberturaMeses };
+                })
+                .filter((r) => r.cajasPotenciales >= 0 && r.coberturaMeses >= 0 && r.coberturaMeses < 2)
+                .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
+                .slice(0, 12);
+
+            return { mounted, potential };
+        } catch {
+            return { mounted: [], potential: [] };
+        }
+    }, []);
+    const mountedCriticalFromInventory =
+        mountedCriticalFromInventoryRaw.length > 0 ? mountedCriticalFromInventoryRaw : fallbackCriticalFromHuarte.mounted;
+    const potentialCriticalFromInventory =
+        potentialCriticalFromInventoryRaw.length > 0 ? potentialCriticalFromInventoryRaw : fallbackCriticalFromHuarte.potential;
     const maxPotentialVisual = Math.max(1, ...potentialVisualFromInventory.map((row) => row.cajasPotenciales || 0));
     const generalStockRowsWithBodega = useMemo(() => {
         if (globalStockByProductLotBodegaFromInventory.length > 0) return globalStockByProductLotBodegaFromInventory;
