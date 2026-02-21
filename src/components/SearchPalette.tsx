@@ -43,7 +43,8 @@ const SearchPalette: React.FC = () => {
         { label: 'Calendario', path: '/calendar', icon: MapPin },
         { label: 'Tareas', path: '/tasks', icon: CheckSquare },
         { label: 'Reuniones', path: '/meetings', icon: Users },
-        { label: 'Inventario', path: '/inventory', icon: Boxes },
+        { label: 'Inventario Canet', path: '/inventory', icon: Boxes },
+        { label: 'Inventario Huarte', path: '/inventory-facturacion', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
     ];
 

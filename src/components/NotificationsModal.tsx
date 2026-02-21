@@ -26,6 +26,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
     const categorizeNotification = (n: NotificationType): 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'recognition' | 'other' => {
         if (n.type === 'recognition') return 'recognition';
         const text = `${n.message || ''}`.toLowerCase();
+        if (text.includes('[invhf_ensam]')) return 'other';
         if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea') || text.includes('comentario')) return 'tasks';
         if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
         if (text.includes('reunión') || text.includes('reunion')) return 'meetings';
@@ -60,6 +61,12 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
             } else {
                 navigate('/tasks');
             }
+            onClose();
+            return;
+        }
+
+        if ((notification.message || '').toLowerCase().includes('[invhf_ensam]')) {
+            navigate('/inventory-facturacion?tab=ensamblajes');
             onClose();
             return;
         }

@@ -147,7 +147,13 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         },
         {
             path: '/inventory',
-            label: 'Inventario',
+            label: 'Inventario Canet',
+            icon: Boxes,
+            show: true,
+        },
+        {
+            path: '/inventory-facturacion',
+            label: 'Inventario Huarte',
             icon: Boxes,
             show: true,
         },

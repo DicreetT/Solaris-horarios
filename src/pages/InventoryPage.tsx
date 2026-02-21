@@ -109,6 +109,7 @@ const INVENTORY_EDIT_REQUESTS_KEY = 'inventory_edit_requests_v1';
 const INVENTORY_EDIT_GRANTS_KEY = 'inventory_edit_grants_v1';
 const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
+const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const EDIT_GRANT_HOURS = 6;
 
 const readLocalJson = <T,>(key: string, fallback: T): T => {
@@ -183,7 +184,7 @@ function InventoryPage() {
   const [editGrants, setEditGrants] = useState<InventoryEditGrant[]>(() => readLocalJson(INVENTORY_EDIT_GRANTS_KEY, []));
   const [auditLog, setAuditLog] = useState<InventoryAuditEntry[]>(() => readLocalJson(INVENTORY_AUDIT_KEY, []));
 
-  const [movimientos, setMovimientos] = useState<Movement[]>(seed.movimientos as Movement[]);
+  const [movimientos, setMovimientos] = useState<Movement[]>(() => readLocalJson(INVENTORY_CANET_MOVS_KEY, seed.movimientos as Movement[]));
   const [productos] = useState<GenericRow[]>(seed.productos as GenericRow[]);
   const [lotes, setLotes] = useState<GenericRow[]>(seed.lotes as GenericRow[]);
   const [bodegas, setBodegas] = useState<GenericRow[]>(seed.bodegas as GenericRow[]);
@@ -703,6 +704,10 @@ function InventoryPage() {
   useEffect(() => {
     setShowMovementsAll(false);
   }, [monthFilter, productFilter, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+
+  useEffect(() => {
+    writeLocalJson(INVENTORY_CANET_MOVS_KEY, movimientos);
+  }, [movimientos]);
 
   const notifyAnabela = async (message: string) => {
     if (!anabela?.id) return;

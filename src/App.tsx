@@ -23,6 +23,7 @@ const ShoppingListPage = React.lazy(() => import('./pages/ShoppingListPage'));
 const DailyChecklistPage = React.lazy(() => import('./pages/DailyChecklistPage'));
 const ChatPage = React.lazy(() => import('./pages/ChatPage'));
 const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
+const InventoryFacturacionPage = React.lazy(() => import('./pages/InventoryFacturacionPage'));
 
 /**
  * Protected Route wrapper
@@ -108,6 +109,7 @@ function App() {
             <Route path="/checklist" element={withLazyPage(<DailyChecklistPage />)} />
             <Route path="/chat" element={withLazyPage(<ChatPage />)} />
             <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
+            <Route path="/inventory-facturacion" element={withLazyPage(<InventoryFacturacionPage />)} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}
