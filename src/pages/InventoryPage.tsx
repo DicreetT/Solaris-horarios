@@ -110,6 +110,7 @@ const INVENTORY_EDIT_GRANTS_KEY = 'inventory_edit_grants_v1';
 const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
+const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
@@ -690,6 +691,211 @@ function InventoryPage() {
     return list as Array<{ producto: string; lote: string; fecha: string; days: number }>;
   }, [lotes]);
 
+  const mountedAndPotentialAlerts = useMemo(() => {
+    const signedFromMovement = (m: any) => {
+      const signed = Number(m?.cantidad_signed);
+      if (Number.isFinite(signed)) return signed;
+      const qty = toNum(m?.cantidad);
+      const sign = toNum(m?.signo) || 1;
+      return qty * sign;
+    };
+
+    const readMovs = (key: string) => {
+      try {
+        const raw = window.localStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const canetMovs = readMovs(INVENTORY_CANET_MOVS_KEY);
+    const huarteMovs = readMovs(INVENTORY_HUARTE_MOVS_KEY);
+
+    // Evita duplicados cuando el mismo movimiento existe en ambos módulos.
+    const allMovs: any[] = [];
+    const seen = new Set<string>();
+    for (const m of [...huarteMovs, ...canetMovs]) {
+      const sig = [
+        clean(m?.fecha),
+        clean(m?.tipo_movimiento),
+        clean(m?.producto),
+        clean(m?.lote),
+        clean(m?.bodega),
+        clean(m?.cliente),
+        clean(m?.destino),
+        clean(m?.factura_doc),
+        clean(m?.cantidad),
+      ].join('|');
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      allMovs.push(m);
+    }
+
+    const stockByPLB = new Map<string, number>();
+    for (const m of allMovs) {
+      const producto = clean(m?.producto);
+      const lote = clean(m?.lote);
+      const bodega = clean(m?.bodega);
+      if (!producto || !lote || !bodega) continue;
+      const key = `${producto}|${lote}|${bodega}`;
+      stockByPLB.set(key, (stockByPLB.get(key) || 0) + signedFromMovement(m));
+    }
+
+    const mountedByProduct = new Map<string, number>();
+    const mountedByProductBodega = new Map<string, Map<string, number>>();
+    const mountedByProductLote = new Map<string, Map<string, number>>();
+    for (const [key, qty] of stockByPLB.entries()) {
+      const [producto, lote, bodega] = key.split('|');
+      const safeQty = Math.max(0, qty);
+      mountedByProduct.set(producto, (mountedByProduct.get(producto) || 0) + safeQty);
+      if (!mountedByProductBodega.has(producto)) mountedByProductBodega.set(producto, new Map<string, number>());
+      const perBodega = mountedByProductBodega.get(producto)!;
+      perBodega.set(bodega, (perBodega.get(bodega) || 0) + safeQty);
+      if (!mountedByProductLote.has(producto)) mountedByProductLote.set(producto, new Map<string, number>());
+      const perLote = mountedByProductLote.get(producto)!;
+      perLote.set(lote, (perLote.get(lote) || 0) + safeQty);
+    }
+
+    const productMeta = new Map<string, { vialesPorCaja: number; consumoMensual: number; modo: string }>();
+    for (const p of productos) {
+      const code = clean(p.producto);
+      if (!code) continue;
+      productMeta.set(code, {
+        vialesPorCaja: toNum(p.viales_por_caja),
+        consumoMensual: toNum(p.consumo_mensual_cajas),
+        modo: clean(p.modo_stock).toUpperCase(),
+      });
+    }
+
+    const potentialByProduct = new Map<string, number>();
+    const potentialByProductLote = new Map<string, Map<string, number>>();
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto) continue;
+      const meta = productMeta.get(producto);
+      if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) continue;
+      const potential = toNum(l.viales_recibidos) / meta.vialesPorCaja;
+      potentialByProduct.set(producto, (potentialByProduct.get(producto) || 0) + Math.max(0, potential));
+      if (!potentialByProductLote.has(producto)) potentialByProductLote.set(producto, new Map<string, number>());
+      const byLote = potentialByProductLote.get(producto)!;
+      byLote.set(lote, (byLote.get(lote) || 0) + Math.max(0, potential));
+    }
+
+    const allProducts = new Set<string>([
+      ...Array.from(mountedByProduct.keys()),
+      ...Array.from(potentialByProduct.keys()),
+      ...Array.from(productMeta.keys()),
+    ]);
+
+    const mountedCritical = Array.from(allProducts)
+      .map((producto) => {
+        const consumo = productMeta.get(producto)?.consumoMensual || 0;
+        const stockTotal = toNum(mountedByProduct.get(producto) || 0);
+        const coberturaMeses = consumo > 0 ? stockTotal / consumo : 0;
+        return { producto, stockTotal, coberturaMeses };
+      })
+      .filter((row) => row.stockTotal > 0 && row.coberturaMeses > 0 && row.coberturaMeses < 2)
+      .sort((a, b) => a.coberturaMeses - b.coberturaMeses);
+
+    const potentialCritical = Array.from(allProducts)
+      .map((producto) => {
+        const consumo = productMeta.get(producto)?.consumoMensual || 0;
+        const cajasPotenciales = toNum(potentialByProduct.get(producto) || 0);
+        const coberturaMeses = consumo > 0 ? cajasPotenciales / consumo : 0;
+        return { producto, cajasPotenciales, coberturaMeses };
+      })
+      .filter((row) => row.cajasPotenciales >= 0 && row.coberturaMeses >= 0 && row.coberturaMeses < 2)
+      .sort((a, b) => a.coberturaMeses - b.coberturaMeses);
+
+    const mountedVisual = Array.from(allProducts)
+      .map((producto) => {
+        const stockTotal = toNum(mountedByProduct.get(producto) || 0);
+        const byBodegaMap = mountedByProductBodega.get(producto) || new Map<string, number>();
+        const byBodega = Array.from(byBodegaMap.entries())
+          .map(([bodega, cantidad]) => ({ bodega, cantidad: toNum(cantidad) }))
+          .filter((row) => row.cantidad > 0)
+          .sort((a, b) => b.cantidad - a.cantidad);
+        return { producto, stockTotal, byBodega };
+      })
+      .filter((row) => row.stockTotal > 0)
+      .sort((a, b) => b.stockTotal - a.stockTotal);
+
+    const potentialVisual = Array.from(allProducts)
+      .map((producto) => {
+        const consumo = productMeta.get(producto)?.consumoMensual || 0;
+        const cajasPotenciales = toNum(potentialByProduct.get(producto) || 0);
+        const coberturaMeses = consumo > 0 ? cajasPotenciales / consumo : 0;
+        return { producto, cajasPotenciales, coberturaMeses };
+      })
+      .filter((row) => row.cajasPotenciales > 0)
+      .sort((a, b) => b.cajasPotenciales - a.cajasPotenciales);
+
+    const mountedCriticalDetails = mountedCritical.map((row) => {
+      const byBodegaMap = mountedByProductBodega.get(row.producto) || new Map<string, number>();
+      const byLoteMap = mountedByProductLote.get(row.producto) || new Map<string, number>();
+      return {
+        producto: row.producto,
+        byBodega: Array.from(byBodegaMap.entries())
+          .map(([bodega, cantidad]) => ({ bodega, cantidad: toNum(cantidad) }))
+          .filter((x) => x.cantidad > 0)
+          .sort((a, b) => b.cantidad - a.cantidad),
+        byLote: Array.from(byLoteMap.entries())
+          .map(([lote, cantidad]) => ({ lote, cantidad: toNum(cantidad) }))
+          .filter((x) => x.cantidad > 0)
+          .sort((a, b) => b.cantidad - a.cantidad),
+      };
+    });
+
+    const potentialCriticalDetails = potentialCritical.map((row) => {
+      const byLoteMap = potentialByProductLote.get(row.producto) || new Map<string, number>();
+      return {
+        producto: row.producto,
+        byLote: Array.from(byLoteMap.entries())
+          .map(([lote, cantidad]) => ({ lote, cantidad: toNum(cantidad) }))
+          .filter((x) => x.cantidad > 0)
+          .sort((a, b) => b.cantidad - a.cantidad),
+      };
+    });
+
+    const globalStockByProductLot = Array.from(mountedByProductLote.entries())
+      .flatMap(([producto, byLote]) =>
+        Array.from(byLote.entries()).map(([lote, stockTotal]) => ({
+          producto,
+          lote,
+          stockTotal: toNum(stockTotal),
+        })),
+      )
+      .filter((row) => row.stockTotal > 0)
+      .sort((a, b) => b.stockTotal - a.stockTotal);
+
+    const globalStockByProductLotBodega = Array.from(stockByPLB.entries())
+      .map(([key, stockTotal]) => {
+        const [producto, lote, bodega] = key.split('|');
+        return {
+          producto,
+          lote,
+          bodega,
+          stockTotal: toNum(Math.max(0, stockTotal)),
+        };
+      })
+      .filter((row) => row.stockTotal > 0)
+      .sort((a, b) => b.stockTotal - a.stockTotal);
+
+    return {
+      mountedCritical,
+      potentialCritical,
+      mountedVisual,
+      potentialVisual,
+      mountedCriticalDetails,
+      potentialCriticalDetails,
+      globalStockByProductLot,
+      globalStockByProductLotBodega,
+    };
+  }, [productos, lotes]);
+
   useEffect(() => {
     const payload = {
       updatedAt: new Date().toISOString(),
@@ -699,9 +905,52 @@ function InventoryPage() {
         coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
       })),
       caducity: caducityAlerts.slice(0, 20),
+      mountedCritical: mountedAndPotentialAlerts.mountedCritical.slice(0, 12).map((r) => ({
+        producto: r.producto,
+        stockTotal: Number(r.stockTotal.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+      })),
+      potentialCritical: mountedAndPotentialAlerts.potentialCritical.slice(0, 12).map((r) => ({
+        producto: r.producto,
+        cajasPotenciales: Number(r.cajasPotenciales.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+      })),
+      mountedVisual: mountedAndPotentialAlerts.mountedVisual.slice(0, 24).map((r) => ({
+        producto: r.producto,
+        stockTotal: Number(r.stockTotal.toFixed(2)),
+        byBodega: r.byBodega.map((b) => ({
+          bodega: b.bodega,
+          cantidad: Number(b.cantidad.toFixed(2)),
+        })),
+      })),
+      potentialVisual: mountedAndPotentialAlerts.potentialVisual.slice(0, 24).map((r) => ({
+        producto: r.producto,
+        cajasPotenciales: Number(r.cajasPotenciales.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+      })),
+      mountedCriticalDetails: mountedAndPotentialAlerts.mountedCriticalDetails.slice(0, 24).map((r) => ({
+        producto: r.producto,
+        byBodega: r.byBodega.map((b) => ({ bodega: b.bodega, cantidad: Number(b.cantidad.toFixed(2)) })),
+        byLote: r.byLote.map((l) => ({ lote: l.lote, cantidad: Number(l.cantidad.toFixed(2)) })),
+      })),
+      potentialCriticalDetails: mountedAndPotentialAlerts.potentialCriticalDetails.slice(0, 24).map((r) => ({
+        producto: r.producto,
+        byLote: r.byLote.map((l) => ({ lote: l.lote, cantidad: Number(l.cantidad.toFixed(2)) })),
+      })),
+      globalStockByProductLot: mountedAndPotentialAlerts.globalStockByProductLot.slice(0, 200).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        stockTotal: Number(r.stockTotal.toFixed(2)),
+      })),
+      globalStockByProductLotBodega: mountedAndPotentialAlerts.globalStockByProductLotBodega.slice(0, 400).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        bodega: r.bodega,
+        stockTotal: Number(r.stockTotal.toFixed(2)),
+      })),
     };
     writeLocalJson(INVENTORY_ALERTS_KEY, payload);
-  }, [riskyProductsSummary, caducityAlerts]);
+  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts]);
 
   const stockByProductLot = useMemo(() => {
     const map = new Map<string, number>();
