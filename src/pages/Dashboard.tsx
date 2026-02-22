@@ -47,7 +47,7 @@ import canetSeed from '../data/inventory_seed.json';
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'stock';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
 type ManagedRequestRow = {
-    source: 'absence' | 'meeting';
+    source: 'absence' | 'meeting' | 'training';
     id: number;
     created_by: string;
     created_at: string;
@@ -61,6 +61,7 @@ type ManagedRequestRow = {
     dateKey?: string;
     endDate?: string;
     preferredDateKey?: string | null;
+    requestedDateKey?: string | null;
 };
 type InventoryAlertsSummary = {
     updatedAt?: string;
@@ -143,7 +144,7 @@ function Dashboard() {
     const location = useLocation();
     const { todos } = useTodos(currentUser);
     const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
-    const { trainingRequests, createTrainingRequest } = useTraining(currentUser);
+    const { trainingRequests, createTrainingRequest, updateTrainingRequest, deleteTrainingRequest } = useTraining(currentUser);
     const { absenceRequests, createAbsence, updateAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
     const { timeData, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
@@ -209,8 +210,10 @@ function Dashboard() {
         byBodega: Array<{ bodega: string; cantidad: number }>;
     } | null>(null);
     const [showAbsencesManageModal, setShowAbsencesManageModal] = useState(false);
+    const [showMyRequestModal, setShowMyRequestModal] = useState(false);
     const [manageRequestsTab, setManageRequestsTab] = useState<'pending' | 'resolved'>('pending');
     const [selectedManagedRequest, setSelectedManagedRequest] = useState<ManagedRequestRow | null>(null);
+    const [selectedMyRequest, setSelectedMyRequest] = useState<ManagedRequestRow | null>(null);
     const [manageRequestDate, setManageRequestDate] = useState('');
     const [manageRequestTitle, setManageRequestTitle] = useState('');
     const [manageRequestDescription, setManageRequestDescription] = useState('');
@@ -218,6 +221,11 @@ function Dashboard() {
     const [manageRequestAttachments, setManageRequestAttachments] = useState<Attachment[]>([]);
     const [manageSaving, setManageSaving] = useState(false);
     const [showCompactTimeTracker, setShowCompactTimeTracker] = useState(false);
+    const [summaryModal, setSummaryModal] = useState<{
+        kind: 'tasks' | 'meetings' | 'trainings' | 'absences';
+        title: string;
+        items: any[];
+    } | null>(null);
     const densityMode = useDensityMode();
     const isCompact = densityMode === 'compact';
     const [compactSection, setCompactSection] = useState<
@@ -235,6 +243,22 @@ function Dashboard() {
         }, 80);
         return () => window.clearTimeout(timer);
     }, [location.hash, navigate]);
+
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        if (params.get('section') === 'time') {
+            setCompactSection('time');
+            params.delete('section');
+            navigate(
+                {
+                    pathname: '/dashboard',
+                    search: params.toString() ? `?${params.toString()}` : '',
+                    hash: location.hash,
+                },
+                { replace: true },
+            );
+        }
+    }, [location.search, location.hash, navigate]);
 
     const today = new Date();
     const todayKey = toDateKey(today);
@@ -350,40 +374,90 @@ function Dashboard() {
     const isRestrictedUser = ((currentUser?.email || '').toLowerCase() === CARLOS_EMAIL) || !!currentUser?.isRestricted;
     const canSeeTrainingsPanel = !!isTrainingManagerUser;
 
-    const summaryTextLines = useMemo(() => {
-        const lines: string[] = [];
+    const weeklyMeetingsSorted = useMemo(
+        () =>
+            weeklyMeetings
+                .slice()
+                .sort((a, b) => `${a.scheduled_date_key || a.preferred_date_key}`.localeCompare(`${b.scheduled_date_key || b.preferred_date_key}`)),
+        [weeklyMeetings],
+    );
+
+    const weeklyTrainingsSorted = useMemo(
+        () =>
+            weeklyTrainings
+                .slice()
+                .sort((a, b) => `${a.scheduled_date_key || a.requested_date_key}`.localeCompare(`${b.scheduled_date_key || b.requested_date_key}`)),
+        [weeklyTrainings],
+    );
+
+    const weeklyAbsenceDetails = useMemo(
+        () =>
+            weeklyAbsences
+                .slice()
+                .sort((a, b) => a.date_key.localeCompare(b.date_key))
+                .map((a) => ({
+                    ...a,
+                    personName: USERS.find((u) => u.id === a.created_by)?.name || 'Compañera/o',
+                })),
+        [weeklyAbsences],
+    );
+
+    const summaryLines = useMemo(() => {
+        const lines: Array<{
+            id: string;
+            text: string;
+            onClick?: () => void;
+        }> = [];
 
         if (dueTodayTodos.length > 0) {
-            lines.push(`Hoy tienes ${dueTodayTodos.length} tarea(s) que vencen.`);
+            lines.push({ id: 'due-today', text: `Hoy tienes ${dueTodayTodos.length} tarea(s) que vencen.` });
         } else {
-            lines.push('Hoy no tienes tareas que venzan.');
+            lines.push({ id: 'due-today-none', text: 'Hoy no tienes tareas que venzan.' });
         }
-        lines.push(`Tareas pendientes totales: ${pendingTodos.length}.`);
+        lines.push({
+            id: 'pending-total',
+            text: `Tareas pendientes totales: ${pendingTodos.length}.`,
+            onClick: pendingTodos.length > 0
+                ? () => setSummaryModal({ kind: 'tasks', title: 'Tareas pendientes', items: pendingTodos })
+                : undefined,
+        });
 
         const todayMeetings = weeklyMeetings.filter((m) => (m.scheduled_date_key || m.preferred_date_key) === todayKey);
         if (todayMeetings.length > 0) {
-            lines.push(`Hoy tienes ${todayMeetings.length} reunión(es).`);
-        } else if (weeklyMeetings.length > 0) {
-            const nextMeeting = weeklyMeetings
-                .slice()
-                .sort((a, b) => `${a.scheduled_date_key || a.preferred_date_key}`.localeCompare(`${b.scheduled_date_key || b.preferred_date_key}`))[0];
+            lines.push({
+                id: 'meetings-today',
+                text: `Hoy tienes ${todayMeetings.length} reunión(es).`,
+                onClick: () => setSummaryModal({ kind: 'meetings', title: 'Reuniones de la semana', items: weeklyMeetingsSorted }),
+            });
+        } else if (weeklyMeetingsSorted.length > 0) {
+            const nextMeeting = weeklyMeetingsSorted[0];
             const nextDate = nextMeeting.scheduled_date_key || nextMeeting.preferred_date_key;
-            lines.push(`Recuerda: tienes reunión el ${nextDate}.`);
+            lines.push({
+                id: 'meetings-next',
+                text: `Recuerda: tienes reunión el ${nextDate}.`,
+                onClick: () => setSummaryModal({ kind: 'meetings', title: 'Próxima reunión', items: [nextMeeting] }),
+            });
         }
 
         const todayTrainings = weeklyTrainings.filter((t) => (t.scheduled_date_key || t.requested_date_key) === todayKey);
         if (todayTrainings.length > 0) {
-            lines.push(`Hoy tienes ${todayTrainings.length} formación(es).`);
-        } else if (weeklyTrainings.length > 0) {
-            const nextTraining = weeklyTrainings
-                .slice()
-                .sort((a, b) => `${a.scheduled_date_key || a.requested_date_key}`.localeCompare(`${b.scheduled_date_key || b.requested_date_key}`))[0];
+            lines.push({
+                id: 'trainings-today',
+                text: `Hoy tienes ${todayTrainings.length} formación(es).`,
+                onClick: () => setSummaryModal({ kind: 'trainings', title: 'Formaciones de la semana', items: weeklyTrainingsSorted }),
+            });
+        } else if (weeklyTrainingsSorted.length > 0) {
+            const nextTraining = weeklyTrainingsSorted[0];
             const nextDate = nextTraining.scheduled_date_key || nextTraining.requested_date_key;
-            lines.push(`Recuerda: tienes formación el ${nextDate}.`);
+            lines.push({
+                id: 'trainings-next',
+                text: `Recuerda: tienes formación el ${nextDate}.`,
+                onClick: () => setSummaryModal({ kind: 'trainings', title: 'Próxima formación', items: [nextTraining] }),
+            });
         }
 
         if (weeklyAbsences.length === 0) {
-            lines.push('Esta semana no hay ausencias.');
+            lines.push({ id: 'absences-none', text: 'Esta semana no hay ausencias.' });
         } else {
             const todayAbsences = weeklyAbsences.filter((a) => {
                 const start = a.date_key;
@@ -394,18 +468,34 @@ function Dashboard() {
                 const names = todayAbsences
                     .map((a) => USERS.find((u) => u.id === a.created_by)?.name || 'Compañera/o')
                     .join(', ');
-                lines.push(`Hoy está(n) ausente(s): ${names}.`);
+                lines.push({
+                    id: 'absences-today',
+                    text: `Hoy está(n) ausente(s): ${names}.`,
+                    onClick: () => setSummaryModal({ kind: 'absences', title: 'Ausencias de la semana', items: weeklyAbsenceDetails }),
+                });
             } else {
-                const nextAbsence = weeklyAbsences
-                    .slice()
-                    .sort((a, b) => a.date_key.localeCompare(b.date_key))[0];
+                const nextAbsence = weeklyAbsenceDetails[0];
                 const name = USERS.find((u) => u.id === nextAbsence.created_by)?.name || 'Compañera/o';
-                lines.push(`Recuerda: ${name} estará ausente el ${nextAbsence.date_key}.`);
+                lines.push({
+                    id: 'absences-next',
+                    text: `Recuerda: ${name} estará ausente el ${nextAbsence.date_key}.`,
+                    onClick: () => setSummaryModal({ kind: 'absences', title: 'Ausencias de la semana', items: weeklyAbsenceDetails }),
+                });
             }
         }
 
         return lines;
-    }, [dueTodayTodos.length, pendingTodos.length, weeklyMeetings, weeklyTrainings, weeklyAbsences, todayKey]);
+    }, [
+        dueTodayTodos.length,
+        pendingTodos,
+        weeklyMeetings,
+        weeklyMeetingsSorted,
+        weeklyTrainings,
+        weeklyTrainingsSorted,
+        weeklyAbsences,
+        weeklyAbsenceDetails,
+        todayKey,
+    ]);
 
     const vacationUsed = useMemo(() => {
         return absenceRequests
@@ -464,12 +554,66 @@ function Dashboard() {
         }));
         return [...absRows, ...meetingRows].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     }, [managedAbsenceRows, managedMeetingRows]);
+
+    const myDetailedRequestRows = useMemo<ManagedRequestRow[]>(() => {
+        if (!currentUser) return [];
+        const abs = managedAbsenceRows
+            .filter((a: any) => a.created_by === currentUser.id)
+            .map((a: any) => ({
+                source: 'absence' as const,
+                id: a.id,
+                created_by: a.created_by,
+                created_at: a.created_at,
+                status: a.status,
+                title: a.type === 'vacation' ? 'Vacaciones' : a.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
+                dateText: `${a.date_key}${a.end_date ? ` al ${a.end_date}` : ''}`,
+                description: a.reason || '',
+                responseMessage: a.response_message || '',
+                attachments: (a.attachments || []) as Attachment[],
+                absenceType: a.type,
+                dateKey: a.date_key,
+                endDate: a.end_date || '',
+            }));
+        const meets = managedMeetingRows
+            .filter((m: any) => m.created_by === currentUser.id)
+            .map((m: any) => ({
+                source: 'meeting' as const,
+                id: m.id,
+                created_by: m.created_by,
+                created_at: m.created_at,
+                status: m.status,
+                title: m.title || 'Reunión',
+                dateText: m.scheduled_date_key || m.preferred_date_key || '-',
+                description: m.description || '',
+                responseMessage: m.response_message || '',
+                attachments: (m.attachments || []) as Attachment[],
+                preferredDateKey: m.preferred_date_key || '',
+            }));
+        const trainings = trainingRequests
+            .filter((t: any) => t.user_id === currentUser.id)
+            .map((t: any) => ({
+                source: 'training' as const,
+                id: t.id,
+                created_by: t.user_id,
+                created_at: t.created_at,
+                status: t.status,
+                title: 'Formación',
+                dateText: t.scheduled_date_key || t.requested_date_key || '-',
+                description: t.reason || '',
+                responseMessage: (Array.isArray(t.comments) ? t.comments.map((c: any) => c?.text).filter(Boolean).join('\n') : '') || '',
+                attachments: (t.attachments || []) as Attachment[],
+                requestedDateKey: t.requested_date_key || '',
+            }));
+        return [...abs, ...meets, ...trainings].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }, [currentUser, managedAbsenceRows, managedMeetingRows, trainingRequests]);
     const myRequestRows = useMemo(() => {
-        if (!currentUser) return [] as Array<{ id: string; title: string; date: string; status: string }>;
+        if (!currentUser) return [] as Array<{ id: string; source: ManagedRequestRow['source']; requestId: number; title: string; date: string; status: string }>;
         const absenceRows = absenceRequests
             .filter((a) => a.created_by === currentUser.id)
             .map((a) => ({
                 id: `absence-${a.id}`,
+                source: 'absence' as const,
+                requestId: a.id,
                 title: a.type === 'vacation' ? 'Vacaciones' : a.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
                 date: a.date_key || '-',
                 status: a.status,
@@ -478,6 +622,8 @@ function Dashboard() {
             .filter((m) => m.created_by === currentUser.id)
             .map((m) => ({
                 id: `meeting-${m.id}`,
+                source: 'meeting' as const,
+                requestId: m.id,
                 title: m.title || 'Solicitud de reunión',
                 date: m.scheduled_date_key || m.preferred_date_key || '-',
                 status: m.status,
@@ -486,6 +632,8 @@ function Dashboard() {
             .filter((t) => t.user_id === currentUser.id)
             .map((t) => ({
                 id: `training-${t.id}`,
+                source: 'training' as const,
+                requestId: t.id,
                 title: 'Solicitud de formación',
                 date: t.scheduled_date_key || t.requested_date_key || '-',
                 status: t.status,
@@ -497,13 +645,20 @@ function Dashboard() {
         () => managedRequestRows.filter((r) => r.status === 'pending'),
         [managedRequestRows],
     );
-    const resolvedManagedRows = useMemo(
-        () => managedRequestRows.filter((r) => r.status !== 'pending'),
-        [managedRequestRows],
-    );
+    const resolvedManagedRows = useMemo(() => {
+        return managedRequestRows.filter((r) => {
+            const approvedStatus =
+                (r.source === 'absence' && r.status === 'approved') ||
+                (r.source === 'meeting' && r.status === 'scheduled');
+            if (!approvedStatus) return false;
+            const rawDate = r.source === 'absence' ? (r.endDate || r.dateKey || '') : (r.preferredDateKey || '');
+            if (!rawDate) return false;
+            return rawDate >= todayKey;
+        });
+    }, [managedRequestRows, todayKey]);
     const requestPreviewRows = useMemo(
-        () => managedRequestRows.slice(0, 6),
-        [managedRequestRows],
+        () => (isAdmin ? managedRequestRows : myDetailedRequestRows).slice(0, 6),
+        [isAdmin, managedRequestRows, myDetailedRequestRows],
     );
 
     const weeklyWorkedHours = useMemo(() => {
@@ -698,9 +853,9 @@ function Dashboard() {
         await Promise.all(filteredNotifications.map((n: any) => markAsRead(n.id)));
     };
 
-    const openRequestModal = (type: QuickRequestType) => {
+    const openRequestModal = (type: QuickRequestType, presetDate?: string) => {
         setActiveRequestModal(type);
-        setRequestDate(todayKey);
+        setRequestDate(presetDate || todayKey);
         setRequestEndDate('');
         setRequestIsDateRange(false);
         setRequestAbsenceType('absence');
@@ -713,6 +868,29 @@ function Dashboard() {
         setRequestAttachments([]);
         setRequestTargetUserId(currentUser?.id || '');
     };
+
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const action = params.get('action');
+        if (action !== 'request') return;
+        const typeParam = params.get('type');
+        const dateParam = params.get('date') || todayKey;
+        const validTypes: QuickRequestType[] = ['absence', 'vacation', 'meeting', 'training'];
+        if (!typeParam || !validTypes.includes(typeParam as QuickRequestType)) return;
+        openRequestModal(typeParam as QuickRequestType, dateParam);
+
+        params.delete('action');
+        params.delete('type');
+        params.delete('date');
+        navigate(
+            {
+                pathname: '/dashboard',
+                search: params.toString() ? `?${params.toString()}` : '',
+                hash: location.hash,
+            },
+            { replace: true },
+        );
+    }, [location.search, location.hash, navigate, todayKey]);
 
     const closeRequestModal = () => {
         setActiveRequestModal(null);
@@ -879,10 +1057,30 @@ function Dashboard() {
         setManageRequestAttachments(request.attachments || []);
     };
 
+    const openMyRequest = (request: ManagedRequestRow) => {
+        setSelectedMyRequest(request);
+        setManageRequestDate(
+            request.source === 'absence'
+                ? (request.dateKey || '')
+                : request.source === 'meeting'
+                    ? (request.preferredDateKey || '')
+                    : (request.requestedDateKey || ''),
+        );
+        setManageRequestTitle(request.title || '');
+        setManageRequestDescription(request.description || '');
+        setManageRequestComment(request.responseMessage || '');
+        setManageRequestAttachments(request.attachments || []);
+        setShowMyRequestModal(true);
+    };
+
     const canEditOwnRequest = useMemo(() => {
         if (!selectedManagedRequest || !currentUser) return false;
         return selectedManagedRequest.created_by === currentUser.id && selectedManagedRequest.status === 'pending';
     }, [selectedManagedRequest, currentUser]);
+    const canEditMyRequest = useMemo(() => {
+        if (!selectedMyRequest || !currentUser) return false;
+        return selectedMyRequest.created_by === currentUser.id && selectedMyRequest.status === 'pending';
+    }, [selectedMyRequest, currentUser]);
 
     const refreshRequestQueries = async () => {
         await Promise.all([
@@ -945,6 +1143,71 @@ function Dashboard() {
             await refreshRequestQueries();
             setSelectedManagedRequest(null);
             setShowAbsencesManageModal(false);
+        } finally {
+            setManageSaving(false);
+        }
+    };
+
+    const saveMyRequestChanges = async () => {
+        if (!selectedMyRequest || !canEditMyRequest) return;
+        setManageSaving(true);
+        try {
+            if (selectedMyRequest.source === 'absence') {
+                await updateAbsence({
+                    id: selectedMyRequest.id,
+                    date_key: manageRequestDate || selectedMyRequest.dateKey,
+                    reason: manageRequestDescription,
+                    response_message: manageRequestComment || null,
+                    attachments: manageRequestAttachments,
+                });
+            } else if (selectedMyRequest.source === 'meeting') {
+                const { error } = await supabase
+                    .from('meeting_requests')
+                    .update({
+                        title: manageRequestTitle,
+                        description: manageRequestDescription,
+                        preferred_date_key: manageRequestDate || null,
+                        response_message: manageRequestComment || null,
+                        attachments: manageRequestAttachments,
+                    })
+                    .eq('id', selectedMyRequest.id)
+                    .eq('created_by', currentUser?.id);
+                if (error) throw error;
+                emitSuccessFeedback('Solicitud actualizada con éxito.');
+            } else {
+                await updateTrainingRequest({
+                    id: selectedMyRequest.id,
+                    requested_date_key: manageRequestDate || selectedMyRequest.requestedDateKey || undefined,
+                    reason: manageRequestDescription,
+                    attachments: manageRequestAttachments,
+                });
+            }
+            await refreshRequestQueries();
+            setShowMyRequestModal(false);
+            setSelectedMyRequest(null);
+        } catch (error: any) {
+            window.alert(error?.message || 'No se pudo guardar la solicitud.');
+        } finally {
+            setManageSaving(false);
+        }
+    };
+
+    const deleteMyRequest = async () => {
+        if (!selectedMyRequest || !currentUser || !canEditMyRequest) return;
+        const ok = window.confirm('¿Eliminar esta solicitud?');
+        if (!ok) return;
+        setManageSaving(true);
+        try {
+            if (selectedMyRequest.source === 'absence') {
+                await deleteAbsence(selectedMyRequest.id);
+            } else if (selectedMyRequest.source === 'meeting') {
+                await deleteMeeting(selectedMyRequest.id);
+            } else {
+                await deleteTrainingRequest(selectedMyRequest.id);
+            }
+            await refreshRequestQueries();
+            setShowMyRequestModal(false);
+            setSelectedMyRequest(null);
         } finally {
             setManageSaving(false);
         }
@@ -1593,8 +1856,18 @@ function Dashboard() {
                     Semana: {formatDatePretty(weekStart)} - {formatDatePretty(weekEnd)}.
                 </p>
                 <div className="space-y-1.5">
-                    {summaryTextLines.map((line, idx) => (
-                        <p key={idx} className="text-sm text-gray-700">{line}</p>
+                    {summaryLines.map((line) => (
+                        line.onClick ? (
+                            <button
+                                key={line.id}
+                                onClick={line.onClick}
+                                className="text-left text-sm text-violet-700 hover:text-violet-900 hover:underline font-semibold"
+                            >
+                                {line.text}
+                            </button>
+                        ) : (
+                            <p key={line.id} className="text-sm text-gray-700">{line.text}</p>
+                        )
                     ))}
                 </div>
             </div>
@@ -1752,15 +2025,9 @@ function Dashboard() {
                                         <button
                                             key={row.id}
                                             onClick={() => {
-                                                const [source, idText] = row.id.split('-');
-                                                const id = Number(idText || 0);
-                                                const target = managedRequestRows.find((r) => r.source === source && r.id === id);
-                                                if (!target) {
-                                                    window.alert('Esta solicitud se gestiona en su módulo específico.');
-                                                    return;
-                                                }
-                                                openManagedRequest(target);
-                                                setShowAbsencesManageModal(true);
+                                                const target = myDetailedRequestRows.find((r) => r.source === row.source && r.id === row.requestId);
+                                                if (!target) return;
+                                                openMyRequest(target);
                                             }}
                                             className="w-full text-left rounded-lg border border-violet-100 bg-white p-2 text-xs hover:border-violet-300 transition"
                                         >
@@ -1922,40 +2189,47 @@ function Dashboard() {
                     {(!isCompact || compactSection === 'absences') && (
                     <div id="dashboard-my-requests" className={`grid grid-cols-1 ${!isCompact && canSeeTrainingsPanel ? 'lg:grid-cols-2' : ''} gap-6`}>
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                            <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
-                                <button
-                                    onClick={() => {
-                                        setSelectedManagedRequest(null);
-                                        setManageRequestsTab('pending');
-                                        setShowAbsencesManageModal(true);
-                                    }}
-                                    className="text-xs font-bold text-violet-700"
-                                >
-                                    {isAdmin ? 'Gestionar solicitudes' : 'Gestionar'}
-                                </button>
-                            </div>
-                            <div className="space-y-2">
-                                {requestPreviewRows.map((item) => (
+                            <h3 className="text-base font-black text-violet-950 mb-3">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
+                            {isAdmin ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        onClick={() => {
+                                            setSelectedManagedRequest(null);
+                                            setManageRequestsTab('pending');
+                                            setShowAbsencesManageModal(true);
+                                        }}
+                                        className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-900"
+                                    >
+                                        Pendientes ({pendingManagedRows.length})
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setSelectedManagedRequest(null);
+                                            setManageRequestsTab('resolved');
+                                            setShowAbsencesManageModal(true);
+                                        }}
+                                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-900"
+                                    >
+                                        Aprobadas ({resolvedManagedRows.length})
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {requestPreviewRows.map((item) => (
                                         <button
                                             key={`${item.source}-${item.id}`}
-                                            onClick={() => {
-                                                openManagedRequest(item);
-                                                setShowAbsencesManageModal(true);
-                                            }}
+                                            onClick={() => openMyRequest(item)}
                                             className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm"
                                         >
                                             <p className="font-bold text-violet-900">{item.source === 'meeting' ? `Reunión · ${item.title}` : `${item.title} · ${item.dateText}`}</p>
-                                            <p className="text-xs text-violet-700">
-                                                Estado: {item.status}
-                                                {isAdmin ? ` · ${USERS.find((u) => u.id === item.created_by)?.name || item.created_by}` : ''}
-                                            </p>
+                                            <p className="text-xs text-violet-700">Estado: {item.status}</p>
                                         </button>
                                     ))}
-                                {managedRequestRows.length === 0 && (
-                                    <div className="app-empty-card">No hay solicitudes para mostrar.</div>
-                                )}
-                            </div>
+                                    {managedRequestRows.length === 0 && (
+                                        <div className="app-empty-card">No hay solicitudes para mostrar.</div>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         {canSeeTrainingsPanel && !isCompact && (
@@ -2433,14 +2707,14 @@ function Dashboard() {
                                             : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                     }`}
                                 >
-                                    Aprobadas y cerradas ({resolvedManagedRows.length})
+                                    Aprobadas ({resolvedManagedRows.length})
                                 </button>
                             </div>
 
                             <div className="rounded-2xl border border-violet-100 bg-violet-50/50 p-2 space-y-2">
                                 {(manageRequestsTab === 'pending' ? pendingManagedRows : resolvedManagedRows).length === 0 ? (
                                     <p className="px-2 py-2 text-xs text-gray-500 italic">
-                                        No hay solicitudes {manageRequestsTab === 'pending' ? 'pendientes' : 'aprobadas/cerradas'}.
+                                        No hay solicitudes {manageRequestsTab === 'pending' ? 'pendientes' : 'aprobadas'}.
                                     </p>
                                 ) : (
                                     (manageRequestsTab === 'pending' ? pendingManagedRows : resolvedManagedRows).map((request) => (
@@ -2487,7 +2761,7 @@ function Dashboard() {
                                             value={manageRequestDate}
                                             onChange={(e) => setManageRequestDate(e.target.value)}
                                             disabled={!canEditOwnRequest && !isAdmin}
-                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                         />
                                     </div>
 
@@ -2498,7 +2772,7 @@ function Dashboard() {
                                                 value={manageRequestTitle}
                                                 onChange={(e) => setManageRequestTitle(e.target.value)}
                                                 disabled={!canEditOwnRequest}
-                                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                             />
                                         </div>
                                     )}
@@ -2512,7 +2786,7 @@ function Dashboard() {
                                             onChange={(e) => setManageRequestDescription(e.target.value)}
                                             rows={3}
                                             disabled={!canEditOwnRequest}
-                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                         />
                                     </div>
 
@@ -2523,7 +2797,7 @@ function Dashboard() {
                                             onChange={(e) => setManageRequestComment(e.target.value)}
                                             rows={2}
                                             disabled={!canEditOwnRequest && !isAdmin}
-                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                         />
                                     </div>
 
@@ -2591,6 +2865,102 @@ function Dashboard() {
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showMyRequestModal && selectedMyRequest && (
+                <div className="app-modal-overlay" onClick={() => {
+                    setShowMyRequestModal(false);
+                    setSelectedMyRequest(null);
+                }}>
+                    <div className="app-modal-panel w-full max-w-[640px] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                            <h3 className="text-lg font-black text-gray-900">Mi solicitud</h3>
+                            <button onClick={() => {
+                                setShowMyRequestModal(false);
+                                setSelectedMyRequest(null);
+                            }} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                <XCircle size={18} />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Fecha</label>
+                                <input
+                                    type="date"
+                                    value={manageRequestDate}
+                                    onChange={(e) => setManageRequestDate(e.target.value)}
+                                    disabled={!canEditMyRequest}
+                                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                />
+                            </div>
+                            {selectedMyRequest.source === 'meeting' && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Título</label>
+                                    <input
+                                        value={manageRequestTitle}
+                                        onChange={(e) => setManageRequestTitle(e.target.value)}
+                                        disabled={!canEditMyRequest}
+                                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                    />
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">{selectedMyRequest.source === 'meeting' ? 'Descripción' : 'Motivo'}</label>
+                                <textarea
+                                    value={manageRequestDescription}
+                                    onChange={(e) => setManageRequestDescription(e.target.value)}
+                                    rows={3}
+                                    disabled={!canEditMyRequest}
+                                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                />
+                            </div>
+                            {selectedMyRequest.source !== 'training' && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Comentario</label>
+                                    <textarea
+                                        value={manageRequestComment}
+                                        onChange={(e) => setManageRequestComment(e.target.value)}
+                                        rows={2}
+                                        disabled={!canEditMyRequest}
+                                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                    />
+                                </div>
+                            )}
+
+                            {canEditMyRequest ? (
+                                <FileUploader
+                                    onUploadComplete={setManageRequestAttachments}
+                                    existingFiles={manageRequestAttachments}
+                                    folderPath={selectedMyRequest.source === 'meeting' ? 'meetings' : selectedMyRequest.source === 'training' ? 'trainings' : 'absences'}
+                                    maxSizeMB={5}
+                                />
+                            ) : (
+                                <div className="rounded-xl border border-gray-200 bg-gray-50 p-2 text-xs text-gray-600">
+                                    {manageRequestAttachments.length > 0
+                                        ? `${manageRequestAttachments.length} archivo(s) adjunto(s).`
+                                        : 'Sin adjuntos.'}
+                                </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <button
+                                    onClick={saveMyRequestChanges}
+                                    disabled={manageSaving || !canEditMyRequest}
+                                    className="px-3 py-2 rounded-xl bg-violet-700 text-white text-xs font-bold disabled:opacity-60"
+                                >
+                                    Guardar cambios
+                                </button>
+                                <button
+                                    onClick={deleteMyRequest}
+                                    disabled={manageSaving || !canEditMyRequest}
+                                    className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold disabled:opacity-60"
+                                >
+                                    Eliminar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2907,6 +3277,63 @@ function Dashboard() {
                             <Coffee size={16} className="text-amber-700" />
                             Chute enviado a {boostToastName}
                             <Sparkles size={14} className="text-amber-600 animate-pulse" />
+                        </div>
+                    </div>
+                </div>
+            )}
+            {summaryModal && (
+                <div className="app-modal-overlay" onClick={() => setSummaryModal(null)}>
+                    <div className="app-modal-panel w-full max-w-2xl rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-gray-100 p-4">
+                            <h3 className="text-lg font-black text-gray-900">{summaryModal.title}</h3>
+                            <button onClick={() => setSummaryModal(null)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                <XCircle size={18} />
+                            </button>
+                        </div>
+                        <div className="space-y-2 p-4 max-h-[60vh] overflow-y-auto">
+                            {summaryModal.items.length === 0 && (
+                                <div className="app-empty-card">No hay elementos para mostrar.</div>
+                            )}
+                            {summaryModal.kind === 'tasks' && summaryModal.items.map((task: any) => (
+                                <button
+                                    key={`summary-task-${task.id}`}
+                                    onClick={() => {
+                                        setSelectedTask(task);
+                                        setSummaryModal(null);
+                                    }}
+                                    className="w-full rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-left hover:border-violet-400"
+                                >
+                                    <p className="text-sm font-black text-violet-900">{task.title}</p>
+                                    <p className="text-xs text-violet-700">
+                                        Vence: {task.due_date_key || (task.created_at ? toDateKey(new Date(task.created_at)) : '-')}
+                                    </p>
+                                </button>
+                            ))}
+                            {summaryModal.kind === 'meetings' && summaryModal.items.map((meeting: any) => (
+                                <div key={`summary-meeting-${meeting.id}`} className="rounded-xl border border-blue-200 bg-blue-50/60 p-3">
+                                    <p className="text-sm font-black text-blue-900">{meeting.title || 'Reunión'}</p>
+                                    <p className="text-xs text-blue-700">Fecha: {meeting.scheduled_date_key || meeting.preferred_date_key || '-'}</p>
+                                    <p className="text-xs text-blue-700">Descripción: {meeting.description || '-'}</p>
+                                </div>
+                            ))}
+                            {summaryModal.kind === 'trainings' && summaryModal.items.map((training: any) => (
+                                <div key={`summary-training-${training.id}`} className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
+                                    <p className="text-sm font-black text-fuchsia-900">Formación</p>
+                                    <p className="text-xs text-fuchsia-700">Fecha: {training.scheduled_date_key || training.requested_date_key || '-'}</p>
+                                    <p className="text-xs text-fuchsia-700">Motivo: {training.reason || '-'}</p>
+                                </div>
+                            ))}
+                            {summaryModal.kind === 'absences' && summaryModal.items.map((absence: any) => (
+                                <div key={`summary-absence-${absence.id}`} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                                    <p className="text-sm font-black text-amber-900">{absence.personName || '-'}</p>
+                                    <p className="text-xs text-amber-700">
+                                        {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'}
+                                        {' · '}
+                                        {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                    </p>
+                                    <p className="text-xs text-amber-700">Motivo: {absence.reason || '-'}</p>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </div>
