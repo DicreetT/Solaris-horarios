@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     AlertTriangle,
     CalendarClock,
@@ -43,8 +44,24 @@ import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 
-type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings';
+type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'stock';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
+type ManagedRequestRow = {
+    source: 'absence' | 'meeting';
+    id: number;
+    created_by: string;
+    created_at: string;
+    status: string;
+    title: string;
+    dateText: string;
+    description: string;
+    responseMessage: string;
+    attachments: Attachment[];
+    absenceType?: 'absence' | 'vacation' | 'special_permit';
+    dateKey?: string;
+    endDate?: string;
+    preferredDateKey?: string | null;
+};
 type InventoryAlertsSummary = {
     updatedAt?: string;
     criticalProducts?: Array<{ producto: string; stockTotal: number; coberturaMeses: number }>;
@@ -70,6 +87,7 @@ const notificationFilterLabels: Record<NotificationFilter, string> = {
     meetings: 'Reuniones',
     absences: 'Ausencias',
     trainings: 'Formaciones',
+    stock: 'Stock',
 };
 
 const PRODUCT_COLORS: Record<string, string> = {
@@ -119,13 +137,14 @@ const toNum = (v: unknown) => {
 
 function Dashboard() {
     const { currentUser } = useAuth();
+    const queryClient = useQueryClient();
     const isAdmin = !!currentUser?.isAdmin;
     const navigate = useNavigate();
     const location = useLocation();
     const { todos } = useTodos(currentUser);
-    const { meetingRequests, createMeeting } = useMeetings(currentUser);
+    const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
     const { trainingRequests, createTrainingRequest } = useTraining(currentUser);
-    const { absenceRequests, createAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
+    const { absenceRequests, createAbsence, updateAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
     const { timeData, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
@@ -190,9 +209,14 @@ function Dashboard() {
         byBodega: Array<{ bodega: string; cantidad: number }>;
     } | null>(null);
     const [showAbsencesManageModal, setShowAbsencesManageModal] = useState(false);
-    const [expandedAbsenceId, setExpandedAbsenceId] = useState<number | null>(null);
-    const [showPendingAbsences, setShowPendingAbsences] = useState(true);
-    const [showResolvedAbsences, setShowResolvedAbsences] = useState(false);
+    const [manageRequestsTab, setManageRequestsTab] = useState<'pending' | 'resolved'>('pending');
+    const [selectedManagedRequest, setSelectedManagedRequest] = useState<ManagedRequestRow | null>(null);
+    const [manageRequestDate, setManageRequestDate] = useState('');
+    const [manageRequestTitle, setManageRequestTitle] = useState('');
+    const [manageRequestDescription, setManageRequestDescription] = useState('');
+    const [manageRequestComment, setManageRequestComment] = useState('');
+    const [manageRequestAttachments, setManageRequestAttachments] = useState<Attachment[]>([]);
+    const [manageSaving, setManageSaving] = useState(false);
     const [showCompactTimeTracker, setShowCompactTimeTracker] = useState(false);
     const densityMode = useDensityMode();
     const isCompact = densityMode === 'compact';
@@ -402,10 +426,44 @@ function Dashboard() {
             : absenceRequests.filter((a) => a.created_by === currentUser.id);
         return [...visible].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     }, [absenceRequests, currentUser, isAdmin]);
-    const pendingMeetingRows = useMemo(
-        () => meetingRequests.filter((m) => m.status === 'pending'),
-        [meetingRequests],
-    );
+    const managedMeetingRows = useMemo(() => {
+        if (!currentUser) return [];
+        const visible = isAdmin
+            ? meetingRequests
+            : meetingRequests.filter((m) => m.created_by === currentUser.id);
+        return [...visible].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }, [meetingRequests, currentUser, isAdmin]);
+    const managedRequestRows = useMemo<ManagedRequestRow[]>(() => {
+        const absRows: ManagedRequestRow[] = managedAbsenceRows.map((a: any) => ({
+            source: 'absence',
+            id: a.id,
+            created_by: a.created_by,
+            created_at: a.created_at,
+            status: a.status,
+            title: a.type === 'vacation' ? 'Vacaciones' : a.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
+            dateText: `${a.date_key}${a.end_date ? ` al ${a.end_date}` : ''}`,
+            description: a.reason || '',
+            responseMessage: a.response_message || '',
+            attachments: (a.attachments || []) as Attachment[],
+            absenceType: a.type,
+            dateKey: a.date_key,
+            endDate: a.end_date || '',
+        }));
+        const meetingRows: ManagedRequestRow[] = managedMeetingRows.map((m: any) => ({
+            source: 'meeting',
+            id: m.id,
+            created_by: m.created_by,
+            created_at: m.created_at,
+            status: m.status,
+            title: m.title || 'Reunión',
+            dateText: m.scheduled_date_key || m.preferred_date_key || '-',
+            description: m.description || '',
+            responseMessage: m.response_message || '',
+            attachments: (m.attachments || []) as Attachment[],
+            preferredDateKey: m.preferred_date_key || '',
+        }));
+        return [...absRows, ...meetingRows].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }, [managedAbsenceRows, managedMeetingRows]);
     const myRequestRows = useMemo(() => {
         if (!currentUser) return [] as Array<{ id: string; title: string; date: string; status: string }>;
         const absenceRows = absenceRequests
@@ -435,13 +493,17 @@ function Dashboard() {
         return [...absenceRows, ...meetingRows, ...trainingRows].sort((a, b) => (a.date < b.date ? 1 : -1));
     }, [absenceRequests, meetingRequests, trainingRequests, currentUser]);
 
-    const pendingAbsenceRows = useMemo(
-        () => managedAbsenceRows.filter((a) => a.status === 'pending'),
-        [managedAbsenceRows],
+    const pendingManagedRows = useMemo(
+        () => managedRequestRows.filter((r) => r.status === 'pending'),
+        [managedRequestRows],
     );
-    const resolvedAbsenceRows = useMemo(
-        () => managedAbsenceRows.filter((a) => a.status !== 'pending'),
-        [managedAbsenceRows],
+    const resolvedManagedRows = useMemo(
+        () => managedRequestRows.filter((r) => r.status !== 'pending'),
+        [managedRequestRows],
+    );
+    const requestPreviewRows = useMemo(
+        () => managedRequestRows.slice(0, 6),
+        [managedRequestRows],
     );
 
     const weeklyWorkedHours = useMemo(() => {
@@ -533,6 +595,7 @@ function Dashboard() {
 
     const categorizeNotification = (n: any): NotificationFilter => {
         const text = `${n.message || ''}`.toLowerCase();
+        if (text.includes('stock') || text.includes('inventario') || text.includes('caduc')) return 'stock';
         if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea')) return 'tasks';
         if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
         if (text.includes('reun')) return 'meetings';
@@ -553,6 +616,7 @@ function Dashboard() {
             meetings: 0,
             absences: 0,
             trainings: 0,
+            stock: 0,
         };
         unreadPendingNotifications.forEach((n) => {
             base[categorizeNotification(n)] += 1;
@@ -575,15 +639,32 @@ function Dashboard() {
 
     const compactNotifications = useMemo(() => filteredNotifications.slice(0, 4), [filteredNotifications]);
 
+    const findTaskFromNotification = (notification: any) => {
+        const message = `${notification.message || ''}`;
+        const idMatch = message.match(/\[#(\d+)\]/);
+        if (idMatch) {
+            const id = Number(idMatch[1]);
+            const byId = todos.find((t) => t.id === id);
+            if (byId) return byId;
+        }
+
+        const quoted = message.match(/"([^"]+)"/);
+        if (quoted?.[1]) {
+            const title = quoted[1].trim().toLowerCase();
+            const exact = todos.find((t) => t.title.trim().toLowerCase() === title);
+            if (exact) return exact;
+            const partial = todos.find((t) => t.title.trim().toLowerCase().includes(title) || title.includes(t.title.trim().toLowerCase()));
+            if (partial) return partial;
+        }
+
+        return null;
+    };
+
     const handleNotificationClick = (notification: any) => {
         void markAsRead(notification.id);
         const category = categorizeNotification(notification);
         if (category === 'tasks') {
-            const task = todos.find((t) => {
-                const title = t.title.toLowerCase();
-                const message = `${notification.message || ''}`.toLowerCase();
-                return message.includes(title);
-            });
+            const task = findTaskFromNotification(notification);
             if (task) {
                 setSelectedTask(task);
                 return;
@@ -595,6 +676,14 @@ function Dashboard() {
         if (category === 'trainings') navigate('/trainings');
         if (category === 'schedule') {
             const block = document.getElementById('dashboard-time-summary');
+            if (block) {
+                block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+        if (category === 'stock') {
+            setInventoryPanelMode('critical');
+            setCompactSection('alerts');
+            const block = document.getElementById('dashboard-inventory-panel');
             if (block) {
                 block.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
@@ -781,78 +870,140 @@ function Dashboard() {
         emitSuccessFeedback('PDF de ausencias generado con éxito.');
     };
 
-    const handleResolveAbsence = async (id: number, status: 'approved' | 'rejected', resolutionType?: string) => {
-        const note = window.prompt('Nota para la solicitud (opcional):', '') || '';
-        await updateAbsenceStatus({
-            id,
-            status,
-            response_message: note,
-            resolution_type: resolutionType,
-        });
-        emitSuccessFeedback('Resolución guardada con éxito.');
+    const openManagedRequest = (request: ManagedRequestRow) => {
+        setSelectedManagedRequest(request);
+        setManageRequestDate(request.source === 'absence' ? (request.dateKey || '') : (request.preferredDateKey || ''));
+        setManageRequestTitle(request.title || '');
+        setManageRequestDescription(request.description || '');
+        setManageRequestComment(request.responseMessage || '');
+        setManageRequestAttachments(request.attachments || []);
     };
 
-    const renderManagedAbsenceRow = (absence: any) => {
-        const ownerName = USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by;
-        const canDelete = isAdmin || (absence.created_by === currentUser?.id && absence.status === 'pending');
-        const isExpanded = expandedAbsenceId === absence.id;
-        return (
-            <div key={absence.id} className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <button
-                        onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
-                        className="flex-1 text-left"
-                    >
-                        <p className="text-sm font-black text-violet-900">
-                            {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
-                        </p>
-                        <p className="text-xs text-violet-700">
-                            {isAdmin ? `${ownerName} · ` : ''}Estado: {absence.status}{absence.resolution_type ? ` · ${absence.resolution_type}` : ''}
-                        </p>
-                    </button>
-                    <div className="flex items-center gap-1.5">
-                        <button
-                            onClick={() => setExpandedAbsenceId((prev) => (prev === absence.id ? null : absence.id))}
-                            className="px-2 py-1 rounded-lg border border-violet-200 bg-white text-violet-700 text-xs font-bold"
-                        >
-                            {isExpanded ? 'Ocultar' : 'Ver'}
-                        </button>
-                        {canDelete && (
-                            <button
-                                onClick={async () => {
-                                    const ok = window.confirm('¿Eliminar esta solicitud?');
-                                    if (!ok) return;
-                                    await deleteAbsence(absence.id);
-                                }}
-                                className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold"
-                            >
-                                Eliminar
-                            </button>
-                        )}
-                    </div>
-                </div>
-                {isExpanded && (
-                    <>
-                        <p className="mt-2 text-sm text-gray-700"><span className="font-bold">Motivo:</span> {absence.reason || '-'}</p>
+    const canEditOwnRequest = useMemo(() => {
+        if (!selectedManagedRequest || !currentUser) return false;
+        return selectedManagedRequest.created_by === currentUser.id && selectedManagedRequest.status === 'pending';
+    }, [selectedManagedRequest, currentUser]);
 
-                        {isAdmin && absence.status === 'pending' && (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                                {absence.type === 'special_permit' ? (
-                                    <>
-                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'makeup')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar · Reponer horas</button>
-                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'paid')} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-bold">Aprobar · Cuenta trabajada</button>
-                                        <button onClick={() => handleResolveAbsence(absence.id, 'approved', 'deducted')} className="px-3 py-1.5 rounded-lg bg-emerald-400 text-white text-xs font-bold">Aprobar · Ausencia normal</button>
-                                    </>
-                                ) : (
-                                    <button onClick={() => handleResolveAbsence(absence.id, 'approved')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold">Aprobar</button>
-                                )}
-                                <button onClick={() => handleResolveAbsence(absence.id, 'rejected')} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Rechazar</button>
-                            </div>
-                        )}
-                    </>
-                )}
-            </div>
-        );
+    const refreshRequestQueries = async () => {
+        await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['absences'] }),
+            queryClient.invalidateQueries({ queryKey: ['meetings'] }),
+            queryClient.invalidateQueries({ queryKey: ['training'] }),
+        ]);
+    };
+
+    const saveManagedRequestChanges = async () => {
+        if (!selectedManagedRequest || !canEditOwnRequest) return;
+        setManageSaving(true);
+        try {
+            if (selectedManagedRequest.source === 'absence') {
+                await updateAbsence({
+                    id: selectedManagedRequest.id,
+                    date_key: manageRequestDate || selectedManagedRequest.dateKey,
+                    reason: manageRequestDescription,
+                    response_message: manageRequestComment || null,
+                    attachments: manageRequestAttachments,
+                });
+            } else {
+                const { error } = await supabase
+                    .from('meeting_requests')
+                    .update({
+                        title: manageRequestTitle,
+                        description: manageRequestDescription,
+                        preferred_date_key: manageRequestDate || null,
+                        response_message: manageRequestComment || null,
+                        attachments: manageRequestAttachments,
+                    })
+                    .eq('id', selectedManagedRequest.id)
+                    .eq('created_by', currentUser?.id);
+                if (error) throw error;
+                emitSuccessFeedback('Solicitud actualizada con éxito.');
+            }
+            await refreshRequestQueries();
+            setShowAbsencesManageModal(false);
+            setSelectedManagedRequest(null);
+        } catch (error: any) {
+            window.alert(error?.message || 'No se pudo guardar la solicitud.');
+        } finally {
+            setManageSaving(false);
+        }
+    };
+
+    const deleteManagedRequest = async () => {
+        if (!selectedManagedRequest || !currentUser) return;
+        const canDelete = isAdmin || (selectedManagedRequest.created_by === currentUser.id && selectedManagedRequest.status === 'pending');
+        if (!canDelete) return;
+        const ok = window.confirm('¿Eliminar esta solicitud?');
+        if (!ok) return;
+        setManageSaving(true);
+        try {
+            if (selectedManagedRequest.source === 'absence') {
+                await deleteAbsence(selectedManagedRequest.id);
+            } else {
+                await deleteMeeting(selectedManagedRequest.id);
+            }
+            await refreshRequestQueries();
+            setSelectedManagedRequest(null);
+            setShowAbsencesManageModal(false);
+        } finally {
+            setManageSaving(false);
+        }
+    };
+
+    const resolveManagedRequest = async (action: 'approve' | 'reprogram' | 'reject') => {
+        if (!selectedManagedRequest || !isAdmin) return;
+        setManageSaving(true);
+        try {
+            if (selectedManagedRequest.source === 'absence') {
+                if (action === 'reprogram') {
+                    await updateAbsence({
+                        id: selectedManagedRequest.id,
+                        date_key: manageRequestDate || selectedManagedRequest.dateKey,
+                        reason: manageRequestDescription || selectedManagedRequest.description,
+                        response_message: manageRequestComment || null,
+                        attachments: manageRequestAttachments,
+                    });
+                } else {
+                    await updateAbsenceStatus({
+                        id: selectedManagedRequest.id,
+                        status: action === 'approve' ? 'approved' : 'rejected',
+                        response_message: manageRequestComment || '',
+                    });
+                }
+            } else {
+                if (action === 'approve') {
+                    await updateMeetingStatus({
+                        id: selectedManagedRequest.id,
+                        status: 'scheduled',
+                        scheduled_date_key: manageRequestDate || selectedManagedRequest.preferredDateKey || undefined,
+                        response_message: manageRequestComment || undefined,
+                    });
+                } else if (action === 'reprogram') {
+                    const { error } = await supabase
+                        .from('meeting_requests')
+                        .update({
+                            preferred_date_key: manageRequestDate || selectedManagedRequest.preferredDateKey || null,
+                            response_message: manageRequestComment || null,
+                        })
+                        .eq('id', selectedManagedRequest.id);
+                    if (error) throw error;
+                } else {
+                    await updateMeetingStatus({
+                        id: selectedManagedRequest.id,
+                        status: 'rejected',
+                        response_message: manageRequestComment || undefined,
+                    });
+                }
+            }
+            await refreshRequestQueries();
+            setShowAbsencesManageModal(false);
+            setSelectedManagedRequest(null);
+            emitSuccessFeedback('Solicitud actualizada con éxito.');
+        } catch (error: any) {
+            window.alert(error?.message || 'No se pudo actualizar la solicitud.');
+        } finally {
+            setManageSaving(false);
+        }
     };
 
     useEffect(() => {
@@ -1284,9 +1435,7 @@ function Dashboard() {
             }).length,
         [unreadPendingNotifications],
     );
-    const absencesBadgeCount = isAdmin
-        ? pendingAbsenceRows.length + pendingMeetingRows.length || weeklyAbsences.length
-        : weeklyTeamAbsences.length;
+    const absencesBadgeCount = isAdmin ? pendingManagedRows.length : weeklyTeamAbsences.length;
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
     const absencesTileLabel = isAdmin ? 'Gestionar solicitudes' : 'Ausencias';
     const trainingsTileLabel = canSeeTrainingsPanel ? 'Gestionar formaciones' : 'Formaciones';
@@ -1600,10 +1749,24 @@ function Dashboard() {
                                 <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Mis solicitudes recientes</p>
                                 <div className="space-y-1.5">
                                     {myRequestRows.slice(0, 6).map((row) => (
-                                        <div key={row.id} className="rounded-lg border border-violet-100 bg-white p-2 text-xs">
+                                        <button
+                                            key={row.id}
+                                            onClick={() => {
+                                                const [source, idText] = row.id.split('-');
+                                                const id = Number(idText || 0);
+                                                const target = managedRequestRows.find((r) => r.source === source && r.id === id);
+                                                if (!target) {
+                                                    window.alert('Esta solicitud se gestiona en su módulo específico.');
+                                                    return;
+                                                }
+                                                openManagedRequest(target);
+                                                setShowAbsencesManageModal(true);
+                                            }}
+                                            className="w-full text-left rounded-lg border border-violet-100 bg-white p-2 text-xs hover:border-violet-300 transition"
+                                        >
                                             <p className="font-bold text-violet-900">{row.title}</p>
                                             <p className="text-violet-700">{row.date} · Estado: {row.status}</p>
-                                        </div>
+                                        </button>
                                     ))}
                                     {myRequestRows.length === 0 && <div className="app-empty-card">Aún no tienes solicitudes creadas.</div>}
                                 </div>
@@ -1763,7 +1926,8 @@ function Dashboard() {
                                 <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
                                 <button
                                     onClick={() => {
-                                        setExpandedAbsenceId(null);
+                                        setSelectedManagedRequest(null);
+                                        setManageRequestsTab('pending');
                                         setShowAbsencesManageModal(true);
                                     }}
                                     className="text-xs font-bold text-violet-700"
@@ -1772,41 +1936,24 @@ function Dashboard() {
                                 </button>
                             </div>
                             <div className="space-y-2">
-                                {(isAdmin
-                                    ? [
-                                        ...managedAbsenceRows.slice(0, 3).map((absence) => ({
-                                            key: `abs-${absence.id}`,
-                                            title: `${absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · ${absence.date_key}`,
-                                            sub: `Estado: ${absence.status} · ${USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by}`,
-                                            onClick: () => {
-                                                setExpandedAbsenceId(absence.id);
+                                {requestPreviewRows.map((item) => (
+                                        <button
+                                            key={`${item.source}-${item.id}`}
+                                            onClick={() => {
+                                                openManagedRequest(item);
                                                 setShowAbsencesManageModal(true);
-                                            },
-                                        })),
-                                        ...meetingRequests.slice(0, 3).map((meeting) => ({
-                                            key: `meet-${meeting.id}`,
-                                            title: `Reunión · ${meeting.title || 'Sin título'}`,
-                                            sub: `Estado: ${meeting.status} · ${meeting.preferred_date_key || '-'}`,
-                                            onClick: () => navigate('/meetings'),
-                                        })),
-                                    ]
-                                    : managedAbsenceRows.slice(0, 4).map((absence) => ({
-                                        key: `abs-${absence.id}`,
-                                        title: `${absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · ${absence.date_key}`,
-                                        sub: `Estado: ${absence.status}`,
-                                        onClick: () => {
-                                            setExpandedAbsenceId(absence.id);
-                                            setShowAbsencesManageModal(true);
-                                        },
-                                    })))
-                                    .map((item) => (
-                                        <button key={item.key} onClick={item.onClick} className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
-                                            <p className="font-bold text-violet-900">{item.title}</p>
-                                            <p className="text-xs text-violet-700">{item.sub}</p>
+                                            }}
+                                            className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm"
+                                        >
+                                            <p className="font-bold text-violet-900">{item.source === 'meeting' ? `Reunión · ${item.title}` : `${item.title} · ${item.dateText}`}</p>
+                                            <p className="text-xs text-violet-700">
+                                                Estado: {item.status}
+                                                {isAdmin ? ` · ${USERS.find((u) => u.id === item.created_by)?.name || item.created_by}` : ''}
+                                            </p>
                                         </button>
                                     ))}
-                                {((isAdmin && managedAbsenceRows.length + meetingRequests.length === 0) || (!isAdmin && managedAbsenceRows.length === 0)) && (
-                                    <div className="app-empty-card">No hay ausencias para mostrar.</div>
+                                {managedRequestRows.length === 0 && (
+                                    <div className="app-empty-card">No hay solicitudes para mostrar.</div>
                                 )}
                             </div>
                         </div>
@@ -1862,7 +2009,7 @@ function Dashboard() {
 
                 <div className="space-y-6">
                     {(!isCompact || compactSection === 'alerts') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                    <div id="dashboard-inventory-panel" className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
                             <h2 className="text-lg font-black text-violet-950">Inventario · Visión general</h2>
                         </div>
@@ -2088,7 +2235,7 @@ function Dashboard() {
                         </div>
 
                         <div className="flex flex-wrap gap-1.5 mb-3">
-                            {(['all', 'tasks', 'schedule', 'meetings', 'absences', 'trainings'] as NotificationFilter[]).map((tab) => (
+                            {(['all', 'tasks', 'schedule', 'meetings', 'absences', 'trainings', 'stock'] as NotificationFilter[]).map((tab) => (
                                 <button
                                     key={tab}
                                     onClick={() => setNotificationFilter(tab)}
@@ -2244,11 +2391,11 @@ function Dashboard() {
             {showAbsencesManageModal && (
                 <div className="app-modal-overlay" onClick={() => {
                     setShowAbsencesManageModal(false);
-                    setExpandedAbsenceId(null);
+                    setSelectedManagedRequest(null);
                 }}>
                     <div className="app-modal-panel w-full max-w-[820px] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
                         <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-                            <h3 className="text-xl font-black text-gray-900">{isAdmin ? 'Gestionar ausencias y vacaciones' : 'Mis ausencias y vacaciones'}</h3>
+                            <h3 className="text-xl font-black text-gray-900">{isAdmin ? 'Gestionar solicitudes' : 'Mis solicitudes'}</h3>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={downloadAbsencesPdf}
@@ -2259,7 +2406,7 @@ function Dashboard() {
                                 </button>
                                 <button onClick={() => {
                                     setShowAbsencesManageModal(false);
-                                    setExpandedAbsenceId(null);
+                                    setSelectedManagedRequest(null);
                                 }} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
                                     <XCircle size={18} />
                                 </button>
@@ -2267,44 +2414,182 @@ function Dashboard() {
                         </div>
 
                         <div className="p-3 sm:p-4 overflow-y-auto space-y-3">
-                            {managedAbsenceRows.length === 0 ? (
-                                <p className="text-sm text-gray-500 italic">No hay registros de ausencias.</p>
-                            ) : (
-                                <>
-                                    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-2">
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    onClick={() => setManageRequestsTab('pending')}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${
+                                        manageRequestsTab === 'pending'
+                                            ? 'bg-amber-600 text-white border-amber-600'
+                                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                                    }`}
+                                >
+                                    Pendientes ({pendingManagedRows.length})
+                                </button>
+                                <button
+                                    onClick={() => setManageRequestsTab('resolved')}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${
+                                        manageRequestsTab === 'resolved'
+                                            ? 'bg-emerald-600 text-white border-emerald-600'
+                                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    }`}
+                                >
+                                    Aprobadas y cerradas ({resolvedManagedRows.length})
+                                </button>
+                            </div>
+
+                            <div className="rounded-2xl border border-violet-100 bg-violet-50/50 p-2 space-y-2">
+                                {(manageRequestsTab === 'pending' ? pendingManagedRows : resolvedManagedRows).length === 0 ? (
+                                    <p className="px-2 py-2 text-xs text-gray-500 italic">
+                                        No hay solicitudes {manageRequestsTab === 'pending' ? 'pendientes' : 'aprobadas/cerradas'}.
+                                    </p>
+                                ) : (
+                                    (manageRequestsTab === 'pending' ? pendingManagedRows : resolvedManagedRows).map((request) => (
                                         <button
-                                            onClick={() => setShowPendingAbsences((prev) => !prev)}
-                                            className="w-full flex items-center justify-between px-2 py-1 text-left"
+                                            key={`${request.source}-${request.id}`}
+                                            onClick={() => openManagedRequest(request)}
+                                            className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-left hover:border-violet-400 transition"
                                         >
-                                            <span className="text-sm font-black text-amber-900">Pendientes ({pendingAbsenceRows.length})</span>
-                                            <span className="text-xs font-bold text-amber-700">{showPendingAbsences ? 'Ocultar' : 'Ver'}</span>
+                                            <p className="text-sm font-black text-violet-900">
+                                                {request.source === 'meeting' ? 'Reunión' : request.title} · {request.source === 'meeting' ? request.title : request.dateText}
+                                            </p>
+                                            <p className="text-xs text-violet-700">
+                                                Estado: {request.status}
+                                                {isAdmin ? ` · ${USERS.find((u) => u.id === request.created_by)?.name || request.created_by}` : ''}
+                                            </p>
                                         </button>
-                                        {showPendingAbsences && (
-                                            <div className="mt-2 space-y-2">
-                                                {pendingAbsenceRows.length === 0
-                                                    ? <p className="px-2 py-2 text-xs text-amber-800 italic">No hay solicitudes pendientes.</p>
-                                                    : pendingAbsenceRows.map(renderManagedAbsenceRow)}
-                                            </div>
-                                        )}
+                                    ))
+                                )}
+                            </div>
+
+                            {selectedManagedRequest && (
+                                <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <p className="text-sm font-black text-gray-900">
+                                                {selectedManagedRequest.source === 'meeting' ? 'Solicitud de reunión/sugerencia' : selectedManagedRequest.title}
+                                            </p>
+                                            <p className="text-xs text-gray-600">
+                                                Estado: {selectedManagedRequest.status} · Persona: {USERS.find((u) => u.id === selectedManagedRequest.created_by)?.name || selectedManagedRequest.created_by}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => setSelectedManagedRequest(null)}
+                                            className="text-xs font-bold text-gray-500"
+                                        >
+                                            Cerrar
+                                        </button>
                                     </div>
 
-                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-2">
-                                        <button
-                                            onClick={() => setShowResolvedAbsences((prev) => !prev)}
-                                            className="w-full flex items-center justify-between px-2 py-1 text-left"
-                                        >
-                                            <span className="text-sm font-black text-emerald-900">Aprobadas y cerradas ({resolvedAbsenceRows.length})</span>
-                                            <span className="text-xs font-bold text-emerald-700">{showResolvedAbsences ? 'Ocultar' : 'Ver'}</span>
-                                        </button>
-                                        {showResolvedAbsences && (
-                                            <div className="mt-2 space-y-2">
-                                                {resolvedAbsenceRows.length === 0
-                                                    ? <p className="px-2 py-2 text-xs text-emerald-800 italic">No hay solicitudes resueltas.</p>
-                                                    : resolvedAbsenceRows.map(renderManagedAbsenceRow)}
-                                            </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Fecha / Reprogramación</label>
+                                        <input
+                                            type="date"
+                                            value={manageRequestDate}
+                                            onChange={(e) => setManageRequestDate(e.target.value)}
+                                            disabled={!canEditOwnRequest && !isAdmin}
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                        />
+                                    </div>
+
+                                    {selectedManagedRequest.source === 'meeting' && (
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-700 mb-1">Título</label>
+                                            <input
+                                                value={manageRequestTitle}
+                                                onChange={(e) => setManageRequestTitle(e.target.value)}
+                                                disabled={!canEditOwnRequest}
+                                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                            />
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                                            {selectedManagedRequest.source === 'meeting' ? 'Descripción' : 'Motivo'}
+                                        </label>
+                                        <textarea
+                                            value={manageRequestDescription}
+                                            onChange={(e) => setManageRequestDescription(e.target.value)}
+                                            rows={3}
+                                            disabled={!canEditOwnRequest}
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Comentario / respuesta</label>
+                                        <textarea
+                                            value={manageRequestComment}
+                                            onChange={(e) => setManageRequestComment(e.target.value)}
+                                            rows={2}
+                                            disabled={!canEditOwnRequest && !isAdmin}
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-100"
+                                        />
+                                    </div>
+
+                                    {canEditOwnRequest ? (
+                                        <FileUploader
+                                            onUploadComplete={setManageRequestAttachments}
+                                            existingFiles={manageRequestAttachments}
+                                            folderPath={selectedManagedRequest.source === 'meeting' ? 'meetings' : 'absences'}
+                                            maxSizeMB={5}
+                                        />
+                                    ) : (
+                                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-2 text-xs text-gray-600">
+                                            {manageRequestAttachments.length > 0
+                                                ? `${manageRequestAttachments.length} archivo(s) adjunto(s).`
+                                                : 'Sin adjuntos.'}
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                                        {canEditOwnRequest && (
+                                            <button
+                                                onClick={saveManagedRequestChanges}
+                                                disabled={manageSaving}
+                                                className="px-3 py-2 rounded-xl bg-violet-700 text-white text-xs font-bold disabled:opacity-60"
+                                            >
+                                                Guardar cambios
+                                            </button>
+                                        )}
+
+                                        {(isAdmin || canEditOwnRequest) && (
+                                            <button
+                                                onClick={deleteManagedRequest}
+                                                disabled={manageSaving}
+                                                className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold disabled:opacity-60"
+                                            >
+                                                Eliminar
+                                            </button>
+                                        )}
+
+                                        {isAdmin && selectedManagedRequest.status === 'pending' && (
+                                            <>
+                                                <button
+                                                    onClick={() => resolveManagedRequest('reprogram')}
+                                                    disabled={manageSaving}
+                                                    className="px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold disabled:opacity-60"
+                                                >
+                                                    Reprogramar
+                                                </button>
+                                                <button
+                                                    onClick={() => resolveManagedRequest('approve')}
+                                                    disabled={manageSaving}
+                                                    className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold disabled:opacity-60"
+                                                >
+                                                    Aceptar
+                                                </button>
+                                                <button
+                                                    onClick={() => resolveManagedRequest('reject')}
+                                                    disabled={manageSaving}
+                                                    className="px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold disabled:opacity-60"
+                                                >
+                                                    Cancelar
+                                                </button>
+                                            </>
                                         )}
                                     </div>
-                                </>
+                                </div>
                             )}
                         </div>
                     </div>
