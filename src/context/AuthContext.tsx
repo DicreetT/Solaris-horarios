@@ -34,7 +34,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
                     const email = data.user.email?.toLowerCase();
                     const localUser = USERS.find((u) => u.email.toLowerCase() === email);
                     if (localUser) {
-                        setCurrentUser(localUser);
+                        setCurrentUser({
+                            ...localUser,
+                            // Use auth uid to avoid RLS mismatches on inserts/updates.
+                            id: data.user.id,
+                            email: data.user.email || localUser.email,
+                        });
                     }
                 }
             } catch (error) {
@@ -52,7 +57,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
                 const email = session.user.email?.toLowerCase();
                 const localUser = USERS.find((u) => u.email.toLowerCase() === email);
                 if (localUser) {
-                    setCurrentUser(localUser);
+                    setCurrentUser({
+                        ...localUser,
+                        id: session.user.id,
+                        email: session.user.email || localUser.email,
+                    });
                 } else {
                     setCurrentUser(null);
                 }

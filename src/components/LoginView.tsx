@@ -112,15 +112,20 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
             USERS.find((u) => u.email.toLowerCase() === loggedEmail) || null;
 
         const finalUser =
-            configuredUser ||
-            {
-                id: data.user.id,
-                name: data.user.email,
-                role: "Usuario",
-                email: data.user.email,
-                canAdminHours: false,
-                isTrainingManager: false,
-            };
+            (configuredUser
+                ? {
+                    ...configuredUser,
+                    id: data.user.id,
+                    email: data.user.email || configuredUser.email,
+                }
+                : {
+                    id: data.user.id,
+                    name: data.user.email,
+                    role: "Usuario",
+                    email: data.user.email,
+                    canAdminHours: false,
+                    isTrainingManager: false,
+                });
 
         onLogin(finalUser);
     }

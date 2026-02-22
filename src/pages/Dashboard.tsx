@@ -30,7 +30,7 @@ import { useWorkProfile } from '../hooks/useWorkProfile';
 import { useChat } from '../hooks/useChat';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import { UserAvatar } from '../components/UserAvatar';
-import { ESTEBAN_ID, USERS } from '../constants';
+import { CARLOS_EMAIL, ESTEBAN_ID, USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
 import { openPrintablePdfReport } from '../utils/pdfReport';
@@ -40,6 +40,7 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
+import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 
@@ -161,7 +162,21 @@ function Dashboard() {
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
     const [sendingBoostTo, setSendingBoostTo] = useState<string | null>(null);
     const [boostToastName, setBoostToastName] = useState<string | null>(null);
-    const [inventoryAlerts, setInventoryAlerts] = useState<InventoryAlertsSummary | null>(null);
+    const [inventoryAlerts] = useSharedJsonState<InventoryAlertsSummary | null>(
+        INVENTORY_ALERTS_KEY,
+        null,
+        { userId: currentUser?.id },
+    );
+    const [huarteMovementsShared] = useSharedJsonState<any[]>(
+        INVENTORY_HUARTE_MOVS_KEY,
+        (huarteSeed.movimientos as any[]) || [],
+        { userId: currentUser?.id },
+    );
+    const [canetMovementsShared] = useSharedJsonState<any[]>(
+        INVENTORY_CANET_MOVS_KEY,
+        (canetSeed.movimientos as any[]) || [],
+        { userId: currentUser?.id },
+    );
     const [inventoryPanelMode, setInventoryPanelMode] = useState<'critical' | 'general'>('critical');
     const [selectedInventoryDetail, setSelectedInventoryDetail] = useState<{
         tipo: 'mounted' | 'potential' | 'canet';
@@ -183,44 +198,8 @@ function Dashboard() {
     const densityMode = useDensityMode();
     const isCompact = densityMode === 'compact';
     const [compactSection, setCompactSection] = useState<
-        'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat'
+        'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat' | 'stock'
     >('events');
-
-    useEffect(() => {
-        const loadAlerts = () => {
-            try {
-                const raw = window.localStorage.getItem(INVENTORY_ALERTS_KEY);
-                setInventoryAlerts(raw ? JSON.parse(raw) : null);
-            } catch {
-                setInventoryAlerts(null);
-            }
-        };
-
-        loadAlerts();
-
-        const onStorage = (event: StorageEvent) => {
-            if (event.key !== INVENTORY_ALERTS_KEY) return;
-            try {
-                setInventoryAlerts(event.newValue ? JSON.parse(event.newValue) : null);
-            } catch {
-                setInventoryAlerts(null);
-            }
-        };
-
-        const onFocus = () => loadAlerts();
-        const onVisibility = () => {
-            if (!document.hidden) loadAlerts();
-        };
-
-        window.addEventListener('storage', onStorage);
-        window.addEventListener('focus', onFocus);
-        document.addEventListener('visibilitychange', onVisibility);
-        return () => {
-            window.removeEventListener('storage', onStorage);
-            window.removeEventListener('focus', onFocus);
-            document.removeEventListener('visibilitychange', onVisibility);
-        };
-    }, []);
 
     useEffect(() => {
         if (location.hash !== '#time-summary') return;
@@ -345,6 +324,7 @@ function Dashboard() {
         [absenceRequests, weekStartKey, weekEndKey],
     );
     const isTrainingManagerUser = currentUser?.id === ESTEBAN_ID;
+    const isRestrictedUser = ((currentUser?.email || '').toLowerCase() === CARLOS_EMAIL) || !!currentUser?.isRestricted;
     const canSeeTrainingsPanel = !!isTrainingManagerUser;
 
     const summaryTextLines = useMemo(() => {
@@ -917,29 +897,24 @@ function Dashboard() {
     const mountedVisualFromInventory = inventoryAlerts?.mountedVisual || [];
     const potentialVisualFromInventory = inventoryAlerts?.potentialVisual || [];
     const globalStockByProductLotFromInventory = inventoryAlerts?.globalStockByProductLot || [];
+    const globalStockByProductLotBodegaFromInventory = inventoryAlerts?.globalStockByProductLotBodega || [];
     const mountedCriticalDetailsFromInventory = inventoryAlerts?.mountedCriticalDetails || [];
     const potentialCriticalDetailsFromInventory = inventoryAlerts?.potentialCriticalDetails || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
-    const huarteMovementsSource = useMemo(() => {
-        try {
-            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_HUARTE_MOVS_KEY) : null;
-            const parsed = raw ? JSON.parse(raw) : [];
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch {
-            // noop
-        }
-        return (huarteSeed.movimientos as any[]) || [];
-    }, []);
-    const canetMovementsSource = useMemo(() => {
-        try {
-            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(INVENTORY_CANET_MOVS_KEY) : null;
-            const parsed = raw ? JSON.parse(raw) : [];
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch {
-            // noop
-        }
-        return (canetSeed.movimientos as any[]) || [];
-    }, []);
+    const huarteMovementsSource = useMemo(
+        () =>
+            Array.isArray(huarteMovementsShared) && huarteMovementsShared.length > 0
+                ? huarteMovementsShared
+                : ((huarteSeed.movimientos as any[]) || []),
+        [huarteMovementsShared],
+    );
+    const canetMovementsSource = useMemo(
+        () =>
+            Array.isArray(canetMovementsShared) && canetMovementsShared.length > 0
+                ? canetMovementsShared
+                : ((canetSeed.movimientos as any[]) || []),
+        [canetMovementsShared],
+    );
     const fallbackCriticalFromHuarte = useMemo(() => {
         try {
             // Montadas: fuente principal Huarte (incluye todas las bodegas).
@@ -1091,6 +1066,70 @@ function Dashboard() {
             }))
             .sort((a, b) => b.total - a.total);
     }, [generalStockRowsWithBodega]);
+    const monthlyConsumptionByProduct = useMemo(() => {
+        const map = new Map<string, number>();
+        ((canetSeed.productos as any[]) || []).forEach((p: any) => {
+            const code = productKey(p?.producto);
+            if (!code || code === 'PRODUCTO') return;
+            map.set(code, toNum(p?.consumo_mensual_cajas));
+        });
+        return map;
+    }, []);
+    const restrictedGeneralRows = useMemo(() => {
+        return generalStockByProduct.slice(0, 12).map((row) => {
+            const producto = productKey(row.producto);
+            const consumoMensual = monthlyConsumptionByProduct.get(producto) || 0;
+            const coberturaMeses = consumoMensual > 0 ? row.total / consumoMensual : 0;
+            return {
+                producto,
+                stockTotal: row.total,
+                coberturaMeses,
+            };
+        });
+    }, [generalStockByProduct, monthlyConsumptionByProduct]);
+    const canetStockRowsWithBodega = useMemo(() => {
+        if (globalStockByProductLotBodegaFromInventory.length > 0) {
+            return globalStockByProductLotBodegaFromInventory
+                .map((row: { producto: string; lote: string; bodega: string; stockTotal: number }) => ({
+                    producto: productKey(row.producto),
+                    lote: clean(row.lote),
+                    bodega: clean(row.bodega) || 'Canet',
+                    stockTotal: toNum(row.stockTotal),
+                }))
+                .filter((row: { producto: string; lote: string; bodega: string; stockTotal: number }) => !!row.producto && !!row.lote && row.stockTotal > 0);
+        }
+        const map = new Map<string, number>();
+        canetMovementsSource.forEach((m: any) => {
+            const producto = productKey(m?.producto);
+            const lote = clean(m?.lote);
+            const bodega = clean(m?.bodega) || 'Canet';
+            if (!producto || producto === 'PRODUCTO' || !lote) return;
+            const signed = Number(m?.cantidad_signed);
+            const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
+            const key = `${producto}|${lote}|${bodega}`;
+            map.set(key, (map.get(key) || 0) + qty);
+        });
+        return Array.from(map.entries())
+            .map(([key, stockTotal]) => {
+                const [producto, lote, bodega] = key.split('|');
+                return { producto, lote, bodega, stockTotal: Math.max(0, toNum(stockTotal)) };
+            })
+            .filter((row) => row.stockTotal > 0);
+    }, [globalStockByProductLotBodegaFromInventory, canetMovementsSource]);
+    const canetTopLots = useMemo(() => {
+        const byProductLot = new Map<string, number>();
+        canetStockRowsWithBodega.forEach((row) => {
+            const key = `${row.producto}|${row.lote}`;
+            byProductLot.set(key, (byProductLot.get(key) || 0) + row.stockTotal);
+        });
+        return Array.from(byProductLot.entries())
+            .map(([key, cantidad]) => {
+                const [producto, lote] = key.split('|');
+                return { producto, lote, cantidad };
+            })
+            .sort((a, b) => b.cantidad - a.cantidad)
+            .slice(0, 8);
+    }, [canetStockRowsWithBodega]);
     const fallbackCanetCritical = useMemo(() => {
         const consumoByProduct = new Map<string, number>();
         ((canetSeed.productos as any[]) || []).forEach((p: any) => {
@@ -1218,7 +1257,7 @@ function Dashboard() {
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
 
     const compactTiles: Array<{
-        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat';
+        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat' | 'stock';
         label: string;
         Icon: any;
     }> = [
@@ -1232,6 +1271,7 @@ function Dashboard() {
         { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
         { key: 'pulse', label: 'Pulso', Icon: Coffee },
         { key: 'chat', label: 'Chat', Icon: MessageCircle },
+        { key: 'stock', label: 'Stock', Icon: BarChart3 },
     ];
     const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
     const compactTileBadges: Partial<Record<typeof compactTiles[number]['key'], number>> = {
@@ -1242,6 +1282,120 @@ function Dashboard() {
         alerts: inventoryBadgeCount,
         chat: chatBadgeCount,
     };
+
+    if (isRestrictedUser) {
+        return (
+            <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">
+                <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                    <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'Carlos'}</h1>
+                    <p className="mt-2 text-sm text-gray-700">Hoy no tienes tareas que venzan.</p>
+                    <p className="text-sm text-gray-700">Tareas pendientes totales: {pendingTodos.length}.</p>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                    <div className="flex flex-wrap gap-2 mb-4">
+                        <button
+                            type="button"
+                            className="px-3 py-2 rounded-xl border text-sm font-bold bg-violet-700 text-white border-violet-700"
+                        >
+                            Inventario
+                        </button>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setInventoryPanelMode('critical')}
+                                className={`px-3 py-2 rounded-xl border text-sm font-bold ${inventoryPanelMode === 'critical' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-700 border-rose-200'}`}
+                            >
+                                Stock crítico
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setInventoryPanelMode('general')}
+                                className={`px-3 py-2 rounded-xl border text-sm font-bold ${inventoryPanelMode === 'general' ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'}`}
+                            >
+                                Datos generales
+                            </button>
+                        </div>
+
+                        {inventoryPanelMode === 'critical' && (
+                            <div className="space-y-3">
+                                <div>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico · Cajas montadas (todas las bodegas)</p>
+                                    <div className="space-y-1.5">
+                                        {mountedCriticalFromInventory.map((item) => (
+                                            <div key={`rm-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50">
+                                                <p className="text-sm font-bold text-rose-900">{item.producto}</p>
+                                                <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-1.5">Stock crítico · Cajas potenciales</p>
+                                    <div className="space-y-1.5">
+                                        {potentialCriticalFromInventory.map((item) => (
+                                            <div key={`rp-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-amber-100 bg-amber-50">
+                                                <p className="text-sm font-bold text-amber-900">{item.producto}</p>
+                                                <p className="text-xs text-amber-700">Potencial: {item.cajasPotenciales.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
+                                    <div className="space-y-1.5">
+                                        {canetCriticalFromInventory.map((item) => (
+                                            <div key={`rc-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50">
+                                                <p className="text-sm font-bold text-rose-900">{item.producto}</p>
+                                                <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {inventoryPanelMode === 'general' && (
+                            <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Datos generales · Producto y stock total</p>
+                                <div className="app-table-wrap">
+                                    <table className="app-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Producto</th>
+                                                <th>Stock total</th>
+                                                <th>Cobertura</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {restrictedGeneralRows.map((row) => (
+                                                <tr key={`carlos-general-${row.producto}`}>
+                                                    <td>
+                                                        <span className="inline-flex items-center gap-2 font-bold text-gray-900">
+                                                            <span
+                                                                className="h-2.5 w-2.5 rounded-full border border-violet-200/70"
+                                                                style={{ backgroundColor: PRODUCT_COLORS[row.producto] || '#7c3aed' }}
+                                                            />
+                                                            {row.producto}
+                                                        </span>
+                                                    </td>
+                                                    <td>{row.stockTotal.toLocaleString('es-ES')}</td>
+                                                    <td>{formatCoverageText(row.coberturaMeses)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">

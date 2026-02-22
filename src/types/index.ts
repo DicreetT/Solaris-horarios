@@ -6,6 +6,7 @@ export interface User {
     email: string;
     isTrainingManager?: boolean;
     isAdmin?: boolean;
+    isRestricted?: boolean;
 }
 
 export interface DriveFolder {

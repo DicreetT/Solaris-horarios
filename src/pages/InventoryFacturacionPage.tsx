@@ -8,6 +8,7 @@ import { USERS } from '../constants';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { useDensityMode } from '../hooks/useDensityMode';
+import { useSharedJsonState } from '../hooks/useSharedJsonState';
 
 type TabKey = 'dashboard' | 'movimientos' | 'rectificativas' | 'ensamblajes' | 'maestros';
 type DashboardKey = 'stock' | 'control' | 'rect' | 'ventas_anual' | 'envios_mes' | 'ensam_anual';
@@ -32,6 +33,9 @@ type Movement = {
   source?: string;
   signo?: number;
   cantidad_signed?: number;
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
 };
 
 type GenericRow = Record<string, any>;
@@ -57,6 +61,8 @@ const STORAGE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
+// Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
+const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
 const EDIT_GRANT_HOURS = 6;
@@ -121,25 +127,6 @@ const displayDate = (v: string) => {
   const d = parseDate(clean(v));
   return d ? d.toLocaleDateString('es-ES') : clean(v);
 };
-const readLocalJson = <T,>(key: string, fallback: T): T => {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-};
-const writeLocalJson = (key: string, value: unknown) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // noop
-  }
-};
-
 const EMPTY_MOV = {
   fecha: new Date().toISOString().slice(0, 10),
   tipo_movimiento: '',
@@ -174,8 +161,16 @@ export default function InventoryFacturacionPage() {
   const [dashboardSection, setDashboardSection] = useState<DashboardKey>('stock');
   const [masterSection, setMasterSection] = useState<MasterKey>('productos');
   const [accessMode, setAccessMode] = useState<InventoryAccessMode>('unset');
-  const [editRequests, setEditRequests] = useState<InventoryEditRequest[]>(() => readLocalJson(STORAGE_HUARTE_EDIT_REQUESTS, []));
-  const [editGrants, setEditGrants] = useState<InventoryEditGrant[]>(() => readLocalJson(STORAGE_HUARTE_EDIT_GRANTS, []));
+  const [editRequests, setEditRequests] = useSharedJsonState<InventoryEditRequest[]>(
+    STORAGE_HUARTE_EDIT_REQUESTS,
+    [],
+    { userId: actorId },
+  );
+  const [editGrants, setEditGrants] = useSharedJsonState<InventoryEditGrant[]>(
+    STORAGE_HUARTE_EDIT_GRANTS,
+    [],
+    { userId: actorId },
+  );
 
   const [monthFilter, setMonthFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
@@ -184,6 +179,7 @@ export default function InventoryFacturacionPage() {
   const [warehouseFilter, setWarehouseFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [showMainFilters, setShowMainFilters] = useState(false);
+  const [quickSearch, setQuickSearch] = useState('');
 
   const [showAllRows, setShowAllRows] = useState<Record<string, boolean>>({});
   const [ventasYearDrill, setVentasYearDrill] = useState<string | null>(null);
@@ -196,26 +192,46 @@ export default function InventoryFacturacionPage() {
   const [lotsActiveModalOpen, setLotsActiveModalOpen] = useState(false);
   const [stockSectionSelected, setStockSectionSelected] = useState<{ bodega: string; qty: number } | null>(null);
 
-  const [movimientos, setMovimientos] = useState<Movement[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_MOVS_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      return Array.isArray(parsed) ? parsed : (seed.movimientos as Movement[]);
-    } catch {
-      return seed.movimientos as Movement[];
-    }
-  });
-  const [canetMovimientos, setCanetMovimientos] = useState<Movement[]>([]);
+  const [movimientos, setMovimientos] = useSharedJsonState<Movement[]>(
+    STORAGE_MOVS_KEY,
+    seed.movimientos as Movement[],
+    { userId: actorId },
+  );
+  const [canetMovimientos] = useSharedJsonState<Movement[]>(
+    STORAGE_CANET_MOVS_KEY,
+    [],
+    { userId: actorId },
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ ...EMPTY_MOV });
 
-  const [productos, setProductos] = useState<GenericRow[]>(seed.productos as GenericRow[]);
-  const [lotes, setLotes] = useState<GenericRow[]>(seed.lotes as GenericRow[]);
-  const [bodegas, setBodegas] = useState<GenericRow[]>(seed.bodegas as GenericRow[]);
-  const [tipos, setTipos] = useState<GenericRow[]>(seed.tipos_movimiento as GenericRow[]);
-  const [clientes, setClientes] = useState<GenericRow[]>(seed.clientes as GenericRow[]);
+  const [productos, setProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_productos_v1',
+    seed.productos as GenericRow[],
+    { userId: actorId },
+  );
+  const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_lotes_v1',
+    seed.lotes as GenericRow[],
+    { userId: actorId },
+  );
+  const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_bodegas_v1',
+    seed.bodegas as GenericRow[],
+    { userId: actorId },
+  );
+  const [tipos, setTipos] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_tipos_v1',
+    seed.tipos_movimiento as GenericRow[],
+    { userId: actorId },
+  );
+  const [clientes, setClientes] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_clientes_v1',
+    seed.clientes as GenericRow[],
+    { userId: actorId },
+  );
 
   const [newProducto, setNewProducto] = useState('');
   const [newLote, setNewLote] = useState({ producto: '', lote: '', bodega: '', estado: 'ACTIVO' });
@@ -224,6 +240,10 @@ export default function InventoryFacturacionPage() {
   const [newBodega, setNewBodega] = useState({ bodega: '', activo_si_no: 'SI' });
 
   const ensamblajesArchivos = seed.ensamblajes_archivos as GenericRow[];
+  const canetAssemblySyncStartDate = useMemo(
+    () => parseDate(CANET_ASSEMBLY_SYNC_START) || new Date('2026-02-23T00:00:00'),
+    [],
+  );
 
   useEffect(() => {
     const t = clean(searchParams.get('tab')).toLowerCase();
@@ -251,7 +271,6 @@ export default function InventoryFacturacionPage() {
   useEffect(() => {
     if (normalizedActiveGrants.length !== editGrants.length) {
       setEditGrants(normalizedActiveGrants);
-      writeLocalJson(STORAGE_HUARTE_EDIT_GRANTS, normalizedActiveGrants);
     }
   }, [normalizedActiveGrants, editGrants.length]);
   const actorGrant = useMemo(() => normalizedActiveGrants.find((g) => g.userId === actorId), [normalizedActiveGrants, actorId]);
@@ -266,12 +285,6 @@ export default function InventoryFacturacionPage() {
     () => editRequests.filter((r) => r.status === 'pending'),
     [editRequests],
   );
-  useEffect(() => {
-    writeLocalJson(STORAGE_HUARTE_EDIT_REQUESTS, editRequests);
-  }, [editRequests]);
-  useEffect(() => {
-    writeLocalJson(STORAGE_HUARTE_EDIT_GRANTS, editGrants);
-  }, [editGrants]);
   useEffect(() => {
     if (accessMode === 'edit' && !canEditNow) {
       setAccessMode('consult');
@@ -362,28 +375,6 @@ export default function InventoryFacturacionPage() {
     }
   };
 
-  useEffect(() => {
-    const read = () => {
-      try {
-        const raw = window.localStorage.getItem(STORAGE_CANET_MOVS_KEY);
-        const parsed = raw ? JSON.parse(raw) : [];
-        setCanetMovimientos(Array.isArray(parsed) ? parsed : []);
-      } catch {
-        setCanetMovimientos([]);
-      }
-    };
-    read();
-    const onStorage = (ev: StorageEvent) => {
-      if (ev.key === STORAGE_CANET_MOVS_KEY) read();
-    };
-    window.addEventListener('storage', onStorage);
-    const timer = window.setInterval(read, 5000);
-    return () => {
-      window.removeEventListener('storage', onStorage);
-      window.clearInterval(timer);
-    };
-  }, []);
-
   const monthSortedMovements = useMemo(() => {
     return [...movimientos].sort((a, b) => {
       const da = parseDate(clean(a.fecha))?.getTime() || 0;
@@ -442,10 +433,25 @@ export default function InventoryFacturacionPage() {
     if (lotFilter && clean(m.lote) !== lotFilter) return false;
     if (warehouseFilter && clean(m.bodega) !== warehouseFilter) return false;
     if (typeFilter && clean(m.tipo_movimiento) !== typeFilter) return false;
+    if (quickSearch) {
+      const q = normalizeSearch(quickSearch);
+      const hay = normalizeSearch([
+        m.tipo_movimiento,
+        m.producto,
+        m.lote,
+        m.bodega,
+        m.cliente,
+        m.factura_doc,
+        m.responsable,
+        m.motivo,
+        m.notas,
+      ].join(' '));
+      if (!hay.includes(q)) return false;
+    }
     return true;
   };
 
-  const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter]);
+  const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
   const visibleMovementsLast7Days = useMemo(() => {
     if (showAllRows.movimientos) return filteredMovements;
     const allowedDays = new Set<string>();
@@ -514,11 +520,41 @@ export default function InventoryFacturacionPage() {
 
   const ensamblajesMovements = useMemo(() => {
     const own = filteredMovements.filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje')).map((m) => ({ ...m, source: m.source || 'facturacion' }));
-    const canet = canetMovimientos.filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje')).map((m) => ({ ...m, source: 'canet' }));
-    return [...canet, ...own].sort((a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0));
-  }, [filteredMovements, canetMovimientos]);
+    const canet = canetMovimientos
+      .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
+      .filter((m) => {
+        const d = parseDate(clean(m.fecha));
+        return !!d && d >= canetAssemblySyncStartDate;
+      })
+      .map((m) => ({ ...m, source: 'canet' }));
+    // Evita duplicados exactos entre Canet y Huarte, priorizando Canet en la fase nueva.
+    const dedup = new Map<string, Movement>();
+    [...canet, ...own].forEach((m) => {
+      const sig = [
+        clean(m.fecha),
+        clean(m.tipo_movimiento),
+        clean(m.producto),
+        clean(m.lote),
+        clean(m.bodega),
+        String(toNum(m.cantidad_signed || m.cantidad)),
+      ].join('|');
+      if (!dedup.has(sig)) dedup.set(sig, m);
+    });
+    return Array.from(dedup.values()).sort((a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0));
+  }, [filteredMovements, canetMovimientos, canetAssemblySyncStartDate]);
 
-  const canetAssemblyIds = useMemo(() => canetMovimientos.filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje')).map((m) => Number(m.id)).filter(Number.isFinite), [canetMovimientos]);
+  const canetAssemblyIds = useMemo(
+    () =>
+      canetMovimientos
+        .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
+        .filter((m) => {
+          const d = parseDate(clean(m.fecha));
+          return !!d && d >= canetAssemblySyncStartDate;
+        })
+        .map((m) => Number(m.id))
+        .filter(Number.isFinite),
+    [canetMovimientos, canetAssemblySyncStartDate],
+  );
   const unseenCanetAssemblies = useMemo(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_CANET_ASSEMBLIES_SEEN);
@@ -708,11 +744,6 @@ export default function InventoryFacturacionPage() {
 
   const persist = (next: Movement[]) => {
     setMovimientos(next);
-    try {
-      window.localStorage.setItem(STORAGE_MOVS_KEY, JSON.stringify(next));
-    } catch {
-      // noop
-    }
   };
 
   const openCreate = () => {
@@ -753,18 +784,41 @@ export default function InventoryFacturacionPage() {
   const saveMovement = () => {
     const qty = Math.abs(toNum(form.cantidad));
     if (!form.tipo_movimiento || !form.producto || !form.lote || !form.bodega || !qty) return;
+    const producto = clean(form.producto);
+    const lote = clean(form.lote);
+    const bodega = clean(form.bodega);
+    const lotMatch = lotes.some((l) => clean(l.producto) === producto && clean(l.lote) === lote);
+    if (!lotMatch) {
+      window.alert(`El lote ${lote} no corresponde al producto ${producto}. Revisa producto/lote.`);
+      return;
+    }
     const t = clean(form.tipo_movimiento).toLowerCase();
     let sign = 1;
     if (t.includes('venta') || t.includes('envio') || t.includes('ajuste-')) sign = -1;
     if (t.includes('nota credito')) sign = 1;
+    const signedQty = qty * sign;
+    const key = `${producto}|${lote}|${bodega}`;
+    const base = movimientos
+      .filter((m) => (editingId ? m.id !== editingId : true))
+      .reduce((acc, m) => {
+        const mk = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
+        if (mk !== key) return acc;
+        const currentSigned = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+        return acc + currentSigned;
+      }, 0);
+    if (base + signedQty < 0) {
+      window.alert(`Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.`);
+      return;
+    }
+    const nowIso = new Date().toISOString();
     const payload: Movement = {
       id: editingId ?? (Math.max(0, ...movimientos.map((m) => toNum(m.id))) + 1),
       fecha: clean(form.fecha),
       tipo_movimiento: clean(form.tipo_movimiento),
-      producto: clean(form.producto),
-      lote: clean(form.lote),
+      producto,
+      lote,
       cantidad: qty,
-      bodega: clean(form.bodega),
+      bodega,
       cliente: clean(form.cliente),
       destino: clean(form.destino),
       factura_doc: clean(form.factura_doc),
@@ -774,6 +828,9 @@ export default function InventoryFacturacionPage() {
       signo: sign,
       cantidad_signed: qty * sign,
       source: editingId ? 'edited' : 'manual',
+      created_at: editingId ? movimientos.find((m) => m.id === editingId)?.created_at : nowIso,
+      updated_at: nowIso,
+      updated_by: currentUser?.name || actorName,
     };
     if (editingId) {
       persist(movimientos.map((m) => (m.id === editingId ? payload : m)));
@@ -847,8 +904,50 @@ export default function InventoryFacturacionPage() {
       subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
     });
   };
+  const exportExecutivePdf = () => {
+    const summaryRows: Array<Array<string | number>> = [
+      ['Stock total (filtro)', Math.round(dashboard.totalStock)],
+      ['Movimientos (filtro)', dashboard.totalMovements],
+      ['Rectificativas (filtro)', dashboard.totalRect],
+      ['Lotes activos (stock>0)', dashboard.totalLots],
+    ];
+    const detailRows = filteredMovements.slice(0, 120).map((m) => [
+      displayDate(m.fecha),
+      m.tipo_movimiento,
+      m.producto,
+      m.lote,
+      m.bodega,
+      m.cantidad_signed || m.cantidad,
+      m.responsable || '-',
+      m.updated_by || '-',
+      m.updated_at ? new Date(m.updated_at).toLocaleString('es-ES') : '-',
+    ]);
+    openPrintablePdfReport({
+      title: 'Inventario Huarte - Reporte gerencial',
+      subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      fileName: `inventario-huarte-gerencial-${monthFilter || 'todos'}.pdf`,
+      headers: ['Indicador', 'Valor'],
+      rows: summaryRows,
+      signatures: ['Responsable', 'Revisión'],
+    });
+    openPrintablePdfReport({
+      title: 'Inventario Huarte - Detalle operativo',
+      subtitle: `Top ${detailRows.length} movimientos filtrados`,
+      fileName: `inventario-huarte-detalle-${monthFilter || 'todos'}.pdf`,
+      headers: ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'],
+      rows: detailRows,
+    });
+    emitSuccessFeedback('PDF gerencial y detalle generados.');
+  };
 
   const limitRows = <T,>(key: string, rows: T[]) => (showAllRows[key] ? rows : rows.slice(0, 6));
+  const activeFilterCount = [
+    selectedProducts.length > 0,
+    !!lotFilter,
+    !!warehouseFilter,
+    !!typeFilter,
+    !!quickSearch,
+  ].filter(Boolean).length;
 
   const tabButton = (key: TabKey, label: string, Icon: any, badge = 0) => (
     <button
@@ -883,6 +982,14 @@ export default function InventoryFacturacionPage() {
             </select>
           </label>
         </div>
+        {accessMode !== 'unset' && (
+          <div className="mt-3 flex justify-end">
+            <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <Download size={14} />
+              PDF gerencial
+            </button>
+          </div>
+        )}
       </section>
 
       {accessMode === 'unset' ? (
@@ -986,11 +1093,19 @@ export default function InventoryFacturacionPage() {
 
       {accessMode !== 'unset' && tab === 'dashboard' && (
         <section className="space-y-3">
+          <div className="rounded-2xl border border-violet-200 bg-white p-2">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <KpiCard title="Stock total" value={String(Math.round(dashboard.totalStock))} tone="violet" onClick={() => setStockTotalModalOpen(true)} />
             <KpiCard title="Movimientos (filtro)" value={String(dashboard.totalMovements)} tone="sky" onClick={() => setMovementTypesModalOpen(true)} />
             <KpiCard title="Rectificativas (filtro)" value={String(dashboard.totalRect)} tone="amber" onClick={() => setRectByProductModalOpen(true)} />
             <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
+          </div>
+          <div className="mt-2 flex justify-end">
+            <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <Download size={14} />
+              PDF gerencial
+            </button>
+          </div>
           </div>
 
           {isCompact && (
@@ -1010,6 +1125,7 @@ export default function InventoryFacturacionPage() {
             <div className="flex flex-wrap items-center gap-2">
               <button onClick={() => setShowMainFilters((s) => !s)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">
                 {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
+                {activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
               </button>
               {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
                 <button
@@ -1019,6 +1135,7 @@ export default function InventoryFacturacionPage() {
                     setLotFilter('');
                     setWarehouseFilter('');
                     setTypeFilter('');
+                    setQuickSearch('');
                   }}
                   className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                 >
@@ -1027,14 +1144,15 @@ export default function InventoryFacturacionPage() {
               )}
             </div>
             {showMainFilters && (
-              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
                 <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
                 <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
                 <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
                 <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+                <TextFilter label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, factura..." />
               </div>
             )}
-            {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
+            {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter, quickSearch].some(Boolean) && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {selectedProducts.map((p) => (
                   <button key={`fp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
@@ -1054,6 +1172,11 @@ export default function InventoryFacturacionPage() {
                 {typeFilter && (
                   <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
                     Tipo: {typeFilter} ×
+                  </button>
+                )}
+                {quickSearch && (
+                  <button onClick={() => setQuickSearch('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                    Buscar: {quickSearch} ×
                   </button>
                 )}
               </div>
@@ -1163,6 +1286,7 @@ export default function InventoryFacturacionPage() {
                   setLotFilter('');
                   setWarehouseFilter('');
                   setTypeFilter('');
+                  setQuickSearch('');
                 }}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
@@ -1171,19 +1295,21 @@ export default function InventoryFacturacionPage() {
             )}
           </div>
           {showMainFilters && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
               <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
               <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
               <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
               <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+              <TextFilter label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, factura..." />
             </div>
           )}
-          {!showMainFilters && (
+          {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter, quickSearch].some(Boolean) && (
             <div className="mt-2 flex flex-wrap gap-2">
               {selectedProducts.map((p) => <button key={`pp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Producto: {p} ×</button>)}
               {lotFilter && <button onClick={() => setLotFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Lote: {lotFilter} ×</button>}
               {warehouseFilter && <button onClick={() => setWarehouseFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Bodega: {warehouseFilter} ×</button>}
               {typeFilter && <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Tipo: {typeFilter} ×</button>}
+              {quickSearch && <button onClick={() => setQuickSearch('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Buscar: {quickSearch} ×</button>}
             </div>
           )}
         </section>
@@ -1211,7 +1337,7 @@ export default function InventoryFacturacionPage() {
           }
         >
           <DataTable
-            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Acciones']}
+            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']}
             rows={visibleMovementsLast7Days.map((m) => [
               displayDate(m.fecha),
               m.tipo_movimiento,
@@ -1222,6 +1348,7 @@ export default function InventoryFacturacionPage() {
               m.cliente || '',
               m.factura_doc || '',
               m.responsable || '',
+              `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
               canEdit ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
@@ -1247,7 +1374,7 @@ export default function InventoryFacturacionPage() {
             }
             onDownload={() => exportPdf('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
           <Panel title="Auditoría de rectificativas" onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}>
             <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r, idx) => [r.fecha, r.tipo, r.factura, <ProductPill key={`h-ra-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
@@ -1713,6 +1840,20 @@ function AutocompleteFilter({ label, value, onChange, options }: { label: string
           ))}
         </div>
       )}
+    </label>
+  );
+}
+
+function TextFilter({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <label className="space-y-1 relative">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-violet-700">{label}</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder || 'Buscar...'}
+        className="w-full rounded-lg border border-violet-200 px-2 py-2 text-sm font-semibold text-violet-900"
+      />
     </label>
   );
 }

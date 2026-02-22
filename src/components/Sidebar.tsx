@@ -65,6 +65,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const userMenuRef = useRef(null);
 
     const isAdmin = !!currentUser?.isAdmin;
+    const isRestrictedUser = !!currentUser?.isRestricted;
     const unreadCount = notifications.filter((n) => !n.read).length;
 
     // --- BADGE CALCULATIONS ---
@@ -123,7 +124,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/calendar',
             label: 'Calendario',
             icon: Calendar,
-            show: true
+            show: !isRestrictedUser
         },
         {
             path: '/tasks',
@@ -142,20 +143,20 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/shopping',
             label: 'Lista de Compras',
             icon: ShoppingBag,
-            show: true,
+            show: !isRestrictedUser,
             badge: pendingShoppingCount
         },
         {
             path: '/inventory',
             label: 'Inventario Canet',
             icon: Boxes,
-            show: true,
+            show: !isRestrictedUser,
         },
         {
             path: '/inventory-facturacion',
             label: 'Inventario Huarte',
             icon: Boxes,
-            show: true,
+            show: !isRestrictedUser,
         },
         {
             path: '/exports',
@@ -168,7 +169,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/folders',
             label: 'Carpetas',
             icon: Folder,
-            show: hasSharedFolders
+            show: hasSharedFolders && !isRestrictedUser
         }
     ];
 

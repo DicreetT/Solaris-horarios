@@ -7,6 +7,8 @@ import { USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
+import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import huarteSeed from '../data/inventory_facturacion_seed.json';
 
 type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
@@ -54,6 +56,9 @@ type Movement = {
   afecta_stock?: string;
   signo?: number;
   cantidad_signed?: number;
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
 };
 
 type GenericRow = Record<string, any>;
@@ -121,26 +126,6 @@ const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   RG: '#1e3a8a',
 };
 
-const readLocalJson = <T,>(key: string, fallback: T): T => {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-};
-
-const writeLocalJson = (key: string, value: unknown) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // noop
-  }
-};
-
 const formatCoverage = (months: number) => {
   if (!Number.isFinite(months) || months <= 0) return '0 días';
   const totalDays = Math.round(months * MONTH_DAYS);
@@ -189,16 +174,58 @@ function InventoryPage() {
 
   const [tab, setTab] = useState<InventoryTab>('dashboard');
   const [accessMode, setAccessMode] = useState<InventoryAccessMode>('unset');
-  const [editRequests, setEditRequests] = useState<InventoryEditRequest[]>(() => readLocalJson(INVENTORY_EDIT_REQUESTS_KEY, []));
-  const [editGrants, setEditGrants] = useState<InventoryEditGrant[]>(() => readLocalJson(INVENTORY_EDIT_GRANTS_KEY, []));
-  const [auditLog, setAuditLog] = useState<InventoryAuditEntry[]>(() => readLocalJson(INVENTORY_AUDIT_KEY, []));
+  const [editRequests, setEditRequests] = useSharedJsonState<InventoryEditRequest[]>(
+    INVENTORY_EDIT_REQUESTS_KEY,
+    [],
+    { userId: actorId },
+  );
+  const [editGrants, setEditGrants] = useSharedJsonState<InventoryEditGrant[]>(
+    INVENTORY_EDIT_GRANTS_KEY,
+    [],
+    { userId: actorId },
+  );
+  const [auditLog, setAuditLog] = useSharedJsonState<InventoryAuditEntry[]>(
+    INVENTORY_AUDIT_KEY,
+    [],
+    { userId: actorId },
+  );
 
-  const [movimientos, setMovimientos] = useState<Movement[]>(() => readLocalJson(INVENTORY_CANET_MOVS_KEY, seed.movimientos as Movement[]));
+  const [movimientos, setMovimientos] = useSharedJsonState<Movement[]>(
+    INVENTORY_CANET_MOVS_KEY,
+    seed.movimientos as Movement[],
+    { userId: actorId },
+  );
   const [productos] = useState<GenericRow[]>(seed.productos as GenericRow[]);
-  const [lotes, setLotes] = useState<GenericRow[]>(seed.lotes as GenericRow[]);
-  const [bodegas, setBodegas] = useState<GenericRow[]>(seed.bodegas as GenericRow[]);
-  const [clientes, setClientes] = useState<GenericRow[]>(seed.clientes as GenericRow[]);
-  const [tipos, setTipos] = useState<GenericRow[]>(seed.tipos_movimiento as GenericRow[]);
+  const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_lotes_v1',
+    seed.lotes as GenericRow[],
+    { userId: actorId },
+  );
+  const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_bodegas_v1',
+    seed.bodegas as GenericRow[],
+    { userId: actorId },
+  );
+  const [clientes, setClientes] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_clientes_v1',
+    seed.clientes as GenericRow[],
+    { userId: actorId },
+  );
+  const [tipos, setTipos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_tipos_v1',
+    seed.tipos_movimiento as GenericRow[],
+    { userId: actorId },
+  );
+  const [, setInventoryAlertsShared] = useSharedJsonState<any | null>(
+    INVENTORY_ALERTS_KEY,
+    null,
+    { userId: actorId },
+  );
+  const [huarteMovimientosShared] = useSharedJsonState<any[]>(
+    INVENTORY_HUARTE_MOVS_KEY,
+    (huarteSeed.movimientos as any[]) || [],
+    { userId: actorId },
+  );
 
   const [monthFilter, setMonthFilter] = useState<string>('');
   const [productFilterInput, setProductFilterInput] = useState<string>('');
@@ -207,6 +234,7 @@ function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>('');
+  const [quickSearch, setQuickSearch] = useState<string>('');
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
 
@@ -263,7 +291,6 @@ function InventoryPage() {
   useEffect(() => {
     if (normalizedActiveGrants.length !== editGrants.length) {
       setEditGrants(normalizedActiveGrants);
-      writeLocalJson(INVENTORY_EDIT_GRANTS_KEY, normalizedActiveGrants);
     }
   }, [normalizedActiveGrants, editGrants.length]);
 
@@ -286,7 +313,6 @@ function InventoryPage() {
     };
     setAuditLog((prev) => {
       const next = [entry, ...prev].slice(0, 500);
-      writeLocalJson(INVENTORY_AUDIT_KEY, next);
       return next;
     });
   };
@@ -365,6 +391,20 @@ function InventoryPage() {
     if (warehouseFilter && clean(m.bodega) !== warehouseFilter) return false;
     if (typeFilter && clean(m.tipo_movimiento) !== typeFilter) return false;
     if (clientFilter && clean(m.cliente) !== clientFilter) return false;
+    if (quickSearch) {
+      const haystack = clean([
+        m.fecha,
+        m.tipo_movimiento,
+        m.producto,
+        m.lote,
+        m.bodega,
+        m.cliente,
+        m.destino,
+        m.notas,
+        m.updated_by,
+      ].join(' ')).toLowerCase();
+      if (!haystack.includes(clean(quickSearch).toLowerCase())) return false;
+    }
     return true;
   };
 
@@ -378,9 +418,9 @@ function InventoryPage() {
       if (!d) return true;
       return d <= monthEnd;
     });
-  }, [normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd]);
+  }, [normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd, quickSearch]);
 
-  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
 
   const stockByPLB = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
@@ -700,18 +740,8 @@ function InventoryPage() {
       return qty * sign;
     };
 
-    const readMovs = (key: string) => {
-      try {
-        const raw = window.localStorage.getItem(key);
-        const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    };
-
-    const canetMovs = readMovs(INVENTORY_CANET_MOVS_KEY);
-    const huarteMovs = readMovs(INVENTORY_HUARTE_MOVS_KEY);
+    const canetMovs = movimientos;
+    const huarteMovs = huarteMovimientosShared;
 
     // Evita duplicados cuando el mismo movimiento existe en ambos módulos.
     const allMovs: any[] = [];
@@ -949,8 +979,8 @@ function InventoryPage() {
         stockTotal: Number(r.stockTotal.toFixed(2)),
       })),
     };
-    writeLocalJson(INVENTORY_ALERTS_KEY, payload);
-  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts]);
+    setInventoryAlertsShared(payload);
+  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts, setInventoryAlertsShared]);
 
   const stockByProductLot = useMemo(() => {
     const map = new Map<string, number>();
@@ -978,7 +1008,7 @@ function InventoryPage() {
       if (byDate !== 0) return byDate;
       return b.id - a.id;
     });
-  }, [monthFilter, monthMovements, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  }, [monthFilter, monthMovements, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
 
   const visibleMovementsLast7Days = useMemo(() => {
     if (showMovementsAll) return visibleMovements;
@@ -999,10 +1029,6 @@ function InventoryPage() {
   useEffect(() => {
     setShowMovementsAll(false);
   }, [monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
-
-  useEffect(() => {
-    writeLocalJson(INVENTORY_CANET_MOVS_KEY, movimientos);
-  }, [movimientos]);
 
   const notifyAnabela = async (message: string) => {
     if (!anabela?.id) return;
@@ -1053,7 +1079,6 @@ function InventoryPage() {
     };
     const next = [request, ...editRequests];
     setEditRequests(next);
-    writeLocalJson(INVENTORY_EDIT_REQUESTS_KEY, next);
     appendAudit('Solicitud de edición', 'Solicitó permiso temporal para editar inventario');
     await notifyInventoryApprovers(`${actorName} solicitó permiso para editar Inventario.`);
   };
@@ -1073,7 +1098,6 @@ function InventoryPage() {
     };
     const nextGrants = [grant, ...normalizedActiveGrants.filter((g) => g.userId !== req.requesterId)];
     setEditGrants(nextGrants);
-    writeLocalJson(INVENTORY_EDIT_GRANTS_KEY, nextGrants);
 
     const nextReqs = editRequests.map((r) =>
       r.id === requestId
@@ -1081,7 +1105,6 @@ function InventoryPage() {
         : r,
     );
     setEditRequests(nextReqs);
-    writeLocalJson(INVENTORY_EDIT_REQUESTS_KEY, nextReqs);
     appendAudit('Aprobación de edición', `Aprobó a ${req.requesterName} por ${EDIT_GRANT_HOURS} horas`);
 
     try {
@@ -1106,7 +1129,6 @@ function InventoryPage() {
         : r,
     );
     setEditRequests(nextReqs);
-    writeLocalJson(INVENTORY_EDIT_REQUESTS_KEY, nextReqs);
     appendAudit('Denegación de edición', `Denegó la solicitud de ${req.requesterName}`);
     try {
       await addNotification({
@@ -1147,7 +1169,29 @@ function InventoryPage() {
     if (!canEditNow) return;
     const qty = Math.abs(toNum(movementForm.cantidad));
     if (!movementForm.tipo_movimiento || !movementForm.producto || !movementForm.lote || !movementForm.bodega || !qty) return;
+    const producto = clean(movementForm.producto);
+    const lote = clean(movementForm.lote);
+    const bodega = clean(movementForm.bodega);
+    const loteValido = lotes.some((l) => clean(l.producto) === producto && clean(l.lote) === lote);
+    if (!loteValido) {
+      window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
+      return;
+    }
     const sign = signByType.get(movementForm.tipo_movimiento) ?? 1;
+    const signedQty = qty * sign;
+    const key = `${producto}|${lote}|${bodega}`;
+    const baseStock = normalizedMovements
+      .filter((m) => (editingId ? m.id !== editingId : true))
+      .reduce((acc, m) => {
+        const mk = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
+        if (mk !== key) return acc;
+        return acc + toNum(m.cantidad_signed);
+      }, 0);
+    if (baseStock + signedQty < 0) {
+      window.alert(`Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.`);
+      return;
+    }
+    const nowIso = new Date().toISOString();
 
     if (editingId) {
       setMovimientos((prev) => prev.map((m) => m.id === editingId ? {
@@ -1163,6 +1207,8 @@ function InventoryPage() {
         notas: movementForm.notas,
         signo: sign,
         cantidad_signed: qty * sign,
+        updated_at: nowIso,
+        updated_by: actorName,
       } : m));
       await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
       appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
@@ -1182,6 +1228,9 @@ function InventoryPage() {
         afecta_stock: 'SI',
         signo: sign,
         cantidad_signed: qty * sign,
+        created_at: nowIso,
+        updated_at: nowIso,
+        updated_by: actorName,
       };
       setMovimientos((prev) => [next, ...prev]);
       await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${next.tipo_movimiento} · ${next.producto} ${next.lote}.`);
@@ -1308,6 +1357,25 @@ function InventoryPage() {
     appendAudit('Descarga PDF', `Movimientos (${monthFilter || 'todos'})`);
     emitSuccessFeedback('PDF generado con éxito.');
   };
+  const downloadExecutiveReport = async () => {
+    const summaryRows: Array<Array<string | number>> = [
+      ['Productos en riesgo', criticalProducts.length],
+      ['Salidas del mes', monthOutputTotal],
+      ['Ajustes del mes', monthAdjustmentsTotal],
+      ['Stock total (filtro)', stockByPLB.reduce((acc, r) => acc + toNum(r.stock), 0)],
+    ];
+    openPrintablePdfReport({
+      title: 'Inventario Canet - Reporte gerencial',
+      subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      fileName: `inventario-canet-gerencial-${monthFilter || 'todos'}.pdf`,
+      headers: ['Indicador', 'Valor'],
+      rows: summaryRows,
+      signatures: ['Responsable', 'Revisión'],
+    });
+    await notifyAnabela(`${actorName} descargó reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
+    appendAudit('Descarga PDF', `Gerencial (${monthFilter || 'todos'})`);
+    emitSuccessFeedback('PDF gerencial generado con éxito.');
+  };
 
   const tabs: Array<{ key: InventoryTab; label: string; icon: React.ElementType; compact?: boolean }> = [
     { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
@@ -1327,7 +1395,7 @@ function InventoryPage() {
   };
 
   const isEditModeActive = accessMode === 'edit' && canEditNow;
-  const activeMainFiltersCount = [productFilters.length > 0, lotFilter, warehouseFilter, typeFilter, clientFilter].filter(Boolean).length;
+  const activeMainFiltersCount = [productFilters.length > 0, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch].filter(Boolean).length;
   const compactInventoryTiles: Array<{ key: 'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'; label: string; Icon: any }> = [
     { key: 'stock', label: 'Stock', Icon: Package },
     { key: 'moves', label: 'Movimientos', Icon: ClipboardList },
@@ -1341,6 +1409,7 @@ function InventoryPage() {
     warehouseFilter ? { key: 'bodega', label: `Bodega: ${warehouseFilter}`, onClear: () => setWarehouseFilter('') } : null,
     typeFilter ? { key: 'tipo', label: `Tipo: ${typeFilter}`, onClear: () => setTypeFilter('') } : null,
     clientFilter ? { key: 'cliente', label: `Cliente: ${clientFilter}`, onClear: () => setClientFilter('') } : null,
+    quickSearch ? { key: 'quick', label: `Buscar: ${quickSearch}`, onClear: () => setQuickSearch('') } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; onClear: () => void }>;
 
   useEffect(() => {
@@ -1370,6 +1439,14 @@ function InventoryPage() {
             </select>
           </label>
         </div>
+        {accessMode !== 'unset' && (
+          <div className="mt-3 flex justify-end">
+            <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <Download size={14} />
+              PDF gerencial
+            </button>
+          </div>
+        )}
       </div>
 
       {accessMode === 'unset' ? (
@@ -1519,6 +1596,7 @@ function InventoryPage() {
                   setWarehouseFilter('');
                   setTypeFilter('');
                   setClientFilter('');
+                  setQuickSearch('');
                 }}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
@@ -1528,12 +1606,13 @@ function InventoryPage() {
           </div>
 
           {showMainFilters && (
-            <div className="mt-3 grid gap-2 md:grid-cols-5">
+            <div className="mt-3 grid gap-2 md:grid-cols-6">
               <InputDatalistTag label="Producto" value={productFilterInput} onChange={setProductFilterInput} onSelect={addProductFilter} listId="inv-filter-product" options={productOptions} placeholder="Escribe producto..." />
               <InputDatalist label="Lote" value={lotFilter} onChange={setLotFilter} listId="inv-filter-lot" options={lotOptions} placeholder="Escribe lote..." />
               <InputDatalist label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} listId="inv-filter-bodega" options={warehouseOptions} placeholder="Escribe bodega..." />
               <InputDatalist label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} listId="inv-filter-type" options={typeOptions} placeholder="Escribe tipo..." />
               <InputDatalist label="Cliente" value={clientFilter} onChange={setClientFilter} listId="inv-filter-client" options={clientOptions} placeholder="Escribe cliente..." />
+              <Input label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, nota..." />
             </div>
           )}
           {activeMainFilterChips.length > 0 && (
@@ -1574,6 +1653,7 @@ function InventoryPage() {
             </div>
           )}
 
+          <section className="rounded-2xl border border-violet-200 bg-white p-2">
           <section className="grid gap-2 md:grid-cols-3">
             <KpiCard
               title="Productos en riesgo"
@@ -1596,6 +1676,13 @@ function InventoryPage() {
               tone="amber"
               onClick={() => scrollToSection('inventory-adjustments-section')}
             />
+          </section>
+          <div className="mt-2 flex justify-end">
+            <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <Download size={14} />
+              PDF gerencial
+            </button>
+          </div>
           </section>
 
           {(!isCompact || compactInventoryPanel === 'stock') && (
@@ -1816,7 +1903,7 @@ function InventoryPage() {
           </div>
 
           <SimpleDataTable
-            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Cliente', 'Destino', 'Notas', 'Acciones']}
+            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Cliente', 'Destino', 'Notas', 'Últ. edición', 'Acciones']}
             rows={visibleMovementsLast7Days.map((m) => [
               m.fecha,
               m.tipo_movimiento,
@@ -1827,6 +1914,7 @@ function InventoryPage() {
               m.cliente || '-',
               m.destino || '-',
               m.notas || '-',
+              `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
               <div key={`act-${m.id}`} className="flex items-center gap-1">
                 <button disabled={!isEditModeActive} onClick={() => startEdit(m)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
                 <button disabled={!isEditModeActive} onClick={() => void deleteMovement(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={13} /></button>
@@ -2198,11 +2286,11 @@ function SelectFilter({ label, value, onChange, options }: { label: string; valu
   );
 }
 
-function Input({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+function Input({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
       {label}
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none" />
+      <input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none" />
     </label>
   );
 }

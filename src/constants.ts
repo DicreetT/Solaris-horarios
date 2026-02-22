@@ -6,6 +6,7 @@ import type { User, DriveFolder } from './types';
  */
 // UUID real de Esteban en Supabase
 export const ESTEBAN_ID = "07d58adc-8c82-458d-ba48-f733ec706c7c";
+export const CARLOS_EMAIL = "carlos@solaris.global";
 
 export const USERS: User[] = [
     {
@@ -44,6 +45,13 @@ export const USERS: User[] = [
         name: "Fer",
         email: "fadodami2503@gmail.com",
         isTrainingManager: false,
+    },
+    {
+        id: "00000000-0000-4000-8000-0000000000c4", // Placeholder local config, runtime id comes from session
+        name: "Carlos",
+        email: CARLOS_EMAIL,
+        isTrainingManager: false,
+        isRestricted: true,
     },
 ];
 

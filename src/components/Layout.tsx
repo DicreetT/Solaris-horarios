@@ -17,6 +17,7 @@ import { useDailyStatus } from '../hooks/useDailyStatus';
 import { toDateKey } from '../utils/dateUtils';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyTeamGreeting } from '../hooks/useDailyTeamGreeting';
+import { useInventoryCriticalAlerts } from '../hooks/useInventoryCriticalAlerts';
 import GlobalSuccessToast from './GlobalSuccessToast';
 
 /**
@@ -27,6 +28,7 @@ function Layout() {
     const { currentUser } = useAuth();
     useRealtime(currentUser);
     useDailyTeamGreeting(currentUser);
+    useInventoryCriticalAlerts(currentUser);
     const { todos } = useTodos(currentUser);
     const { timeData } = useTimeData();
     const { dailyStatuses } = useDailyStatus(currentUser);

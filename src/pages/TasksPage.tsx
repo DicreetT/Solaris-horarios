@@ -161,6 +161,12 @@ function TasksPage() {
 
     // --- Filtering Logic ---
     const filterByCurrentCriteria = (t: Todo) => {
+        // Non-admin users can only browse tasks they created or are assigned to.
+        if (!isAdmin) {
+            const relatedToUser = t.created_by === currentUser.id || t.assigned_to.includes(currentUser.id);
+            if (!relatedToUser) return false;
+        }
+
         const isDoneForMe = t.completed_by.includes(currentUser.id);
         const isAssignedToMe = t.assigned_to.includes(currentUser.id);
 

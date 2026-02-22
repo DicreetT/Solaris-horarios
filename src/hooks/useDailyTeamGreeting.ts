@@ -66,7 +66,8 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                 .in('conversation_id', groupIds);
             if (participantsError) throw participantsError;
 
-            const allTeamUserIds = new Set(USERS.map((user) => user.id));
+            const teamUsers = USERS.filter((user) => !user.isRestricted);
+            const allTeamUserIds = new Set(teamUsers.map((user) => user.id));
             const participantsByConversation = new Map<number, Set<string>>();
             (participantRows || []).forEach((row: any) => {
                 const set = participantsByConversation.get(row.conversation_id) || new Set<string>();
@@ -76,7 +77,7 @@ export function useDailyTeamGreeting(currentUser: User | null) {
 
             const scored = conversations.map((conversation: any) => {
                 const members = participantsByConversation.get(conversation.id) || new Set<string>();
-                const includesWholeTeam = USERS.every((user) => members.has(user.id));
+                const includesWholeTeam = teamUsers.every((user) => members.has(user.id));
                 const titlePreferred = isPreferredGroupTitle(conversation.title);
                 const participantCount = members.size;
 
@@ -194,4 +195,3 @@ export function useDailyTeamGreeting(currentUser: User | null) {
         };
     }, [currentUser]);
 }
-

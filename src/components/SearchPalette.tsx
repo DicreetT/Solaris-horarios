@@ -5,13 +5,14 @@ import { useNavigate } from 'react-router-dom';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { useAuth } from '../context/AuthContext';
-import { USERS } from '../constants';
+import { CARLOS_EMAIL, USERS } from '../constants';
 
 const SearchPalette: React.FC = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const navigate = useNavigate();
     const { currentUser } = useAuth();
+    const isRestrictedUser = (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL || !!currentUser?.isRestricted;
     const { todos } = useTodos(currentUser);
 
     const toggleOpen = useCallback(() => setIsOpen(prev => !prev), []);
@@ -46,9 +47,12 @@ const SearchPalette: React.FC = () => {
         { label: 'Inventario Canet', path: '/inventory', icon: Boxes },
         { label: 'Inventario Huarte', path: '/inventory-facturacion', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
-    ];
+    ].filter((link) => {
+        if (!isRestrictedUser) return true;
+        return link.path === '/tasks';
+    });
 
-    const results = query ? [
+    const queryResults = [
         ...navigationLinks.filter(link => link.label.toLowerCase().includes(query.toLowerCase())),
         ...todos.filter(todo => todo.title.toLowerCase().includes(query.toLowerCase())).map(t => ({
             label: t.title,
@@ -56,19 +60,20 @@ const SearchPalette: React.FC = () => {
             icon: CheckSquare,
             isTodo: true
         })),
-        ...meetingRequests.filter(meeting => meeting.title.toLowerCase().includes(query.toLowerCase())).map(m => ({
+        ...(!isRestrictedUser ? meetingRequests.filter(meeting => meeting.title.toLowerCase().includes(query.toLowerCase())).map(m => ({
             label: m.title,
             path: `/meetings?meeting=${m.id}`,
             icon: Users,
             isMeeting: true
-        })),
+        })) : []),
         ...USERS.filter(user => user.name.toLowerCase().includes(query.toLowerCase())).map(u => ({
             label: u.name,
             path: '/dashboard',
             icon: Users,
             isUser: true
         }))
-    ].slice(0, 8) : navigationLinks;
+    ];
+    const results = query ? queryResults.slice(0, 8) : navigationLinks;
 
     const handleSelect = (path: string) => {
         navigate(path);

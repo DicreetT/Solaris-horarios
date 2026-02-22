@@ -8,6 +8,7 @@ import LoginView from './components/LoginView';
 import Layout from './components/Layout';
 import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { NotificationsProvider } from './context/NotificationsContext';
+import { CARLOS_EMAIL } from './constants';
 
 // Pages
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
@@ -59,6 +60,7 @@ function withLazyPage(page: React.ReactElement) {
  */
 function App() {
   const { currentUser, login } = useAuth();
+  const isRestrictedUser = (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
 
   const handleLogin = (user: User) => {
     login(user);
@@ -73,7 +75,7 @@ function App() {
             path="/login"
             element={
               currentUser ? (
-                <Navigate to="/calendar" replace />
+                <Navigate to={isRestrictedUser ? "/dashboard" : "/calendar"} replace />
               ) : (
                 <LoginView onLogin={handleLogin} />
               )
@@ -84,7 +86,7 @@ function App() {
           <Route
             path="/"
             element={
-              <Navigate to={currentUser ? "/calendar" : "/login"} replace />
+              <Navigate to={currentUser ? (isRestrictedUser ? "/dashboard" : "/calendar") : "/login"} replace />
             }
           />
 
@@ -97,26 +99,26 @@ function App() {
             </ProtectedRoute>
           }>
             <Route path="/dashboard" element={withLazyPage(<Dashboard />)} />
-            <Route path="/calendar" element={withLazyPage(<CalendarPage />)} />
+            <Route path="/calendar" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<CalendarPage />)} />
             <Route path="/tasks" element={withLazyPage(<TasksPage />)} />
-            <Route path="/meetings" element={withLazyPage(<MeetingsPage />)} />
-            <Route path="/absences" element={withLazyPage(<AbsencesPage />)} />
-            <Route path="/trainings" element={withLazyPage(<TrainingsPage />)} />
-            <Route path="/time-tracking" element={withLazyPage(<TimeTrackingPage />)} />
-            <Route path="/exports" element={withLazyPage(<ExportsPage />)} />
-            <Route path="/folders" element={withLazyPage(<FoldersPage />)} />
-            <Route path="/shopping" element={withLazyPage(<ShoppingListPage />)} />
-            <Route path="/checklist" element={withLazyPage(<DailyChecklistPage />)} />
+            <Route path="/meetings" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<MeetingsPage />)} />
+            <Route path="/absences" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<AbsencesPage />)} />
+            <Route path="/trainings" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TrainingsPage />)} />
+            <Route path="/time-tracking" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TimeTrackingPage />)} />
+            <Route path="/exports" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ExportsPage />)} />
+            <Route path="/folders" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FoldersPage />)} />
+            <Route path="/shopping" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ShoppingListPage />)} />
+            <Route path="/checklist" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<DailyChecklistPage />)} />
             <Route path="/chat" element={withLazyPage(<ChatPage />)} />
-            <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
-            <Route path="/inventory-facturacion" element={withLazyPage(<InventoryFacturacionPage />)} />
+            <Route path="/inventory" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<InventoryPage />)} />
+            <Route path="/inventory-facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<InventoryFacturacionPage />)} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}
           <Route
             path="*"
             element={
-              <Navigate to={currentUser ? "/calendar" : "/login"} replace />
+              <Navigate to={currentUser ? (isRestrictedUser ? "/dashboard" : "/calendar") : "/login"} replace />
             }
           />
         </Routes>
