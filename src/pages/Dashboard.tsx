@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     AlertTriangle,
-    BarChart3,
     CalendarClock,
     Coffee,
     Clock3,
@@ -198,7 +197,7 @@ function Dashboard() {
     const densityMode = useDensityMode();
     const isCompact = densityMode === 'compact';
     const [compactSection, setCompactSection] = useState<
-        'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat' | 'stock'
+        'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat'
     >('events');
 
     useEffect(() => {
@@ -403,6 +402,38 @@ function Dashboard() {
             : absenceRequests.filter((a) => a.created_by === currentUser.id);
         return [...visible].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     }, [absenceRequests, currentUser, isAdmin]);
+    const pendingMeetingRows = useMemo(
+        () => meetingRequests.filter((m) => m.status === 'pending'),
+        [meetingRequests],
+    );
+    const myRequestRows = useMemo(() => {
+        if (!currentUser) return [] as Array<{ id: string; title: string; date: string; status: string }>;
+        const absenceRows = absenceRequests
+            .filter((a) => a.created_by === currentUser.id)
+            .map((a) => ({
+                id: `absence-${a.id}`,
+                title: a.type === 'vacation' ? 'Vacaciones' : a.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
+                date: a.date_key || '-',
+                status: a.status,
+            }));
+        const meetingRows = meetingRequests
+            .filter((m) => m.created_by === currentUser.id)
+            .map((m) => ({
+                id: `meeting-${m.id}`,
+                title: m.title || 'Solicitud de reunión',
+                date: m.scheduled_date_key || m.preferred_date_key || '-',
+                status: m.status,
+            }));
+        const trainingRows = trainingRequests
+            .filter((t) => t.user_id === currentUser.id)
+            .map((t) => ({
+                id: `training-${t.id}`,
+                title: 'Solicitud de formación',
+                date: t.scheduled_date_key || t.requested_date_key || '-',
+                status: t.status,
+            }));
+        return [...absenceRows, ...meetingRows, ...trainingRows].sort((a, b) => (a.date < b.date ? 1 : -1));
+    }, [absenceRequests, meetingRequests, trainingRequests, currentUser]);
 
     const pendingAbsenceRows = useMemo(
         () => managedAbsenceRows.filter((a) => a.status === 'pending'),
@@ -1253,11 +1284,15 @@ function Dashboard() {
             }).length,
         [unreadPendingNotifications],
     );
-    const absencesBadgeCount = isAdmin ? pendingAbsenceRows.length || weeklyAbsences.length : weeklyTeamAbsences.length;
+    const absencesBadgeCount = isAdmin
+        ? pendingAbsenceRows.length + pendingMeetingRows.length || weeklyAbsences.length
+        : weeklyTeamAbsences.length;
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
+    const absencesTileLabel = isAdmin ? 'Gestionar solicitudes' : 'Ausencias';
+    const trainingsTileLabel = canSeeTrainingsPanel ? 'Gestionar formaciones' : 'Formaciones';
 
     const compactTiles: Array<{
-        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat' | 'stock';
+        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat';
         label: string;
         Icon: any;
     }> = [
@@ -1265,13 +1300,12 @@ function Dashboard() {
         { key: 'quick', label: 'Solicitudes', Icon: Users },
         { key: 'checklist', label: 'Checklist', Icon: Sparkles },
         { key: 'time', label: 'Jornada', Icon: Clock3 },
-        { key: 'absences', label: 'Ausencias', Icon: UserX },
-        { key: 'trainings', label: 'Formaciones', Icon: GraduationCap },
+        { key: 'absences', label: absencesTileLabel, Icon: UserX },
+        { key: 'trainings', label: trainingsTileLabel, Icon: GraduationCap },
         { key: 'alerts', label: 'Inventario', Icon: Info },
         { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
         { key: 'pulse', label: 'Pulso', Icon: Coffee },
         { key: 'chat', label: 'Chat', Icon: MessageCircle },
-        { key: 'stock', label: 'Stock', Icon: BarChart3 },
     ];
     const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
     const compactTileBadges: Partial<Record<typeof compactTiles[number]['key'], number>> = {
@@ -1482,29 +1516,35 @@ function Dashboard() {
                             onSubmit={async (e) => {
                                 e.preventDefault();
                                 if (!eventDraft.trim() || !currentUser) return;
-                                await createEvent({
-                                    date_key: todayKey,
-                                    title: eventDraft.trim(),
-                                    description: null,
-                                    created_by: currentUser.id,
-                                });
-                                setEventDraft('');
+                                try {
+                                    await createEvent({
+                                        date_key: todayKey,
+                                        title: eventDraft.trim(),
+                                        description: null,
+                                        created_by: currentUser.id,
+                                    });
+                                    setEventDraft('');
+                                } catch {
+                                    // fallback is handled in hook; prevent app-level error
+                                }
                             }}
-                            className="flex gap-2 mb-3"
+                            className="mb-3"
                         >
-                            <input
+                            <textarea
                                 value={eventDraft}
                                 onChange={(e) => setEventDraft(e.target.value)}
-                                className="flex-1 border border-violet-200 rounded-xl px-3 py-2 text-sm"
-                                placeholder="Ej: Hoy llega Solar Vital"
+                                className="w-full min-h-[84px] border border-violet-200 rounded-xl px-3 py-2 text-sm"
+                                placeholder="Ej: Hoy llega Solar Vital&#10;Recordar envío a las 11:00&#10;Notas del día"
                             />
-                            <button className="px-3 py-2 bg-violet-700 text-white rounded-xl text-sm font-bold">
-                                Añadir
-                            </button>
+                            <div className="mt-2 flex justify-end">
+                                <button className="px-3 py-2 bg-violet-700 text-white rounded-xl text-sm font-bold">
+                                    Añadir evento
+                                </button>
+                            </div>
                         </form>
                         <div className="space-y-2">
                             {todayEvents.length > 0 ? todayEvents.map((event) => (
-                                <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900">
+                                <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900 whitespace-pre-line">
                                     {event.title}
                                 </div>
                             )) : <div className="app-empty-card">Aún no hay eventos para hoy.</div>}
@@ -1547,14 +1587,26 @@ function Dashboard() {
                                 </button>
                                 <button
                                     onClick={() => {
-                                        const block = document.getElementById('dashboard-time-summary');
+                                        const block = document.getElementById('dashboard-my-requests');
                                         if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                     }}
                                     className="sm:col-span-2 p-3 rounded-xl border border-violet-300 bg-violet-700 hover:bg-violet-800 text-white flex items-center justify-center gap-2 text-sm font-black"
                                 >
                                     <Clock3 size={16} />
-                                    Registro horario y edición
+                                    Mis solicitudes
                                 </button>
+                            </div>
+                            <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Mis solicitudes recientes</p>
+                                <div className="space-y-1.5">
+                                    {myRequestRows.slice(0, 6).map((row) => (
+                                        <div key={row.id} className="rounded-lg border border-violet-100 bg-white p-2 text-xs">
+                                            <p className="font-bold text-violet-900">{row.title}</p>
+                                            <p className="text-violet-700">{row.date} · Estado: {row.status}</p>
+                                        </div>
+                                    ))}
+                                    {myRequestRows.length === 0 && <div className="app-empty-card">Aún no tienes solicitudes creadas.</div>}
+                                </div>
                             </div>
                         </div>
                     )}
@@ -1705,10 +1757,10 @@ function Dashboard() {
                     )}
 
                     {(!isCompact || compactSection === 'absences') && (
-                    <div className={`grid grid-cols-1 ${!isCompact && canSeeTrainingsPanel ? 'lg:grid-cols-2' : ''} gap-6`}>
+                    <div id="dashboard-my-requests" className={`grid grid-cols-1 ${!isCompact && canSeeTrainingsPanel ? 'lg:grid-cols-2' : ''} gap-6`}>
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Ausencias del equipo' : 'Mis ausencias y vacaciones'}</h3>
+                                <h3 className="text-base font-black text-violet-950">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
                                 <button
                                     onClick={() => {
                                         setExpandedAbsenceId(null);
@@ -1716,22 +1768,44 @@ function Dashboard() {
                                     }}
                                     className="text-xs font-bold text-violet-700"
                                 >
-                                    Gestionar
+                                    {isAdmin ? 'Gestionar solicitudes' : 'Gestionar'}
                                 </button>
                             </div>
                             <div className="space-y-2">
-                                {managedAbsenceRows
-                                    .slice(0, 4)
-                                    .map((absence) => (
-                                        <button key={absence.id} onClick={() => {
+                                {(isAdmin
+                                    ? [
+                                        ...managedAbsenceRows.slice(0, 3).map((absence) => ({
+                                            key: `abs-${absence.id}`,
+                                            title: `${absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · ${absence.date_key}`,
+                                            sub: `Estado: ${absence.status} · ${USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by}`,
+                                            onClick: () => {
+                                                setExpandedAbsenceId(absence.id);
+                                                setShowAbsencesManageModal(true);
+                                            },
+                                        })),
+                                        ...meetingRequests.slice(0, 3).map((meeting) => ({
+                                            key: `meet-${meeting.id}`,
+                                            title: `Reunión · ${meeting.title || 'Sin título'}`,
+                                            sub: `Estado: ${meeting.status} · ${meeting.preferred_date_key || '-'}`,
+                                            onClick: () => navigate('/meetings'),
+                                        })),
+                                    ]
+                                    : managedAbsenceRows.slice(0, 4).map((absence) => ({
+                                        key: `abs-${absence.id}`,
+                                        title: `${absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · ${absence.date_key}`,
+                                        sub: `Estado: ${absence.status}`,
+                                        onClick: () => {
                                             setExpandedAbsenceId(absence.id);
                                             setShowAbsencesManageModal(true);
-                                        }} className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
-                                            <p className="font-bold text-violet-900">{absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}</p>
-                                            <p className="text-xs text-violet-700">Estado: {absence.status}{isAdmin ? ` · ${USERS.find((u) => u.id === absence.created_by)?.name || absence.created_by}` : ''}</p>
+                                        },
+                                    })))
+                                    .map((item) => (
+                                        <button key={item.key} onClick={item.onClick} className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
+                                            <p className="font-bold text-violet-900">{item.title}</p>
+                                            <p className="text-xs text-violet-700">{item.sub}</p>
                                         </button>
                                     ))}
-                                {managedAbsenceRows.length === 0 && (
+                                {((isAdmin && managedAbsenceRows.length + meetingRequests.length === 0) || (!isAdmin && managedAbsenceRows.length === 0)) && (
                                     <div className="app-empty-card">No hay ausencias para mostrar.</div>
                                 )}
                             </div>
@@ -1740,8 +1814,8 @@ function Dashboard() {
                         {canSeeTrainingsPanel && !isCompact && (
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-base font-black text-violet-950">Formaciones</h3>
-                                <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar</Link>
+                                <h3 className="text-base font-black text-violet-950">Gestionar formaciones</h3>
+                                <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar formaciones</Link>
                             </div>
                             <div className="space-y-2">
                                 {trainingRequests
@@ -1765,8 +1839,8 @@ function Dashboard() {
                     {canSeeTrainingsPanel && isCompact && compactSection === 'trainings' && (
                     <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                         <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-base font-black text-violet-950">Formaciones</h3>
-                            <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar</Link>
+                            <h3 className="text-base font-black text-violet-950">Gestionar formaciones</h3>
+                            <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar formaciones</Link>
                         </div>
                         <div className="space-y-2">
                             {trainingRequests
@@ -1822,7 +1896,7 @@ function Dashboard() {
                                         : 'bg-white text-violet-700 border-violet-200'
                                 }`}
                             >
-                                <BarChart3 size={14} />
+                                <Info size={14} />
                                 Datos generales
                             </button>
                         </div>
