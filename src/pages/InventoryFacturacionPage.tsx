@@ -202,7 +202,7 @@ export default function InventoryFacturacionPage() {
   const [canetMovimientos] = useSharedJsonState<Movement[]>(
     STORAGE_CANET_MOVS_KEY,
     [],
-    { userId: actorId, initializeIfMissing: false },
+    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 2000 },
   );
   const [canetAssembliesSeenIds, setCanetAssembliesSeenIds] = useSharedJsonState<number[]>(
     `${STORAGE_CANET_ASSEMBLIES_SEEN}:${actorId || 'anon'}`,

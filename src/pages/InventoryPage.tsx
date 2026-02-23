@@ -236,7 +236,7 @@ function InventoryPage() {
   const [huarteMovimientosShared] = useSharedJsonState<any[]>(
     INVENTORY_HUARTE_MOVS_KEY,
     (huarteSeed.movimientos as any[]) || [],
-    { userId: actorId, initializeIfMissing: false },
+    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 3000 },
   );
 
   const [monthFilter, setMonthFilter] = useState<string>('');

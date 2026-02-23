@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 type Options = {
   userId?: string;
   initializeIfMissing?: boolean;
+  pollIntervalMs?: number;
 };
 
 export function useSharedJsonState<T>(
@@ -11,7 +12,7 @@ export function useSharedJsonState<T>(
   fallbackValue: T,
   options: Options = {},
 ): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
-  const { userId, initializeIfMissing = true } = options;
+  const { userId, initializeIfMissing = true, pollIntervalMs = 15000 } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
   const valueRef = useRef<T>(fallbackValue);
@@ -83,7 +84,7 @@ export function useSharedJsonState<T>(
       void load(true);
     };
 
-    const intervalId = window.setInterval(refresh, 15000);
+    const intervalId = window.setInterval(refresh, pollIntervalMs);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refresh();
     };
@@ -117,7 +118,7 @@ export function useSharedJsonState<T>(
       window.removeEventListener('focus', onFocus);
       void supabase.removeChannel(channel);
     };
-  }, [key, fallbackValue, initializeIfMissing, persist]);
+  }, [key, fallbackValue, initializeIfMissing, persist, pollIntervalMs]);
 
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {

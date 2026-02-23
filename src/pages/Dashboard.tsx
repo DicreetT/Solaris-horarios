@@ -200,12 +200,12 @@ function Dashboard() {
     const [huarteMovementsShared] = useSharedJsonState<any[]>(
         INVENTORY_HUARTE_MOVS_KEY,
         (huarteSeed.movimientos as any[]) || [],
-        { userId: currentUser?.id, initializeIfMissing: false },
+        { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 3000 },
     );
     const [canetMovementsShared] = useSharedJsonState<any[]>(
         INVENTORY_CANET_MOVS_KEY,
         (canetSeed.movimientos as any[]) || [],
-        { userId: currentUser?.id, initializeIfMissing: false },
+        { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 3000 },
     );
     const [inventoryPanelMode, setInventoryPanelMode] = useState<'critical' | 'general'>('critical');
     const [selectedInventoryDetail, setSelectedInventoryDetail] = useState<{
