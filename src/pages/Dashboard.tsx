@@ -135,6 +135,7 @@ const toNum = (v: unknown) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
 };
+const normStatus = (value: unknown) => clean(value).toLowerCase();
 
 function Dashboard() {
     const { currentUser } = useAuth();
@@ -642,14 +643,14 @@ function Dashboard() {
     }, [absenceRequests, meetingRequests, trainingRequests, currentUser]);
 
     const pendingManagedRows = useMemo(
-        () => managedRequestRows.filter((r) => r.status === 'pending'),
+        () => managedRequestRows.filter((r) => normStatus(r.status) === 'pending'),
         [managedRequestRows],
     );
     const resolvedManagedRows = useMemo(() => {
         return managedRequestRows.filter((r) => {
             const approvedStatus =
-                (r.source === 'absence' && r.status === 'approved') ||
-                (r.source === 'meeting' && r.status === 'scheduled');
+                (r.source === 'absence' && normStatus(r.status) === 'approved') ||
+                (r.source === 'meeting' && normStatus(r.status) === 'scheduled');
             if (!approvedStatus) return false;
             const rawDate = r.source === 'absence' ? (r.endDate || r.dateKey || '') : (r.preferredDateKey || '');
             if (!rawDate) return false;
@@ -1075,18 +1076,28 @@ function Dashboard() {
 
     const canEditOwnRequest = useMemo(() => {
         if (!selectedManagedRequest || !currentUser) return false;
-        return selectedManagedRequest.created_by === currentUser.id && selectedManagedRequest.status === 'pending';
+        return selectedManagedRequest.created_by === currentUser.id && normStatus(selectedManagedRequest.status) === 'pending';
     }, [selectedManagedRequest, currentUser]);
     const canEditMyRequest = useMemo(() => {
         if (!selectedMyRequest || !currentUser) return false;
-        return selectedMyRequest.created_by === currentUser.id && selectedMyRequest.status === 'pending';
+        return selectedMyRequest.created_by === currentUser.id && normStatus(selectedMyRequest.status) === 'pending';
+    }, [selectedMyRequest, currentUser]);
+    const canDeleteMyRequest = useMemo(() => {
+        if (!selectedMyRequest || !currentUser) return false;
+        return selectedMyRequest.created_by === currentUser.id || currentUser.isAdmin;
     }, [selectedMyRequest, currentUser]);
 
     const refreshRequestQueries = async () => {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['absences'] }),
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] }),
             queryClient.invalidateQueries({ queryKey: ['meetings'] }),
+            queryClient.invalidateQueries({ queryKey: ['meetings', currentUser?.id] }),
             queryClient.invalidateQueries({ queryKey: ['training'] }),
+            queryClient.invalidateQueries({ queryKey: ['training', currentUser?.id] }),
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] }),
+            queryClient.refetchQueries({ queryKey: ['meetings', currentUser?.id] }),
+            queryClient.refetchQueries({ queryKey: ['training', currentUser?.id] }),
         ]);
     };
 
@@ -1193,7 +1204,7 @@ function Dashboard() {
     };
 
     const deleteMyRequest = async () => {
-        if (!selectedMyRequest || !currentUser || !canEditMyRequest) return;
+        if (!selectedMyRequest || !currentUser || !canDeleteMyRequest) return;
         const ok = window.confirm('¿Eliminar esta solicitud?');
         if (!ok) return;
         setManageSaving(true);
@@ -2837,7 +2848,7 @@ function Dashboard() {
                                             </button>
                                         )}
 
-                                        {isAdmin && selectedManagedRequest.status === 'pending' && (
+                                        {isAdmin && normStatus(selectedManagedRequest.status) === 'pending' && (
                                             <>
                                                 <button
                                                     onClick={() => resolveManagedRequest('reprogram')}
@@ -2955,7 +2966,7 @@ function Dashboard() {
                                 </button>
                                 <button
                                     onClick={deleteMyRequest}
-                                    disabled={manageSaving || !canEditMyRequest}
+                                    disabled={manageSaving || !canDeleteMyRequest}
                                     className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold disabled:opacity-60"
                                 >
                                     Eliminar

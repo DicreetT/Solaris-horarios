@@ -105,6 +105,8 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] });
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] });
             emitSuccessFeedback('Solicitud creada con éxito.');
         },
     });
@@ -120,6 +122,8 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] });
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] });
             emitSuccessFeedback('Solicitud actualizada con éxito.');
         },
     });
@@ -140,6 +144,8 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] });
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] });
             emitSuccessFeedback('Estado actualizado con éxito.');
         },
     });
@@ -154,6 +160,8 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] });
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] });
             emitSuccessFeedback('Solicitud eliminada con éxito.');
         },
     });
@@ -172,6 +180,8 @@ export function useAbsences(currentUser: User | null) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });
+            queryClient.invalidateQueries({ queryKey: ['absences', currentUser?.id] });
+            queryClient.refetchQueries({ queryKey: ['absences', currentUser?.id] });
             emitSuccessFeedback('Ausencia eliminada con éxito.');
         }
     })

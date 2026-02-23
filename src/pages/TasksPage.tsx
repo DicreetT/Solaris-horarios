@@ -7,7 +7,7 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { TaskSection } from '../components/TaskSection';
 import { TaskCardRow } from '../components/TaskCardRow';
-import { CheckSquare, Plus, UserCheck, Shield, Search } from 'lucide-react';
+import { CheckSquare, Plus, UserCheck, Shield, Search, SlidersHorizontal } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS } from '../constants';
 import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
@@ -40,6 +40,7 @@ function TasksPage() {
     const [assignedByFilter, setAssignedByFilter] = useState<string>('all');
     const [monthFilter, setMonthFilter] = useState<string>('all');
     const [titleSearch, setTitleSearch] = useState('');
+    const [showFilters, setShowFilters] = useState(false);
     const { getSeenAt, markSeenAt, markManySeenAt, seenMap } = useTaskCommentSeen(currentUser);
 
     const isAdmin = currentUser?.isAdmin;
@@ -301,7 +302,42 @@ function TasksPage() {
                 </div>
 
                 {/* Filters */}
-                <div className="bg-white border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                <div className="bg-white border border-gray-200 rounded-2xl p-3">
+                <div className="flex items-center justify-between gap-3">
+                    <button
+                        onClick={() => setShowFilters((prev) => !prev)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-violet-200 px-3 py-2 text-xs font-black text-violet-800 bg-violet-50 hover:bg-violet-100"
+                    >
+                        <SlidersHorizontal size={14} />
+                        Filtros
+                    </button>
+                    {activeFilterChips.length > 0 && (
+                        <button
+                            onClick={() => {
+                                setTaskTypeFilter('pending');
+                                setAssignedToFilter('all');
+                                setAssignedByFilter('all');
+                                setMonthFilter('all');
+                                setTitleSearch('');
+                            }}
+                            className="text-xs font-bold text-violet-700 underline"
+                        >
+                            Limpiar todo
+                        </button>
+                    )}
+                </div>
+                {activeFilterChips.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {activeFilterChips.map((chip) => (
+                            <span key={chip.key} className="app-filter-chip">
+                                {chip.label}
+                                <button className="app-filter-chip-x" onClick={chip.clear} title="Quitar filtro">x</button>
+                            </span>
+                        ))}
+                    </div>
+                )}
+                {showFilters && (
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de tarea</label>
                     <select
@@ -374,27 +410,7 @@ function TasksPage() {
                         />
                     </div>
                 </div>
-                {activeFilterChips.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        {activeFilterChips.map((chip) => (
-                            <span key={chip.key} className="app-filter-chip">
-                                {chip.label}
-                                <button className="app-filter-chip-x" onClick={chip.clear} title="Quitar filtro">x</button>
-                            </span>
-                        ))}
-                        <button
-                            onClick={() => {
-                                setTaskTypeFilter('pending');
-                                setAssignedToFilter('all');
-                                setAssignedByFilter('all');
-                                setMonthFilter('all');
-                                setTitleSearch('');
-                            }}
-                            className="text-xs font-bold text-violet-700 underline"
-                        >
-                            Limpiar todo
-                        </button>
-                    </div>
+                </div>
                 )}
             </div>
             </div>
