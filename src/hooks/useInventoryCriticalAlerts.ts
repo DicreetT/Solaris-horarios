@@ -109,7 +109,7 @@ export function useInventoryCriticalAlerts(currentUser: User | null) {
             if (totalCritical === 0) return;
 
             const day = getDateKey();
-            const message = `Recuerda revisar stock crítico (montadas ${summary.mounted.length}, potenciales ${summary.potential.length}, Canet ${summary.canet.length}).`;
+            const message = 'Recuerda revisar el stock crítico de inventario.';
             const dayStart = `${day}T00:00:00.000Z`;
             const { data: existingTodayRows } = await supabase
                 .from('notifications')

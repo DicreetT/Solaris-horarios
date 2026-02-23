@@ -271,13 +271,17 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         mutationFn: async (conversationId: number) => {
             if (!currentUser) throw new Error('No user logged in');
 
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()
                 .eq('conversation_id', conversationId)
-                .eq('user_id', currentUser.id);
+                .eq('user_id', currentUser.id)
+                .select('user_id');
 
             if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('No se pudo eliminar el chat de tu lista (revisa permisos de RLS en chat_participants).');
+            }
             return conversationId;
         },
         onMutate: async (conversationId) => {

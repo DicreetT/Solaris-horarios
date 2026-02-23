@@ -139,7 +139,7 @@ const toNum = (v: unknown) => {
 const normStatus = (value: unknown) => clean(value).toLowerCase();
 const isVisibleAbsenceStatus = (value: unknown) => {
     const status = normStatus(value);
-    return status === 'approved' || status === 'pending';
+    return status !== 'rejected' && status !== 'reject' && status !== 'cancelled' && status !== 'canceled';
 };
 const parseDateKeySafe = (value?: string | null) => {
     if (!value) return null;
@@ -2806,13 +2806,22 @@ function Dashboard() {
                                         <label className="block text-xs font-bold text-gray-700 mb-1">
                                             {selectedManagedRequest.source === 'meeting' ? 'Descripción' : 'Motivo'}
                                         </label>
-                                        <textarea
-                                            value={manageRequestDescription}
-                                            onChange={(e) => setManageRequestDescription(e.target.value)}
-                                            rows={3}
-                                            disabled={!canEditOwnRequest}
-                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
-                                        />
+                                        {!canEditOwnRequest ? (
+                                            <div className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[84px]">
+                                                <LinkifiedText
+                                                    text={manageRequestDescription || '-'}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <textarea
+                                                value={manageRequestDescription}
+                                                onChange={(e) => setManageRequestDescription(e.target.value)}
+                                                rows={3}
+                                                disabled={!canEditOwnRequest}
+                                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                            />
+                                        )}
                                         {manageRequestDescription.trim() && (
                                             <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
                                                 <p className="font-bold mb-1">Vista previa clicable</p>
@@ -2826,13 +2835,22 @@ function Dashboard() {
 
                                     <div>
                                         <label className="block text-xs font-bold text-gray-700 mb-1">Comentario / respuesta</label>
-                                        <textarea
-                                            value={manageRequestComment}
-                                            onChange={(e) => setManageRequestComment(e.target.value)}
-                                            rows={2}
-                                            disabled={!canEditOwnRequest && !isAdmin}
-                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
-                                        />
+                                        {(!canEditOwnRequest && !isAdmin) ? (
+                                            <div className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[64px]">
+                                                <LinkifiedText
+                                                    text={manageRequestComment || '-'}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <textarea
+                                                value={manageRequestComment}
+                                                onChange={(e) => setManageRequestComment(e.target.value)}
+                                                rows={2}
+                                                disabled={!canEditOwnRequest && !isAdmin}
+                                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                            />
+                                        )}
                                         {manageRequestComment.trim() && (
                                             <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
                                                 <p className="font-bold mb-1">Vista previa clicable</p>
@@ -2952,13 +2970,22 @@ function Dashboard() {
                             )}
                             <div>
                                 <label className="block text-xs font-bold text-gray-700 mb-1">{selectedMyRequest.source === 'meeting' ? 'Descripción' : 'Motivo'}</label>
-                                <textarea
-                                    value={manageRequestDescription}
-                                    onChange={(e) => setManageRequestDescription(e.target.value)}
-                                    rows={3}
-                                    disabled={!canEditMyRequest}
-                                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
-                                />
+                                {!canEditMyRequest ? (
+                                    <div className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[84px]">
+                                        <LinkifiedText
+                                            text={manageRequestDescription || '-'}
+                                            linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                        />
+                                    </div>
+                                ) : (
+                                    <textarea
+                                        value={manageRequestDescription}
+                                        onChange={(e) => setManageRequestDescription(e.target.value)}
+                                        rows={3}
+                                        disabled={!canEditMyRequest}
+                                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                    />
+                                )}
                                 {manageRequestDescription.trim() && (
                                     <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
                                         <p className="font-bold mb-1">Vista previa clicable</p>
@@ -2972,13 +2999,22 @@ function Dashboard() {
                             {selectedMyRequest.source !== 'training' && (
                                 <div>
                                     <label className="block text-xs font-bold text-gray-700 mb-1">Comentario</label>
-                                    <textarea
-                                        value={manageRequestComment}
-                                        onChange={(e) => setManageRequestComment(e.target.value)}
-                                        rows={2}
-                                        disabled={!canEditMyRequest}
-                                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
-                                    />
+                                    {!canEditMyRequest ? (
+                                        <div className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-gray-100 text-gray-700 min-h-[64px]">
+                                            <LinkifiedText
+                                                text={manageRequestComment || '-'}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <textarea
+                                            value={manageRequestComment}
+                                            onChange={(e) => setManageRequestComment(e.target.value)}
+                                            rows={2}
+                                            disabled={!canEditMyRequest}
+                                            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
+                                        />
+                                    )}
                                     {manageRequestComment.trim() && (
                                         <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
                                             <p className="font-bold mb-1">Vista previa clicable</p>
