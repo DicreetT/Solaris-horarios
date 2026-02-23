@@ -195,17 +195,17 @@ function Dashboard() {
     const [inventoryAlerts] = useSharedJsonState<InventoryAlertsSummary | null>(
         INVENTORY_ALERTS_KEY,
         null,
-        { userId: currentUser?.id },
+        { userId: currentUser?.id, initializeIfMissing: false },
     );
     const [huarteMovementsShared] = useSharedJsonState<any[]>(
         INVENTORY_HUARTE_MOVS_KEY,
         (huarteSeed.movimientos as any[]) || [],
-        { userId: currentUser?.id },
+        { userId: currentUser?.id, initializeIfMissing: false },
     );
     const [canetMovementsShared] = useSharedJsonState<any[]>(
         INVENTORY_CANET_MOVS_KEY,
         (canetSeed.movimientos as any[]) || [],
-        { userId: currentUser?.id },
+        { userId: currentUser?.id, initializeIfMissing: false },
     );
     const [inventoryPanelMode, setInventoryPanelMode] = useState<'critical' | 'general'>('critical');
     const [selectedInventoryDetail, setSelectedInventoryDetail] = useState<{
