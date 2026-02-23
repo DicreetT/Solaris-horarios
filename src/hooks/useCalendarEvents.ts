@@ -35,7 +35,6 @@ export function useCalendarEvents() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        if ((sharedEvents || []).length > 0) return;
         try {
             const raw = window.localStorage.getItem(LEGACY_LOCAL_CALENDAR_EVENTS_KEY);
             const parsed = raw ? JSON.parse(raw) : [];
@@ -49,7 +48,25 @@ export function useCalendarEvents() {
                     title: String(ev.title),
                     created_by: ev.created_by ? String(ev.created_by) : '',
                 })) as CalendarEvent[];
-            if (cleaned.length > 0) setSharedEvents(cleaned);
+            if (cleaned.length === 0) return;
+
+            const existing = Array.isArray(sharedEvents) ? sharedEvents : [];
+            const signatures = new Set(existing.map((ev) => `${ev.date_key}::${ev.title}::${ev.created_by || ''}`));
+            const missingLegacy = cleaned.filter((ev) => !signatures.has(`${ev.date_key}::${ev.title}::${ev.created_by || ''}`));
+            if (missingLegacy.length === 0) return;
+
+            setSharedEvents((prev) => {
+                const base = Array.isArray(prev) ? prev : [];
+                const nextIdStart = base.reduce((max, ev) => {
+                    const id = Number(ev.id);
+                    return Number.isFinite(id) ? Math.max(max, id) : max;
+                }, 0) + 1;
+                const normalizedMissing = missingLegacy.map((ev, idx) => ({
+                    ...ev,
+                    id: nextIdStart + idx,
+                }));
+                return [...base, ...normalizedMissing];
+            });
         } catch {
             // noop
         }

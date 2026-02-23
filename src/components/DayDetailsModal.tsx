@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { USERS, ESTEBAN_ID } from '../constants';
 import MeetingDetailModal from './MeetingDetailModal';
 import TaskDetailModal from './TaskDetailModal';
+import LinkifiedText from './LinkifiedText';
 
 /**
  * Modal that shows detailed information about a specific day
@@ -386,7 +387,11 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
                                                             absence.status === 'pending' ? 'Pendiente' : 'Rechazado'}
                                                     </span>
                                                 </div>
-                                                <p className="text-xs text-gray-600">{displayReason}</p>
+                                                <LinkifiedText
+                                                    text={displayReason}
+                                                    className="text-xs text-gray-600"
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
                                             </div>
                                         );
                                     })}
@@ -496,7 +501,11 @@ export default function DayDetailsModal({ date, events, onClose, onToggleDayStat
                                                     )}
                                                 </div>
                                                 {meeting.description && (
-                                                    <p className="text-xs text-gray-600">{meeting.description}</p>
+                                                    <LinkifiedText
+                                                        text={meeting.description}
+                                                        className="text-xs text-gray-600"
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
                                                 )}
                                             </div>
                                         );

@@ -137,6 +137,10 @@ const toNum = (v: unknown) => {
     return Number.isFinite(n) ? n : 0;
 };
 const normStatus = (value: unknown) => clean(value).toLowerCase();
+const isVisibleAbsenceStatus = (value: unknown) => {
+    const status = normStatus(value);
+    return status === 'approved' || status === 'pending';
+};
 const parseDateKeySafe = (value?: string | null) => {
     if (!value) return null;
     const parsed = new Date(`${value}T12:00:00`);
@@ -372,7 +376,7 @@ function Dashboard() {
         const we = parseDateKeySafe(weekEndKey);
         if (!ws || !we) return [] as typeof absenceRequests;
         return absenceRequests.filter((a) => {
-            if (normStatus(a.status) !== 'approved') return false;
+            if (!isVisibleAbsenceStatus(a.status)) return false;
             const start = parseDateKeySafe(a.date_key);
             const end = parseDateKeySafe(a.end_date || a.date_key);
             if (!start || !end) return false;
