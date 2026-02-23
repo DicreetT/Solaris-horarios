@@ -5,6 +5,8 @@ import { useTodos } from '../hooks/useTodos';
 import { XCircle, CheckSquare, Tag, Plus, X } from 'lucide-react';
 import { FileUploader, Attachment } from './FileUploader';
 
+const PRIORITY_TAG = '__priority__';
+
 export default function TodoModal({ onClose }: { onClose: () => void }) {
     const { currentUser } = useAuth();
     const { createTodo } = useTodos(currentUser);
@@ -18,6 +20,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
     // Tag State
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState("");
+    const [isPriority, setIsPriority] = useState(false);
 
     const handleToggleAssignee = (id: string) => {
         setAssignedIds((prev) =>
@@ -57,7 +60,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                 dueDateKey: dueDate || null,
                 assignedTo: assignedIds,
                 attachments,
-                tags
+                tags: isPriority ? Array.from(new Set([...tags, PRIORITY_TAG])) : tags
             });
             onClose();
         } catch (error: any) {
@@ -171,6 +174,23 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                 value={dueDate}
                                 onChange={(e) => setDueDate(e.target.value)}
                             />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-gray-900 mb-2">
+                                Prioridad
+                            </label>
+                            <button
+                                type="button"
+                                onClick={() => setIsPriority((prev) => !prev)}
+                                className={`w-full rounded-xl border-2 px-3 py-2 text-sm font-bold transition ${
+                                    isPriority
+                                        ? 'border-red-300 bg-red-50 text-red-700'
+                                        : 'border-gray-100 bg-white text-gray-700'
+                                }`}
+                            >
+                                {isPriority ? 'Prioritaria activada' : 'Marcar como prioritaria'}
+                            </button>
                         </div>
 
                         <div>

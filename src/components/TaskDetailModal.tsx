@@ -10,6 +10,7 @@ import { FileUploader } from './FileUploader';
 import { Celebration } from './Celebration';
 import { haptics } from '../utils/haptics';
 import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
+import LinkifiedText from './LinkifiedText';
 
 const PRIORITY_TAG = '__priority__';
 
@@ -346,9 +347,18 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                                 className="w-full bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed focus:outline-none focus:border-primary min-h-[100px]"
                             />
                         ) : (
-                            <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed">
-                                {task.description || <span className="text-gray-400 italic">Sin descripción</span>}
-                            </div>
+                            task.description ? (
+                                <LinkifiedText
+                                    as="div"
+                                    text={task.description}
+                                    className="bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed"
+                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                />
+                            ) : (
+                                <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 text-gray-700 whitespace-pre-wrap leading-relaxed">
+                                    <span className="text-gray-400 italic">Sin descripción</span>
+                                </div>
+                            )
                         )}
 
                         {isEditing && (
@@ -480,7 +490,15 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                                                         ? 'bg-primary text-white rounded-tr-none'
                                                         : 'bg-gray-100 text-gray-800 rounded-tl-none'}
                                                 `}>
-                                                    <p className="whitespace-pre-wrap">{comment.text}</p>
+                                                    <LinkifiedText
+                                                        text={comment.text}
+                                                        className="whitespace-pre-wrap"
+                                                        linkClassName={
+                                                            isMe
+                                                                ? 'underline decoration-dotted underline-offset-2 text-white hover:text-white/80'
+                                                                : 'underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800'
+                                                        }
+                                                    />
 
                                                     {/* Comment Attachments */}
                                                     {comment.attachments && comment.attachments.length > 0 && (

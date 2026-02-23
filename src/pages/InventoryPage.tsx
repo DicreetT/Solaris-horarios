@@ -168,9 +168,21 @@ function InventoryPage() {
   const admins = USERS.filter((u) => !!u.isAdmin);
   const actorName = currentUser?.name || 'Usuario';
   const actorId = currentUser?.id || '';
+  const actorEmail = clean(currentUser?.email).toLowerCase();
+  const actorNameLower = clean(currentUser?.name).toLowerCase();
   const actorIsAdmin = !!currentUser?.isAdmin;
-  const actorIsAnabela = !!(currentUser && anabela && currentUser.id === anabela.id);
-  const actorIsFernando = !!(currentUser && fernando && currentUser.id === fernando.id);
+  const actorIsAnabela = !!(
+    (currentUser && anabela && currentUser.id === anabela.id) ||
+    actorNameLower.includes('anab') ||
+    actorEmail.includes('anab')
+  );
+  const actorIsFernando = !!(
+    (currentUser && fernando && currentUser.id === fernando.id) ||
+    actorNameLower.includes('fernando') ||
+    actorNameLower === 'fer' ||
+    actorNameLower.startsWith('fer ') ||
+    actorEmail.includes('fer')
+  );
 
   const [tab, setTab] = useState<InventoryTab>('dashboard');
   const [accessMode, setAccessMode] = useState<InventoryAccessMode>('unset');

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, CheckCircle2, Circle, Users, Zap, MessageCircle } from 'lucide-react';
+import { Calendar, CheckCircle2, Circle, Users, Zap, MessageCircle, AlarmClock } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Todo } from '../types';
 import { USERS } from '../constants';
@@ -20,12 +20,19 @@ interface TaskCardRowProps {
     onMarkCommentsRead?: (todo: Todo) => void;
 }
 
+const PRIORITY_TAG = '__priority__';
+
 export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClick, onToggle, onMarkCommentsRead }: TaskCardRowProps) {
     const { sendNudge } = useNotificationsContext();
     const queryClient = useQueryClient();
     const [showCelebration, setShowCelebration] = React.useState(false);
     const isDoneForMe = todo.completed_by.includes(currentUser.id);
+    const isPriority = (todo.tags || []).includes(PRIORITY_TAG);
     const hasPendingAssignees = (todo.assigned_to || []).some((uid) => !todo.completed_by.includes(uid));
+    const canTogglePriority = !!(currentUser?.id && (
+        todo.created_by === currentUser.id ||
+        (todo.assigned_to || []).includes(currentUser.id)
+    ));
 
     // Simple calculation for due date
     const today = new Date().toISOString().split('T')[0];
@@ -57,7 +64,8 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                 onClick={() => onClick(todo)}
                 className={`
           flex items-center gap-4 p-4 mb-2 rounded-2xl border transition-all cursor-pointer bg-white
-          ${isDoneForMe ? 'opacity-85 border-gray-100 shadow-none' : 'border-gray-100 hover:border-primary/30 hover:shadow-md'}
+          ${isDoneForMe ? 'opacity-85 shadow-none' : 'hover:shadow-md'}
+          ${isPriority ? 'border-red-300 hover:border-red-400' : 'border-gray-100 hover:border-primary/30'}
         `}
             >
                 {/* 1. Status Icon */}
@@ -90,9 +98,9 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                 {isOverdue ? 'Vencida' : 'Hoy'}
                             </span>
                         )}
-                        {todo.tags && todo.tags.length > 0 && (
+                        {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG).length > 0 && (
                             <div className="flex gap-1">
-                                {todo.tags.map(tag => (
+                                {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG).map(tag => (
                                     <span key={tag} className="px-1.5 py-0.5 rounded-md bg-primary/5 text-primary text-[10px] font-bold">
                                         #{tag}
                                     </span>
@@ -198,6 +206,32 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                 <Zap size={14} />
                             </motion.button>
                         )}
+                        <button
+                            onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!canTogglePriority) return;
+                                const currentTags = todo.tags || [];
+                                const nextTags = isPriority
+                                    ? currentTags.filter((t) => t !== PRIORITY_TAG)
+                                    : Array.from(new Set([...currentTags, PRIORITY_TAG]));
+                                const { error } = await supabase
+                                    .from('todos')
+                                    .update({ tags: nextTags })
+                                    .eq('id', todo.id);
+                                if (!error) {
+                                    queryClient.invalidateQueries({ queryKey: ['todos'] });
+                                }
+                            }}
+                            disabled={!canTogglePriority}
+                            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors shadow-sm ring-1 ${
+                                isPriority
+                                    ? 'bg-red-500 text-white ring-red-500/50 hover:bg-red-600'
+                                    : 'bg-white text-red-500 ring-red-300/60 hover:bg-red-50'
+                            } ${!canTogglePriority ? 'opacity-40 cursor-not-allowed' : ''}`}
+                            title={isPriority ? 'Quitar prioridad' : 'Marcar como prioritaria'}
+                        >
+                            <AlarmClock size={14} />
+                        </button>
                     </div>
                 </div>
             </div>

@@ -12,6 +12,7 @@ import { formatDateTimePretty } from '../utils/dateUtils';
 import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { supabase } from '../lib/supabase';
+import { linkifyTextNodes } from '../components/LinkifiedText';
 
 const userNameById = (id: string) => USERS.find((u) => u.id === id)?.name || `Usuario ${id.slice(0, 6)}`;
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -371,10 +372,22 @@ function ChatPage() {
 
     const renderMessageWithMentions = (text: string, mentionIds: string[]) => {
         const names = mentionIds.map((id) => userNameById(id)).filter(Boolean);
-        if (names.length === 0) return <p className="text-sm text-gray-900 whitespace-pre-wrap">{text}</p>;
+        if (names.length === 0) {
+            return (
+                <p className="text-sm text-gray-900 whitespace-pre-wrap">
+                    {linkifyTextNodes(text, 'underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800')}
+                </p>
+            );
+        }
 
         const pattern = names.map((name) => `@${escapeRegex(name)}`).join('|');
-        if (!pattern) return <p className="text-sm text-gray-900 whitespace-pre-wrap">{text}</p>;
+        if (!pattern) {
+            return (
+                <p className="text-sm text-gray-900 whitespace-pre-wrap">
+                    {linkifyTextNodes(text, 'underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800')}
+                </p>
+            );
+        }
         const regex = new RegExp(`(${pattern})`, 'g');
         const parts = text.split(regex);
 
@@ -382,7 +395,13 @@ function ChatPage() {
             <p className="text-sm text-gray-900 whitespace-pre-wrap">
                 {parts.map((part, idx) => {
                     const isMention = names.some((name) => part === `@${name}`);
-                    if (!isMention) return <React.Fragment key={idx}>{part}</React.Fragment>;
+                    if (!isMention) {
+                        return (
+                            <React.Fragment key={idx}>
+                                {linkifyTextNodes(part, 'underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800')}
+                            </React.Fragment>
+                        );
+                    }
                     return (
                         <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 font-bold">
                             {part}

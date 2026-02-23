@@ -43,6 +43,7 @@ import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
+import LinkifiedText from '../components/LinkifiedText';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'stock';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
@@ -364,7 +365,7 @@ function Dashboard() {
     const weeklyAbsences = useMemo(
         () =>
             absenceRequests.filter((a) => {
-                if (a.status !== 'approved') return false;
+                if (normStatus(a.status) !== 'approved') return false;
                 const start = a.date_key;
                 const end = a.end_date || a.date_key;
                 return end >= weekStartKey && start <= weekEndKey;
@@ -3324,14 +3325,32 @@ function Dashboard() {
                                 <div key={`summary-meeting-${meeting.id}`} className="rounded-xl border border-blue-200 bg-blue-50/60 p-3">
                                     <p className="text-sm font-black text-blue-900">{meeting.title || 'Reunión'}</p>
                                     <p className="text-xs text-blue-700">Fecha: {meeting.scheduled_date_key || meeting.preferred_date_key || '-'}</p>
-                                    <p className="text-xs text-blue-700">Descripción: {meeting.description || '-'}</p>
+                                    <p className="text-xs text-blue-700">
+                                        Descripción:{' '}
+                                        {meeting.description ? (
+                                            <LinkifiedText
+                                                as="span"
+                                                text={meeting.description}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                            />
+                                        ) : '-'}
+                                    </p>
                                 </div>
                             ))}
                             {summaryModal.kind === 'trainings' && summaryModal.items.map((training: any) => (
                                 <div key={`summary-training-${training.id}`} className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
                                     <p className="text-sm font-black text-fuchsia-900">Formación</p>
                                     <p className="text-xs text-fuchsia-700">Fecha: {training.scheduled_date_key || training.requested_date_key || '-'}</p>
-                                    <p className="text-xs text-fuchsia-700">Motivo: {training.reason || '-'}</p>
+                                    <p className="text-xs text-fuchsia-700">
+                                        Motivo:{' '}
+                                        {training.reason ? (
+                                            <LinkifiedText
+                                                as="span"
+                                                text={training.reason}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-fuchsia-700 hover:text-fuchsia-800"
+                                            />
+                                        ) : '-'}
+                                    </p>
                                 </div>
                             ))}
                             {summaryModal.kind === 'absences' && summaryModal.items.map((absence: any) => (
@@ -3342,7 +3361,16 @@ function Dashboard() {
                                         {' · '}
                                         {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
                                     </p>
-                                    <p className="text-xs text-amber-700">Motivo: {absence.reason || '-'}</p>
+                                    <p className="text-xs text-amber-700">
+                                        Motivo:{' '}
+                                        {absence.reason ? (
+                                            <LinkifiedText
+                                                as="span"
+                                                text={absence.reason}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-amber-700 hover:text-amber-800"
+                                            />
+                                        ) : '-'}
+                                    </p>
                                 </div>
                             ))}
                         </div>

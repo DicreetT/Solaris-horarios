@@ -11,6 +11,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
 import { FileUploader, Attachment } from '../components/FileUploader';
 import { useNotificationsContext } from '../context/NotificationsContext';
+import LinkifiedText from '../components/LinkifiedText';
 
 /**
  * Meetings page
@@ -211,9 +212,11 @@ function MeetingsPage() {
                                                 </div>
 
                                                 {m.description && (
-                                                    <p className="text-gray-600 text-sm mb-3 line-clamp-2">
-                                                        {m.description}
-                                                    </p>
+                                                    <LinkifiedText
+                                                        text={m.description}
+                                                        className="text-gray-600 text-sm mb-3 line-clamp-2"
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
                                                 )}
 
                                                 <div className="flex flex-wrap gap-4 text-xs text-gray-500">
@@ -239,7 +242,14 @@ function MeetingsPage() {
                                                 {m.response_message && (
                                                     <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
                                                         <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
-                                                        <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {m.response_message}</span>
+                                                        <span className="text-gray-600">
+                                                            <span className="font-bold text-gray-700">Nota:</span>{' '}
+                                                            <LinkifiedText
+                                                                as="span"
+                                                                text={m.response_message}
+                                                                linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                            />
+                                                        </span>
                                                     </div>
                                                 )}
 
@@ -337,10 +347,13 @@ function MeetingsPage() {
 
                                             <h3 className="font-bold text-gray-900 mb-1">{m.title}</h3>
                                             {m.description && (
-                                                <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                                <div className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
                                                     <span className="font-bold text-gray-700 block mb-1">Descripción:</span>
-                                                    {m.description || 'Sin descripción'}
-                                                </p>
+                                                    <LinkifiedText
+                                                        text={m.description}
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
+                                                </div>
                                             )}
 
                                             {m.attachments && m.attachments.length > 0 && (

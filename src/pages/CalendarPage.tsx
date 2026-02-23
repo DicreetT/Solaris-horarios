@@ -15,6 +15,7 @@ import { USERS } from '../constants';
 import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { FileUploader, Attachment } from '../components/FileUploader';
+import LinkifiedText from '../components/LinkifiedText';
 
 /**
  * Calendar page
@@ -675,14 +676,32 @@ function CalendarPage() {
                                         <div className="space-y-1">
                                             <p className="font-black text-gray-900">{selectedEventItem.title || 'Reunión'}</p>
                                             <p className="text-gray-700">Fecha: {selectedEventItem.scheduled_date_key || selectedEventItem.preferred_date_key || '-'}</p>
-                                            <p className="text-gray-700">Descripción: {selectedEventItem.description || '-'}</p>
+                                            <p className="text-gray-700">
+                                                Descripción:{' '}
+                                                {selectedEventItem.description ? (
+                                                    <LinkifiedText
+                                                        as="span"
+                                                        text={selectedEventItem.description}
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
+                                                ) : '-'}
+                                            </p>
                                         </div>
                                     )}
                                     {eventModal.type === 'trainings' && (
                                         <div className="space-y-1">
                                             <p className="font-black text-gray-900">Formación</p>
                                             <p className="text-gray-700">Fecha: {selectedEventItem.scheduled_date_key || selectedEventItem.requested_date_key || '-'}</p>
-                                            <p className="text-gray-700">Motivo: {selectedEventItem.reason || '-'}</p>
+                                            <p className="text-gray-700">
+                                                Motivo:{' '}
+                                                {selectedEventItem.reason ? (
+                                                    <LinkifiedText
+                                                        as="span"
+                                                        text={selectedEventItem.reason}
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
+                                                ) : '-'}
+                                            </p>
                                             <p className="text-gray-700">Estado: {selectedEventItem.status || '-'}</p>
                                         </div>
                                     )}
@@ -693,7 +712,16 @@ function CalendarPage() {
                                                 Persona: {USERS.find((u) => u.id === selectedEventItem.created_by)?.name || selectedEventItem.created_by || '-'}
                                             </p>
                                             <p className="text-gray-700">Fecha: {selectedEventItem.date_key}{selectedEventItem.end_date ? ` al ${selectedEventItem.end_date}` : ''}</p>
-                                            <p className="text-gray-700">Motivo: {selectedEventItem.reason || '-'}</p>
+                                            <p className="text-gray-700">
+                                                Motivo:{' '}
+                                                {selectedEventItem.reason ? (
+                                                    <LinkifiedText
+                                                        as="span"
+                                                        text={selectedEventItem.reason}
+                                                        linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                    />
+                                                ) : '-'}
+                                            </p>
                                         </div>
                                     )}
                                 </div>

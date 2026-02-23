@@ -10,6 +10,7 @@ import { Plus, UserX, Calendar, MessageSquare, Trash2, XCircle, CheckCircle, Clo
 import { UserAvatar } from '../components/UserAvatar';
 import { RoleBadge } from '../components/RoleBadge';
 import { FileUploader, Attachment } from '../components/FileUploader';
+import LinkifiedText from '../components/LinkifiedText';
 
 /**
  * Absences page
@@ -338,9 +339,14 @@ function AbsencesPage() {
                                                 </div>
                                             )}
 
-                                            <p className="text-gray-600 text-sm mb-3">
-                                                <span className="font-bold text-gray-700">Motivo:</span> {r.reason}
-                                            </p>
+                                            <div className="text-gray-600 text-sm mb-3">
+                                                <span className="font-bold text-gray-700">Motivo:</span>{' '}
+                                                <LinkifiedText
+                                                    as="span"
+                                                    text={r.reason}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
 
                                             {r.attachments && r.attachments.length > 0 && (
                                                 <div className="mb-3 flex flex-wrap gap-2">
@@ -363,7 +369,14 @@ function AbsencesPage() {
                                             {r.response_message && (
                                                 <div className="mt-3 flex items-start gap-2 text-sm bg-gray-50 p-3 rounded-xl border border-gray-100">
                                                     <MessageSquare size={16} className="text-gray-400 mt-0.5 shrink-0" />
-                                                    <span className="text-gray-600"><span className="font-bold text-gray-700">Nota:</span> {r.response_message}</span>
+                                                    <span className="text-gray-600">
+                                                        <span className="font-bold text-gray-700">Nota:</span>{' '}
+                                                        <LinkifiedText
+                                                            as="span"
+                                                            text={r.response_message}
+                                                            linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                        />
+                                                    </span>
                                                 </div>
                                             )}
 
@@ -493,10 +506,13 @@ function AbsencesPage() {
                                                 </div>
                                             )}
 
-                                            <p className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                            <div className="text-sm text-gray-600 mb-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
                                                 <span className="font-bold text-gray-700 block mb-1">Motivo:</span>
-                                                {r.reason}
-                                            </p>
+                                                <LinkifiedText
+                                                    text={r.reason}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
 
                                             {r.attachments && r.attachments.length > 0 && (
                                                 <div className="mb-3 flex flex-wrap gap-2">
