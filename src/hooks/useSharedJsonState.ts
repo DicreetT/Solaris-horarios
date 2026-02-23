@@ -44,8 +44,8 @@ export function useSharedJsonState<T>(
     let active = true;
     keyRef.current = key;
 
-    const load = async () => {
-      setLoading(true);
+    const load = async (silent = false) => {
+      if (!silent) setLoading(true);
       const { data, error } = await supabase
         .from('shared_json_state')
         .select('payload')
@@ -74,10 +74,22 @@ export function useSharedJsonState<T>(
         }
       }
 
-      if (active) setLoading(false);
+      if (active && !silent) setLoading(false);
     };
 
     void load();
+
+    const refresh = () => {
+      void load(true);
+    };
+
+    const intervalId = window.setInterval(refresh, 15000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const onFocus = () => refresh();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
 
     const channel = supabase
       .channel(`shared-json:${key}`)
@@ -100,6 +112,9 @@ export function useSharedJsonState<T>(
 
     return () => {
       active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
       void supabase.removeChannel(channel);
     };
   }, [key, fallbackValue, initializeIfMissing, persist]);
@@ -121,4 +136,3 @@ export function useSharedJsonState<T>(
 
   return [value, setSharedValue, loading];
 }
-

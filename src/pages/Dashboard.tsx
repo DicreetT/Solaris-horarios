@@ -137,6 +137,11 @@ const toNum = (v: unknown) => {
     return Number.isFinite(n) ? n : 0;
 };
 const normStatus = (value: unknown) => clean(value).toLowerCase();
+const parseDateKeySafe = (value?: string | null) => {
+    if (!value) return null;
+    const parsed = new Date(`${value}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 function Dashboard() {
     const { currentUser } = useAuth();
@@ -362,16 +367,18 @@ function Dashboard() {
         [trainingRequests, currentUser, weekStartKey, weekEndKey],
     );
 
-    const weeklyAbsences = useMemo(
-        () =>
-            absenceRequests.filter((a) => {
-                if (normStatus(a.status) !== 'approved') return false;
-                const start = a.date_key;
-                const end = a.end_date || a.date_key;
-                return end >= weekStartKey && start <= weekEndKey;
-            }),
-        [absenceRequests, weekStartKey, weekEndKey],
-    );
+    const weeklyAbsences = useMemo(() => {
+        const ws = parseDateKeySafe(weekStartKey);
+        const we = parseDateKeySafe(weekEndKey);
+        if (!ws || !we) return [] as typeof absenceRequests;
+        return absenceRequests.filter((a) => {
+            if (normStatus(a.status) !== 'approved') return false;
+            const start = parseDateKeySafe(a.date_key);
+            const end = parseDateKeySafe(a.end_date || a.date_key);
+            if (!start || !end) return false;
+            return end >= ws && start <= we;
+        });
+    }, [absenceRequests, weekStartKey, weekEndKey]);
     const isTrainingManagerUser = currentUser?.id === ESTEBAN_ID;
     const isRestrictedUser = ((currentUser?.email || '').toLowerCase() === CARLOS_EMAIL) || !!currentUser?.isRestricted;
     const canSeeTrainingsPanel = !!isTrainingManagerUser;
@@ -461,10 +468,12 @@ function Dashboard() {
         if (weeklyAbsences.length === 0) {
             lines.push({ id: 'absences-none', text: 'Esta semana no hay ausencias.' });
         } else {
+            const todayDate = parseDateKeySafe(todayKey);
             const todayAbsences = weeklyAbsences.filter((a) => {
-                const start = a.date_key;
-                const end = a.end_date || a.date_key;
-                return todayKey >= start && todayKey <= end;
+                const start = parseDateKeySafe(a.date_key);
+                const end = parseDateKeySafe(a.end_date || a.date_key);
+                if (!todayDate || !start || !end) return false;
+                return todayDate >= start && todayDate <= end;
             });
             if (todayAbsences.length > 0) {
                 const names = todayAbsences
@@ -2800,6 +2809,15 @@ function Dashboard() {
                                             disabled={!canEditOwnRequest}
                                             className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                         />
+                                        {manageRequestDescription.trim() && (
+                                            <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
+                                                <p className="font-bold mb-1">Vista previa clicable</p>
+                                                <LinkifiedText
+                                                    text={manageRequestDescription}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div>
@@ -2811,6 +2829,15 @@ function Dashboard() {
                                             disabled={!canEditOwnRequest && !isAdmin}
                                             className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                         />
+                                        {manageRequestComment.trim() && (
+                                            <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
+                                                <p className="font-bold mb-1">Vista previa clicable</p>
+                                                <LinkifiedText
+                                                    text={manageRequestComment}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
 
                                     {canEditOwnRequest ? (
@@ -2928,6 +2955,15 @@ function Dashboard() {
                                     disabled={!canEditMyRequest}
                                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                 />
+                                {manageRequestDescription.trim() && (
+                                    <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
+                                        <p className="font-bold mb-1">Vista previa clicable</p>
+                                        <LinkifiedText
+                                            text={manageRequestDescription}
+                                            linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                        />
+                                    </div>
+                                )}
                             </div>
                             {selectedMyRequest.source !== 'training' && (
                                 <div>
@@ -2939,6 +2975,15 @@ function Dashboard() {
                                         disabled={!canEditMyRequest}
                                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-700"
                                     />
+                                    {manageRequestComment.trim() && (
+                                        <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-2 text-xs text-blue-900">
+                                            <p className="font-bold mb-1">Vista previa clicable</p>
+                                            <LinkifiedText
+                                                text={manageRequestComment}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-blue-700 hover:text-blue-800"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
