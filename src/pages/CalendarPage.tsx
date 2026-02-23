@@ -661,6 +661,11 @@ function CalendarPage() {
                                                     ? (item.scheduled_date_key || item.requested_date_key || '-')
                                                     : `${item.date_key}${item.end_date ? ` al ${item.end_date}` : ''}`}
                                         </p>
+                                        {eventModal.type === 'absences' && (
+                                            <p className="text-[11px] text-violet-700">
+                                                {USERS.find((u) => u.id === item.created_by)?.name || item.created_by || 'Sin persona'}
+                                            </p>
+                                        )}
                                     </button>
                                 ))}
                             </div>
@@ -684,6 +689,9 @@ function CalendarPage() {
                                     {eventModal.type === 'absences' && (
                                         <div className="space-y-1">
                                             <p className="font-black text-gray-900">{selectedEventItem.type === 'vacation' ? 'Vacaciones' : 'Ausencia'}</p>
+                                            <p className="text-gray-700">
+                                                Persona: {USERS.find((u) => u.id === selectedEventItem.created_by)?.name || selectedEventItem.created_by || '-'}
+                                            </p>
                                             <p className="text-gray-700">Fecha: {selectedEventItem.date_key}{selectedEventItem.end_date ? ` al ${selectedEventItem.end_date}` : ''}</p>
                                             <p className="text-gray-700">Motivo: {selectedEventItem.reason || '-'}</p>
                                         </div>

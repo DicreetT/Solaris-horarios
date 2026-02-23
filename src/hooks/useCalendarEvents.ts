@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { CalendarEvent } from '../types';
 
 const LOCAL_CALENDAR_EVENTS_KEY = 'calendar_events_fallback_v1';
+const SHARED_CALENDAR_EVENTS_KEY = 'calendar_events_shared_v1';
 
 const readLocalEvents = (): CalendarEvent[] => {
     if (typeof window === 'undefined') return [];
@@ -27,6 +28,28 @@ const writeLocalEvents = (events: CalendarEvent[]) => {
 export function useCalendarEvents() {
     const queryClient = useQueryClient();
 
+    const readSharedEvents = async (): Promise<CalendarEvent[]> => {
+        const { data } = await supabase
+            .from('shared_json_state')
+            .select('payload')
+            .eq('key', SHARED_CALENDAR_EVENTS_KEY)
+            .maybeSingle();
+        return Array.isArray(data?.payload) ? (data?.payload as CalendarEvent[]) : [];
+    };
+
+    const writeSharedEvents = async (events: CalendarEvent[]) => {
+        await supabase
+            .from('shared_json_state')
+            .upsert(
+                {
+                    key: SHARED_CALENDAR_EVENTS_KEY,
+                    payload: events,
+                    updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'key' },
+            );
+    };
+
     const { data: calendarEvents = [], isLoading } = useQuery({
         queryKey: ['calendarEvents'],
         queryFn: async () => {
@@ -36,6 +59,8 @@ export function useCalendarEvents() {
                 .order('created_at', { ascending: true });
 
             if (error) {
+                const shared = await readSharedEvents();
+                if (shared.length > 0) return shared;
                 return readLocalEvents();
             }
             return data as CalendarEvent[];
@@ -51,13 +76,16 @@ export function useCalendarEvents() {
                 .single();
 
             if (error) {
-                const fallbackRows = readLocalEvents();
+                const sharedRows = await readSharedEvents();
+                const baseRows = sharedRows.length > 0 ? sharedRows : readLocalEvents();
                 const fallbackEvent: CalendarEvent = {
                     id: Date.now(),
                     created_at: new Date().toISOString(),
                     ...event,
                 };
-                writeLocalEvents([fallbackEvent, ...fallbackRows]);
+                const nextRows = [fallbackEvent, ...baseRows];
+                writeLocalEvents(nextRows);
+                await writeSharedEvents(nextRows);
                 return fallbackEvent;
             }
             return data;
@@ -75,8 +103,11 @@ export function useCalendarEvents() {
                 .eq('id', id);
 
             if (error) {
-                const fallbackRows = readLocalEvents();
-                writeLocalEvents(fallbackRows.filter((row) => row.id !== id));
+                const sharedRows = await readSharedEvents();
+                const baseRows = sharedRows.length > 0 ? sharedRows : readLocalEvents();
+                const nextRows = baseRows.filter((row) => row.id !== id);
+                writeLocalEvents(nextRows);
+                await writeSharedEvents(nextRows);
                 return;
             }
         },

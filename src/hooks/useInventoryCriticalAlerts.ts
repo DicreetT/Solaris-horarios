@@ -18,11 +18,6 @@ const toNum = (v: unknown) => {
 
 const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
 
-const isPreferredGroupTitle = (title?: string | null) => {
-    const value = `${title || ''}`.toLowerCase();
-    return value.includes('equipo') || value.includes('solaris') || value.includes('general');
-};
-
 const getAlertRecipients = () => {
     const wanted = ['thalia', 'itzi', 'esteban', 'anabel'];
     return USERS.filter((u) => wanted.some((tag) => u.name.toLowerCase().includes(tag))).map((u) => u.id);
@@ -98,51 +93,6 @@ async function buildSummaryFromStorage(): Promise<AlertSummary> {
     }
 }
 
-async function findTeamConversationId(currentUserId: string, recipientIds: string[]): Promise<number | null> {
-    const { data: memberships, error: membershipError } = await supabase
-        .from('chat_participants')
-        .select('conversation_id')
-        .eq('user_id', currentUserId);
-    if (membershipError) throw membershipError;
-
-    const conversationIds = Array.from(
-        new Set((memberships || []).map((row: any) => Number(row.conversation_id)).filter(Boolean)),
-    );
-    if (conversationIds.length === 0) return null;
-
-    const { data: conversations, error: conversationsError } = await supabase
-        .from('chat_conversations')
-        .select('id, title, kind')
-        .in('id', conversationIds)
-        .eq('kind', 'group');
-    if (conversationsError) throw conversationsError;
-    if (!conversations || conversations.length === 0) return null;
-
-    const groupIds = conversations.map((c: any) => c.id);
-    const { data: participantRows, error: participantsError } = await supabase
-        .from('chat_participants')
-        .select('conversation_id, user_id')
-        .in('conversation_id', groupIds);
-    if (participantsError) throw participantsError;
-
-    const participantsByConversation = new Map<number, Set<string>>();
-    (participantRows || []).forEach((row: any) => {
-        const set = participantsByConversation.get(row.conversation_id) || new Set<string>();
-        set.add(row.user_id);
-        participantsByConversation.set(row.conversation_id, set);
-    });
-
-    const ranked = conversations.map((conversation: any) => {
-        const members = participantsByConversation.get(conversation.id) || new Set<string>();
-        const includesRecipients = recipientIds.every((id) => members.has(id));
-        const titlePreferred = isPreferredGroupTitle(conversation.title);
-        const score = (includesRecipients ? 1000 : 0) + (titlePreferred ? 200 : 0) + members.size;
-        return { id: conversation.id as number, score };
-    });
-    ranked.sort((a, b) => b.score - a.score);
-    return ranked[0]?.id || null;
-}
-
 export function useInventoryCriticalAlerts(currentUser: User | null) {
     useEffect(() => {
         if (!currentUser?.isAdmin) return;
@@ -159,34 +109,30 @@ export function useInventoryCriticalAlerts(currentUser: User | null) {
             const totalCritical = summary.mounted.length + summary.potential.length + summary.canet.length;
             if (totalCritical === 0) return;
 
-            const signature = JSON.stringify({
-                day: getDateKey(),
-                mounted: summary.mounted.map((r) => `${r.producto}:${Math.round(r.stockTotal)}`),
-                potential: summary.potential.map((r) => `${r.producto}:${Math.round(r.cajasPotenciales)}`),
-                canet: summary.canet.map((r) => `${r.producto}:${Math.round(r.stockTotal)}`),
-            });
+            const day = getDateKey();
+            const signature = JSON.stringify({ day });
             const sent = localStorage.getItem(STOCK_ALERT_SENT_KEY);
             if (sent === signature) return;
 
-            const message = `Alerta de stock crítico: montadas ${summary.mounted.length}, potenciales ${summary.potential.length}, Canet ${summary.canet.length}.`;
-            const conversationId = await findTeamConversationId(currentUser.id, recipientIds);
+            const message = `Recuerda revisar stock crítico (montadas ${summary.mounted.length}, potenciales ${summary.potential.length}, Canet ${summary.canet.length}).`;
+            const dayStart = `${day}T00:00:00.000Z`;
 
-            if (conversationId) {
-                const { error: messageError } = await supabase.from('chat_messages').insert({
-                    conversation_id: conversationId,
-                    sender_id: currentUser.id,
-                    message,
-                    attachments: [],
-                    mentions: [],
-                    reply_to: null,
-                    linked_task_id: null,
-                    linked_meeting_id: null,
-                });
-                if (messageError) throw messageError;
+            const { data: existingTodayRows } = await supabase
+                .from('notifications')
+                .select('id, user_id')
+                .in('user_id', recipientIds)
+                .eq('message', message)
+                .gte('created_at', dayStart);
+
+            const existingUsers = new Set((existingTodayRows || []).map((row: any) => row.user_id));
+            const missingRecipients = recipientIds.filter((id) => !existingUsers.has(id));
+            if (missingRecipients.length === 0) {
+                localStorage.setItem(STOCK_ALERT_SENT_KEY, signature);
+                return;
             }
 
             const nowIso = new Date().toISOString();
-            const rows = recipientIds.map((userId) => ({
+            const rows = missingRecipients.map((userId) => ({
                 user_id: userId,
                 type: 'action_required',
                 message,

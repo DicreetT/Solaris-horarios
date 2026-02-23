@@ -72,6 +72,12 @@ export function useAbsences(currentUser: User | null) {
 
             if (!primaryInsert.error) return primaryInsert.data;
 
+            // If admin is creating for another user and policy rejects it,
+            // do not silently create it for the admin account.
+            if (isCrossUserInsert) {
+                throw new Error('No tienes permisos para crear ausencias en nombre de otra persona con la política actual de seguridad.');
+            }
+
             // RLS fallback: minimal insert relying on auth.uid()/DB defaults
             const fallbackInsert = await supabase
                 .from('absence_requests')

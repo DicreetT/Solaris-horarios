@@ -21,8 +21,6 @@ const getSpainTime = (date = new Date()) =>
         timeZone: SPAIN_TIMEZONE,
     }).format(date);
 
-const greetingSentStorageKey = (userId: string, key: string) => `daily-team-greeting:${userId}:${key}`;
-
 const isPreferredGroupTitle = (title?: string | null) => {
     const value = `${title || ''}`.toLowerCase();
     return value.includes('equipo') || value.includes('solaris') || value.includes('general');
@@ -118,13 +116,9 @@ export function useDailyTeamGreeting(currentUser: User | null) {
             // Solo a las 09:00 en punto, hora España.
             if (spainTime !== '09:00') return;
 
-            const sentKey = greetingSentStorageKey(currentUser.id, spainDayKey);
-            if (localStorage.getItem(sentKey) === '1') return;
-
             try {
                 const laborable = await isWorkingDay(spainDayKey, now);
                 if (!laborable) {
-                    localStorage.setItem(sentKey, '1');
                     return;
                 }
 
@@ -141,7 +135,6 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                 if (existingError) throw existingError;
 
                 if (existingMessage && existingMessage.length > 0) {
-                    localStorage.setItem(sentKey, '1');
                     return;
                 }
 
@@ -166,8 +159,19 @@ export function useDailyTeamGreeting(currentUser: User | null) {
 
                 const recipients = (participantsRows || []).map((row: any) => row.user_id).filter(Boolean);
                 if (recipients.length > 0) {
+                    const duplicateThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+                    const { data: existingNotifications } = await supabase
+                        .from('notifications')
+                        .select('user_id')
+                        .in('user_id', recipients)
+                        .eq('message', DAILY_GREETING_MESSAGE)
+                        .gte('created_at', duplicateThreshold);
+                    const alreadyNotified = new Set((existingNotifications || []).map((row: any) => row.user_id));
+                    const missingRecipients = recipients.filter((id) => !alreadyNotified.has(id));
+                    if (missingRecipients.length === 0) return;
+
                     const nowIso = new Date().toISOString();
-                    const notifications = recipients.map((userId: string) => ({
+                    const notifications = missingRecipients.map((userId: string) => ({
                         user_id: userId,
                         type: 'reminder',
                         message: DAILY_GREETING_MESSAGE,
@@ -177,8 +181,6 @@ export function useDailyTeamGreeting(currentUser: User | null) {
                     const { error: notificationsError } = await supabase.from('notifications').insert(notifications);
                     if (notificationsError) throw notificationsError;
                 }
-
-                localStorage.setItem(sentKey, '1');
             } catch (error) {
                 console.error('Daily team greeting error:', error);
             }
