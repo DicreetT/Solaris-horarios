@@ -10,6 +10,7 @@ import { TaskCardRow } from '../components/TaskCardRow';
 import { CheckSquare, Plus, UserCheck, Shield, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS } from '../constants';
+import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
 
 function TasksPage() {
     const { currentUser } = useAuth();
@@ -39,11 +40,10 @@ function TasksPage() {
     const [assignedByFilter, setAssignedByFilter] = useState<string>('all');
     const [monthFilter, setMonthFilter] = useState<string>('all');
     const [titleSearch, setTitleSearch] = useState('');
-    const [commentSeenVersion, setCommentSeenVersion] = useState(0);
+    const { getSeenAt, markSeenAt, markManySeenAt, seenMap } = useTaskCommentSeen(currentUser);
 
     const isAdmin = currentUser?.isAdmin;
 
-    const getSeenStorageKey = (taskId: number) => `task-comments-seen:${currentUser.id}:${taskId}`;
     const toMillis = (value?: string | null) => {
         if (!value) return 0;
         const parsed = Date.parse(value);
@@ -62,36 +62,35 @@ function TasksPage() {
     // Seed initial "seen" baseline so old comments do not appear as new.
     // Only new comments posted after this baseline will trigger unread state.
     useEffect(() => {
+        const seed: Record<string, string> = {};
         todos.forEach((task) => {
-            const key = getSeenStorageKey(task.id);
-            const existing = localStorage.getItem(key);
+            const existing = getSeenAt(task.id);
             if (existing) return;
             const latest = getLatestForeignCommentAt(task);
             if (latest) {
-                localStorage.setItem(key, latest);
+                seed[String(task.id)] = latest;
             }
         });
-    }, [todos, currentUser.id]);
+        markManySeenAt(seed);
+    }, [todos, getSeenAt, markManySeenAt]);
 
     const unreadCommentsByTask = useMemo(() => {
         const map = new Map<number, number>();
         todos.forEach((task) => {
-            const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+            const seenAt = getSeenAt(task.id) || '';
             const seenAtMs = toMillis(seenAt);
             const unread = (task.comments || []).filter((c: any) => c.user_id !== currentUser.id && toMillis(c.created_at) > seenAtMs).length;
             map.set(task.id, unread);
         });
         return map;
-    }, [todos, currentUser.id, commentSeenVersion]);
+    }, [todos, currentUser.id, seenMap, getSeenAt]);
 
     const markTaskCommentsAsSeen = (task: Todo) => {
         const latest = getLatestForeignCommentAt(task);
         if (!latest) return;
-        const key = getSeenStorageKey(task.id);
-        const seenAt = localStorage.getItem(key) || '';
+        const seenAt = getSeenAt(task.id) || '';
         if (toMillis(latest) <= toMillis(seenAt)) return;
-        localStorage.setItem(key, latest);
-        setCommentSeenVersion((v) => v + 1);
+        markSeenAt(task.id, latest);
     };
 
     const openTaskDetail = (task: Todo) => {
@@ -139,7 +138,7 @@ function TasksPage() {
         if (taskTypeFilter !== 'pending') return sorted;
 
         const getLatestUnreadTs = (task: Todo) => {
-            const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+            const seenAt = getSeenAt(task.id) || '';
             const seenAtMs = toMillis(seenAt);
             const unread = (task.comments || [])
                 .filter((c: any) => c.user_id !== currentUser.id && toMillis(c.created_at) > seenAtMs)

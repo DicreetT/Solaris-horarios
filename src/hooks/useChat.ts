@@ -4,33 +4,6 @@ import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 
-const hiddenChatsStorageKey = (userId: string) => `chat_hidden_conversations:${userId}`;
-
-const readHiddenChats = (userId?: string | null): number[] => {
-    if (!userId) return [];
-    try {
-        const raw = localStorage.getItem(hiddenChatsStorageKey(userId));
-        const parsed = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(parsed)) return [];
-        return parsed.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
-    } catch {
-        return [];
-    }
-};
-
-const writeHiddenChats = (userId?: string | null, ids: number[] = []) => {
-    if (!userId) return;
-    const unique = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)));
-    localStorage.setItem(hiddenChatsStorageKey(userId), JSON.stringify(unique));
-};
-
-const hideConversationLocally = (userId?: string | null, conversationId?: number) => {
-    if (!userId || !conversationId) return;
-    const current = readHiddenChats(userId);
-    if (current.includes(conversationId)) return;
-    writeHiddenChats(userId, [...current, conversationId]);
-};
-
 export interface ChatConversation {
     id: number;
     kind: 'direct' | 'group';
@@ -98,12 +71,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 }>;
 
             if (baseConversations.length === 0) return [];
-
-            const hiddenIds = new Set(readHiddenChats(currentUser.id));
-            const visibleConversations = baseConversations.filter((conversation) => !hiddenIds.has(conversation.id));
-            if (visibleConversations.length === 0) return [];
-
-            const conversationIds = visibleConversations.map((c) => c.id);
+            const conversationIds = baseConversations.map((c) => c.id);
 
             const [{ data: participantsRows, error: participantsError }, { data: messagesRows, error: messagesError }] = await Promise.all([
                 supabase
@@ -134,7 +102,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 }
             });
 
-            return visibleConversations
+            return baseConversations
                 .map((conversation) => ({
                     ...conversation,
                     participants: participantsByConversation.get(conversation.id) || [],
@@ -309,12 +277,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .eq('conversation_id', conversationId)
                 .eq('user_id', currentUser.id);
 
-            if (error) {
-                const message = `${error.message || ''}`.toLowerCase();
-                const isPolicyIssue = message.includes('row-level security') || message.includes('policy');
-                if (!isPolicyIssue) throw error;
-            }
-            hideConversationLocally(currentUser.id, conversationId);
+            if (error) throw error;
             return conversationId;
         },
         onMutate: async (conversationId) => {

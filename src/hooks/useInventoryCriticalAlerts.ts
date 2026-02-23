@@ -7,7 +7,6 @@ import canetSeed from '../data/inventory_seed.json';
 
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
-const STOCK_ALERT_SENT_KEY = 'inventory-stock-alert:last';
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
@@ -110,13 +109,8 @@ export function useInventoryCriticalAlerts(currentUser: User | null) {
             if (totalCritical === 0) return;
 
             const day = getDateKey();
-            const signature = JSON.stringify({ day });
-            const sent = localStorage.getItem(STOCK_ALERT_SENT_KEY);
-            if (sent === signature) return;
-
             const message = `Recuerda revisar stock crítico (montadas ${summary.mounted.length}, potenciales ${summary.potential.length}, Canet ${summary.canet.length}).`;
             const dayStart = `${day}T00:00:00.000Z`;
-
             const { data: existingTodayRows } = await supabase
                 .from('notifications')
                 .select('id, user_id')
@@ -126,10 +120,7 @@ export function useInventoryCriticalAlerts(currentUser: User | null) {
 
             const existingUsers = new Set((existingTodayRows || []).map((row: any) => row.user_id));
             const missingRecipients = recipientIds.filter((id) => !existingUsers.has(id));
-            if (missingRecipients.length === 0) {
-                localStorage.setItem(STOCK_ALERT_SENT_KEY, signature);
-                return;
-            }
+            if (missingRecipients.length === 0) return;
 
             const nowIso = new Date().toISOString();
             const rows = missingRecipients.map((userId) => ({
@@ -141,8 +132,6 @@ export function useInventoryCriticalAlerts(currentUser: User | null) {
             }));
             const { error: notificationsError } = await supabase.from('notifications').insert(rows);
             if (notificationsError) throw notificationsError;
-
-            localStorage.setItem(STOCK_ALERT_SENT_KEY, signature);
         };
 
         void run();

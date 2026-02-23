@@ -63,6 +63,8 @@ const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
 const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
+// Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
+const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
 const EDIT_GRANT_HOURS = 6;
@@ -202,6 +204,16 @@ export default function InventoryFacturacionPage() {
     [],
     { userId: actorId },
   );
+  const [canetAssembliesSeenIds, setCanetAssembliesSeenIds] = useSharedJsonState<number[]>(
+    `${STORAGE_CANET_ASSEMBLIES_SEEN}:${actorId || 'anon'}`,
+    [],
+    { userId: actorId, initializeIfMissing: !!actorId },
+  );
+  const [canetAssembliesNotifiedKey, setCanetAssembliesNotifiedKey] = useSharedJsonState<string>(
+    `${STORAGE_CANET_ASSEMBLIES_NOTIFIED}:${actorId || 'anon'}`,
+    '',
+    { userId: actorId, initializeIfMissing: !!actorId },
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -242,6 +254,10 @@ export default function InventoryFacturacionPage() {
   const ensamblajesArchivos = seed.ensamblajes_archivos as GenericRow[];
   const canetAssemblySyncStartDate = useMemo(
     () => parseDate(CANET_ASSEMBLY_SYNC_START) || new Date('2026-02-23T00:00:00'),
+    [],
+  );
+  const canetMovementSyncStartDate = useMemo(
+    () => parseDate(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
     [],
   );
 
@@ -375,13 +391,24 @@ export default function InventoryFacturacionPage() {
     }
   };
 
+  const integratedMovements = useMemo(() => {
+    const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
+    const canet = (canetMovimientos || [])
+      .filter((m) => {
+        const d = parseDate(clean(m.fecha));
+        return !!d && d >= canetMovementSyncStartDate;
+      })
+      .map((m) => ({ ...m, source: 'canet' }));
+    return [...canet, ...own];
+  }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
+
   const monthSortedMovements = useMemo(() => {
-    return [...movimientos].sort((a, b) => {
+    return [...integratedMovements].sort((a, b) => {
       const da = parseDate(clean(a.fecha))?.getTime() || 0;
       const db = parseDate(clean(b.fecha))?.getTime() || 0;
       return db - da;
     });
-  }, [movimientos]);
+  }, [integratedMovements]);
 
   const monthOptions = useMemo(() => {
     const keys = new Set<string>();
@@ -519,7 +546,10 @@ export default function InventoryFacturacionPage() {
   }), [filteredMovements]);
 
   const ensamblajesMovements = useMemo(() => {
-    const own = filteredMovements.filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje')).map((m) => ({ ...m, source: m.source || 'facturacion' }));
+    const own = filteredMovements
+      .filter((m) => m.source !== 'canet')
+      .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
+      .map((m) => ({ ...m, source: m.source || 'facturacion' }));
     const canet = canetMovimientos
       .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
       .filter((m) => {
@@ -556,37 +586,27 @@ export default function InventoryFacturacionPage() {
     [canetMovimientos, canetAssemblySyncStartDate],
   );
   const unseenCanetAssemblies = useMemo(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_CANET_ASSEMBLIES_SEEN);
-      const seen = new Set<number>(raw ? JSON.parse(raw) : []);
-      return canetAssemblyIds.filter((id) => !seen.has(id)).length;
-    } catch {
-      return canetAssemblyIds.length;
-    }
-  }, [canetAssemblyIds]);
+    const seen = new Set<number>((canetAssembliesSeenIds || []).map((id) => Number(id)).filter(Number.isFinite));
+    return canetAssemblyIds.filter((id) => !seen.has(id)).length;
+  }, [canetAssemblyIds, canetAssembliesSeenIds]);
 
   useEffect(() => {
     if (tab !== 'ensamblajes') return;
-    try {
-      window.localStorage.setItem(STORAGE_CANET_ASSEMBLIES_SEEN, JSON.stringify(canetAssemblyIds));
-    } catch {
-      // noop
-    }
-  }, [tab, canetAssemblyIds]);
+    setCanetAssembliesSeenIds(canetAssemblyIds);
+  }, [tab, canetAssemblyIds, setCanetAssembliesSeenIds]);
 
   useEffect(() => {
     const count = canetAssemblyIds.length;
     if (!currentUser || count === 0) return;
     const key = `${currentUser.id}:${count}`;
-    const notified = window.localStorage.getItem(STORAGE_CANET_ASSEMBLIES_NOTIFIED);
-    if (notified === key) return;
-    window.localStorage.setItem(STORAGE_CANET_ASSEMBLIES_NOTIFIED, key);
+    if (canetAssembliesNotifiedKey === key) return;
+    setCanetAssembliesNotifiedKey(key);
     void addNotification({
       message: `[INVHF_ENSAM] Inventario Canet registró ensamblajes nuevos (${count}). Toca para revisar.`,
       type: 'info',
       userId: currentUser.id,
     });
-  }, [canetAssemblyIds.length, currentUser, addNotification]);
+  }, [canetAssemblyIds.length, currentUser, addNotification, canetAssembliesNotifiedKey, setCanetAssembliesNotifiedKey]);
 
   const dashboard = useMemo(() => {
     const totalStock = controlByLot.reduce((acc, row) => acc + row.stock, 0);
@@ -798,8 +818,8 @@ export default function InventoryFacturacionPage() {
     if (t.includes('nota credito')) sign = 1;
     const signedQty = qty * sign;
     const key = `${producto}|${lote}|${bodega}`;
-    const base = movimientos
-      .filter((m) => (editingId ? m.id !== editingId : true))
+    const base = monthSortedMovements
+      .filter((m) => (editingId && m.source !== 'canet' ? m.id !== editingId : true))
       .reduce((acc, m) => {
         const mk = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
         if (mk !== key) return acc;
@@ -1320,7 +1340,7 @@ export default function InventoryFacturacionPage() {
           title="Movimientos"
           actions={
             <div className="flex items-center gap-2">
-              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
                 <Download size={14} />
                 Descargar PDF
               </button>
@@ -1337,7 +1357,7 @@ export default function InventoryFacturacionPage() {
           }
         >
           <DataTable
-            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']}
+            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente', 'Últ. edición', 'Acciones']}
             rows={visibleMovementsLast7Days.map((m) => [
               displayDate(m.fecha),
               m.tipo_movimiento,
@@ -1348,8 +1368,9 @@ export default function InventoryFacturacionPage() {
               m.cliente || '',
               m.factura_doc || '',
               m.responsable || '',
+              m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación',
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
-              canEdit ? (
+              canEdit && m.source !== 'canet' ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
                   <button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>

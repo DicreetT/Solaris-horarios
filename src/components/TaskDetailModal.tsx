@@ -9,6 +9,9 @@ import { useTodos } from '../hooks/useTodos';
 import { FileUploader } from './FileUploader';
 import { Celebration } from './Celebration';
 import { haptics } from '../utils/haptics';
+import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
+
+const PRIORITY_TAG = '__priority__';
 
 interface TaskDetailModalProps {
     task: Todo;
@@ -23,13 +26,13 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showCelebration, setShowCelebration] = useState(false);
-    const [, setReadTick] = useState(0);
+    const { getSeenAt, markSeenAt } = useTaskCommentSeen(currentUser);
 
     // Edit States
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const [editDescription, setEditDescription] = useState(task.description || '');
-    const [editTags, setEditTags] = useState<string[]>(task.tags || []);
+    const [editTags, setEditTags] = useState<string[]>((task.tags || []).filter((tag) => tag !== PRIORITY_TAG));
     const [tagInput, setTagInput] = useState("");
 
     const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
@@ -38,7 +41,6 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
 
     // Main badge/button state reflects the current user
     const isCompleted = isDoneForMe;
-    const getSeenStorageKey = (taskId: number) => `task-comments-seen:${currentUser.id}:${taskId}`;
     const toMillis = (value?: string | null) => {
         if (!value) return 0;
         const parsed = Date.parse(value);
@@ -48,7 +50,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
         .filter((c) => c.user_id !== currentUser.id)
         .filter((c) => !!c.created_at)
         .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))[0];
-    const seenAt = localStorage.getItem(getSeenStorageKey(task.id)) || '';
+    const seenAt = getSeenAt(task.id) || '';
     const seenAtMs = toMillis(seenAt);
     const unreadForeignComments = (task.comments || []).filter((c) => (
         c.user_id !== currentUser.id &&
@@ -58,7 +60,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
     const handleMarkCommentsRead = async () => {
         const wasShocked = !!task.shocked_users?.includes(currentUser.id);
         if (latestForeignComment?.created_at) {
-            localStorage.setItem(getSeenStorageKey(task.id), latestForeignComment.created_at);
+            markSeenAt(task.id, latestForeignComment.created_at);
             onMarkCommentsRead?.(task);
         }
         if (task.shocked_users?.includes(currentUser.id)) {
@@ -74,7 +76,6 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
             setShowCelebration(true);
             window.setTimeout(() => onClose(), 350);
         }
-        setReadTick((v) => v + 1);
     };
 
     const handleResolveByCompleting = async () => {
@@ -154,7 +155,9 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                 updates: {
                     title: editTitle,
                     description: editDescription,
-                    tags: editTags
+                    tags: (task.tags || []).includes(PRIORITY_TAG)
+                        ? Array.from(new Set([...editTags, PRIORITY_TAG]))
+                        : editTags
                 }
             });
             setIsEditing(false);
@@ -229,7 +232,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                             )}
 
                             {/* Tags View (Non-Edit) */}
-                            {!isEditing && task.tags && task.tags.map(tag => (
+                            {!isEditing && (task.tags || []).filter((tag) => tag !== PRIORITY_TAG).map(tag => (
                                 <span key={tag} className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${getTagColor(tag)}`}>
                                     {tag}
                                 </span>
@@ -355,7 +358,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                                         setIsEditing(false);
                                         setEditTitle(task.title);
                                         setEditDescription(task.description || '');
-                                        setEditTags(task.tags || []);
+                                        setEditTags((task.tags || []).filter((tag) => tag !== PRIORITY_TAG));
                                     }}
                                     className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors"
                                 >
