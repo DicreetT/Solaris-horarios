@@ -210,6 +210,7 @@ function ChatPage() {
                 await removeConversation({
                     conversationId: target.id,
                     deleteForAll: isOwner && target.created_by === currentUser?.id,
+                    signature: targetSignature,
                 });
             }
             if (effectiveTargets.some((t: any) => t.id === selectedConversationId)) {
@@ -279,6 +280,17 @@ function ChatPage() {
         if (!messagesContainerRef.current) return;
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
     }, [selectedConversationId, messages.length]);
+
+    useEffect(() => {
+        const prevBodyOverflow = document.body.style.overflow;
+        const prevHtmlOverflow = document.documentElement.style.overflow;
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = prevBodyOverflow;
+            document.documentElement.style.overflow = prevHtmlOverflow;
+        };
+    }, []);
 
     const mentionCandidates = useMemo(() => {
         const pool = selectedConversationParticipants.length > 0

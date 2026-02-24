@@ -47,48 +47,72 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
     const currentUserId = currentUser?.id || '';
     const [deletedConversationIds, setDeletedConversationIds] = useState<number[]>([]);
     const [hiddenConversationIds, setHiddenConversationIds] = useState<number[]>([]);
+    const [deletedConversationSignatures, setDeletedConversationSignatures] = useState<string[]>([]);
+    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useState<string[]>([]);
     const hiddenStorageKey = `chat_hidden_conversations_v1:${currentUserId || 'anon'}`;
     const deletedStorageKey = 'chat_deleted_conversations_v1';
+    const hiddenSignaturesStorageKey = `chat_hidden_conversation_signatures_v1:${currentUserId || 'anon'}`;
+    const deletedSignaturesStorageKey = 'chat_deleted_conversation_signatures_v1';
+
+    const toNumList = (value: unknown): number[] =>
+        Array.isArray(value) ? value.map((v) => Number(v)).filter(Number.isFinite) : [];
+    const toStringList = (value: unknown): string[] =>
+        Array.isArray(value) ? value.map((v) => `${v || ''}`.trim()).filter(Boolean) : [];
 
     useEffect(() => {
         if (!currentUserId) return;
         try {
             const rawHidden = window.localStorage.getItem(hiddenStorageKey);
             const rawDeleted = window.localStorage.getItem(deletedStorageKey);
-            setHiddenConversationIds(rawHidden ? JSON.parse(rawHidden) : []);
-            setDeletedConversationIds(rawDeleted ? JSON.parse(rawDeleted) : []);
+            const rawHiddenSignatures = window.localStorage.getItem(hiddenSignaturesStorageKey);
+            const rawDeletedSignatures = window.localStorage.getItem(deletedSignaturesStorageKey);
+            setHiddenConversationIds(toNumList(rawHidden ? JSON.parse(rawHidden) : []));
+            setDeletedConversationIds(toNumList(rawDeleted ? JSON.parse(rawDeleted) : []));
+            setHiddenConversationSignatures(toStringList(rawHiddenSignatures ? JSON.parse(rawHiddenSignatures) : []));
+            setDeletedConversationSignatures(toStringList(rawDeletedSignatures ? JSON.parse(rawDeletedSignatures) : []));
         } catch {
             setHiddenConversationIds([]);
             setDeletedConversationIds([]);
+            setHiddenConversationSignatures([]);
+            setDeletedConversationSignatures([]);
         }
-    }, [currentUserId, hiddenStorageKey]);
+    }, [currentUserId, hiddenStorageKey, hiddenSignaturesStorageKey]);
 
     useEffect(() => {
         if (!currentUserId) return;
         try {
             window.localStorage.setItem(hiddenStorageKey, JSON.stringify(hiddenConversationIds));
+            window.localStorage.setItem(hiddenSignaturesStorageKey, JSON.stringify(hiddenConversationSignatures));
         } catch {
             // noop
         }
-    }, [currentUserId, hiddenConversationIds, hiddenStorageKey]);
+    }, [currentUserId, hiddenConversationIds, hiddenConversationSignatures, hiddenStorageKey, hiddenSignaturesStorageKey]);
 
     useEffect(() => {
         try {
             window.localStorage.setItem(deletedStorageKey, JSON.stringify(deletedConversationIds));
+            window.localStorage.setItem(deletedSignaturesStorageKey, JSON.stringify(deletedConversationSignatures));
         } catch {
             // noop
         }
-    }, [deletedConversationIds]);
+    }, [deletedConversationIds, deletedConversationSignatures, deletedSignaturesStorageKey]);
 
     const addHiddenConversationId = (conversationId: number) =>
         setHiddenConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
     const addDeletedConversationId = (conversationId: number) =>
         setDeletedConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
+    const addHiddenConversationSignature = (signature: string) =>
+        setHiddenConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
+    const addDeletedConversationSignature = (signature: string) =>
+        setDeletedConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
     const hiddenSet = new Set(hiddenConversationIds.map((id) => Number(id)));
     const deletedSet = new Set(deletedConversationIds.map((id) => Number(id)));
+    const hiddenSignatureSet = new Set(hiddenConversationSignatures);
+    const deletedSignatureSet = new Set(deletedConversationSignatures);
     const filterSignature = useMemo(
-        () => `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}`,
-        [hiddenConversationIds, deletedConversationIds],
+        () =>
+            `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}|${hiddenConversationSignatures.join(',')}|${deletedConversationSignatures.join(',')}`,
+        [hiddenConversationIds, deletedConversationIds, hiddenConversationSignatures, deletedConversationSignatures],
     );
 
     const conversationsKey = ['chat-conversations', currentUser?.id, filterSignature] as const;
@@ -116,12 +140,8 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     created_at: string;
                 }>;
 
-            const visibleConversations = baseConversations.filter(
-                (c) => !hiddenSet.has(Number(c.id)) && !deletedSet.has(Number(c.id)),
-            );
-
-            if (visibleConversations.length === 0) return [];
-            const conversationIds = visibleConversations.map((c) => c.id);
+            if (baseConversations.length === 0) return [];
+            const conversationIds = baseConversations.map((c) => c.id);
 
             const [{ data: participantsRows, error: participantsError }, { data: messagesRows, error: messagesError }] = await Promise.all([
                 supabase
@@ -150,6 +170,22 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 if (!latestByConversation.has(row.conversation_id)) {
                     latestByConversation.set(row.conversation_id, row);
                 }
+            });
+
+            const signatureOf = (conversation: { kind: 'direct' | 'group'; title: string | null; participants?: string[] }) => {
+                const participantsSig = [...(conversation.participants || [])].sort().join('|');
+                const titleSig = (conversation.title || '').trim().toLowerCase();
+                return conversation.kind === 'direct' ? `direct:${participantsSig}` : `group:${titleSig}:${participantsSig}`;
+            };
+
+            const visibleConversations = baseConversations.filter((c) => {
+                const sig = signatureOf({ ...c, participants: participantsByConversation.get(c.id) || [] });
+                return (
+                    !hiddenSet.has(Number(c.id)) &&
+                    !deletedSet.has(Number(c.id)) &&
+                    !hiddenSignatureSet.has(sig) &&
+                    !deletedSignatureSet.has(sig)
+                );
             });
 
             const normalized = visibleConversations
@@ -339,9 +375,11 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         mutationFn: async ({
             conversationId,
             deleteForAll,
+            signature,
         }: {
             conversationId: number;
             deleteForAll: boolean;
+            signature?: string;
         }) => {
             if (!currentUser) throw new Error('No user logged in');
 
@@ -356,16 +394,19 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 if (error) {
                     // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
                     addDeletedConversationId(conversationId);
+                    if (signature) addDeletedConversationSignature(signature);
                     return { conversationId, deleteForAll };
                 }
                 if (!data || data.length === 0) {
                     throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
                 }
                 addDeletedConversationId(conversationId);
+                if (signature) addDeletedConversationSignature(signature);
                 return { conversationId, deleteForAll };
             }
 
             addHiddenConversationId(conversationId);
+            if (signature) addHiddenConversationSignature(signature);
             const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()
