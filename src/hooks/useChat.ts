@@ -268,8 +268,29 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
     });
 
     const removeConversationMutation = useMutation({
-        mutationFn: async (conversationId: number) => {
+        mutationFn: async ({
+            conversationId,
+            deleteForAll,
+        }: {
+            conversationId: number;
+            deleteForAll: boolean;
+        }) => {
             if (!currentUser) throw new Error('No user logged in');
+
+            if (deleteForAll) {
+                const { data, error } = await supabase
+                    .from('chat_conversations')
+                    .delete()
+                    .eq('id', conversationId)
+                    .eq('created_by', currentUser.id)
+                    .select('id');
+
+                if (error) throw error;
+                if (!data || data.length === 0) {
+                    throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
+                }
+                return { conversationId, deleteForAll };
+            }
 
             const { data, error } = await supabase
                 .from('chat_participants')
@@ -282,9 +303,9 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             if (!data || data.length === 0) {
                 throw new Error('No se pudo eliminar el chat de tu lista (revisa permisos de RLS en chat_participants).');
             }
-            return conversationId;
+            return { conversationId, deleteForAll };
         },
-        onMutate: async (conversationId) => {
+        onMutate: async ({ conversationId }) => {
             await queryClient.cancelQueries({ queryKey: conversationsKey });
             const previous = queryClient.getQueryData<ChatConversation[]>(conversationsKey) || [];
             queryClient.setQueryData<ChatConversation[]>(
@@ -293,15 +314,15 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             );
             return { previous };
         },
-        onError: (_error, _conversationId, context) => {
+        onError: (_error, _variables, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(conversationsKey, context.previous);
             }
         },
-        onSuccess: (conversationId) => {
+        onSuccess: ({ conversationId, deleteForAll }) => {
             queryClient.invalidateQueries({ queryKey: conversationsKey });
             queryClient.removeQueries({ queryKey: ['chat-messages', conversationId] });
-            emitSuccessFeedback('Chat eliminado de tu lista.');
+            emitSuccessFeedback(deleteForAll ? 'Chat eliminado para todo el equipo.' : 'Chat eliminado de tu lista.');
         },
     });
 

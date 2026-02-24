@@ -51,6 +51,7 @@ function ChatPage() {
     const [speechSupported, setSpeechSupported] = useState(false);
     const [transcribingAudioAttachments, setTranscribingAudioAttachments] = useState(false);
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
+    const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const recognitionRef = useRef<any>(null);
     const openingDirectRef = useRef<string | null>(null);
 
@@ -184,13 +185,21 @@ function ChatPage() {
         }
     };
 
-    const handleRemoveConversation = async (conversationId: number) => {
-        const ok = window.confirm('¿Seguro que quieres eliminar este chat de tu lista?');
+    const handleRemoveConversation = async (conversation: any) => {
+        const isOwner = conversation?.created_by === currentUser?.id;
+        const ok = window.confirm(
+            isOwner
+                ? '¿Eliminar este chat para todo el equipo? Esta acción no se puede deshacer.'
+                : '¿Seguro que quieres eliminar este chat de tu lista?',
+        );
         if (!ok) return;
         setChatActionError(null);
         try {
-            await removeConversation(conversationId);
-            if (selectedConversationId === conversationId) {
+            await removeConversation({
+                conversationId: conversation.id,
+                deleteForAll: isOwner,
+            });
+            if (selectedConversationId === conversation.id) {
                 setSelectedConversationId(null);
             }
         } catch (error: any) {
@@ -252,6 +261,11 @@ function ChatPage() {
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!messagesContainerRef.current) return;
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }, [selectedConversationId, messages.length]);
 
     const mentionCandidates = useMemo(() => {
         const pool = selectedConversationParticipants.length > 0
@@ -428,9 +442,9 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto pb-12">
-            <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 min-h-[72vh]">
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4">
+        <div className="max-w-7xl mx-auto pb-6 h-[calc(100vh-7.5rem)] overflow-hidden">
+            <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 flex flex-col min-h-0">
                     <div className="flex items-center justify-between mb-3">
                         <h1 className="text-xl font-black text-gray-900">Chat interno</h1>
                         <button
@@ -442,7 +456,7 @@ function ChatPage() {
                         </button>
                     </div>
 
-                    <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
+                    <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
                         {chatActionError && (
                             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                 {chatActionError}
@@ -478,7 +492,7 @@ function ChatPage() {
                                         </p>
                                     </button>
                                     <button
-                                        onClick={() => void handleRemoveConversation(conversation.id)}
+                                        onClick={() => void handleRemoveConversation(conversation)}
                                         disabled={removingConversation}
                                         className="p-2 rounded-xl border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-60"
                                         title="Eliminar chat"
@@ -491,7 +505,7 @@ function ChatPage() {
                     </div>
                 </div>
 
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm flex flex-col min-h-[72vh]">
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm flex flex-col h-full min-h-0 overflow-hidden">
                     {!selectedConversation ? (
                         <div className="flex-1 flex items-center justify-center p-8 text-center">
                             <div>
@@ -508,7 +522,7 @@ function ChatPage() {
                                 </p>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
                                 {messagesError && (
                                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                         Error cargando mensajes: {(messagesError as any)?.message || 'Intenta de nuevo.'}
