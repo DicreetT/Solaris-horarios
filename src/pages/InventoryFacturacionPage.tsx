@@ -416,6 +416,47 @@ export default function InventoryFacturacionPage() {
     );
   }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
 
+  useEffect(() => {
+    const direct = (canetMovimientos || [])
+      .filter((m) => {
+        const d = parseDate(clean(m.fecha));
+        return !!d && d >= canetMovementSyncStartDate;
+      })
+      .map((m) => ({
+        ...m,
+        source: 'canet',
+        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
+      }));
+
+    const signature = (m: any) =>
+      [
+        String(toNum((m as any).origin_canet_id) || toNum(m.id)),
+        clean(m.fecha),
+        clean(m.tipo_movimiento),
+        clean(m.producto),
+        clean(m.lote),
+        clean(m.bodega),
+        String(toNum(m.cantidad_signed || m.cantidad)),
+        clean(m.cliente),
+        clean(m.destino),
+        clean(m.notas),
+      ].join('|');
+
+    setMovimientos((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      const prevCanet = base.filter((m) => clean((m as any).source).toLowerCase() === 'canet');
+      const prevSig = prevCanet.map(signature).sort();
+      const nextSig = direct.map(signature).sort();
+      const same =
+        prevSig.length === nextSig.length &&
+        prevSig.every((item, idx) => item === nextSig[idx]);
+      if (same) return base;
+
+      const nonCanet = base.filter((m) => clean((m as any).source).toLowerCase() !== 'canet');
+      return [...direct, ...nonCanet];
+    });
+  }, [canetMovimientos, canetMovementSyncStartDate, setMovimientos]);
+
   const integratedMovements = useMemo(() => {
     const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
     return [...canetMovimientosEffective, ...own.filter((m) => clean(m.source).toLowerCase() !== 'canet')];
