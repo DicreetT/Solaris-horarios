@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { MessageCircle, Mic, Plus, Reply, Send, Square, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -277,9 +277,14 @@ function ChatPage() {
         };
     }, []);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!messagesContainerRef.current) return;
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        const id = window.setTimeout(() => {
+            if (!messagesContainerRef.current) return;
+            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }, 0);
+        return () => window.clearTimeout(id);
     }, [selectedConversationId, messages.length]);
 
     useEffect(() => {

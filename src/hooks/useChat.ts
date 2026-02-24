@@ -417,6 +417,12 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     return { conversationId, deleteForAll };
                 }
                 if (!data || data.length === 0) {
+                    if (currentUser?.isAdmin) {
+                        // Algunas políticas RLS devuelven 0 filas sin error: aplicamos borrado lógico global.
+                        addDeletedConversationId(conversationId);
+                        if (signature) addDeletedConversationSignature(signature);
+                        return { conversationId, deleteForAll };
+                    }
                     throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
                 }
                 addDeletedConversationId(conversationId);
