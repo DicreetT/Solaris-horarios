@@ -392,14 +392,28 @@ export default function InventoryFacturacionPage() {
   };
 
   const canetMovimientosEffective = useMemo(() => {
-    const mirrored = (movimientos || []).filter((m) => clean(m.source).toLowerCase() === 'canet');
-    if (mirrored.length > 0) return mirrored;
-    return (canetMovimientos || [])
+    const direct = (canetMovimientos || [])
       .filter((m) => {
         const d = parseDate(clean(m.fecha));
         return !!d && d >= canetMovementSyncStartDate;
       })
-      .map((m) => ({ ...m, source: 'canet' }));
+      .map((m) => ({ ...m, source: 'canet' as const, origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id) }));
+
+    const mirrored = (movimientos || [])
+      .filter((m) => clean((m as any).source).toLowerCase() === 'canet')
+      .map((m) => ({ ...m, source: 'canet' as const, origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id) }));
+
+    // Prioriza la fuente directa de Canet y usa el espejo solo como respaldo.
+    const merged = new Map<number, Movement>();
+    direct.forEach((m) => merged.set(toNum((m as any).origin_canet_id) || toNum(m.id), m));
+    mirrored.forEach((m) => {
+      const key = toNum((m as any).origin_canet_id) || toNum(m.id);
+      if (!merged.has(key)) merged.set(key, m);
+    });
+
+    return Array.from(merged.values()).sort(
+      (a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0),
+    );
   }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
 
   const integratedMovements = useMemo(() => {
