@@ -75,7 +75,8 @@ function ChatPage() {
         sendMessage,
         deleteMessage,
         deletingMessage,
-        deletedMessageText,
+        deletedMessageMarker,
+        deletedMessageLegacyText,
         removeConversation,
         removingConversation,
     } = useChat(currentUser, selectedConversationId);
@@ -617,13 +618,25 @@ function ChatPage() {
 
                                 {messages.map((msg) => {
                                     const mine = msg.sender_id === currentUser?.id;
-                                    const canDeleteMessage = mine || !!currentUser?.isAdmin;
-                                    const isDeletedMessage = msg.message === deletedMessageText;
+                                    const canDeleteMessage = mine;
+                                    const isDeletedMessage =
+                                        msg.message === deletedMessageMarker ||
+                                        msg.message === deletedMessageLegacyText;
                                     const replyMessage = msg.reply_to ? messageById.get(msg.reply_to) : null;
 
                                     return (
                                         <div key={msg.id} className={`max-w-[80%] ${mine ? 'ml-auto' : 'mr-auto'}`}>
-                                            <div className={`rounded-2xl p-3 border ${mine ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200'}`}>
+                                            <div className={`relative rounded-2xl p-3 border ${mine ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200'}`}>
+                                                {canDeleteMessage && !isDeletedMessage && (
+                                                    <button
+                                                        onClick={() => void handleDeleteMessage(msg.id)}
+                                                        disabled={deletingMessage}
+                                                        className="absolute right-2 top-2 inline-flex items-center justify-center rounded-md p-1 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                                        title="Borrar mensaje"
+                                                    >
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                )}
                                                 <p className="text-xs font-bold text-gray-500 mb-1">{userNameById(msg.sender_id)}</p>
 
                                                 {replyMessage && (
@@ -633,7 +646,7 @@ function ChatPage() {
                                                 )}
 
                                                 {isDeletedMessage ? (
-                                                    <p className="text-sm italic text-gray-500">Mensaje eliminado</p>
+                                                    <p className="text-sm italic text-gray-500">{userNameById(msg.sender_id)} ha borrado un mensaje.</p>
                                                 ) : (
                                                     msg.message && renderMessageWithMentions(msg.message, msg.mentions || [])
                                                 )}
@@ -696,15 +709,6 @@ function ChatPage() {
                                                                 className="inline-flex items-center gap-1 text-violet-700 font-bold"
                                                             >
                                                                 <Reply size={12} /> Responder
-                                                            </button>
-                                                        )}
-                                                        {canDeleteMessage && !isDeletedMessage && (
-                                                            <button
-                                                                onClick={() => void handleDeleteMessage(msg.id)}
-                                                                disabled={deletingMessage}
-                                                                className="inline-flex items-center gap-1 text-rose-700 font-bold disabled:opacity-60"
-                                                            >
-                                                                <Trash2 size={12} /> Borrar
                                                             </button>
                                                         )}
                                                     </div>

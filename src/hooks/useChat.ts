@@ -43,7 +43,8 @@ interface SendMessageInput {
     linkedMeetingId?: number | null;
 }
 
-const DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
+const DELETED_MESSAGE_MARKER = '__LUNARIS_DELETED__';
+const LEGACY_DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
 
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
@@ -266,7 +267,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     id: row.id,
                     conversation_id: row.conversation_id,
                     sender_id: row.sender_id,
-                    message: isDeleted ? DELETED_MESSAGE_TEXT : row.message,
+                    message: isDeleted ? DELETED_MESSAGE_MARKER : row.message,
                     attachments: isDeleted ? [] : (row.attachments || []),
                     mentions: isDeleted ? [] : (row.mentions || []),
                     reply_to: isDeleted ? null : (row.reply_to || null),
@@ -496,15 +497,15 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             if (targetError) throw targetError;
             if (!target) throw new Error('Mensaje no encontrado.');
 
-            const canDelete = currentUser.isAdmin || target.sender_id === currentUser.id;
+            const canDelete = target.sender_id === currentUser.id;
             if (!canDelete) {
-                throw new Error('Solo puedes eliminar tus mensajes.');
+                throw new Error('Solo puedes eliminar tus propios mensajes.');
             }
 
             const { error: updateError } = await supabase
                 .from('chat_messages')
                 .update({
-                    message: DELETED_MESSAGE_TEXT,
+                    message: DELETED_MESSAGE_MARKER,
                     attachments: [],
                     mentions: [],
                     reply_to: null,
@@ -546,6 +547,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         removeConversation: removeConversationMutation.mutateAsync,
         deletingMessage: deleteMessageMutation.isPending,
         deleteMessage: deleteMessageMutation.mutateAsync,
-        deletedMessageText: DELETED_MESSAGE_TEXT,
+        deletedMessageMarker: DELETED_MESSAGE_MARKER,
+        deletedMessageLegacyText: LEGACY_DELETED_MESSAGE_TEXT,
     };
 }
