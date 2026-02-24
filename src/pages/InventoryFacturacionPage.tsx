@@ -391,16 +391,21 @@ export default function InventoryFacturacionPage() {
     }
   };
 
-  const integratedMovements = useMemo(() => {
-    const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
-    const canet = (canetMovimientos || [])
+  const canetMovimientosEffective = useMemo(() => {
+    const mirrored = (movimientos || []).filter((m) => clean(m.source).toLowerCase() === 'canet');
+    if (mirrored.length > 0) return mirrored;
+    return (canetMovimientos || [])
       .filter((m) => {
         const d = parseDate(clean(m.fecha));
         return !!d && d >= canetMovementSyncStartDate;
       })
       .map((m) => ({ ...m, source: 'canet' }));
-    return [...canet, ...own];
   }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
+
+  const integratedMovements = useMemo(() => {
+    const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
+    return [...canetMovimientosEffective, ...own.filter((m) => clean(m.source).toLowerCase() !== 'canet')];
+  }, [movimientos, canetMovimientosEffective]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -550,12 +555,8 @@ export default function InventoryFacturacionPage() {
       .filter((m) => m.source !== 'canet')
       .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
       .map((m) => ({ ...m, source: m.source || 'facturacion' }));
-    const canet = canetMovimientos
+    const canet = canetMovimientosEffective
       .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
-      .filter((m) => {
-        const d = parseDate(clean(m.fecha));
-        return !!d && d >= canetAssemblySyncStartDate;
-      })
       .map((m) => ({ ...m, source: 'canet' }));
     // Evita duplicados exactos entre Canet y Huarte, priorizando Canet en la fase nueva.
     const dedup = new Map<string, Movement>();
@@ -571,19 +572,15 @@ export default function InventoryFacturacionPage() {
       if (!dedup.has(sig)) dedup.set(sig, m);
     });
     return Array.from(dedup.values()).sort((a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0));
-  }, [filteredMovements, canetMovimientos, canetAssemblySyncStartDate]);
+  }, [filteredMovements, canetMovimientosEffective]);
 
   const canetAssemblyIds = useMemo(
     () =>
-      canetMovimientos
+      canetMovimientosEffective
         .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
-        .filter((m) => {
-          const d = parseDate(clean(m.fecha));
-          return !!d && d >= canetAssemblySyncStartDate;
-        })
         .map((m) => Number(m.id))
         .filter(Number.isFinite),
-    [canetMovimientos, canetAssemblySyncStartDate],
+    [canetMovimientosEffective],
   );
   const unseenCanetAssemblies = useMemo(() => {
     const seen = new Set<number>((canetAssembliesSeenIds || []).map((id) => Number(id)).filter(Number.isFinite));

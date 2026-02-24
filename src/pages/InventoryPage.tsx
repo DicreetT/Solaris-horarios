@@ -116,6 +116,7 @@ const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
+const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
@@ -233,7 +234,7 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
-  const [huarteMovimientosShared] = useSharedJsonState<any[]>(
+  const [huarteMovimientosShared, setHuarteMovimientosShared] = useSharedJsonState<any[]>(
     INVENTORY_HUARTE_MOVS_KEY,
     (huarteSeed.movimientos as any[]) || [],
     { userId: actorId, initializeIfMissing: false, pollIntervalMs: 3000 },
@@ -280,6 +281,10 @@ function InventoryPage() {
   const [tipoModalOpen, setTipoModalOpen] = useState(false);
   const [tipoForm, setTipoForm] = useState({ tipo_movimiento: '', signo_1_1: '-1', afecta_stock_si_no: 'SI' });
   const [newClient, setNewClient] = useState('');
+  const canetMovementSyncStartDate = useMemo(
+    () => dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
+    [],
+  );
 
   const addProductFilter = (value: string) => {
     const v = clean(value);
@@ -367,6 +372,45 @@ function InventoryPage() {
       };
     });
   }, [movimientos, signByType]);
+
+  useEffect(() => {
+    const mirrorRows = normalizedMovements
+      .filter((m) => {
+        const d = dateFromAny(clean(m.fecha));
+        return !!d && d >= canetMovementSyncStartDate;
+      })
+      .map((m) => ({
+        ...m,
+        id: 900000000 + toNum(m.id),
+        source: 'canet',
+      }));
+
+    const signature = (m: any) => [
+      clean(m.fecha),
+      clean(m.tipo_movimiento),
+      clean(m.producto),
+      clean(m.lote),
+      clean(m.bodega),
+      String(toNum(m.cantidad_signed)),
+      clean(m.cliente),
+      clean(m.destino),
+      clean(m.notas),
+      clean(m.source),
+    ].join('|');
+
+    setHuarteMovimientosShared((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      const prevCanet = base.filter((m) => clean(m.source).toLowerCase() === 'canet');
+      const prevSig = prevCanet.map(signature).sort();
+      const nextSig = mirrorRows.map(signature).sort();
+      const same =
+        prevSig.length === nextSig.length &&
+        prevSig.every((item, idx) => item === nextSig[idx]);
+      if (same) return base;
+      const nonCanet = base.filter((m) => clean(m.source).toLowerCase() !== 'canet');
+      return [...mirrorRows, ...nonCanet];
+    });
+  }, [normalizedMovements, canetMovementSyncStartDate, setHuarteMovimientosShared]);
 
   const validDates = useMemo(() => normalizedMovements.map((m) => dateFromAny(clean(m.fecha))).filter(Boolean) as Date[], [normalizedMovements]);
   const currentMonth = useMemo(() => {
