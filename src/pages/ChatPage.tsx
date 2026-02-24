@@ -203,8 +203,6 @@ function ChatPage() {
         const isOwner = conversation?.created_by === currentUser?.id;
         const isAdmin = !!currentUser?.isAdmin;
         const targetSignature = conversationSignature(conversation);
-        const targets = conversations.filter((c: any) => conversationSignature(c) === targetSignature);
-        const effectiveTargets = targets.length > 0 ? targets : [conversation];
         const ok = window.confirm(
             (isOwner || isAdmin)
                 ? '¿Eliminar este chat para todo el equipo? Esta acción no se puede deshacer.'
@@ -213,14 +211,12 @@ function ChatPage() {
         if (!ok) return;
         setChatActionError(null);
         try {
-            for (const target of effectiveTargets) {
-                await removeConversation({
-                    conversationId: target.id,
-                    deleteForAll: isOwner || isAdmin,
-                    signature: targetSignature,
-                });
-            }
-            if (effectiveTargets.some((t: any) => t.id === selectedConversationId)) {
+            await removeConversation({
+                conversationId: conversation.id,
+                deleteForAll: isOwner || isAdmin,
+                signature: targetSignature,
+            });
+            if (conversation.id === selectedConversationId) {
                 setSelectedConversationId(null);
             }
         } catch (error: any) {
@@ -500,7 +496,7 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto w-full h-full min-h-0 overflow-hidden">
+        <div className="max-w-7xl mx-auto w-full h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden app-page-shell">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
@@ -608,7 +604,7 @@ function ChatPage() {
 
                                     return (
                                         <div key={msg.id} className={`max-w-[80%] ${mine ? 'ml-auto' : 'mr-auto'}`}>
-                                            <div className={`relative rounded-2xl p-3 border ${mine ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200'}`}>
+                                            <div className={`relative rounded-2xl p-3 border break-words ${mine ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200'}`}>
                                                 {canDeleteMessage && !isDeletedMessage && (
                                                     <button
                                                         onClick={() => void handleDeleteMessage(msg.id)}

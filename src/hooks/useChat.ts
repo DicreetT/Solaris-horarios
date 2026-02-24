@@ -414,44 +414,105 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             signature?: string;
         }) => {
             if (!currentUser) throw new Error('No user logged in');
+            let targetIds: number[] = [conversationId];
+
+            if (signature) {
+                const { data: membershipRows, error: membershipError } = await supabase
+                    .from('chat_participants')
+                    .select('conversation_id, conversation:chat_conversations(id, kind, title)')
+                    .eq('user_id', currentUser.id);
+
+                if (!membershipError && membershipRows && membershipRows.length > 0) {
+                    const membershipIds = Array.from(
+                        new Set(
+                            membershipRows
+                                .map((row: any) => Number(row.conversation_id))
+                                .filter(Number.isFinite),
+                        ),
+                    );
+
+                    if (membershipIds.length > 0) {
+                        const { data: participantsRows } = await supabase
+                            .from('chat_participants')
+                            .select('conversation_id, user_id')
+                            .in('conversation_id', membershipIds);
+
+                        const participantsByConversation = new Map<number, string[]>();
+                        (participantsRows || []).forEach((row: any) => {
+                            const convId = Number(row.conversation_id);
+                            const list = participantsByConversation.get(convId) || [];
+                            list.push(String(row.user_id));
+                            participantsByConversation.set(convId, list);
+                        });
+
+                        const signatureOf = (conversation: {
+                            kind: 'direct' | 'group';
+                            title: string | null;
+                            participants?: string[];
+                        }) => {
+                            const participantsSig = [...(conversation.participants || [])].sort().join('|');
+                            const titleSig = (conversation.title || '').trim().toLowerCase();
+                            return conversation.kind === 'direct'
+                                ? `direct:${participantsSig}`
+                                : `group:${titleSig}:${participantsSig}`;
+                        };
+
+                        const matchingIds = (membershipRows || [])
+                            .filter((row: any) => {
+                                const conv = row.conversation;
+                                if (!conv) return false;
+                                return signatureOf({
+                                    kind: conv.kind,
+                                    title: conv.title,
+                                    participants: participantsByConversation.get(Number(conv.id)) || [],
+                                }) === signature;
+                            })
+                            .map((row: any) => Number(row.conversation_id))
+                            .filter(Number.isFinite);
+
+                        if (matchingIds.length > 0) {
+                            targetIds = Array.from(new Set(matchingIds));
+                        }
+                    }
+                }
+            }
 
             if (deleteForAll) {
-                const deleteQuery = supabase
-                    .from('chat_conversations')
-                    .delete()
-                    .eq('id', conversationId);
-                const { data, error } = await (
-                    currentUser?.isAdmin
-                        ? deleteQuery.select('id')
-                        : deleteQuery.eq('created_by', currentUser.id).select('id')
-                );
+                for (const targetId of targetIds) {
+                    const deleteQuery = supabase
+                        .from('chat_conversations')
+                        .delete()
+                        .eq('id', targetId);
+                    const { data, error } = await (
+                        currentUser?.isAdmin
+                            ? deleteQuery.select('id')
+                            : deleteQuery.eq('created_by', currentUser.id).select('id')
+                    );
 
-                if (error) {
-                    // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
-                    addDeletedConversationId(conversationId);
-                    if (signature) addDeletedConversationSignature(signature);
-                    return { conversationId, deleteForAll };
-                }
-                if (!data || data.length === 0) {
-                    if (currentUser?.isAdmin) {
-                        // Algunas políticas RLS devuelven 0 filas sin error: aplicamos borrado lógico global.
-                        addDeletedConversationId(conversationId);
-                        if (signature) addDeletedConversationSignature(signature);
-                        return { conversationId, deleteForAll };
+                    if (error) {
+                        // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
+                        addDeletedConversationId(targetId);
+                        continue;
                     }
-                    throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
+                    if (!data || data.length === 0) {
+                        if (!currentUser?.isAdmin) {
+                            throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
+                        }
+                        addDeletedConversationId(targetId);
+                        continue;
+                    }
+                    addDeletedConversationId(targetId);
                 }
-                addDeletedConversationId(conversationId);
                 if (signature) addDeletedConversationSignature(signature);
                 return { conversationId, deleteForAll };
             }
 
-            addHiddenConversationId(conversationId);
+            targetIds.forEach((targetId) => addHiddenConversationId(targetId));
             if (signature) addHiddenConversationSignature(signature);
             const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()
-                .eq('conversation_id', conversationId)
+                .in('conversation_id', targetIds)
                 .eq('user_id', currentUser.id)
                 .select('user_id');
 

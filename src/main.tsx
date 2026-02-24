@@ -40,31 +40,18 @@ if (typeof window !== 'undefined') {
         window.location.reload()
     })
 
-    const SW_RESET_KEY = 'lunaris-sw-reset-v3'
-    const hasReset = (() => {
-        try {
-            return window.localStorage.getItem(SW_RESET_KEY) === '1'
-        } catch {
-            return false
-        }
-    })()
-
-    if (!hasReset && 'serviceWorker' in navigator) {
+    // Hard disable stale PWA runtime caches for now: guarantees latest JS/CSS on every load.
+    if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then((registrations) => {
             registrations.forEach((registration) => {
                 registration.unregister()
             })
         })
-        if ('caches' in window) {
-            caches.keys().then((keys) => {
-                keys.forEach((key) => caches.delete(key))
-            })
-        }
-        try {
-            window.localStorage.setItem(SW_RESET_KEY, '1')
-        } catch {
-            // noop
-        }
+    }
+    if ('caches' in window) {
+        caches.keys().then((keys) => {
+            keys.forEach((key) => caches.delete(key))
+        })
     }
 }
 
