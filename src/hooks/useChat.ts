@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { useSharedJsonState } from './useSharedJsonState';
 
 export interface ChatConversation {
     id: number;
@@ -45,57 +46,26 @@ interface SendMessageInput {
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
     const currentUserId = currentUser?.id || '';
-    const [deletedConversationIds, setDeletedConversationIds] = useState<number[]>([]);
-    const [hiddenConversationIds, setHiddenConversationIds] = useState<number[]>([]);
-    const [deletedConversationSignatures, setDeletedConversationSignatures] = useState<string[]>([]);
-    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useState<string[]>([]);
-    const hiddenStorageKey = `chat_hidden_conversations_v1:${currentUserId || 'anon'}`;
-    const deletedStorageKey = 'chat_deleted_conversations_v1';
-    const hiddenSignaturesStorageKey = `chat_hidden_conversation_signatures_v1:${currentUserId || 'anon'}`;
-    const deletedSignaturesStorageKey = 'chat_deleted_conversation_signatures_v1';
-
-    const toNumList = (value: unknown): number[] =>
-        Array.isArray(value) ? value.map((v) => Number(v)).filter(Number.isFinite) : [];
-    const toStringList = (value: unknown): string[] =>
-        Array.isArray(value) ? value.map((v) => `${v || ''}`.trim()).filter(Boolean) : [];
-
-    useEffect(() => {
-        if (!currentUserId) return;
-        try {
-            const rawHidden = window.localStorage.getItem(hiddenStorageKey);
-            const rawDeleted = window.localStorage.getItem(deletedStorageKey);
-            const rawHiddenSignatures = window.localStorage.getItem(hiddenSignaturesStorageKey);
-            const rawDeletedSignatures = window.localStorage.getItem(deletedSignaturesStorageKey);
-            setHiddenConversationIds(toNumList(rawHidden ? JSON.parse(rawHidden) : []));
-            setDeletedConversationIds(toNumList(rawDeleted ? JSON.parse(rawDeleted) : []));
-            setHiddenConversationSignatures(toStringList(rawHiddenSignatures ? JSON.parse(rawHiddenSignatures) : []));
-            setDeletedConversationSignatures(toStringList(rawDeletedSignatures ? JSON.parse(rawDeletedSignatures) : []));
-        } catch {
-            setHiddenConversationIds([]);
-            setDeletedConversationIds([]);
-            setHiddenConversationSignatures([]);
-            setDeletedConversationSignatures([]);
-        }
-    }, [currentUserId, hiddenStorageKey, hiddenSignaturesStorageKey]);
-
-    useEffect(() => {
-        if (!currentUserId) return;
-        try {
-            window.localStorage.setItem(hiddenStorageKey, JSON.stringify(hiddenConversationIds));
-            window.localStorage.setItem(hiddenSignaturesStorageKey, JSON.stringify(hiddenConversationSignatures));
-        } catch {
-            // noop
-        }
-    }, [currentUserId, hiddenConversationIds, hiddenConversationSignatures, hiddenStorageKey, hiddenSignaturesStorageKey]);
-
-    useEffect(() => {
-        try {
-            window.localStorage.setItem(deletedStorageKey, JSON.stringify(deletedConversationIds));
-            window.localStorage.setItem(deletedSignaturesStorageKey, JSON.stringify(deletedConversationSignatures));
-        } catch {
-            // noop
-        }
-    }, [deletedConversationIds, deletedConversationSignatures, deletedSignaturesStorageKey]);
+    const [deletedConversationIds, setDeletedConversationIds] = useSharedJsonState<number[]>(
+        'chat_deleted_conversations_v2',
+        [],
+        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
+    );
+    const [hiddenConversationIds, setHiddenConversationIds] = useSharedJsonState<number[]>(
+        `chat_hidden_conversations_v2:${currentUserId || 'anon'}`,
+        [],
+        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
+    );
+    const [deletedConversationSignatures, setDeletedConversationSignatures] = useSharedJsonState<string[]>(
+        'chat_deleted_conversation_signatures_v2',
+        [],
+        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
+    );
+    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useSharedJsonState<string[]>(
+        `chat_hidden_conversation_signatures_v2:${currentUserId || 'anon'}`,
+        [],
+        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
+    );
 
     const addHiddenConversationId = (conversationId: number) =>
         setHiddenConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
