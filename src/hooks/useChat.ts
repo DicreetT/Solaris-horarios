@@ -68,6 +68,11 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         [],
         { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
     );
+    const [deletedMessageIdsGlobal, setDeletedMessageIdsGlobal] = useSharedJsonState<number[]>(
+        'chat_deleted_messages_global_v1',
+        [],
+        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
+    );
     const localHiddenIdsKey = `chat_hidden_conversations_local_v1:${currentUserId || 'anon'}`;
     const localDeletedIdsKey = 'chat_deleted_conversations_local_v1';
     const localHiddenSigsKey = `chat_hidden_conversation_signatures_local_v1:${currentUserId || 'anon'}`;
@@ -123,10 +128,13 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         setHiddenConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
     const addDeletedConversationSignature = (signature: string) =>
         setDeletedConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
+    const addDeletedMessageIdGlobal = (messageId: number) =>
+        setDeletedMessageIdsGlobal((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
     const hiddenSet = new Set(hiddenConversationIds.map((id) => Number(id)));
     const deletedSet = new Set(deletedConversationIds.map((id) => Number(id)));
     const hiddenSignatureSet = new Set(hiddenConversationSignatures);
     const deletedSignatureSet = new Set(deletedConversationSignatures);
+    const deletedMessageSet = new Set((deletedMessageIdsGlobal || []).map((id) => Number(id)));
     const filterSignature = useMemo(
         () =>
             `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}|${hiddenConversationSignatures.join(',')}|${deletedConversationSignatures.join(',')}`,
@@ -134,7 +142,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
     );
 
     const conversationsKey = ['chat-conversations', currentUser?.id, filterSignature] as const;
-    const messagesKey = ['chat-messages', selectedConversationId] as const;
+    const messagesKey = ['chat-messages', selectedConversationId, (deletedMessageIdsGlobal || []).join(',')] as const;
 
     const { data: conversations = [], isLoading: loadingConversations, error: conversationsError } = useQuery<ChatConversation[]>({
         queryKey: conversationsKey,
@@ -252,18 +260,21 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .limit(300);
 
             if (error) throw error;
-            return (data || []).map((row: any) => ({
-                id: row.id,
-                conversation_id: row.conversation_id,
-                sender_id: row.sender_id,
-                message: row.message,
-                attachments: row.attachments || [],
-                mentions: row.mentions || [],
-                reply_to: row.reply_to || null,
-                linked_task_id: row.linked_task_id || null,
-                linked_meeting_id: row.linked_meeting_id || null,
-                created_at: row.created_at,
-            }));
+            return (data || []).map((row: any) => {
+                const isDeleted = deletedMessageSet.has(Number(row.id));
+                return {
+                    id: row.id,
+                    conversation_id: row.conversation_id,
+                    sender_id: row.sender_id,
+                    message: isDeleted ? DELETED_MESSAGE_TEXT : row.message,
+                    attachments: isDeleted ? [] : (row.attachments || []),
+                    mentions: isDeleted ? [] : (row.mentions || []),
+                    reply_to: isDeleted ? null : (row.reply_to || null),
+                    linked_task_id: isDeleted ? null : (row.linked_task_id || null),
+                    linked_meeting_id: isDeleted ? null : (row.linked_meeting_id || null),
+                    created_at: row.created_at,
+                };
+            });
         },
         enabled: !!currentUser && !!selectedConversationId,
     });
@@ -501,7 +512,12 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .eq('id', messageId)
                 .eq('conversation_id', conversationId);
 
-            if (updateError) throw updateError;
+            if (updateError) {
+                addDeletedMessageIdGlobal(messageId);
+                return { messageId, conversationId };
+            }
+
+            addDeletedMessageIdGlobal(messageId);
             return { messageId, conversationId };
         },
         onSuccess: ({ conversationId }) => {
