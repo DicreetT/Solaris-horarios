@@ -187,6 +187,16 @@ function ChatPage() {
 
     const handleRemoveConversation = async (conversation: any) => {
         const isOwner = conversation?.created_by === currentUser?.id;
+        const directTargets =
+            conversation?.kind === 'direct'
+                ? conversations.filter((c: any) => {
+                    if (c.kind !== 'direct') return false;
+                    const a = [...(c.participants || [])].sort().join('|');
+                    const b = [...(conversation.participants || [])].sort().join('|');
+                    return a === b;
+                })
+                : [conversation];
+        const targets = directTargets.length > 0 ? directTargets : [conversation];
         const ok = window.confirm(
             isOwner
                 ? '¿Eliminar este chat para todo el equipo? Esta acción no se puede deshacer.'
@@ -195,11 +205,13 @@ function ChatPage() {
         if (!ok) return;
         setChatActionError(null);
         try {
-            await removeConversation({
-                conversationId: conversation.id,
-                deleteForAll: isOwner,
-            });
-            if (selectedConversationId === conversation.id) {
+            for (const target of targets) {
+                await removeConversation({
+                    conversationId: target.id,
+                    deleteForAll: isOwner && target.created_by === currentUser?.id,
+                });
+            }
+            if (targets.some((t: any) => t.id === selectedConversationId)) {
                 setSelectedConversationId(null);
             }
         } catch (error: any) {
@@ -442,9 +454,9 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto h-[calc(100dvh-8rem)] overflow-hidden">
+        <div className="max-w-7xl mx-auto overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 flex flex-col min-h-0">
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
                         <h1 className="text-xl font-black text-gray-900">Chat interno</h1>
                         <button
@@ -456,7 +468,7 @@ function ChatPage() {
                         </button>
                     </div>
 
-                    <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
+                    <div className="space-y-2 min-h-0 overflow-y-auto pr-1">
                         {chatActionError && (
                             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                 {chatActionError}
@@ -505,7 +517,7 @@ function ChatPage() {
                     </div>
                 </div>
 
-                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm flex flex-col h-full min-h-0 overflow-hidden">
+                <div className="bg-white rounded-3xl border border-gray-200 shadow-sm h-full min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr) auto' }}>
                     {!selectedConversation ? (
                         <div className="flex-1 flex items-center justify-center p-8 text-center">
                             <div>

@@ -121,7 +121,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 }
             });
 
-            return visibleConversations
+            const normalized = visibleConversations
                 .map((conversation) => ({
                     ...conversation,
                     participants: participantsByConversation.get(conversation.id) || [],
@@ -132,6 +132,22 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     const bTime = b.last_message?.created_at || b.created_at;
                     return aTime < bTime ? 1 : -1;
                 });
+
+            // Deduplica chats directos con mismo par de participantes (puede haber historial viejo duplicado).
+            const seenDirect = new Set<string>();
+            const deduped: ChatConversation[] = [];
+            for (const conversation of normalized) {
+                if (conversation.kind !== 'direct') {
+                    deduped.push(conversation);
+                    continue;
+                }
+                const pair = [...(conversation.participants || [])].sort().join('|');
+                if (seenDirect.has(pair)) continue;
+                seenDirect.add(pair);
+                deduped.push(conversation);
+            }
+
+            return deduped;
         },
         enabled: !!currentUser,
     });
