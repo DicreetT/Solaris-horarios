@@ -66,6 +66,52 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         [],
         { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
     );
+    const localHiddenIdsKey = `chat_hidden_conversations_local_v1:${currentUserId || 'anon'}`;
+    const localDeletedIdsKey = 'chat_deleted_conversations_local_v1';
+    const localHiddenSigsKey = `chat_hidden_conversation_signatures_local_v1:${currentUserId || 'anon'}`;
+    const localDeletedSigsKey = 'chat_deleted_conversation_signatures_local_v1';
+
+    useEffect(() => {
+        if (!currentUserId) return;
+        try {
+            const localHiddenIds = JSON.parse(window.localStorage.getItem(localHiddenIdsKey) || '[]');
+            const localDeletedIds = JSON.parse(window.localStorage.getItem(localDeletedIdsKey) || '[]');
+            const localHiddenSigs = JSON.parse(window.localStorage.getItem(localHiddenSigsKey) || '[]');
+            const localDeletedSigs = JSON.parse(window.localStorage.getItem(localDeletedSigsKey) || '[]');
+            if (Array.isArray(localHiddenIds) && localHiddenIds.length > 0) {
+                setHiddenConversationIds((prev) => Array.from(new Set([...prev, ...localHiddenIds.map((v: any) => Number(v)).filter(Number.isFinite)])));
+            }
+            if (Array.isArray(localDeletedIds) && localDeletedIds.length > 0) {
+                setDeletedConversationIds((prev) => Array.from(new Set([...prev, ...localDeletedIds.map((v: any) => Number(v)).filter(Number.isFinite)])));
+            }
+            if (Array.isArray(localHiddenSigs) && localHiddenSigs.length > 0) {
+                setHiddenConversationSignatures((prev) => Array.from(new Set([...prev, ...localHiddenSigs.map((v: any) => String(v || '').trim()).filter(Boolean)])));
+            }
+            if (Array.isArray(localDeletedSigs) && localDeletedSigs.length > 0) {
+                setDeletedConversationSignatures((prev) => Array.from(new Set([...prev, ...localDeletedSigs.map((v: any) => String(v || '').trim()).filter(Boolean)])));
+            }
+        } catch {
+            // noop
+        }
+    }, [currentUserId]);
+
+    useEffect(() => {
+        if (!currentUserId) return;
+        try {
+            window.localStorage.setItem(localHiddenIdsKey, JSON.stringify(hiddenConversationIds || []));
+            window.localStorage.setItem(localDeletedIdsKey, JSON.stringify(deletedConversationIds || []));
+            window.localStorage.setItem(localHiddenSigsKey, JSON.stringify(hiddenConversationSignatures || []));
+            window.localStorage.setItem(localDeletedSigsKey, JSON.stringify(deletedConversationSignatures || []));
+        } catch {
+            // noop
+        }
+    }, [
+        currentUserId,
+        hiddenConversationIds,
+        deletedConversationIds,
+        hiddenConversationSignatures,
+        deletedConversationSignatures,
+    ]);
 
     const addHiddenConversationId = (conversationId: number) =>
         setHiddenConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));

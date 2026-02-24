@@ -284,11 +284,15 @@ function ChatPage() {
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
         const prevHtmlOverflow = document.documentElement.style.overflow;
+        const mainEl = document.querySelector('main');
+        const prevMainOverflow = mainEl ? (mainEl as HTMLElement).style.overflow : '';
         document.body.style.overflow = 'hidden';
         document.documentElement.style.overflow = 'hidden';
+        if (mainEl) (mainEl as HTMLElement).style.overflow = 'hidden';
         return () => {
             document.body.style.overflow = prevBodyOverflow;
             document.documentElement.style.overflow = prevHtmlOverflow;
+            if (mainEl) (mainEl as HTMLElement).style.overflow = prevMainOverflow;
         };
     }, []);
 
@@ -481,7 +485,10 @@ function ChatPage() {
                         </button>
                     </div>
 
-                    <div className="space-y-2 min-h-0 overflow-y-auto pr-1">
+                    <div
+                        className="space-y-2 min-h-0 overflow-y-auto pr-1"
+                        onWheelCapture={(e) => e.stopPropagation()}
+                    >
                         {chatActionError && (
                             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                 {chatActionError}
@@ -547,7 +554,11 @@ function ChatPage() {
                                 </p>
                             </div>
 
-                            <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3">
+                            <div
+                                ref={messagesContainerRef}
+                                className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3"
+                                onWheelCapture={(e) => e.stopPropagation()}
+                            >
                                 {messagesError && (
                                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                         Error cargando mensajes: {(messagesError as any)?.message || 'Intenta de nuevo.'}
