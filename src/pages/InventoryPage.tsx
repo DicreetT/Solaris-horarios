@@ -208,7 +208,7 @@ function InventoryPage() {
   const [movimientos, setMovimientos, movimientosLoading] = useSharedJsonState<Movement[]>(
     INVENTORY_CANET_MOVS_KEY,
     seed.movimientos as Movement[],
-    { userId: actorId },
+    { userId: actorId, pollIntervalMs: 300 },
   );
   const [productos] = useState<GenericRow[]>(seed.productos as GenericRow[]);
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
@@ -239,7 +239,7 @@ function InventoryPage() {
   const [huarteMovimientosShared, setHuarteMovimientosShared, huarteMovimientosLoading] = useSharedJsonState<any[]>(
     INVENTORY_HUARTE_MOVS_KEY,
     (huarteSeed.movimientos as any[]) || [],
-    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 1000 },
+    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 300 },
   );
 
   const [monthFilter, setMonthFilter] = useState<string>('');
