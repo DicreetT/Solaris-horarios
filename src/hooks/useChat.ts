@@ -400,12 +400,15 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             if (!currentUser) throw new Error('No user logged in');
 
             if (deleteForAll) {
-                const { data, error } = await supabase
+                const deleteQuery = supabase
                     .from('chat_conversations')
                     .delete()
-                    .eq('id', conversationId)
-                    .eq('created_by', currentUser.id)
-                    .select('id');
+                    .eq('id', conversationId);
+                const { data, error } = await (
+                    currentUser?.isAdmin
+                        ? deleteQuery.select('id')
+                        : deleteQuery.eq('created_by', currentUser.id).select('id')
+                );
 
                 if (error) {
                     // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.

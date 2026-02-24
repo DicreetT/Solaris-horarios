@@ -195,11 +195,12 @@ function ChatPage() {
 
     const handleRemoveConversation = async (conversation: any) => {
         const isOwner = conversation?.created_by === currentUser?.id;
+        const isAdmin = !!currentUser?.isAdmin;
         const targetSignature = conversationSignature(conversation);
         const targets = conversations.filter((c: any) => conversationSignature(c) === targetSignature);
         const effectiveTargets = targets.length > 0 ? targets : [conversation];
         const ok = window.confirm(
-            isOwner
+            (isOwner || isAdmin)
                 ? '¿Eliminar este chat para todo el equipo? Esta acción no se puede deshacer.'
                 : '¿Seguro que quieres eliminar este chat de tu lista?',
         );
@@ -209,7 +210,7 @@ function ChatPage() {
             for (const target of effectiveTargets) {
                 await removeConversation({
                     conversationId: target.id,
-                    deleteForAll: isOwner && target.created_by === currentUser?.id,
+                    deleteForAll: isOwner || isAdmin,
                     signature: targetSignature,
                 });
             }
