@@ -197,7 +197,7 @@ export default function InventoryFacturacionPage() {
   const [movimientos, setMovimientos] = useSharedJsonState<Movement[]>(
     STORAGE_MOVS_KEY,
     seed.movimientos as Movement[],
-    { userId: actorId },
+    { userId: actorId, pollIntervalMs: 2000 },
   );
   const [canetMovimientos] = useSharedJsonState<Movement[]>(
     STORAGE_CANET_MOVS_KEY,
