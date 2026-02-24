@@ -427,7 +427,13 @@ function ChatPage() {
         try {
             await deleteMessage({ messageId, conversationId: selectedConversationId });
         } catch (error: any) {
-            setChatActionError(error?.message || 'No se pudo eliminar el mensaje.');
+            const message = `${error?.message || 'No se pudo eliminar el mensaje.'}`;
+            setChatActionError(message);
+            if (message.toLowerCase().includes('row-level security') || message.toLowerCase().includes('policy')) {
+                window.alert('No se pudo borrar por permisos RLS en Supabase para chat_messages.');
+            } else {
+                window.alert(message);
+            }
         }
     };
 
@@ -547,7 +553,7 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto w-full h-[calc(100dvh-7.5rem)] min-h-0 overflow-hidden app-page-shell">
+        <div className="max-w-7xl mx-auto w-full h-full min-h-0 overflow-hidden app-page-shell">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
