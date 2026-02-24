@@ -40,7 +40,7 @@ if (typeof window !== 'undefined') {
         window.location.reload()
     })
 
-    const SW_RESET_KEY = 'lunaris-sw-reset-v2'
+    const SW_RESET_KEY = 'lunaris-sw-reset-v3'
     const hasReset = (() => {
         try {
             return window.localStorage.getItem(SW_RESET_KEY) === '1'
