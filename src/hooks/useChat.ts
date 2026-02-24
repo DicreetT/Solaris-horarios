@@ -43,6 +43,8 @@ interface SendMessageInput {
     linkedMeetingId?: number | null;
 }
 
+const DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
+
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
     const currentUserId = currentUser?.id || '';
@@ -467,6 +469,48 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         },
     });
 
+    const deleteMessageMutation = useMutation({
+        mutationFn: async ({ messageId, conversationId }: { messageId: number; conversationId: number }) => {
+            if (!currentUser) throw new Error('No user logged in');
+
+            const { data: target, error: targetError } = await supabase
+                .from('chat_messages')
+                .select('id, sender_id')
+                .eq('id', messageId)
+                .eq('conversation_id', conversationId)
+                .single();
+
+            if (targetError) throw targetError;
+            if (!target) throw new Error('Mensaje no encontrado.');
+
+            const canDelete = currentUser.isAdmin || target.sender_id === currentUser.id;
+            if (!canDelete) {
+                throw new Error('Solo puedes eliminar tus mensajes.');
+            }
+
+            const { error: updateError } = await supabase
+                .from('chat_messages')
+                .update({
+                    message: DELETED_MESSAGE_TEXT,
+                    attachments: [],
+                    mentions: [],
+                    reply_to: null,
+                    linked_task_id: null,
+                    linked_meeting_id: null,
+                })
+                .eq('id', messageId)
+                .eq('conversation_id', conversationId);
+
+            if (updateError) throw updateError;
+            return { messageId, conversationId };
+        },
+        onSuccess: ({ conversationId }) => {
+            queryClient.invalidateQueries({ queryKey: conversationsKey });
+            queryClient.invalidateQueries({ queryKey: ['chat-messages', conversationId] });
+            emitSuccessFeedback('Mensaje eliminado.');
+        },
+    });
+
     return {
         conversations,
         messages,
@@ -482,5 +526,8 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         sendMessage: sendMessageMutation.mutateAsync,
         removingConversation: removeConversationMutation.isPending,
         removeConversation: removeConversationMutation.mutateAsync,
+        deletingMessage: deleteMessageMutation.isPending,
+        deleteMessage: deleteMessageMutation.mutateAsync,
+        deletedMessageText: DELETED_MESSAGE_TEXT,
     };
 }

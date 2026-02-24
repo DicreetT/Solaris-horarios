@@ -52,6 +52,7 @@ function ChatPage() {
     const [transcribingAudioAttachments, setTranscribingAudioAttachments] = useState(false);
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+    const sendingRef = useRef(false);
     const recognitionRef = useRef<any>(null);
     const openingDirectRef = useRef<string | null>(null);
 
@@ -68,7 +69,11 @@ function ChatPage() {
         messagesError,
         creatingConversation,
         createConversation,
+        sendingMessage,
         sendMessage,
+        deleteMessage,
+        deletingMessage,
+        deletedMessageText,
         removeConversation,
         removingConversation,
     } = useChat(currentUser, selectedConversationId);
@@ -316,7 +321,10 @@ function ChatPage() {
 
     const sendCurrentMessage = async () => {
         if (!selectedConversationId) return;
+        if (sendingRef.current || sendingMessage || transcribingAudioAttachments) return;
 
+        sendingRef.current = true;
+        try {
         let messageWithAbsence = linkedAbsenceId
             ? `${messageDraft}${messageDraft ? '\n' : ''}Solicitud vinculada #${linkedAbsenceId} (${linkedAbsenceKind === 'vacation' ? 'vacaciones' : 'ausencia'})`
             : messageDraft;
@@ -374,6 +382,20 @@ function ChatPage() {
         setMentionOpen(false);
         setMentionQuery('');
         setMentionStartIndex(null);
+        } finally {
+            sendingRef.current = false;
+        }
+    };
+
+    const handleDeleteMessage = async (messageId: number) => {
+        if (!selectedConversationId) return;
+        const ok = window.confirm('¿Eliminar este mensaje? Se verá como "Mensaje eliminado".');
+        if (!ok) return;
+        try {
+            await deleteMessage({ messageId, conversationId: selectedConversationId });
+        } catch (error: any) {
+            setChatActionError(error?.message || 'No se pudo eliminar el mensaje.');
+        }
     };
 
     const handleMessageInput = (value: string, cursorPos: number) => {
@@ -577,6 +599,8 @@ function ChatPage() {
 
                                 {messages.map((msg) => {
                                     const mine = msg.sender_id === currentUser?.id;
+                                    const canDeleteMessage = mine || !!currentUser?.isAdmin;
+                                    const isDeletedMessage = msg.message === deletedMessageText;
                                     const replyMessage = msg.reply_to ? messageById.get(msg.reply_to) : null;
 
                                     return (
@@ -590,9 +614,13 @@ function ChatPage() {
                                                     </div>
                                                 )}
 
-                                                {msg.message && renderMessageWithMentions(msg.message, msg.mentions || [])}
+                                                {isDeletedMessage ? (
+                                                    <p className="text-sm italic text-gray-500">Mensaje eliminado</p>
+                                                ) : (
+                                                    msg.message && renderMessageWithMentions(msg.message, msg.mentions || [])
+                                                )}
 
-                                                {msg.linked_task_id && (
+                                                {!isDeletedMessage && msg.linked_task_id && (
                                                     <div className="mt-2 text-xs">
                                                         <button
                                                             onClick={() => {
@@ -607,18 +635,18 @@ function ChatPage() {
                                                         </button>
                                                     </div>
                                                 )}
-                                                {msg.linked_meeting_id && (
+                                                {!isDeletedMessage && msg.linked_meeting_id && (
                                                     <div className="mt-1 text-xs">
                                                         <Link to="/meetings" className="text-violet-700 font-bold">Reunión vinculada #{msg.linked_meeting_id}</Link>
                                                     </div>
                                                 )}
-                                                {msg.message.includes('Solicitud vinculada #') && (
+                                                {!isDeletedMessage && msg.message.includes('Solicitud vinculada #') && (
                                                     <div className="mt-1 text-xs">
                                                         <Link to="/absences" className="text-violet-700 font-bold">Ver solicitud vinculada</Link>
                                                     </div>
                                                 )}
 
-                                                {msg.attachments?.length > 0 && (
+                                                {!isDeletedMessage && msg.attachments?.length > 0 && (
                                                     <div className="mt-2 space-y-1">
                                                         {msg.attachments.map((file, idx) => (
                                                             <div key={`${msg.id}-${idx}`} className="space-y-1">
@@ -643,12 +671,25 @@ function ChatPage() {
 
                                                 <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500">
                                                     <span>{formatDateTimePretty(new Date(msg.created_at))}</span>
-                                                    <button
-                                                        onClick={() => setReplyToId(msg.id)}
-                                                        className="inline-flex items-center gap-1 text-violet-700 font-bold"
-                                                    >
-                                                        <Reply size={12} /> Responder
-                                                    </button>
+                                                    <div className="flex items-center gap-3">
+                                                        {!isDeletedMessage && (
+                                                            <button
+                                                                onClick={() => setReplyToId(msg.id)}
+                                                                className="inline-flex items-center gap-1 text-violet-700 font-bold"
+                                                            >
+                                                                <Reply size={12} /> Responder
+                                                            </button>
+                                                        )}
+                                                        {canDeleteMessage && !isDeletedMessage && (
+                                                            <button
+                                                                onClick={() => void handleDeleteMessage(msg.id)}
+                                                                disabled={deletingMessage}
+                                                                className="inline-flex items-center gap-1 text-rose-700 font-bold disabled:opacity-60"
+                                                            >
+                                                                <Trash2 size={12} /> Borrar
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -807,11 +848,11 @@ function ChatPage() {
                                         </button>
                                         <button
                                             onClick={sendCurrentMessage}
-                                            disabled={transcribingAudioAttachments}
-                                            className={`px-3 py-2 rounded-xl text-white ${transcribingAudioAttachments ? 'bg-violet-400 cursor-not-allowed' : 'bg-violet-700'}`}
+                                            disabled={transcribingAudioAttachments || sendingMessage}
+                                            className={`px-3 py-2 rounded-xl text-white ${(transcribingAudioAttachments || sendingMessage) ? 'bg-violet-400 cursor-not-allowed' : 'bg-violet-700'}`}
                                             title="Enviar"
                                         >
-                                            {transcribingAudioAttachments ? <Square size={16} /> : <Send size={16} />}
+                                            {(transcribingAudioAttachments || sendingMessage) ? <Square size={16} /> : <Send size={16} />}
                                         </button>
                                     </div>
                                     {transcribingAudioAttachments && (
