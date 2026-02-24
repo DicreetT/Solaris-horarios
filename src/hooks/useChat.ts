@@ -1,9 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
-import { useSharedJsonState } from './useSharedJsonState';
 
 export interface ChatConversation {
     id: number;
@@ -49,31 +48,11 @@ const LEGACY_DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
     const currentUserId = currentUser?.id || '';
-    const [deletedConversationIds, setDeletedConversationIds] = useSharedJsonState<number[]>(
-        'chat_deleted_conversations_v2',
-        [],
-        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
-    );
-    const [hiddenConversationIds, setHiddenConversationIds] = useSharedJsonState<number[]>(
-        `chat_hidden_conversations_v2:${currentUserId || 'anon'}`,
-        [],
-        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
-    );
-    const [deletedConversationSignatures, setDeletedConversationSignatures] = useSharedJsonState<string[]>(
-        'chat_deleted_conversation_signatures_v2',
-        [],
-        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
-    );
-    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useSharedJsonState<string[]>(
-        `chat_hidden_conversation_signatures_v2:${currentUserId || 'anon'}`,
-        [],
-        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
-    );
-    const [deletedMessageIdsGlobal, setDeletedMessageIdsGlobal] = useSharedJsonState<number[]>(
-        'chat_deleted_messages_global_v1',
-        [],
-        { userId: currentUserId, initializeIfMissing: true, pollIntervalMs: 1000 },
-    );
+    const [deletedConversationIds, setDeletedConversationIds] = useState<number[]>([]);
+    const [hiddenConversationIds, setHiddenConversationIds] = useState<number[]>([]);
+    const [deletedConversationSignatures, setDeletedConversationSignatures] = useState<string[]>([]);
+    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useState<string[]>([]);
+    const [deletedMessageIdsGlobal, setDeletedMessageIdsGlobal] = useState<number[]>([]);
     const localHiddenIdsKey = `chat_hidden_conversations_local_v1:${currentUserId || 'anon'}`;
     const localDeletedIdsKey = 'chat_deleted_conversations_local_v1';
     const localHiddenSigsKey = `chat_hidden_conversation_signatures_local_v1:${currentUserId || 'anon'}`;
@@ -86,17 +65,21 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             const localDeletedIds = JSON.parse(window.localStorage.getItem(localDeletedIdsKey) || '[]');
             const localHiddenSigs = JSON.parse(window.localStorage.getItem(localHiddenSigsKey) || '[]');
             const localDeletedSigs = JSON.parse(window.localStorage.getItem(localDeletedSigsKey) || '[]');
+            const localDeletedMsgIds = JSON.parse(window.localStorage.getItem(`chat_deleted_messages_local_v1:${currentUserId}`) || '[]');
             if (Array.isArray(localHiddenIds) && localHiddenIds.length > 0) {
-                setHiddenConversationIds((prev) => Array.from(new Set([...prev, ...localHiddenIds.map((v: any) => Number(v)).filter(Number.isFinite)])));
+                setHiddenConversationIds(Array.from(new Set(localHiddenIds.map((v: any) => Number(v)).filter(Number.isFinite))));
             }
             if (Array.isArray(localDeletedIds) && localDeletedIds.length > 0) {
-                setDeletedConversationIds((prev) => Array.from(new Set([...prev, ...localDeletedIds.map((v: any) => Number(v)).filter(Number.isFinite)])));
+                setDeletedConversationIds(Array.from(new Set(localDeletedIds.map((v: any) => Number(v)).filter(Number.isFinite))));
             }
             if (Array.isArray(localHiddenSigs) && localHiddenSigs.length > 0) {
-                setHiddenConversationSignatures((prev) => Array.from(new Set([...prev, ...localHiddenSigs.map((v: any) => String(v || '').trim()).filter(Boolean)])));
+                setHiddenConversationSignatures(Array.from(new Set(localHiddenSigs.map((v: any) => String(v || '').trim()).filter(Boolean))));
             }
             if (Array.isArray(localDeletedSigs) && localDeletedSigs.length > 0) {
-                setDeletedConversationSignatures((prev) => Array.from(new Set([...prev, ...localDeletedSigs.map((v: any) => String(v || '').trim()).filter(Boolean)])));
+                setDeletedConversationSignatures(Array.from(new Set(localDeletedSigs.map((v: any) => String(v || '').trim()).filter(Boolean))));
+            }
+            if (Array.isArray(localDeletedMsgIds) && localDeletedMsgIds.length > 0) {
+                setDeletedMessageIdsGlobal(Array.from(new Set(localDeletedMsgIds.map((v: any) => Number(v)).filter(Number.isFinite))));
             }
         } catch {
             // noop
@@ -110,6 +93,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             window.localStorage.setItem(localDeletedIdsKey, JSON.stringify(deletedConversationIds || []));
             window.localStorage.setItem(localHiddenSigsKey, JSON.stringify(hiddenConversationSignatures || []));
             window.localStorage.setItem(localDeletedSigsKey, JSON.stringify(deletedConversationSignatures || []));
+            window.localStorage.setItem(`chat_deleted_messages_local_v1:${currentUserId}`, JSON.stringify(deletedMessageIdsGlobal || []));
         } catch {
             // noop
         }
@@ -119,6 +103,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         deletedConversationIds,
         hiddenConversationSignatures,
         deletedConversationSignatures,
+        deletedMessageIdsGlobal,
     ]);
 
     const addHiddenConversationId = (conversationId: number) =>
