@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -34,6 +34,8 @@ function Layout() {
     const { dailyStatuses } = useDailyStatus(currentUser);
     const { notifications } = useNotificationsContext();
     const navigate = useNavigate();
+    const location = useLocation();
+    const isChatRoute = location.pathname === '/chat';
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -198,7 +200,7 @@ function Layout() {
                     <Header onMenuToggle={handleMenuToggle} />
 
                     {/* Page content */}
-                    <main className="flex-1 p-4 md:p-8 overflow-y-auto relative z-10">
+                    <main className={`flex-1 ${isChatRoute ? 'p-4 md:p-4 overflow-hidden' : 'p-4 md:p-8 overflow-y-auto'} relative z-10`}>
                         <div className="pointer-events-none fixed right-4 top-4 z-[120] md:right-6 md:top-5">
                             <button
                                 onClick={() => setUiDensity((prev) => (prev === 'compact' ? 'comfortable' : 'compact'))}

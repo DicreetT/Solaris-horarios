@@ -1,9 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
-import { useSharedJsonState } from './useSharedJsonState';
 
 export interface ChatConversation {
     id: number;
@@ -46,19 +45,51 @@ interface SendMessageInput {
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
     const currentUserId = currentUser?.id || '';
-    const [deletedConversationIds, setDeletedConversationIds] = useSharedJsonState<number[]>(
-        'chat_deleted_conversations_v1',
-        [],
-        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
-    );
-    const [hiddenConversationIds, setHiddenConversationIds] = useSharedJsonState<number[]>(
-        `chat_hidden_conversations_v1:${currentUserId || 'anon'}`,
-        [],
-        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
-    );
+    const [deletedConversationIds, setDeletedConversationIds] = useState<number[]>([]);
+    const [hiddenConversationIds, setHiddenConversationIds] = useState<number[]>([]);
+    const hiddenStorageKey = `chat_hidden_conversations_v1:${currentUserId || 'anon'}`;
+    const deletedStorageKey = 'chat_deleted_conversations_v1';
+
+    useEffect(() => {
+        if (!currentUserId) return;
+        try {
+            const rawHidden = window.localStorage.getItem(hiddenStorageKey);
+            const rawDeleted = window.localStorage.getItem(deletedStorageKey);
+            setHiddenConversationIds(rawHidden ? JSON.parse(rawHidden) : []);
+            setDeletedConversationIds(rawDeleted ? JSON.parse(rawDeleted) : []);
+        } catch {
+            setHiddenConversationIds([]);
+            setDeletedConversationIds([]);
+        }
+    }, [currentUserId, hiddenStorageKey]);
+
+    useEffect(() => {
+        if (!currentUserId) return;
+        try {
+            window.localStorage.setItem(hiddenStorageKey, JSON.stringify(hiddenConversationIds));
+        } catch {
+            // noop
+        }
+    }, [currentUserId, hiddenConversationIds, hiddenStorageKey]);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(deletedStorageKey, JSON.stringify(deletedConversationIds));
+        } catch {
+            // noop
+        }
+    }, [deletedConversationIds]);
+
+    const addHiddenConversationId = (conversationId: number) =>
+        setHiddenConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
+    const addDeletedConversationId = (conversationId: number) =>
+        setDeletedConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
     const hiddenSet = new Set(hiddenConversationIds.map((id) => Number(id)));
     const deletedSet = new Set(deletedConversationIds.map((id) => Number(id)));
-    const filterSignature = `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}`;
+    const filterSignature = useMemo(
+        () => `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}`,
+        [hiddenConversationIds, deletedConversationIds],
+    );
 
     const conversationsKey = ['chat-conversations', currentUser?.id, filterSignature] as const;
     const messagesKey = ['chat-messages', selectedConversationId] as const;
@@ -133,17 +164,18 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     return aTime < bTime ? 1 : -1;
                 });
 
-            // Deduplica chats directos con mismo par de participantes (puede haber historial viejo duplicado).
-            const seenDirect = new Set<string>();
+            // Deduplica chats con misma firma (directo por par, grupo por título + participantes).
+            const seenSignature = new Set<string>();
             const deduped: ChatConversation[] = [];
             for (const conversation of normalized) {
-                if (conversation.kind !== 'direct') {
-                    deduped.push(conversation);
-                    continue;
-                }
-                const pair = [...(conversation.participants || [])].sort().join('|');
-                if (seenDirect.has(pair)) continue;
-                seenDirect.add(pair);
+                const participantsSig = [...(conversation.participants || [])].sort().join('|');
+                const titleSig = (conversation.title || '').trim().toLowerCase();
+                const signature =
+                    conversation.kind === 'direct'
+                        ? `direct:${participantsSig}`
+                        : `group:${titleSig}:${participantsSig}`;
+                if (seenSignature.has(signature)) continue;
+                seenSignature.add(signature);
                 deduped.push(conversation);
             }
 
@@ -323,23 +355,17 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
 
                 if (error) {
                     // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
-                    setDeletedConversationIds((prev) =>
-                        prev.includes(conversationId) ? prev : [...prev, conversationId],
-                    );
+                    addDeletedConversationId(conversationId);
                     return { conversationId, deleteForAll };
                 }
                 if (!data || data.length === 0) {
                     throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
                 }
-                setDeletedConversationIds((prev) =>
-                    prev.includes(conversationId) ? prev : [...prev, conversationId],
-                );
+                addDeletedConversationId(conversationId);
                 return { conversationId, deleteForAll };
             }
 
-            setHiddenConversationIds((prev) =>
-                prev.includes(conversationId) ? prev : [...prev, conversationId],
-            );
+            addHiddenConversationId(conversationId);
             const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()

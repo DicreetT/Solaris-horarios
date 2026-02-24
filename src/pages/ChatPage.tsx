@@ -185,18 +185,19 @@ function ChatPage() {
         }
     };
 
+    const conversationSignature = (conversation: any) => {
+        const participantsSig = [...(conversation?.participants || [])].sort().join('|');
+        const titleSig = (conversation?.title || '').trim().toLowerCase();
+        return conversation?.kind === 'direct'
+            ? `direct:${participantsSig}`
+            : `group:${titleSig}:${participantsSig}`;
+    };
+
     const handleRemoveConversation = async (conversation: any) => {
         const isOwner = conversation?.created_by === currentUser?.id;
-        const directTargets =
-            conversation?.kind === 'direct'
-                ? conversations.filter((c: any) => {
-                    if (c.kind !== 'direct') return false;
-                    const a = [...(c.participants || [])].sort().join('|');
-                    const b = [...(conversation.participants || [])].sort().join('|');
-                    return a === b;
-                })
-                : [conversation];
-        const targets = directTargets.length > 0 ? directTargets : [conversation];
+        const targetSignature = conversationSignature(conversation);
+        const targets = conversations.filter((c: any) => conversationSignature(c) === targetSignature);
+        const effectiveTargets = targets.length > 0 ? targets : [conversation];
         const ok = window.confirm(
             isOwner
                 ? '¿Eliminar este chat para todo el equipo? Esta acción no se puede deshacer.'
@@ -205,13 +206,13 @@ function ChatPage() {
         if (!ok) return;
         setChatActionError(null);
         try {
-            for (const target of targets) {
+            for (const target of effectiveTargets) {
                 await removeConversation({
                     conversationId: target.id,
                     deleteForAll: isOwner && target.created_by === currentUser?.id,
                 });
             }
-            if (targets.some((t: any) => t.id === selectedConversationId)) {
+            if (effectiveTargets.some((t: any) => t.id === selectedConversationId)) {
                 setSelectedConversationId(null);
             }
         } catch (error: any) {
@@ -454,7 +455,7 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto overflow-hidden" style={{ height: 'calc(100vh - 160px)' }}>
+        <div className="max-w-7xl mx-auto h-full min-h-0 overflow-hidden">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
