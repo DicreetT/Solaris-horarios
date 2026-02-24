@@ -12,7 +12,7 @@ export function useSharedJsonState<T>(
   fallbackValue: T,
   options: Options = {},
 ): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
-  const { userId, initializeIfMissing = true, pollIntervalMs = 15000 } = options;
+  const { userId, initializeIfMissing = true, pollIntervalMs = 2000 } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
   const valueRef = useRef<T>(fallbackValue);
@@ -109,7 +109,11 @@ export function useSharedJsonState<T>(
           valueRef.current = next as T;
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          refresh();
+        }
+      });
 
     return () => {
       active = false;
