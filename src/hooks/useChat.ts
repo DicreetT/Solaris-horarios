@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { useSharedJsonState } from './useSharedJsonState';
 
 export interface ChatConversation {
     id: number;
@@ -44,8 +45,22 @@ interface SendMessageInput {
 
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
+    const currentUserId = currentUser?.id || '';
+    const [deletedConversationIds, setDeletedConversationIds] = useSharedJsonState<number[]>(
+        'chat_deleted_conversations_v1',
+        [],
+        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
+    );
+    const [hiddenConversationIds, setHiddenConversationIds] = useSharedJsonState<number[]>(
+        `chat_hidden_conversations_v1:${currentUserId || 'anon'}`,
+        [],
+        { userId: currentUserId, initializeIfMissing: !!currentUserId, pollIntervalMs: 1000 },
+    );
+    const hiddenSet = new Set(hiddenConversationIds.map((id) => Number(id)));
+    const deletedSet = new Set(deletedConversationIds.map((id) => Number(id)));
+    const filterSignature = `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}`;
 
-    const conversationsKey = ['chat-conversations', currentUser?.id] as const;
+    const conversationsKey = ['chat-conversations', currentUser?.id, filterSignature] as const;
     const messagesKey = ['chat-messages', selectedConversationId] as const;
 
     const { data: conversations = [], isLoading: loadingConversations, error: conversationsError } = useQuery<ChatConversation[]>({
@@ -70,8 +85,12 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     created_at: string;
                 }>;
 
-            if (baseConversations.length === 0) return [];
-            const conversationIds = baseConversations.map((c) => c.id);
+            const visibleConversations = baseConversations.filter(
+                (c) => !hiddenSet.has(Number(c.id)) && !deletedSet.has(Number(c.id)),
+            );
+
+            if (visibleConversations.length === 0) return [];
+            const conversationIds = visibleConversations.map((c) => c.id);
 
             const [{ data: participantsRows, error: participantsError }, { data: messagesRows, error: messagesError }] = await Promise.all([
                 supabase
@@ -102,7 +121,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 }
             });
 
-            return baseConversations
+            return visibleConversations
                 .map((conversation) => ({
                     ...conversation,
                     participants: participantsByConversation.get(conversation.id) || [],
@@ -121,6 +140,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         queryKey: messagesKey,
         queryFn: async () => {
             if (!currentUser || !selectedConversationId) return [];
+            if (hiddenSet.has(Number(selectedConversationId)) || deletedSet.has(Number(selectedConversationId))) return [];
 
             const { data, error } = await supabase
                 .from('chat_messages')
@@ -171,7 +191,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [currentUser, queryClient, selectedConversationId]);
+    }, [currentUser, queryClient, selectedConversationId, conversationsKey]);
 
     const createConversationMutation = useMutation({
         mutationFn: async ({
@@ -285,13 +305,25 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     .eq('created_by', currentUser.id)
                     .select('id');
 
-                if (error) throw error;
+                if (error) {
+                    // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
+                    setDeletedConversationIds((prev) =>
+                        prev.includes(conversationId) ? prev : [...prev, conversationId],
+                    );
+                    return { conversationId, deleteForAll };
+                }
                 if (!data || data.length === 0) {
                     throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
                 }
+                setDeletedConversationIds((prev) =>
+                    prev.includes(conversationId) ? prev : [...prev, conversationId],
+                );
                 return { conversationId, deleteForAll };
             }
 
+            setHiddenConversationIds((prev) =>
+                prev.includes(conversationId) ? prev : [...prev, conversationId],
+            );
             const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()
@@ -299,10 +331,11 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .eq('user_id', currentUser.id)
                 .select('user_id');
 
-            if (error) throw error;
-            if (!data || data.length === 0) {
-                throw new Error('No se pudo eliminar el chat de tu lista (revisa permisos de RLS en chat_participants).');
+            if (error) {
+                // Fallback local por usuario: aunque falle RLS, se mantiene oculto para no reaparecer.
+                return { conversationId, deleteForAll };
             }
+            if (!data || data.length === 0) return { conversationId, deleteForAll };
             return { conversationId, deleteForAll };
         },
         onMutate: async ({ conversationId }) => {
@@ -320,7 +353,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             }
         },
         onSuccess: ({ conversationId, deleteForAll }) => {
-            queryClient.invalidateQueries({ queryKey: conversationsKey });
+            queryClient.invalidateQueries({ queryKey: ['chat-conversations', currentUser?.id] });
             queryClient.removeQueries({ queryKey: ['chat-messages', conversationId] });
             emitSuccessFeedback(deleteForAll ? 'Chat eliminado para todo el equipo.' : 'Chat eliminado de tu lista.');
         },

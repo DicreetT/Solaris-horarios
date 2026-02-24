@@ -442,7 +442,7 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto pb-6 h-[calc(100vh-7.5rem)] overflow-hidden">
+        <div className="max-w-7xl mx-auto h-[calc(100dvh-8rem)] overflow-hidden">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 flex flex-col min-h-0">
                     <div className="flex items-center justify-between mb-3">
@@ -522,7 +522,7 @@ function ChatPage() {
                                 </p>
                             </div>
 
-                            <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+                            <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3">
                                 {messagesError && (
                                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
                                         Error cargando mensajes: {(messagesError as any)?.message || 'Intenta de nuevo.'}
@@ -614,7 +614,7 @@ function ChatPage() {
                                 })}
                             </div>
 
-                            <div className="p-4 border-t border-gray-100 space-y-3">
+                            <div className="p-4 border-t border-gray-100 space-y-3 bg-white">
                                 {replyToId && (
                                     <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2 flex items-center justify-between">
                                         <span>Respondiendo a: {(messageById.get(replyToId)?.message || '[adjunto]').slice(0, 80)}</span>
