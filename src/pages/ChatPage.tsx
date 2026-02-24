@@ -562,7 +562,7 @@ function ChatPage() {
                                 <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setSelectedConversationId(conversation.id)}
-                                        className="flex-1 text-left p-1"
+                                        className="flex-1 min-w-0 text-left p-1"
                                     >
                                         <p className="text-sm font-bold text-gray-900 truncate">{conversationName(conversation)}</p>
                                         <p className="text-xs text-gray-500 truncate mt-1">
