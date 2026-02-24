@@ -317,6 +317,8 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             participantIds: string[];
         }) => {
             if (!currentUser) throw new Error('No user logged in');
+            const normalizedTitle = (title || '').trim();
+            if (!normalizedTitle) throw new Error('El título del chat es obligatorio.');
 
             const uniqueMembers = Array.from(new Set([currentUser.id, ...participantIds]));
             if (uniqueMembers.length < 2) throw new Error('Selecciona al menos una persona para crear el chat.');
@@ -325,7 +327,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .from('chat_conversations')
                 .insert({
                     kind,
-                    title: title?.trim() || null,
+                    title: normalizedTitle,
                     created_by: currentUser.id,
                 })
                 .select('id')

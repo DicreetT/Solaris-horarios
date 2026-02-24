@@ -83,6 +83,9 @@ function ChatPage() {
     const selectedConversation = conversations.find((c) => c.id === selectedConversationId) || null;
 
     const conversationName = (conversation: any) => {
+        if (conversation.title?.trim()) {
+            return conversation.title.trim();
+        }
         if (conversation.kind === 'group') {
             return conversation.title || `Grupo (${conversation.participants.length})`;
         }
@@ -97,6 +100,7 @@ function ChatPage() {
     }, [messages]);
 
     const canCreateGroup = chatMembers.length >= 2;
+    const canCreateConversation = chatMembers.length > 0 && chatTitle.trim().length > 0;
 
     useEffect(() => {
         if (!selectedConversationId && conversations.length > 0) {
@@ -129,26 +133,22 @@ function ChatPage() {
         if (openingDirectRef.current === directUserId || creatingConversation) return;
 
         openingDirectRef.current = directUserId;
-        createConversation({
-            kind: 'direct',
-            participantIds: [directUserId],
-        })
-            .then((conversationId) => {
-                setSelectedConversationId(conversationId);
-            })
-            .catch((error: any) => {
-                setChatActionError(error?.message || 'No se pudo abrir el chat directo.');
-            })
-            .finally(() => {
-                openingDirectRef.current = null;
-                clearUserParam();
-            });
+        setChatMembers([directUserId]);
+        setChatTitle('');
+        setShowCreateModal(true);
+        setChatActionError('Pon un título para crear este chat.');
+        openingDirectRef.current = null;
+        clearUserParam();
     }, [searchParams, setSearchParams, currentUser, conversations, createConversation, creatingConversation]);
 
     const createNewChat = async () => {
         if (!currentUser) return;
         if (chatMembers.length === 0) {
             setChatActionError('Selecciona al menos una persona para crear el chat.');
+            return;
+        }
+        if (!chatTitle.trim()) {
+            setChatActionError('El título del chat es obligatorio.');
             return;
         }
 
@@ -171,7 +171,7 @@ function ChatPage() {
         try {
             const id = await createConversation({
                 kind: chatMembers.length > 1 ? 'group' : 'direct',
-                title: chatMembers.length > 1 ? chatTitle.trim() : undefined,
+                title: chatTitle.trim(),
                 participantIds: chatMembers,
             });
             setSelectedConversationId(id);
@@ -914,12 +914,12 @@ function ChatPage() {
                                 </div>
                             )}
                             <div>
-                                <label className="block text-sm font-bold text-gray-900 mb-2">Título del grupo (opcional)</label>
+                                <label className="block text-sm font-bold text-gray-900 mb-2">Título del chat (obligatorio)</label>
                                 <input
                                     value={chatTitle}
                                     onChange={(e) => setChatTitle(e.target.value)}
                                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm"
-                                    placeholder={canCreateGroup ? 'Ej: Ventas · Semana 9' : 'Solo para chats grupales'}
+                                    placeholder={canCreateGroup ? 'Ej: Ventas · Semana 9' : 'Ej: Nómina Anabella'}
                                 />
                             </div>
 
@@ -955,8 +955,8 @@ function ChatPage() {
                             </button>
                             <button
                                 onClick={createNewChat}
-                                disabled={chatMembers.length === 0 || creatingConversation}
-                                className={`px-3 py-2 rounded-xl text-white text-sm font-bold ${chatMembers.length === 0 || creatingConversation ? 'bg-violet-300 cursor-not-allowed' : 'bg-violet-700'}`}
+                                disabled={!canCreateConversation || creatingConversation}
+                                className={`px-3 py-2 rounded-xl text-white text-sm font-bold ${!canCreateConversation || creatingConversation ? 'bg-violet-300 cursor-not-allowed' : 'bg-violet-700'}`}
                             >
                                 {creatingConversation ? 'Creando...' : 'Crear chat'}
                             </button>
