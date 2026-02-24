@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { MessageCircle, Mic, Plus, Reply, Send, Square, Trash2 } from 'lucide-react';
+import { Check, MessageCircle, Mic, Plus, Reply, Send, Square, Trash2, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useChat } from '../hooks/useChat';
 import { USERS } from '../constants';
@@ -42,6 +42,8 @@ function ChatPage() {
     const [chatTitle, setChatTitle] = useState('');
     const [chatMembers, setChatMembers] = useState<string[]>([]);
     const [chatActionError, setChatActionError] = useState<string | null>(null);
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [titleDraft, setTitleDraft] = useState('');
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
 
     const [mentionOpen, setMentionOpen] = useState(false);
@@ -53,6 +55,7 @@ function ChatPage() {
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const sendingRef = useRef(false);
+    const lastSendRef = useRef<{ signature: string; at: number }>({ signature: '', at: 0 });
     const recognitionRef = useRef<any>(null);
     const openingDirectRef = useRef<string | null>(null);
 
@@ -73,6 +76,8 @@ function ChatPage() {
         sendMessage,
         deleteMessage,
         deletingMessage,
+        updateConversationTitle,
+        updatingConversationTitle,
         deletedMessageMarker,
         deletedMessageLegacyText,
         removeConversation,
@@ -100,6 +105,15 @@ function ChatPage() {
 
     const canCreateGroup = chatMembers.length >= 2;
     const canCreateConversation = chatMembers.length > 0 && chatTitle.trim().length > 0;
+
+    useEffect(() => {
+        if (!selectedConversation) {
+            setIsEditingTitle(false);
+            setTitleDraft('');
+            return;
+        }
+        setTitleDraft(conversationName(selectedConversation));
+    }, [selectedConversation?.id]);
 
     useEffect(() => {
         if (!selectedConversationId && conversations.length > 0) {
@@ -280,14 +294,21 @@ function ChatPage() {
     }, []);
 
     useLayoutEffect(() => {
-        if (!messagesContainerRef.current) return;
-        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-        const id = window.setTimeout(() => {
-            if (!messagesContainerRef.current) return;
-            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-        }, 0);
-        return () => window.clearTimeout(id);
-    }, [selectedConversationId, messages.length]);
+        const container = messagesContainerRef.current;
+        if (!container) return;
+        const scrollToBottom = () => {
+            const live = messagesContainerRef.current;
+            if (!live) return;
+            live.scrollTop = live.scrollHeight;
+        };
+        scrollToBottom();
+        const raf = window.requestAnimationFrame(scrollToBottom);
+        const id = window.setTimeout(scrollToBottom, 80);
+        return () => {
+            window.cancelAnimationFrame(raf);
+            window.clearTimeout(id);
+        };
+    }, [selectedConversationId, messages]);
 
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
@@ -320,7 +341,22 @@ function ChatPage() {
         if (!selectedConversationId) return;
         if (sendingRef.current || sendingMessage || transcribingAudioAttachments) return;
 
+        const draftTrimmed = messageDraft.trim();
+        const rawSignature = JSON.stringify({
+            conversationId: selectedConversationId,
+            message: draftTrimmed,
+            attachments: messageAttachments.map((f) => `${f.name}|${f.url}|${f.type || ''}`),
+            replyToId,
+            linkedTaskId,
+            linkedMeetingId,
+            linkedAbsenceId,
+            linkedAbsenceKind,
+        });
+        const now = Date.now();
+        if (lastSendRef.current.signature === rawSignature && now - lastSendRef.current.at < 2500) return;
+
         sendingRef.current = true;
+        lastSendRef.current = { signature: rawSignature, at: now };
         try {
         let messageWithAbsence = linkedAbsenceId
             ? `${messageDraft}${messageDraft ? '\n' : ''}Solicitud vinculada #${linkedAbsenceId} (${linkedAbsenceKind === 'vacation' ? 'vacaciones' : 'ausencia'})`
@@ -386,12 +422,27 @@ function ChatPage() {
 
     const handleDeleteMessage = async (messageId: number) => {
         if (!selectedConversationId) return;
-        const ok = window.confirm('¿Eliminar este mensaje? Se verá como "Mensaje eliminado".');
+        const ok = window.confirm('¿Desea borrar el mensaje?');
         if (!ok) return;
         try {
             await deleteMessage({ messageId, conversationId: selectedConversationId });
         } catch (error: any) {
             setChatActionError(error?.message || 'No se pudo eliminar el mensaje.');
+        }
+    };
+
+    const handleSaveTitle = async () => {
+        if (!selectedConversation) return;
+        const next = titleDraft.trim();
+        if (!next) {
+            setChatActionError('El título del chat es obligatorio.');
+            return;
+        }
+        try {
+            await updateConversationTitle({ conversationId: selectedConversation.id, title: next });
+            setIsEditingTitle(false);
+        } catch (error: any) {
+            setChatActionError(error?.message || 'No se pudo actualizar el título.');
         }
     };
 
@@ -496,7 +547,7 @@ function ChatPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto w-full h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden app-page-shell">
+        <div className="max-w-7xl mx-auto w-full h-[calc(100dvh-7.5rem)] min-h-0 overflow-hidden app-page-shell">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
@@ -573,7 +624,52 @@ function ChatPage() {
                     ) : (
                         <>
                             <div className="p-4 border-b border-gray-100">
-                                <h2 className="text-lg font-black text-gray-900">{conversationName(selectedConversation)}</h2>
+                                {isEditingTitle ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            value={titleDraft}
+                                            onChange={(e) => setTitleDraft(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    void handleSaveTitle();
+                                                }
+                                                if (e.key === 'Escape') {
+                                                    setIsEditingTitle(false);
+                                                    setTitleDraft(conversationName(selectedConversation));
+                                                }
+                                            }}
+                                            autoFocus
+                                            className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900"
+                                        />
+                                        <button
+                                            onClick={() => void handleSaveTitle()}
+                                            disabled={updatingConversationTitle}
+                                            className="p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:opacity-60"
+                                            title="Guardar título"
+                                        >
+                                            <Check size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setIsEditingTitle(false);
+                                                setTitleDraft(conversationName(selectedConversation));
+                                            }}
+                                            className="p-2 rounded-lg border border-gray-200 bg-white text-gray-700"
+                                            title="Cancelar edición"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => setIsEditingTitle(true)}
+                                        className="text-left"
+                                        title="Editar título del chat"
+                                    >
+                                        <h2 className="text-lg font-black text-gray-900">{conversationName(selectedConversation)}</h2>
+                                    </button>
+                                )}
                                 <p className="text-xs text-gray-500">
                                     {selectedConversationParticipants.map((id) => userNameById(id)).join(', ')}
                                 </p>
@@ -689,6 +785,16 @@ function ChatPage() {
                                                                 <Reply size={12} /> Responder
                                                             </button>
                                                         )}
+                                                        {!isDeletedMessage && canDeleteMessage && (
+                                                            <button
+                                                                onClick={() => void handleDeleteMessage(msg.id)}
+                                                                disabled={deletingMessage}
+                                                                className="inline-flex items-center gap-1 text-rose-700 font-bold disabled:opacity-60"
+                                                                title="Borrar mensaje"
+                                                            >
+                                                                <Trash2 size={12} /> Borrar
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
@@ -697,7 +803,7 @@ function ChatPage() {
                                 })}
                             </div>
 
-                            <div className="p-4 border-t border-gray-100 space-y-3 bg-white">
+                            <div className="shrink-0 border-t border-gray-100 bg-white p-4 space-y-3 min-h-[150px] max-h-[220px] overflow-y-auto">
                                 {replyToId && (
                                     <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2 flex items-center justify-between">
                                         <span>Respondiendo a: {(messageById.get(replyToId)?.message || '[adjunto]').slice(0, 80)}</span>
@@ -830,7 +936,7 @@ function ChatPage() {
                                             onKeyUp={(e) => handleMessageInput(e.currentTarget.value, e.currentTarget.selectionStart || 0)}
                                             rows={2}
                                             placeholder="Escribe un mensaje..."
-                                            className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm"
+                                            className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 caret-violet-700 resize-none min-h-[44px] max-h-[120px]"
                                         />
                                         <button
                                             onClick={toggleTranscription}

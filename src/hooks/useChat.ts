@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
@@ -47,88 +47,8 @@ const LEGACY_DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
 
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
-    const currentUserId = currentUser?.id || '';
-    const [deletedConversationIds, setDeletedConversationIds] = useState<number[]>([]);
-    const [hiddenConversationIds, setHiddenConversationIds] = useState<number[]>([]);
-    const [deletedConversationSignatures, setDeletedConversationSignatures] = useState<string[]>([]);
-    const [hiddenConversationSignatures, setHiddenConversationSignatures] = useState<string[]>([]);
-    const [deletedMessageIdsGlobal, setDeletedMessageIdsGlobal] = useState<number[]>([]);
-    const localHiddenIdsKey = `chat_hidden_conversations_local_v1:${currentUserId || 'anon'}`;
-    const localDeletedIdsKey = 'chat_deleted_conversations_local_v1';
-    const localHiddenSigsKey = `chat_hidden_conversation_signatures_local_v1:${currentUserId || 'anon'}`;
-    const localDeletedSigsKey = 'chat_deleted_conversation_signatures_local_v1';
-
-    useEffect(() => {
-        if (!currentUserId) return;
-        try {
-            const localHiddenIds = JSON.parse(window.localStorage.getItem(localHiddenIdsKey) || '[]');
-            const localDeletedIds = JSON.parse(window.localStorage.getItem(localDeletedIdsKey) || '[]');
-            const localHiddenSigs = JSON.parse(window.localStorage.getItem(localHiddenSigsKey) || '[]');
-            const localDeletedSigs = JSON.parse(window.localStorage.getItem(localDeletedSigsKey) || '[]');
-            const localDeletedMsgIds = JSON.parse(window.localStorage.getItem(`chat_deleted_messages_local_v1:${currentUserId}`) || '[]');
-            if (Array.isArray(localHiddenIds) && localHiddenIds.length > 0) {
-                setHiddenConversationIds(Array.from(new Set(localHiddenIds.map((v: any) => Number(v)).filter(Number.isFinite))));
-            }
-            if (Array.isArray(localDeletedIds) && localDeletedIds.length > 0) {
-                setDeletedConversationIds(Array.from(new Set(localDeletedIds.map((v: any) => Number(v)).filter(Number.isFinite))));
-            }
-            if (Array.isArray(localHiddenSigs) && localHiddenSigs.length > 0) {
-                setHiddenConversationSignatures(Array.from(new Set(localHiddenSigs.map((v: any) => String(v || '').trim()).filter(Boolean))));
-            }
-            if (Array.isArray(localDeletedSigs) && localDeletedSigs.length > 0) {
-                setDeletedConversationSignatures(Array.from(new Set(localDeletedSigs.map((v: any) => String(v || '').trim()).filter(Boolean))));
-            }
-            if (Array.isArray(localDeletedMsgIds) && localDeletedMsgIds.length > 0) {
-                setDeletedMessageIdsGlobal(Array.from(new Set(localDeletedMsgIds.map((v: any) => Number(v)).filter(Number.isFinite))));
-            }
-        } catch {
-            // noop
-        }
-    }, [currentUserId]);
-
-    useEffect(() => {
-        if (!currentUserId) return;
-        try {
-            window.localStorage.setItem(localHiddenIdsKey, JSON.stringify(hiddenConversationIds || []));
-            window.localStorage.setItem(localDeletedIdsKey, JSON.stringify(deletedConversationIds || []));
-            window.localStorage.setItem(localHiddenSigsKey, JSON.stringify(hiddenConversationSignatures || []));
-            window.localStorage.setItem(localDeletedSigsKey, JSON.stringify(deletedConversationSignatures || []));
-            window.localStorage.setItem(`chat_deleted_messages_local_v1:${currentUserId}`, JSON.stringify(deletedMessageIdsGlobal || []));
-        } catch {
-            // noop
-        }
-    }, [
-        currentUserId,
-        hiddenConversationIds,
-        deletedConversationIds,
-        hiddenConversationSignatures,
-        deletedConversationSignatures,
-        deletedMessageIdsGlobal,
-    ]);
-
-    const addHiddenConversationId = (conversationId: number) =>
-        setHiddenConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
-    const addDeletedConversationId = (conversationId: number) =>
-        setDeletedConversationIds((prev) => (prev.includes(conversationId) ? prev : [...prev, conversationId]));
-    const addHiddenConversationSignature = (signature: string) =>
-        setHiddenConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
-    const addDeletedConversationSignature = (signature: string) =>
-        setDeletedConversationSignatures((prev) => (prev.includes(signature) ? prev : [...prev, signature]));
-    const addDeletedMessageIdGlobal = (messageId: number) =>
-        setDeletedMessageIdsGlobal((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
-    const hiddenSet = new Set(hiddenConversationIds.map((id) => Number(id)));
-    const deletedSet = new Set(deletedConversationIds.map((id) => Number(id)));
-    const hiddenSignatureSet = new Set(hiddenConversationSignatures);
-    const deletedSignatureSet = new Set(deletedConversationSignatures);
-    const deletedMessageSet = new Set((deletedMessageIdsGlobal || []).map((id) => Number(id)));
-    const filterSignature = useMemo(
-        () =>
-            `${hiddenConversationIds.join(',')}|${deletedConversationIds.join(',')}|${hiddenConversationSignatures.join(',')}|${deletedConversationSignatures.join(',')}`,
-        [hiddenConversationIds, deletedConversationIds, hiddenConversationSignatures, deletedConversationSignatures],
-    );
-
-    const conversationsKey = ['chat-conversations', currentUser?.id, filterSignature] as const;
-    const messagesKey = ['chat-messages', selectedConversationId, (deletedMessageIdsGlobal || []).join(',')] as const;
+    const conversationsKey = ['chat-conversations', currentUser?.id] as const;
+    const messagesKey = ['chat-messages', selectedConversationId] as const;
 
     const { data: conversations = [], isLoading: loadingConversations, error: conversationsError } = useQuery<ChatConversation[]>({
         queryKey: conversationsKey,
@@ -190,15 +110,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 return conversation.kind === 'direct' ? `direct:${participantsSig}` : `group:${titleSig}:${participantsSig}`;
             };
 
-            const visibleConversations = baseConversations.filter((c) => {
-                const sig = signatureOf({ ...c, participants: participantsByConversation.get(c.id) || [] });
-                return (
-                    !hiddenSet.has(Number(c.id)) &&
-                    !deletedSet.has(Number(c.id)) &&
-                    !hiddenSignatureSet.has(sig) &&
-                    !deletedSignatureSet.has(sig)
-                );
-            });
+            const visibleConversations = baseConversations;
 
             const normalized = visibleConversations
                 .map((conversation) => ({
@@ -236,7 +148,6 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         queryKey: messagesKey,
         queryFn: async () => {
             if (!currentUser || !selectedConversationId) return [];
-            if (hiddenSet.has(Number(selectedConversationId)) || deletedSet.has(Number(selectedConversationId))) return [];
 
             const { data, error } = await supabase
                 .from('chat_messages')
@@ -247,7 +158,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
 
             if (error) throw error;
             return (data || []).map((row: any) => {
-                const isDeleted = deletedMessageSet.has(Number(row.id));
+                const isDeleted = row.message === DELETED_MESSAGE_MARKER || row.message === LEGACY_DELETED_MESSAGE_TEXT;
                 return {
                     id: row.id,
                     conversation_id: row.conversation_id,
@@ -290,7 +201,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [currentUser, queryClient, selectedConversationId, conversationsKey]);
+    }, [currentUser, queryClient, selectedConversationId]);
 
     const createConversationMutation = useMutation({
         mutationFn: async ({
@@ -388,6 +299,26 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         },
     });
 
+    const updateConversationTitleMutation = useMutation({
+        mutationFn: async ({ conversationId, title }: { conversationId: number; title: string }) => {
+            if (!currentUser) throw new Error('No user logged in');
+            const normalizedTitle = (title || '').trim();
+            if (!normalizedTitle) throw new Error('El título del chat es obligatorio.');
+
+            const { error } = await supabase
+                .from('chat_conversations')
+                .update({ title: normalizedTitle })
+                .eq('id', conversationId);
+
+            if (error) throw error;
+            return { conversationId, title: normalizedTitle };
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: conversationsKey });
+            emitSuccessFeedback('Título actualizado.');
+        },
+    });
+
     const removeConversationMutation = useMutation({
         mutationFn: async ({
             conversationId,
@@ -474,26 +405,16 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                             : deleteQuery.eq('created_by', currentUser.id).select('id')
                     );
 
-                    if (error) {
-                        // Fallback: mantenemos borrado global lógico aunque RLS no permita hard-delete físico.
-                        addDeletedConversationId(targetId);
-                        continue;
-                    }
+                    if (error) throw error;
                     if (!data || data.length === 0) {
                         if (!currentUser?.isAdmin) {
                             throw new Error('Solo quien creó el chat puede eliminarlo para todo el equipo.');
                         }
-                        addDeletedConversationId(targetId);
-                        continue;
+                        throw new Error('No se pudo eliminar el chat para todo el equipo.');
                     }
-                    addDeletedConversationId(targetId);
                 }
-                if (signature) addDeletedConversationSignature(signature);
                 return { conversationId, deleteForAll };
             }
-
-            targetIds.forEach((targetId) => addHiddenConversationId(targetId));
-            if (signature) addHiddenConversationSignature(signature);
             const { data, error } = await supabase
                 .from('chat_participants')
                 .delete()
@@ -501,10 +422,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .eq('user_id', currentUser.id)
                 .select('user_id');
 
-            if (error) {
-                // Fallback local por usuario: aunque falle RLS, se mantiene oculto para no reaparecer.
-                return { conversationId, deleteForAll };
-            }
+            if (error) throw error;
             if (!data || data.length === 0) return { conversationId, deleteForAll };
             return { conversationId, deleteForAll };
         },
@@ -561,12 +479,7 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                 .eq('id', messageId)
                 .eq('conversation_id', conversationId);
 
-            if (updateError) {
-                addDeletedMessageIdGlobal(messageId);
-                return { messageId, conversationId };
-            }
-
-            addDeletedMessageIdGlobal(messageId);
+            if (updateError) throw updateError;
             return { messageId, conversationId };
         },
         onSuccess: ({ conversationId }) => {
@@ -587,8 +500,11 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         createConversationError: createConversationMutation.error,
         sendingMessage: sendMessageMutation.isPending,
         sendMessageError: sendMessageMutation.error,
+        updatingConversationTitle: updateConversationTitleMutation.isPending,
+        updateConversationTitleError: updateConversationTitleMutation.error,
         createConversation: createConversationMutation.mutateAsync,
         sendMessage: sendMessageMutation.mutateAsync,
+        updateConversationTitle: updateConversationTitleMutation.mutateAsync,
         removingConversation: removeConversationMutation.isPending,
         removeConversation: removeConversationMutation.mutateAsync,
         deletingMessage: deleteMessageMutation.isPending,

@@ -152,11 +152,15 @@ export function useAbsences(currentUser: User | null) {
 
     const deleteAbsenceMutation = useMutation({
         mutationFn: async (id: number) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('absence_requests')
                 .delete()
-                .eq('id', id);
+                .eq('id', id)
+                .select('id');
             if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('No se pudo eliminar la solicitud (sin permisos o ya no existe).');
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });

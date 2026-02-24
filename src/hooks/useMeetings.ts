@@ -100,11 +100,15 @@ export function useMeetings(currentUser: User | null) {
 
     const deleteMeetingMutation = useMutation<void, Error, number>({
         mutationFn: async (id: number) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('meeting_requests')
                 .delete()
-                .eq('id', id);
+                .eq('id', id)
+                .select('id');
             if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('No se pudo eliminar la solicitud (sin permisos o ya no existe).');
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['meetings'] });
