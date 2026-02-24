@@ -50,8 +50,6 @@ function ChatPage() {
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [speechSupported, setSpeechSupported] = useState(false);
     const [transcribingAudioAttachments, setTranscribingAudioAttachments] = useState(false);
-    const [chatViewportHeight, setChatViewportHeight] = useState<number | null>(null);
-    const pageRef = useRef<HTMLDivElement | null>(null);
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const sendingRef = useRef(false);
@@ -295,18 +293,6 @@ function ChatPage() {
         return () => window.clearTimeout(id);
     }, [selectedConversationId, messages.length]);
 
-    useLayoutEffect(() => {
-        const recalc = () => {
-            if (!pageRef.current) return;
-            const top = pageRef.current.getBoundingClientRect().top;
-            const height = Math.max(360, Math.floor(window.innerHeight - top - 12));
-            setChatViewportHeight(height);
-        };
-        recalc();
-        window.addEventListener('resize', recalc);
-        return () => window.removeEventListener('resize', recalc);
-    }, []);
-
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
         const prevHtmlOverflow = document.documentElement.style.overflow;
@@ -514,11 +500,7 @@ function ChatPage() {
     };
 
     return (
-        <div
-            ref={pageRef}
-            className="max-w-7xl mx-auto w-full min-h-0 overflow-hidden"
-            style={chatViewportHeight ? { height: `${chatViewportHeight}px` } : undefined}
-        >
+        <div className="max-w-7xl mx-auto w-full h-full min-h-0 overflow-hidden">
             <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 h-full min-h-0">
                 <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-4 min-h-0 overflow-hidden grid" style={{ gridTemplateRows: 'auto minmax(0,1fr)' }}>
                     <div className="flex items-center justify-between mb-3">
