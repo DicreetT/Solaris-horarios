@@ -1160,14 +1160,36 @@ function Dashboard() {
         if (!ok) return;
         setManageSaving(true);
         try {
+            const source = selectedManagedRequest.source;
+            const targetId = selectedManagedRequest.id;
             if (selectedManagedRequest.source === 'absence') {
                 await deleteAbsence(selectedManagedRequest.id);
             } else {
                 await deleteMeeting(selectedManagedRequest.id);
             }
+            if (source === 'absence') {
+                const { data, error } = await supabase
+                    .from('absence_requests')
+                    .select('id')
+                    .eq('id', targetId)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) throw new Error('La solicitud sigue existiendo en base de datos.');
+            } else {
+                const { data, error } = await supabase
+                    .from('meeting_requests')
+                    .select('id')
+                    .eq('id', targetId)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) throw new Error('La solicitud sigue existiendo en base de datos.');
+            }
             await refreshRequestQueries();
             setSelectedManagedRequest(null);
             setShowAbsencesManageModal(false);
+            emitSuccessFeedback('Solicitud eliminada con éxito.');
+        } catch (error: any) {
+            window.alert(error?.message || 'No se pudo eliminar la solicitud.');
         } finally {
             setManageSaving(false);
         }
@@ -1223,6 +1245,8 @@ function Dashboard() {
         if (!ok) return;
         setManageSaving(true);
         try {
+            const source = selectedMyRequest.source;
+            const targetId = selectedMyRequest.id;
             if (selectedMyRequest.source === 'absence') {
                 await deleteAbsence(selectedMyRequest.id);
             } else if (selectedMyRequest.source === 'meeting') {
@@ -1230,9 +1254,37 @@ function Dashboard() {
             } else {
                 await deleteTrainingRequest(selectedMyRequest.id);
             }
+            if (source === 'absence') {
+                const { data, error } = await supabase
+                    .from('absence_requests')
+                    .select('id')
+                    .eq('id', targetId)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) throw new Error('La solicitud sigue existiendo en base de datos.');
+            } else if (source === 'meeting') {
+                const { data, error } = await supabase
+                    .from('meeting_requests')
+                    .select('id')
+                    .eq('id', targetId)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) throw new Error('La solicitud sigue existiendo en base de datos.');
+            } else {
+                const { data, error } = await supabase
+                    .from('training_requests')
+                    .select('id')
+                    .eq('id', targetId)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) throw new Error('La solicitud sigue existiendo en base de datos.');
+            }
             await refreshRequestQueries();
             setShowMyRequestModal(false);
             setSelectedMyRequest(null);
+            emitSuccessFeedback('Solicitud eliminada con éxito.');
+        } catch (error: any) {
+            window.alert(error?.message || 'No se pudo eliminar la solicitud.');
         } finally {
             setManageSaving(false);
         }
