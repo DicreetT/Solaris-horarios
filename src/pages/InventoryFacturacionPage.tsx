@@ -204,7 +204,7 @@ export default function InventoryFacturacionPage() {
     seed.movimientos as Movement[],
     { userId: actorId, pollIntervalMs: 300 },
   );
-  const [canetMovimientos] = useSharedJsonState<Movement[]>(
+  const [canetMovimientos, , canetMovimientosLoading] = useSharedJsonState<Movement[]>(
     STORAGE_CANET_MOVS_KEY,
     [],
     { userId: actorId, initializeIfMissing: false, pollIntervalMs: 300 },
@@ -397,16 +397,41 @@ export default function InventoryFacturacionPage() {
   };
 
   const canetMovimientosEffective = useMemo(() => {
+    const canonicalLotForProduct = (productoRaw: string, loteRaw: string) => {
+      const producto = clean(productoRaw);
+      const lote = clean(loteRaw);
+      if (!producto || !lote) return lote;
+      const allLots = (lotes || [])
+        .filter((l) => clean(l.producto) === producto)
+        .map((l) => clean(l.lote))
+        .filter(Boolean);
+      const exact = allLots.find((candidate) => clean(candidate) === lote);
+      if (exact) return exact;
+      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      if (suffixMatches.length === 1) return suffixMatches[0];
+      return lote;
+    };
+
     const direct = (canetMovimientos || [])
       .filter((m) => {
         const d = parseDate(clean(m.fecha));
         return !!d && d >= canetMovementSyncStartDate;
       })
-      .map((m) => ({ ...m, source: 'canet' as const, origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id) }));
+      .map((m) => ({
+        ...m,
+        lote: canonicalLotForProduct(clean(m.producto), clean(m.lote)),
+        source: 'canet' as const,
+        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
+      }));
 
     const mirrored = (movimientos || [])
       .filter((m) => clean((m as any).source).toLowerCase() === 'canet')
-      .map((m) => ({ ...m, source: 'canet' as const, origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id) }));
+      .map((m) => ({
+        ...m,
+        lote: canonicalLotForProduct(clean(m.producto), clean(m.lote)),
+        source: 'canet' as const,
+        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
+      }));
 
     // Prioriza la fuente directa de Canet y usa el espejo solo como respaldo.
     const merged = new Map<number, Movement>();
@@ -419,7 +444,7 @@ export default function InventoryFacturacionPage() {
     return Array.from(merged.values()).sort(
       (a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0),
     );
-  }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
+  }, [movimientos, canetMovimientos, canetMovementSyncStartDate, lotes]);
 
   const canetTransferAutoInMovements = useMemo(() => {
     const isHuarte = (v: unknown) => clean(v).toUpperCase() === 'HUARTE';
@@ -451,6 +476,7 @@ export default function InventoryFacturacionPage() {
   }, [canetMovimientosEffective]);
 
   useEffect(() => {
+    if (canetMovimientosLoading) return;
     const direct = (canetMovimientos || [])
       .filter((m) => {
         const d = parseDate(clean(m.fecha));
@@ -489,19 +515,18 @@ export default function InventoryFacturacionPage() {
       const nonCanet = base.filter((m) => clean((m as any).source).toLowerCase() !== 'canet');
       return [...direct, ...nonCanet];
     });
-  }, [canetMovimientos, canetMovementSyncStartDate, setMovimientos]);
+  }, [canetMovimientos, canetMovementSyncStartDate, setMovimientos, canetMovimientosLoading]);
 
   const integratedMovements = useMemo(() => {
     const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
     return [
       ...canetMovimientosEffective,
-      ...canetTransferAutoInMovements,
       ...own.filter((m) => {
         const src = clean(m.source).toLowerCase();
-        return src !== 'canet' && src !== 'canet_auto_in';
+        return src !== 'canet';
       }),
     ];
-  }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
+  }, [movimientos, canetMovimientosEffective]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {

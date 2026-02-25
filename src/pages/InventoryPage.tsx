@@ -66,6 +66,11 @@ type Movement = {
 type GenericRow = Record<string, any>;
 
 const clean = (v: any) => (v == null ? '' : String(v).trim());
+const normalizeSearch = (v: any) =>
+  clean(v)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -295,23 +300,68 @@ function InventoryPage() {
     source: 'canet',
     origin_canet_id: toNum(m.id),
   });
+  const isCanetTransferToHuarte = (m: Movement) => {
+    const tipo = normalizeSearch(m.tipo_movimiento);
+    const dest = clean(m.destino).toUpperCase();
+    const client = clean(m.cliente).toUpperCase();
+    const bodega = clean(m.bodega).toUpperCase();
+    const d = dateFromAny(clean(m.fecha));
+    return (
+      !!d &&
+      d >= canetMovementSyncStartDate &&
+      tipo.includes('traspaso') &&
+      (dest === 'HUARTE' || client === 'HUARTE') &&
+      bodega !== 'HUARTE'
+    );
+  };
+  const toHuarteAutoInMovement = (m: Movement): Movement => ({
+    ...m,
+    id: 1900000000 + toNum(m.id),
+    source: 'canet_auto_in',
+    origin_canet_id: toNum(m.id),
+    tipo_movimiento: 'entrada_traspaso',
+    bodega: 'HUARTE',
+    cliente: clean(m.bodega) || 'CANET',
+    destino: 'HUARTE',
+    cantidad: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
+    cantidad_signed: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
+    signo: 1,
+    notas: clean(m.notas)
+      ? `${clean(m.notas)} · Auto entrada por traspaso Canet→Huarte`
+      : 'Auto entrada por traspaso Canet→Huarte',
+  });
   const syncMirrorUpsert = (m: Movement) => {
     const mirror = toHuarteMirrorMovement(m);
+    const shouldAutoIn = isCanetTransferToHuarte(m);
+    const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m) : null;
     setHuarteMovimientosShared((prev) => {
       const base = Array.isArray(prev) ? prev : [];
-      const idx = base.findIndex((row: any) => toNum(row.origin_canet_id) === toNum(m.id));
-      if (idx >= 0) {
-        const next = [...base];
-        next[idx] = mirror;
-        return next;
+      const next = [...base];
+      const mirrorIdx = next.findIndex(
+        (row: any) => clean(row.source).toLowerCase() === 'canet' && toNum(row.origin_canet_id) === toNum(m.id),
+      );
+      if (mirrorIdx >= 0) next[mirrorIdx] = mirror;
+      else next.unshift(mirror);
+      const autoIdx = next.findIndex(
+        (row: any) => clean(row.source).toLowerCase() === 'canet_auto_in' && toNum(row.origin_canet_id) === toNum(m.id),
+      );
+      if (autoIn) {
+        if (autoIdx >= 0) next[autoIdx] = autoIn;
+        else next.unshift(autoIn);
+      } else if (autoIdx >= 0) {
+        next.splice(autoIdx, 1);
       }
-      return [mirror, ...base];
+      return next;
     });
   };
   const syncMirrorDelete = (canetId: number) => {
     setHuarteMovimientosShared((prev) => {
       const base = Array.isArray(prev) ? prev : [];
-      return base.filter((row: any) => toNum(row.origin_canet_id) !== toNum(canetId));
+      return base.filter((row: any) => {
+        const src = clean(row.source).toLowerCase();
+        if (toNum(row.origin_canet_id) !== toNum(canetId)) return true;
+        return src !== 'canet' && src !== 'canet_auto_in';
+      });
     });
   };
 
@@ -385,6 +435,20 @@ function InventoryPage() {
   }, [productos]);
 
   const normalizedMovements = useMemo(() => {
+    const canonicalLot = (productoRaw: string, loteRaw: string) => {
+      const producto = clean(productoRaw);
+      const lote = clean(loteRaw);
+      if (!producto || !lote) return lote;
+      const allLots = lotes
+        .filter((l) => clean(l.producto) === producto)
+        .map((l) => clean(l.lote))
+        .filter(Boolean);
+      const exact = allLots.find((candidate) => clean(candidate) === lote);
+      if (exact) return exact;
+      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      if (suffixMatches.length === 1) return suffixMatches[0];
+      return lote;
+    };
     return movimientos.map((m) => {
       const tipo = clean(m.tipo_movimiento);
       const qty = Math.abs(toNum(m.cantidad));
@@ -392,15 +456,19 @@ function InventoryPage() {
       const sign = rowSign !== 0 ? rowSign : (signByType.get(tipo) ?? (toNum(m.cantidad_signed) < 0 ? -1 : 1));
       const hasSigned = m.cantidad_signed !== undefined && m.cantidad_signed !== null && clean(m.cantidad_signed) !== '';
       const signedFromRow = toNum(m.cantidad_signed);
+      const producto = clean(m.producto);
+      const lote = canonicalLot(producto, clean(m.lote));
       return {
         ...m,
+        producto,
+        lote,
         cantidad: qty,
         signo: sign,
         cantidad_signed: hasSigned ? signedFromRow : qty * sign,
         afecta_stock: clean(m.afecta_stock) || 'SI',
       };
     });
-  }, [movimientos, signByType]);
+  }, [movimientos, signByType, lotes]);
 
   useEffect(() => {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
