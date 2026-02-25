@@ -153,7 +153,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-25-1125';
+const HUARTE_BUILD_TAG = 'HF-2026-02-25-1130';
 
 export default function InventoryFacturacionPage() {
   const { currentUser } = useAuth();
@@ -664,6 +664,14 @@ export default function InventoryFacturacionPage() {
       .map((r) => ({ ...r, stock: Math.max(0, toNum(r.stock)) }))
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [filteredMovementsForStock]);
+  const safeControlByLot = useMemo(
+    () =>
+      controlByLot.map((r) => ({
+        ...r,
+        stock: Math.max(0, Math.round(toNum(r.stock))),
+      })),
+    [controlByLot],
+  );
 
   const stockVisualRows = useMemo(() => {
     const byLot = new Map<
@@ -675,7 +683,7 @@ export default function InventoryFacturacionPage() {
         byBodega: Record<string, number>;
       }
     >();
-    controlByLot.forEach((m) => {
+    safeControlByLot.forEach((m) => {
       const producto = clean(m.producto);
       const lote = clean(m.lote);
       const bodega = clean(m.bodega);
@@ -691,7 +699,7 @@ export default function InventoryFacturacionPage() {
       .filter((r) => r.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 14);
-  }, [controlByLot]);
+  }, [safeControlByLot]);
   useEffect(() => {
     setStockSectionSelected(null);
   }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
@@ -765,27 +773,27 @@ export default function InventoryFacturacionPage() {
         .filter((l) => clean(l.estado || 'ACTIVO').toLowerCase() !== 'cerrado')
         .map((l) => `${clean(l.producto)}|${clean(l.lote)}|${clean(l.bodega)}`),
     );
-    const totalLots = controlByLot.filter((r) => r.stock > 0).filter((r) => activeMaster.size === 0 || activeMaster.has(`${r.producto}|${r.lote}|${r.bodega}`)).length;
+    const totalLots = safeControlByLot.filter((r) => r.stock > 0).filter((r) => activeMaster.size === 0 || activeMaster.has(`${r.producto}|${r.lote}|${r.bodega}`)).length;
     return { totalStock, totalMovements, totalRect, totalLots };
-  }, [controlByLot, filteredMovements, rectificativas, lotes]);
+  }, [controlByLot, safeControlByLot, filteredMovements, rectificativas, lotes]);
 
   const stockByProductTotals = useMemo(() => {
     const map = new Map<string, number>();
-    controlByLot.forEach((r) => {
+    safeControlByLot.forEach((r) => {
       map.set(r.producto, (map.get(r.producto) || 0) + Math.max(0, toNum(r.stock)));
     });
     return Array.from(map.entries())
       .map(([producto, total]) => ({ producto, total: Math.max(0, toNum(total)) }))
       .sort((a, b) => b.total - a.total);
-  }, [controlByLot]);
+  }, [safeControlByLot]);
   const safeKpiStockTotal = useMemo(
-    () => Math.max(0, Math.round(controlByLot.reduce((acc, r) => acc + Math.max(0, toNum(r.stock)), 0))),
-    [controlByLot],
+    () => Math.max(0, Math.round(safeControlByLot.reduce((acc, r) => acc + Math.max(0, toNum(r.stock)), 0))),
+    [safeControlByLot],
   );
 
   const activeLotsByProduct = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    controlByLot
+    safeControlByLot
       .filter((r) => toNum(r.stock) > 0)
       .forEach((r) => {
         if (!map.has(r.producto)) map.set(r.producto, new Set<string>());
@@ -794,7 +802,7 @@ export default function InventoryFacturacionPage() {
     return Array.from(map.entries())
       .map(([producto, lots]) => ({ producto, lots: lots.size }))
       .sort((a, b) => b.lots - a.lots);
-  }, [controlByLot]);
+  }, [safeControlByLot]);
 
   const movementTypeSummary = useMemo(() => {
     const map = new Map<string, number>();
@@ -1078,7 +1086,7 @@ export default function InventoryFacturacionPage() {
   };
   const exportExecutivePdf = () => {
     const summaryRows: Array<Array<string | number>> = [
-      ['Stock total (filtro)', Math.round(dashboard.totalStock)],
+      ['Stock total (filtro)', safeKpiStockTotal],
       ['Movimientos (filtro)', dashboard.totalMovements],
       ['Rectificativas (filtro)', dashboard.totalRect],
       ['Lotes activos (stock>0)', dashboard.totalLots],
@@ -1358,23 +1366,23 @@ export default function InventoryFacturacionPage() {
 
           {(!isCompact || dashboardSection === 'stock') && (
             <Panel
-              title="Stock por producto/lote/bodega"
+              title={`Stock por producto/lote/bodega · ${HUARTE_BUILD_TAG}`}
               onDownload={() =>
                 exportPdf(
                   'Inventario Facturacion - Stock por Lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock'],
-                  controlByLot.map((r) => [r.producto, r.lote, r.bodega, Math.max(0, Math.round(toNum(r.stock)))]),
+                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
-              actions={controlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
+              actions={safeControlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
               <DataTable
                 headers={['Producto', 'Lote', 'Bodega', 'Stock']}
-                rows={limitRows('stock', controlByLot).map((r, idx) => [
+                rows={limitRows('stock', safeControlByLot).map((r, idx) => [
                   <ProductPill key={`h-stock-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
                   r.lote,
                   r.bodega,
-                  Math.max(0, Math.round(toNum(r.stock))),
+                  r.stock,
                 ])}
               />
               <StockVisual
@@ -1397,17 +1405,17 @@ export default function InventoryFacturacionPage() {
                 exportPdf(
                   'Inventario Facturacion - Control por lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock calculado'],
-                  controlByLot.map((r) => [r.producto, r.lote, r.bodega, Math.max(0, Math.round(toNum(r.stock)))]),
+                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
             >
               <DataTable
                 headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']}
-                rows={controlByLot.map((r, idx) => [
+                rows={safeControlByLot.map((r, idx) => [
                   <ProductPill key={`h-control-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
                   r.lote,
                   r.bodega,
-                  Math.max(0, Math.round(toNum(r.stock))),
+                  r.stock,
                 ])}
               />
             </Panel>
