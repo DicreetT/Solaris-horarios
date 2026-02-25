@@ -1397,6 +1397,11 @@ function InventoryPage() {
     if (!lotForm.producto || !lotForm.lote) return;
     const semaforo = getCaducitySemaforo(lotForm.fecha_caducidad);
     if (editingLotKey) {
+      const [oldProductoRaw, oldLoteRaw] = editingLotKey.split('|');
+      const oldProducto = clean(oldProductoRaw);
+      const oldLote = clean(oldLoteRaw);
+      const newProducto = clean(lotForm.producto);
+      const newLote = clean(lotForm.lote);
       setLotes((prev) =>
         prev.map((l) =>
           `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey
@@ -1404,8 +1409,25 @@ function InventoryPage() {
             : l,
         ),
       );
+      const changedMovements = movimientos
+        .filter((m) => clean(m.producto) === oldProducto && clean(m.lote) === oldLote)
+        .map((m) => ({
+          ...m,
+          producto: newProducto,
+          lote: newLote,
+          updated_at: new Date().toISOString(),
+          updated_by: actorName,
+        }));
+      if (changedMovements.length > 0) {
+        const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
+        setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
+        changedMovements.forEach((m) => syncMirrorUpsert(m));
+      }
       await notifyAnabela(`${actorName} editó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
-      appendAudit('Edición de lote', `${lotForm.producto} ${lotForm.lote}`);
+      appendAudit(
+        'Edición de lote',
+        `${oldProducto} ${oldLote} → ${lotForm.producto} ${lotForm.lote} · Movimientos actualizados: ${changedMovements.length}`,
+      );
       emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
       setLotes((prev) => [{ ...lotForm, semaforo_caducidad: semaforo }, ...prev]);
@@ -1457,6 +1479,68 @@ function InventoryPage() {
     appendAudit('Creación de cliente', newClient.trim());
     emitSuccessFeedback('Cliente creado con éxito.');
     setNewClient('');
+  };
+
+  const editClient = async (oldClientRaw: string) => {
+    if (!canEditNow) return;
+    const oldClient = clean(oldClientRaw);
+    if (!oldClient) return;
+    const nextClient = window.prompt('Nuevo nombre de cliente', oldClientRaw)?.trim();
+    if (!nextClient) return;
+    const nextClientClean = clean(nextClient);
+    if (!nextClientClean || nextClientClean === oldClient) return;
+    setClientes((prev) =>
+      prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)),
+    );
+    const changedMovements = movimientos
+      .filter((m) => clean(m.cliente) === oldClient)
+      .map((m) => ({
+        ...m,
+        cliente: nextClient,
+        updated_at: new Date().toISOString(),
+        updated_by: actorName,
+      }));
+    if (changedMovements.length > 0) {
+      const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
+      setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
+      changedMovements.forEach((m) => syncMirrorUpsert(m));
+    }
+    await notifyAnabela(`${actorName} editó cliente en Inventario: ${oldClientRaw} → ${nextClient}.`);
+    appendAudit('Edición de cliente', `${oldClientRaw} → ${nextClient} · Movimientos actualizados: ${changedMovements.length}`);
+    emitSuccessFeedback('Cliente actualizado con éxito.');
+  };
+
+  const editTipoMovimiento = async (oldTipoRaw: string) => {
+    if (!canEditNow) return;
+    const oldTipo = clean(oldTipoRaw);
+    if (!oldTipo) return;
+    const nextTipo = window.prompt('Nuevo tipo de movimiento', oldTipoRaw)?.trim();
+    if (!nextTipo) return;
+    const nextTipoClean = clean(nextTipo);
+    if (!nextTipoClean || nextTipoClean === oldTipo) return;
+    setTipos((prev) =>
+      prev.map((t) =>
+        clean(t.tipo_movimiento) === oldTipo
+          ? { ...t, tipo_movimiento: nextTipo }
+          : t,
+      ),
+    );
+    const changedMovements = movimientos
+      .filter((m) => clean(m.tipo_movimiento) === oldTipo)
+      .map((m) => ({
+        ...m,
+        tipo_movimiento: nextTipo,
+        updated_at: new Date().toISOString(),
+        updated_by: actorName,
+      }));
+    if (changedMovements.length > 0) {
+      const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
+      setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
+      changedMovements.forEach((m) => syncMirrorUpsert(m));
+    }
+    await notifyAnabela(`${actorName} editó tipo de movimiento: ${oldTipoRaw} → ${nextTipo}.`);
+    appendAudit('Edición de tipo', `${oldTipoRaw} → ${nextTipo} · Movimientos actualizados: ${changedMovements.length}`);
+    emitSuccessFeedback('Tipo de movimiento actualizado con éxito.');
   };
 
   const downloadMovements = async () => {
@@ -2117,7 +2201,20 @@ function InventoryPage() {
               <button onClick={addClient} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir</button>
             </div>
           </div>
-          <SimpleDataTable headers={['Cliente']} rows={clientes.map((c) => [c.cliente])} />
+          <SimpleDataTable
+            headers={['Cliente', 'Acciones']}
+            rows={clientes.map((c, idx) => [
+              c.cliente,
+              <button
+                key={`client-edit-${idx}`}
+                disabled={!isEditModeActive}
+                onClick={() => void editClient(c.cliente)}
+                className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+              >
+                <Pencil size={13} />
+              </button>,
+            ])}
+          />
         </div>
       )}
 
@@ -2129,7 +2226,22 @@ function InventoryPage() {
               <button onClick={() => setTipoModalOpen(true)} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir tipo</button>
             </div>
           </div>
-          <SimpleDataTable headers={['Tipo', 'Signo', 'Afecta stock']} rows={tipos.map((t) => [t.tipo_movimiento, t.signo_1_1, t.afecta_stock_si_no])} />
+          <SimpleDataTable
+            headers={['Tipo', 'Signo', 'Afecta stock', 'Acciones']}
+            rows={tipos.map((t, idx) => [
+              t.tipo_movimiento,
+              t.signo_1_1,
+              t.afecta_stock_si_no,
+              <button
+                key={`tipo-edit-${idx}`}
+                disabled={!isEditModeActive}
+                onClick={() => void editTipoMovimiento(t.tipo_movimiento)}
+                className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+              >
+                <Pencil size={13} />
+              </button>,
+            ])}
+          />
         </div>
       )}
 

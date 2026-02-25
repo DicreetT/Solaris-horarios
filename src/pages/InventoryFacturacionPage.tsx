@@ -121,6 +121,11 @@ const parseDate = (v: string): Date | null => {
 };
 
 const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const monthEndFromKey = (key: string) => {
+  const [y, m] = key.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return null;
+  return new Date(y, m, 0, 23, 59, 59, 999);
+};
 const monthLabel = (key: string) => {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, (m || 1) - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
@@ -416,6 +421,35 @@ export default function InventoryFacturacionPage() {
     );
   }, [movimientos, canetMovimientos, canetMovementSyncStartDate]);
 
+  const canetTransferAutoInMovements = useMemo(() => {
+    const isHuarte = (v: unknown) => clean(v).toUpperCase() === 'HUARTE';
+    const isTransfer = (v: unknown) => normalizeSearch(v).includes('traspaso');
+
+    return canetMovimientosEffective
+      .filter((m) => isTransfer(m.tipo_movimiento))
+      .filter((m) => isHuarte(m.destino) || isHuarte(m.cliente))
+      .filter((m) => !isHuarte(m.bodega))
+      .map((m) => {
+        const qty = Math.abs(toNum(m.cantidad_signed || m.cantidad));
+        const baseId = toNum((m as any).origin_canet_id) || toNum(m.id);
+        return {
+          ...m,
+          id: -1_000_000_000 - baseId,
+          bodega: 'HUARTE',
+          tipo_movimiento: clean(m.tipo_movimiento) || 'traspaso',
+          cliente: clean(m.bodega) || 'CANET',
+          destino: 'HUARTE',
+          cantidad: qty,
+          cantidad_signed: qty,
+          signo: 1,
+          source: 'canet_auto_in',
+          notas: clean(m.notas)
+            ? `${clean(m.notas)} · Auto entrada por traspaso Canet→Huarte`
+            : 'Auto entrada por traspaso Canet→Huarte',
+        } as Movement;
+      });
+  }, [canetMovimientosEffective]);
+
   useEffect(() => {
     const direct = (canetMovimientos || [])
       .filter((m) => {
@@ -459,8 +493,15 @@ export default function InventoryFacturacionPage() {
 
   const integratedMovements = useMemo(() => {
     const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
-    return [...canetMovimientosEffective, ...own.filter((m) => clean(m.source).toLowerCase() !== 'canet')];
-  }, [movimientos, canetMovimientosEffective]);
+    return [
+      ...canetMovimientosEffective,
+      ...canetTransferAutoInMovements,
+      ...own.filter((m) => {
+        const src = clean(m.source).toLowerCase();
+        return src !== 'canet' && src !== 'canet_auto_in';
+      }),
+    ];
+  }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -539,6 +580,16 @@ export default function InventoryFacturacionPage() {
   };
 
   const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
+  const filteredMovementsForStock = useMemo(() => {
+    const monthEnd = monthFilter ? monthEndFromKey(monthFilter) : null;
+    return monthSortedMovements.filter((m) => {
+      if (!movementPassesFilters(m, false)) return false;
+      if (!monthEnd) return true;
+      const d = parseDate(clean(m.fecha));
+      if (!d) return false;
+      return d.getTime() <= monthEnd.getTime();
+    });
+  }, [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
   const visibleMovementsLast7Days = useMemo(() => {
     if (showAllRows.movimientos) return filteredMovements;
     const allowedDays = new Set<string>();
@@ -558,7 +609,7 @@ export default function InventoryFacturacionPage() {
 
   const controlByLot = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
-    filteredMovements.forEach((m) => {
+    filteredMovementsForStock.forEach((m) => {
       const key = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
       if (!map.has(key)) {
         map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
@@ -567,7 +618,7 @@ export default function InventoryFacturacionPage() {
       row.stock += toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
     });
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
-  }, [filteredMovements]);
+  }, [filteredMovementsForStock]);
 
   const stockVisualRows = useMemo(() => {
     const byLot = new Map<
@@ -579,7 +630,7 @@ export default function InventoryFacturacionPage() {
         byBodega: Record<string, number>;
       }
     >();
-    filteredMovements.forEach((m) => {
+    filteredMovementsForStock.forEach((m) => {
       const producto = clean(m.producto);
       const lote = clean(m.lote);
       const bodega = clean(m.bodega);
@@ -595,7 +646,7 @@ export default function InventoryFacturacionPage() {
       .filter((r) => r.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 14);
-  }, [filteredMovements]);
+  }, [filteredMovementsForStock]);
   useEffect(() => {
     setStockSectionSelected(null);
   }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
@@ -1392,7 +1443,7 @@ export default function InventoryFacturacionPage() {
           title="Movimientos"
           actions={
             <div className="flex items-center gap-2">
-              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', m.source === 'canet' ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
                 <Download size={14} />
                 Descargar PDF
               </button>
@@ -1420,9 +1471,9 @@ export default function InventoryFacturacionPage() {
               m.cliente || '',
               m.factura_doc || '',
               m.responsable || '',
-              m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación',
+              m.source === 'canet' ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación',
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
-              canEdit && m.source !== 'canet' ? (
+              canEdit && m.source !== 'canet' && m.source !== 'canet_auto_in' ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
                   <button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
