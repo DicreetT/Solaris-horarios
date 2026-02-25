@@ -443,10 +443,11 @@ function InventoryPage() {
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
-      const exact = allLots.find((candidate) => clean(candidate) === lote);
-      if (exact) return exact;
       const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
-      if (suffixMatches.length === 1) return suffixMatches[0];
+      if (suffixMatches.length > 0) {
+        const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
+        if (preferred) return preferred;
+      }
       return lote;
     };
     return movimientos.map((m) => {
@@ -480,10 +481,11 @@ function InventoryPage() {
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
-      const exact = allLots.find((candidate) => clean(candidate) === lote);
-      if (exact) return exact;
       const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
-      if (suffixMatches.length === 1) return suffixMatches[0];
+      if (suffixMatches.length > 0) {
+        const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
+        if (preferred) return preferred;
+      }
       return lote;
     };
 
