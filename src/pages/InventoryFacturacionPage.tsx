@@ -771,10 +771,10 @@ export default function InventoryFacturacionPage() {
   const stockByProductTotals = useMemo(() => {
     const map = new Map<string, number>();
     controlByLot.forEach((r) => {
-      map.set(r.producto, (map.get(r.producto) || 0) + toNum(r.stock));
+      map.set(r.producto, (map.get(r.producto) || 0) + Math.max(0, toNum(r.stock)));
     });
     return Array.from(map.entries())
-      .map(([producto, total]) => ({ producto, total }))
+      .map(([producto, total]) => ({ producto, total: Math.max(0, toNum(total)) }))
       .sort((a, b) => b.total - a.total);
   }, [controlByLot]);
 
@@ -1262,7 +1262,12 @@ export default function InventoryFacturacionPage() {
         <section className="space-y-3">
           <div className="rounded-2xl border border-violet-200 bg-white p-2">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <KpiCard title="Stock total" value={String(Math.round(dashboard.totalStock))} tone="violet" onClick={() => setStockTotalModalOpen(true)} />
+            <KpiCard
+              title="Stock total"
+              value={String(Math.max(0, Math.round(toNum(dashboard.totalStock))))}
+              tone="violet"
+              onClick={() => setStockTotalModalOpen(true)}
+            />
             <KpiCard title="Movimientos (filtro)" value={String(dashboard.totalMovements)} tone="sky" onClick={() => setMovementTypesModalOpen(true)} />
             <KpiCard title="Rectificativas (filtro)" value={String(dashboard.totalRect)} tone="amber" onClick={() => setRectByProductModalOpen(true)} />
             <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
