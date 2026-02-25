@@ -471,6 +471,40 @@ function InventoryPage() {
   }, [movimientos, signByType, lotes]);
 
   useEffect(() => {
+    if (movimientosLoading) return;
+    const canonicalLot = (productoRaw: string, loteRaw: string) => {
+      const producto = clean(productoRaw);
+      const lote = clean(loteRaw);
+      if (!producto || !lote) return lote;
+      const allLots = lotes
+        .filter((l) => clean(l.producto) === producto)
+        .map((l) => clean(l.lote))
+        .filter(Boolean);
+      const exact = allLots.find((candidate) => clean(candidate) === lote);
+      if (exact) return exact;
+      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      if (suffixMatches.length === 1) return suffixMatches[0];
+      return lote;
+    };
+
+    const next = movimientos.map((m) => {
+      const producto = clean(m.producto);
+      const lote = canonicalLot(producto, clean(m.lote));
+      if (lote === clean(m.lote) && producto === clean(m.producto)) return m;
+      return {
+        ...m,
+        producto,
+        lote,
+        updated_at: new Date().toISOString(),
+        updated_by: actorName,
+      };
+    });
+    const changed = next.some((m, idx) => clean(m.lote) !== clean(movimientos[idx]?.lote) || clean(m.producto) !== clean(movimientos[idx]?.producto));
+    if (!changed) return;
+    setMovimientos(next);
+  }, [movimientos, lotes, movimientosLoading, actorName]);
+
+  useEffect(() => {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
     if (movimientosLoading || huarteMovimientosLoading) return;
 

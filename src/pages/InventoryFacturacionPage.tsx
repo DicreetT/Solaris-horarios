@@ -521,12 +521,13 @@ export default function InventoryFacturacionPage() {
     const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
     return [
       ...canetMovimientosEffective,
+      ...canetTransferAutoInMovements,
       ...own.filter((m) => {
         const src = clean(m.source).toLowerCase();
-        return src !== 'canet';
+        return src !== 'canet' && src !== 'canet_auto_in';
       }),
     ];
-  }, [movimientos, canetMovimientosEffective]);
+  }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
