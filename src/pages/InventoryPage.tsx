@@ -474,12 +474,15 @@ function InventoryPage() {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
     if (movimientosLoading || huarteMovimientosLoading) return;
 
-    const mirrorRows = normalizedMovements
+    const eligibleRows = normalizedMovements
       .filter((m) => {
         const d = dateFromAny(clean(m.fecha));
         return !!d && d >= canetMovementSyncStartDate;
-      })
-      .map((m) => toHuarteMirrorMovement(m));
+      });
+    const mirrorRows = eligibleRows.map((m) => toHuarteMirrorMovement(m));
+    const autoInRows = eligibleRows
+      .filter((m) => isCanetTransferToHuarte(m))
+      .map((m) => toHuarteAutoInMovement(m));
 
     const signature = (m: any) => [
       clean(m.fecha),
@@ -497,14 +500,23 @@ function InventoryPage() {
     setHuarteMovimientosShared((prev) => {
       const base = Array.isArray(prev) ? prev : [];
       const prevCanet = base.filter((m) => clean(m.source).toLowerCase() === 'canet');
+      const prevAuto = base.filter((m) => clean(m.source).toLowerCase() === 'canet_auto_in');
       const prevSig = prevCanet.map(signature).sort();
       const nextSig = mirrorRows.map(signature).sort();
-      const same =
+      const prevAutoSig = prevAuto.map(signature).sort();
+      const nextAutoSig = autoInRows.map(signature).sort();
+      const sameCanet =
         prevSig.length === nextSig.length &&
         prevSig.every((item, idx) => item === nextSig[idx]);
-      if (same) return base;
-      const nonCanet = base.filter((m) => clean(m.source).toLowerCase() !== 'canet');
-      return [...mirrorRows, ...nonCanet];
+      const sameAuto =
+        prevAutoSig.length === nextAutoSig.length &&
+        prevAutoSig.every((item, idx) => item === nextAutoSig[idx]);
+      if (sameCanet && sameAuto) return base;
+      const nonMirrored = base.filter((m) => {
+        const src = clean(m.source).toLowerCase();
+        return src !== 'canet' && src !== 'canet_auto_in';
+      });
+      return [...mirrorRows, ...autoInRows, ...nonMirrored];
     });
   }, [
     normalizedMovements,
@@ -1478,7 +1490,13 @@ function InventoryPage() {
         ),
       );
       const changedMovements = movimientos
-        .filter((m) => clean(m.producto) === oldProducto && clean(m.lote) === oldLote)
+        .filter((m) => {
+          if (clean(m.producto) !== oldProducto) return false;
+          const mvLot = clean(m.lote);
+          if (mvLot === oldLote) return true;
+          // Soporta histórico con lote corto cuando maestro quedó en formato largo.
+          return oldLote.endsWith(mvLot) || mvLot.endsWith(oldLote);
+        })
         .map((m) => ({
           ...m,
           producto: newProducto,
