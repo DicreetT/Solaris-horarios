@@ -153,6 +153,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
+const HUARTE_BUILD_TAG = 'HF-2026-02-25-1118';
 
 export default function InventoryFacturacionPage() {
   const { currentUser } = useAuth();
@@ -1136,6 +1137,7 @@ export default function InventoryFacturacionPage() {
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">Inventario Huarte</p>
             <h1 className="text-3xl font-black text-violet-950">Control de stock Huarte</h1>
             <p className="text-sm text-violet-700/80">Vista integrada con filtros, visuales y tablas operativas.</p>
+            <p className="text-[10px] font-semibold text-violet-300">build {HUARTE_BUILD_TAG}</p>
           </div>
           <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
             Mes de análisis
@@ -1358,10 +1360,24 @@ export default function InventoryFacturacionPage() {
           {(!isCompact || dashboardSection === 'stock') && (
             <Panel
               title="Stock por producto/lote/bodega"
-              onDownload={() => exportPdf('Inventario Facturacion - Stock por Lote', ['Producto', 'Lote', 'Bodega', 'Stock'], controlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]))}
+              onDownload={() =>
+                exportPdf(
+                  'Inventario Facturacion - Stock por Lote',
+                  ['Producto', 'Lote', 'Bodega', 'Stock'],
+                  controlByLot.map((r) => [r.producto, r.lote, r.bodega, Math.max(0, Math.round(toNum(r.stock)))]),
+                )
+              }
               actions={controlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock']} rows={limitRows('stock', controlByLot).map((r, idx) => [<ProductPill key={`h-stock-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.stock])} />
+              <DataTable
+                headers={['Producto', 'Lote', 'Bodega', 'Stock']}
+                rows={limitRows('stock', controlByLot).map((r, idx) => [
+                  <ProductPill key={`h-stock-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
+                  r.lote,
+                  r.bodega,
+                  Math.max(0, Math.round(toNum(r.stock))),
+                ])}
+              />
               <StockVisual
                 rows={stockVisualRows}
                 colorMap={productColorMap}
@@ -1382,11 +1398,19 @@ export default function InventoryFacturacionPage() {
                 exportPdf(
                   'Inventario Facturacion - Control por lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock calculado'],
-                  controlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                  controlByLot.map((r) => [r.producto, r.lote, r.bodega, Math.max(0, Math.round(toNum(r.stock)))]),
                 )
               }
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']} rows={controlByLot.map((r, idx) => [<ProductPill key={`h-control-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.stock])} />
+              <DataTable
+                headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']}
+                rows={controlByLot.map((r, idx) => [
+                  <ProductPill key={`h-control-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
+                  r.lote,
+                  r.bodega,
+                  Math.max(0, Math.round(toNum(r.stock))),
+                ])}
+              />
             </Panel>
           )}
 
