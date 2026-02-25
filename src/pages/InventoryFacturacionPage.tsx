@@ -88,6 +88,10 @@ const normalizeSearch = (v: unknown) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const isHuarteAlias = (v: unknown) => {
+  const x = normalizeSearch(v);
+  return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
+};
 const suggestionMatches = (option: string, query: string) => {
   const q = normalizeSearch(query);
   if (!q) return true;
@@ -453,13 +457,12 @@ export default function InventoryFacturacionPage() {
   }, [movimientos, canetMovimientos, canetMovementSyncStartDate, lotes]);
 
   const canetTransferAutoInMovements = useMemo(() => {
-    const isHuarte = (v: unknown) => clean(v).toUpperCase() === 'HUARTE';
     const isTransfer = (v: unknown) => normalizeSearch(v).includes('traspaso');
 
     return canetMovimientosEffective
       .filter((m) => isTransfer(m.tipo_movimiento))
-      .filter((m) => isHuarte(m.destino) || isHuarte(m.cliente))
-      .filter((m) => !isHuarte(m.bodega))
+      .filter((m) => isHuarteAlias(m.destino) || isHuarteAlias(m.cliente))
+      .filter((m) => !isHuarteAlias(m.bodega))
       .map((m) => {
         const qty = Math.abs(toNum(m.cantidad_signed || m.cantidad));
         const baseId = toNum((m as any).origin_canet_id) || toNum(m.id);

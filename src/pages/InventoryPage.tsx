@@ -295,6 +295,10 @@ function InventoryPage() {
   );
 
   const isCanetMirroredMovement = (m: Movement) => clean((m as any).source).toLowerCase() === 'canet';
+  const isHuarteAlias = (v: string) => {
+    const x = normalizeSearch(v);
+    return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
+  };
   const toHuarteMirrorMovement = (m: Movement): Movement => ({
     ...m,
     id: 900000000 + toNum(m.id),
@@ -303,15 +307,15 @@ function InventoryPage() {
   });
   const isCanetTransferToHuarte = (m: Movement) => {
     const tipo = normalizeSearch(m.tipo_movimiento);
-    const dest = clean(m.destino).toUpperCase();
-    const client = clean(m.cliente).toUpperCase();
+    const dest = clean(m.destino);
+    const client = clean(m.cliente);
     const bodega = clean(m.bodega).toUpperCase();
     const d = dateFromAny(clean(m.fecha));
     return (
       !!d &&
       d >= canetMovementSyncStartDate &&
       tipo.includes('traspaso') &&
-      (dest === 'HUARTE' || client === 'HUARTE') &&
+      (isHuarteAlias(dest) || isHuarteAlias(client)) &&
       bodega !== 'HUARTE'
     );
   };
