@@ -117,6 +117,14 @@ const parseDate = (v: string): Date | null => {
     const d = new Date(`${v}T00:00:00`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
+  const slash = clean(v).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const dd = Number(slash[1]);
+    const mm = Number(slash[2]);
+    const yy = Number(slash[3]);
+    const d = new Date(yy, mm - 1, dd, 0, 0, 0, 0);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
   const n = Number(v);
   if (Number.isFinite(n) && n > 20000) {
     const d = new Date((n - 25569) * 86400 * 1000);
