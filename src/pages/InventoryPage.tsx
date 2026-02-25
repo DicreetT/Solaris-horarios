@@ -1540,17 +1540,16 @@ function InventoryPage() {
             : l,
         ),
       );
+      const oldLotToken = normalizeLotToken(oldLote);
       const changedMovements = movimientos
         .filter((m) => {
-          if (clean(m.producto) !== oldProducto) return false;
           const mvLot = clean(m.lote);
-          if (mvLot === oldLote) return true;
-          // Soporta histórico con lote corto cuando maestro quedó en formato largo.
-          return oldLote.endsWith(mvLot) || mvLot.endsWith(oldLote);
+          if (!mvLot) return false;
+          const mvToken = normalizeLotToken(mvLot);
+          return mvLot === oldLote || mvToken === oldLotToken || mvToken.endsWith(oldLotToken) || oldLotToken.endsWith(mvToken);
         })
         .map((m) => ({
           ...m,
-          producto: newProducto,
           lote: newLote,
           updated_at: new Date().toISOString(),
           updated_by: actorName,
