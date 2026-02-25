@@ -87,6 +87,7 @@ const normalizeSearch = (v: unknown) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
 const suggestionMatches = (option: string, query: string) => {
   const q = normalizeSearch(query);
   if (!q) return true;
@@ -401,15 +402,19 @@ export default function InventoryFacturacionPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
+      const lotToken = normalizeLotToken(lote);
       const allLots = (lotes || [])
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
-      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      const suffixMatches = allLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
       if (suffixMatches.length > 0) {
         const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
+      const globalLots = (lotes || []).map((l) => clean(l.lote)).filter(Boolean);
+      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
+      if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
     };
 

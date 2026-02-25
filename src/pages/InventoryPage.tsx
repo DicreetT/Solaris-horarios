@@ -71,6 +71,7 @@ const normalizeSearch = (v: any) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
 const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -439,15 +440,22 @@ function InventoryPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
+      const lotToken = normalizeLotToken(lote);
       const allLots = lotes
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
-      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      const suffixMatches = allLots.filter((candidate) => {
+        const cand = normalizeLotToken(candidate);
+        return cand.endsWith(lotToken);
+      });
       if (suffixMatches.length > 0) {
         const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
+      const globalLots = lotes.map((l) => clean(l.lote)).filter(Boolean);
+      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
+      if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
     };
     return movimientos.map((m) => {
@@ -477,15 +485,22 @@ function InventoryPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
+      const lotToken = normalizeLotToken(lote);
       const allLots = lotes
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
-      const suffixMatches = allLots.filter((candidate) => clean(candidate).endsWith(lote));
+      const suffixMatches = allLots.filter((candidate) => {
+        const cand = normalizeLotToken(candidate);
+        return cand.endsWith(lotToken);
+      });
       if (suffixMatches.length > 0) {
         const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
+      const globalLots = lotes.map((l) => clean(l.lote)).filter(Boolean);
+      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
+      if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
     };
 
