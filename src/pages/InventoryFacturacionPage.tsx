@@ -659,7 +659,9 @@ export default function InventoryFacturacionPage() {
       const signed = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
       row.stock = Math.max(0, row.stock + signed);
     });
-    return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
+    return Array.from(map.values())
+      .map((r) => ({ ...r, stock: Math.max(0, toNum(r.stock)) }))
+      .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [filteredMovementsForStock]);
 
   const stockVisualRows = useMemo(() => {
@@ -754,7 +756,7 @@ export default function InventoryFacturacionPage() {
   }, [canetAssemblyIds.length, currentUser, addNotification, canetAssembliesNotifiedKey, setCanetAssembliesNotifiedKey]);
 
   const dashboard = useMemo(() => {
-    const totalStock = controlByLot.reduce((acc, row) => acc + row.stock, 0);
+    const totalStock = Math.max(0, controlByLot.reduce((acc, row) => acc + Math.max(0, toNum(row.stock)), 0));
     const totalMovements = filteredMovements.length;
     const totalRect = rectificativas.length;
     const activeMaster = new Set(
