@@ -644,13 +644,20 @@ export default function InventoryFacturacionPage() {
 
   const controlByLot = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
-    filteredMovementsForStock.forEach((m) => {
+    const ordered = [...filteredMovementsForStock].sort((a, b) => {
+      const da = parseDate(clean(a.fecha))?.getTime() || 0;
+      const db = parseDate(clean(b.fecha))?.getTime() || 0;
+      if (da !== db) return da - db;
+      return toNum(a.id) - toNum(b.id);
+    });
+    ordered.forEach((m) => {
       const key = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
       if (!map.has(key)) {
         map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
       }
       const row = map.get(key)!;
-      row.stock += toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      const signed = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      row.stock = Math.max(0, row.stock + signed);
     });
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [filteredMovementsForStock]);
@@ -665,11 +672,11 @@ export default function InventoryFacturacionPage() {
         byBodega: Record<string, number>;
       }
     >();
-    filteredMovementsForStock.forEach((m) => {
+    controlByLot.forEach((m) => {
       const producto = clean(m.producto);
       const lote = clean(m.lote);
       const bodega = clean(m.bodega);
-      const signed = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      const signed = Math.max(0, toNum(m.stock));
       if (!producto || !lote || !bodega) return;
       const key = `${producto}|${lote}`;
       if (!byLot.has(key)) byLot.set(key, { producto, lote, total: 0, byBodega: {} });
@@ -681,7 +688,7 @@ export default function InventoryFacturacionPage() {
       .filter((r) => r.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 14);
-  }, [filteredMovementsForStock]);
+  }, [controlByLot]);
   useEffect(() => {
     setStockSectionSelected(null);
   }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
