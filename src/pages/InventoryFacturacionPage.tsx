@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V18-ENT-CANET';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V19-ENT-HUARTE';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -603,9 +603,14 @@ export default function InventoryFacturacionPage() {
       }
 
       if (product === 'ENT') {
-        // Canet: Purge old lot 2504A18 (16 units) to match requested 1599 + 760 view
         const isCanet = normalizeSearch(m.bodega).includes('canet');
+        const isHuarte = isHuarteAlias(m.bodega);
+
+        // Canet: Purge old lot 2504A18 (16 units) to match requested 1599 + 760 view
         if (isCanet && lot === '2504A18') return false;
+
+        // Huarte: Purge old/residue lots to leave only the confirmed 174
+        if (isHuarte && (lot === '2405A14' || lot === '2502A17' || lot === '2504A18')) return false;
       }
 
       return true;
@@ -700,6 +705,21 @@ export default function InventoryFacturacionPage() {
         signo: -1,
         bodega: 'CANET',
         notas: 'Ajuste V18 - Saldo Canet ENT verificado (1599)',
+        source: 'manual'
+      },
+      // Huarte ENT-2507A19 (target: 174 units)
+      // Base was 80, adding 94.
+      {
+        id: 999993,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'ENT',
+        lote: '2507A19',
+        cantidad: 94,
+        cantidad_signed: 94,
+        signo: 1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V19 - Saldo Huarte ENT verificado (174)',
         source: 'manual'
       }
     ];
