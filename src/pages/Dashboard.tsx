@@ -2796,6 +2796,9 @@ function Dashboard() {
                                                             <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
                                                         )}
                                                     </div>
+                                                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                                                        {(conversation.participants || []).map((id: string) => USERS.find(u => u.id === id)?.name || id.slice(0, 6)).join(', ')}
+                                                    </p>
                                                     <p className="text-xs text-gray-500 truncate mt-0.5">
                                                         {conversation.last_message?.message || 'Sin mensajes aún'}
                                                     </p>

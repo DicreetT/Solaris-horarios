@@ -624,7 +624,10 @@ function ChatPage() {
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-xs text-gray-500 truncate mt-1">
+                                        <p className="text-[10px] text-gray-400 truncate mt-1">
+                                            {conversation.participants.map((id: string) => userNameById(id)).join(', ')}
+                                        </p>
+                                        <p className="text-xs text-gray-500 truncate mt-0.5">
                                             {conversation.last_message?.message || 'Sin mensajes aún'}
                                         </p>
                                     </div>
