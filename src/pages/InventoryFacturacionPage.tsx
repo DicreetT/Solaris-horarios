@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V15-AV-CANET';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V16-AV-BILBAO';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -662,6 +662,20 @@ export default function InventoryFacturacionPage() {
         signo: -1,
         bodega: 'CANET',
         notas: 'Ajuste V15 - Saldo Canet AV verificado (198)',
+        source: 'manual'
+      },
+      // Bilbao AV-2507A07 (target: 36 units)
+      {
+        id: 999995,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'AV',
+        lote: '2507A07',
+        cantidad: 9,
+        cantidad_signed: 9,
+        signo: 1,
+        bodega: 'BILBAO',
+        notas: 'Ajuste V16 - Saldo Bilbao AV verificado (36)',
         source: 'manual'
       }
     ];
