@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V24-RG-BILBAO';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V25-RG-CANET';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -834,6 +834,21 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'BILBAO',
         notas: 'Ajuste V24 - Saldo Bilbao RG verificado (33)',
+        source: 'manual'
+      },
+      // Canet RG-2504A04 (target: 3386 units)
+      // Base was 3409, adjusting by -23.
+      {
+        id: 999986,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'RG',
+        lote: '2504A04',
+        cantidad: 23,
+        cantidad_signed: -23,
+        signo: -1,
+        bodega: 'CANET',
+        notas: 'Ajuste V25 - Saldo Canet RG verificado (3386)',
         source: 'manual'
       }
     ];
