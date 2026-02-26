@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V19-ENT-HUARTE';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V20-ISO-CANET';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -613,6 +613,12 @@ export default function InventoryFacturacionPage() {
         if (isHuarte && (lot === '2405A14' || lot === '2502A17' || lot === '2504A18')) return false;
       }
 
+      if (product === 'ISO') {
+        // Canet: Purge zero-stock lot 230730
+        const isCanet = normalizeSearch(m.bodega).includes('canet');
+        if (isCanet && lot === '230730') return false;
+      }
+
       return true;
     });
 
@@ -720,6 +726,21 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'HUARTE',
         notas: 'Ajuste V19 - Saldo Huarte ENT verificado (174)',
+        source: 'manual'
+      },
+      // Canet ISO-250932 (target: 2630 units)
+      // Base was 2641, subtracting 11.
+      {
+        id: 999992,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'ISO',
+        lote: '250932',
+        cantidad: 11,
+        cantidad_signed: -11,
+        signo: -1,
+        bodega: 'CANET',
+        notas: 'Ajuste V20 - Saldo Canet ISO verificado (2630)',
         source: 'manual'
       }
     ];
