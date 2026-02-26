@@ -647,18 +647,18 @@ export default function InventoryFacturacionPage() {
 
     // 4. Programmatic Corrections
     const corrections: Movement[] = [
-      // Huarte SV-2511A34 (target: 188 units)
+      // Huarte SV-2511A34 (base target before new transfers: 188 units -> correction = 113)
       {
         id: 999999,
         fecha: '2026-02-24',
         tipo_movimiento: 'correcion_saldo_inicial',
         producto: 'SV',
         lote: '2511A34',
-        cantidad: 23,
-        cantidad_signed: 23,
+        cantidad: 113,
+        cantidad_signed: 113,
         signo: 1,
         bodega: 'HUARTE',
-        notas: 'Ajuste V9 - Saldo Huarte verificado (188)',
+        notas: 'Ajuste V9 - Saldo Huarte verificado (base 188)',
         source: 'manual'
       },
       // Bilbao SV-2511A34 (target: 50 units additional for a total matching user needs)
