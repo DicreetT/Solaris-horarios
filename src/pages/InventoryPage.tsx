@@ -216,7 +216,11 @@ function InventoryPage() {
     seed.movimientos as Movement[],
     { userId: actorId, pollIntervalMs: 300 },
   );
-  const [productos] = useState<GenericRow[]>(seed.productos as GenericRow[]);
+  const [productos, setProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_productos_v1',
+    seed.productos as GenericRow[],
+    { userId: actorId },
+  );
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
     seed.lotes as GenericRow[],
@@ -258,6 +262,7 @@ function InventoryPage() {
   const [quickSearch, setQuickSearch] = useState<string>('');
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
+  const [newProducto, setNewProducto] = useState('');
 
   const [dashMoveProduct, setDashMoveProduct] = useState('');
   const [dashMoveLot, setDashMoveLot] = useState('');
@@ -1698,6 +1703,15 @@ function InventoryPage() {
     emitSuccessFeedback('Tipo de movimiento actualizado con éxito.');
   };
 
+  const createProducto = () => {
+    const code = clean(newProducto).toUpperCase();
+    if (!code) return;
+    if (productos.some((p) => clean(p.producto) === code)) return;
+    setProductos((prev) => [...prev, { producto: code, activo_si_no: 'SI' }]);
+    setNewProducto('');
+    emitSuccessFeedback('Producto creado con éxito.');
+  };
+
   const downloadMovements = async () => {
     const headers = ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Destino', 'Notas'];
     const rows = visibleMovements.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed ?? m.cantidad, m.bodega, m.cliente || '', m.destino || '', m.notas || '']);
@@ -2308,7 +2322,39 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'productos' && <SimpleDataTable headers={['Producto', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo']} rows={productos.map((p) => [<ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />, <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />, p.stock_min, p.stock_opt, p.modo_stock, p.activo_si_no])} />}
+      {accessMode !== 'unset' && tab === 'productos' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-violet-950">Productos</h3>
+              {isEditModeActive && (
+                <div className="flex items-center gap-2">
+                  <input
+                    value={newProducto}
+                    onChange={(e) => setNewProducto(e.target.value)}
+                    placeholder="Nuevo producto"
+                    className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-semibold focus:border-violet-500 focus:outline-none"
+                  />
+                  <button onClick={createProducto} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
+                    <Plus size={14} /> Agregar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          <SimpleDataTable
+            headers={['Producto', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo']}
+            rows={productos.map((p) => [
+              <ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />,
+              <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />,
+              p.stock_min || '-',
+              p.stock_opt || '-',
+              p.modo_stock || '-',
+              p.activo_si_no || 'SI',
+            ])}
+          />
+        </div>
+      )}
 
       {accessMode !== 'unset' && tab === 'lotes' && (
         <div className="space-y-4">
