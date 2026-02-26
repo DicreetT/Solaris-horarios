@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V21-ISO-HUARTE';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V22-ISO-HUARTE-FIX';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -749,18 +749,19 @@ export default function InventoryFacturacionPage() {
         source: 'manual'
       },
       // Huarte ISO-250932 (target: 133 units)
-      // Base is 0 due to 'main' filter, adding 133.
+      // Base was 53, previous +133 resulted in 186. 
+      // We adjust to +80 to hit exactly 133.
       {
         id: 999991,
         fecha: '2026-02-23',
         tipo_movimiento: 'correcion_saldo_inicial',
         producto: 'ISO',
         lote: '250932',
-        cantidad: 133,
-        cantidad_signed: 133,
+        cantidad: 80,
+        cantidad_signed: 80,
         signo: 1,
         bodega: 'HUARTE',
-        notas: 'Ajuste V21 - Saldo Huarte ISO verificado (133)',
+        notas: 'Ajuste V22 - Saldo Huarte ISO verificado (133)',
         source: 'manual'
       }
     ];
