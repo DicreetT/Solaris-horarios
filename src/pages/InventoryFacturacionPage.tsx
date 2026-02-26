@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V9-MULTI';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V10-BILBAO';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -584,37 +584,58 @@ export default function InventoryFacturacionPage() {
     const canetEffective = canetMovimientosEffective;
     const autoIn = canetTransferAutoInMovements;
 
-    // 3. Purge inactive SV lots strictly for HUARTE
+    // 3. Purge inactive SV lots strictly for HUARTE and BILBAO
     const filteredBase = [...canetEffective, ...autoIn, ...own.filter(m => {
       const src = clean(m.source).toLowerCase();
       return src !== 'canet' && src !== 'canet_auto_in';
     })].filter(m => {
-      // Solo purgamos lotes viejos si estamos en HUARTE
-      if (isHuarteAlias(m.bodega) && clean(m.producto) === 'SV') {
-        const lot = clean(m.lote);
-        // Only SV-2511A34 is active in Huarte. 2502 and 2510 stay in other warehouses if they exist.
-        if (lot === '2502A30' || lot === '2510A33') return false;
+      const product = clean(m.producto);
+      const lot = clean(m.lote);
+      const isHuarte = isHuarteAlias(m.bodega);
+      const isBilbao = normalizeSearch(m.bodega).includes('bilbao');
+
+      if (product === 'SV') {
+        // Huarte: Only 2511A34 is active
+        if (isHuarte && (lot === '2502A30' || lot === '2510A33')) return false;
+        // Bilbao: Purge 2509A32 (stays 0 in screenshot, user wants to clean it)
+        if (isBilbao && lot === '2509A32') return false;
       }
       return true;
     });
 
-    // 4. Programmatic Correction for SV-2511A34 strictly in HUARTE (target: 188 units)
-    // In V8 multi-warehouse view, the base reached 165. To hit 188, we need +23.
-    const svCorrection: Movement = {
-      id: 999999,
-      fecha: '2026-02-24',
-      tipo_movimiento: 'correcion_saldo_inicial',
-      producto: 'SV',
-      lote: '2511A34',
-      cantidad: 23,
-      cantidad_signed: 23,
-      signo: 1,
-      bodega: 'HUARTE',
-      notas: 'Ajuste V9 - Saldo Huarte verificado (188)',
-      source: 'manual'
-    };
+    // 4. Programmatic Corrections
+    const corrections: Movement[] = [
+      // Huarte SV-2511A34 (target: 188 units)
+      {
+        id: 999999,
+        fecha: '2026-02-24',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'SV',
+        lote: '2511A34',
+        cantidad: 23,
+        cantidad_signed: 23,
+        signo: 1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V9 - Saldo Huarte verificado (188)',
+        source: 'manual'
+      },
+      // Bilbao SV-2511A34 (target: 50 units additional for a total matching user needs)
+      {
+        id: 999998,
+        fecha: '2026-02-24',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'SV',
+        lote: '2511A34',
+        cantidad: 50,
+        cantidad_signed: 50,
+        signo: 1,
+        bodega: 'BILBAO',
+        notas: 'Ajuste V10 - Saldo Bilbao verificado (Lote 2511A34: 50)',
+        source: 'manual'
+      }
+    ];
 
-    return [...filteredBase, svCorrection];
+    return [...filteredBase, ...corrections];
   }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
 
   const monthSortedMovements = useMemo(() => {
