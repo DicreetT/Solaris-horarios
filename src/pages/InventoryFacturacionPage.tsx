@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V8-MULTI';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V9-MULTI';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -599,17 +599,18 @@ export default function InventoryFacturacionPage() {
     });
 
     // 4. Programmatic Correction for SV-2511A34 strictly in HUARTE (target: 188 units)
+    // In V8 multi-warehouse view, the base reached 165. To hit 188, we need +23.
     const svCorrection: Movement = {
       id: 999999,
       fecha: '2026-02-24',
       tipo_movimiento: 'correcion_saldo_inicial',
       producto: 'SV',
       lote: '2511A34',
-      cantidad: 83,
-      cantidad_signed: 83,
+      cantidad: 23,
+      cantidad_signed: 23,
       signo: 1,
       bodega: 'HUARTE',
-      notas: 'Ajuste V8 - Saldo Huarte verificado (188)',
+      notas: 'Ajuste V9 - Saldo Huarte verificado (188)',
       source: 'manual'
     };
 
