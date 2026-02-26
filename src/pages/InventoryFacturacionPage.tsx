@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V4';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V5';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -568,7 +568,10 @@ export default function InventoryFacturacionPage() {
   }, [movimientos, canetMovementSyncStartDate, loadingMovs, setMovimientos]);
 
   const integratedMovements = useMemo(() => {
-    const own = (movimientos || []).map((m) => ({ ...m, source: m.source || 'facturacion' }));
+    const own = (movimientos || [])
+      .filter((m) => isHuarteAlias(m.bodega)) // CRITICAL: Only movements physically in Huarte
+      .map((m) => ({ ...m, source: m.source || 'facturacion' }));
+
     return [
       ...canetMovimientosEffective,
       ...canetTransferAutoInMovements,
@@ -1416,39 +1419,6 @@ export default function InventoryFacturacionPage() {
               }
               actions={safeControlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
-              {/* DEBUG SECTION */}
-              {selectedProducts.includes('SV') && (
-                <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-xl overflow-x-auto">
-                  <h4 className="text-sm font-bold text-orange-900 mb-2">Debug Internal Movement Trace (SV)</h4>
-                  <table className="w-full text-[10px]">
-                    <thead>
-                      <tr className="border-b border-orange-200">
-                        <th className="text-left py-1">ID</th>
-                        <th className="text-left py-1">Loc</th>
-                        <th className="text-left py-1">Fecha</th>
-                        <th className="text-left py-1">Lote</th>
-                        <th className="text-left py-1">Cant</th>
-                        <th className="text-left py-1">Src</th>
-                        <th className="text-left py-1">Tipo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {integratedMovements.filter(m => clean(m.producto) === 'SV').map(m => (
-                        <tr key={m.id} className="border-b border-orange-100 last:border-0">
-                          <td className="py-1">{m.id}</td>
-                          <td className="py-1">{m.bodega}</td>
-                          <td className="py-1">{clean(m.fecha)}</td>
-                          <td className="py-1">{clean(m.lote)}</td>
-                          <td className="py-1 font-bold">{toNum(m.cantidad_signed || (toNum(m.cantidad) * (toNum(m.signo) || 1)))}</td>
-                          <td className="py-1">{m.source}</td>
-                          <td className="py-1">{m.tipo_movimiento}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <p className="mt-2 text-[9px] text-orange-700">Cut-off: {canetMovementSyncStartDate.toISOString()}</p>
-                </div>
-              )}
               <DataTable
                 headers={['Producto', 'Lote', 'Bodega', 'Stock']}
                 rows={limitRows('stock', safeControlByLot).map((r, idx) => [
