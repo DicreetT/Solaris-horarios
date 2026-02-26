@@ -55,7 +55,6 @@ function ChatPage() {
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
-    const isUserScrolledUp = useRef(false);
     const sendingRef = useRef(false);
     const lastSendRef = useRef<{ signature: string; at: number }>({ signature: '', at: 0 });
     const recognitionRef = useRef<any>(null);
@@ -305,48 +304,8 @@ function ChatPage() {
     }, []);
 
     useEffect(() => {
-        const container = messagesContainerRef.current;
-        if (!container) return;
-
-        const handleScroll = () => {
-            const { scrollTop, scrollHeight, clientHeight } = container;
-            // User is "scrolled up" if they are more than 150px away from the bottom
-            const isAtBottom = scrollHeight - scrollTop - clientHeight < 150;
-            isUserScrolledUp.current = !isAtBottom;
-        };
-
-        container.addEventListener('scroll', handleScroll, { passive: true });
-        return () => container.removeEventListener('scroll', handleScroll);
+        // Optional trigger for loading more messages natively when scrolled to top
     }, []);
-
-    const scrollToBottom = () => {
-        if (messagesContainerRef.current) {
-            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-        }
-    };
-
-    useLayoutEffect(() => {
-        // Reset scroll awareness and force scroll on conversation change
-        isUserScrolledUp.current = false;
-        scrollToBottom();
-        const raf = window.requestAnimationFrame(scrollToBottom);
-        const id1 = window.setTimeout(scrollToBottom, 100);
-        const id2 = window.setTimeout(scrollToBottom, 500);
-        return () => {
-            window.cancelAnimationFrame(raf);
-            window.clearTimeout(id1);
-            window.clearTimeout(id2);
-        };
-    }, [selectedConversationId]);
-
-    useLayoutEffect(() => {
-        // Only auto-scroll on new messages if the user is AT the bottom already
-        if (!isUserScrolledUp.current) {
-            scrollToBottom();
-            const id = window.setTimeout(scrollToBottom, 50);
-            return () => window.clearTimeout(id);
-        }
-    }, [messages, loadingMessages]);
 
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
@@ -750,20 +709,11 @@ function ChatPage() {
 
                             <div
                                 ref={messagesContainerRef}
-                                className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3"
+                                className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col-reverse gap-3"
                                 onWheelCapture={(e) => e.stopPropagation()}
                             >
-                                {messagesError && (
-                                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
-                                        Error cargando mensajes: {(messagesError as any)?.message || 'Intenta de nuevo.'}
-                                    </p>
-                                )}
-                                {loadingMessages && <p className="text-sm text-gray-500">Cargando mensajes...</p>}
-                                {!loadingMessages && messages.length === 0 && (
-                                    <p className="text-sm text-gray-500 italic">Aún no hay mensajes en este chat.</p>
-                                )}
-
-                                {messages.map((msg) => {
+                                <div ref={messagesEndRef} className="h-2 shrink-0" />
+                                {[...messages].reverse().map((msg) => {
                                     const mine = msg.sender_id === currentUser?.id;
                                     const canDeleteMessage = mine;
                                     const isDeletedMessage =
@@ -874,7 +824,16 @@ function ChatPage() {
                                         </div>
                                     );
                                 })}
-                                <div ref={messagesEndRef} className="h-4" />
+
+                                {!loadingMessages && messages.length === 0 && (
+                                    <p className="text-sm text-gray-500 italic mt-auto text-center w-full">Aún no hay mensajes en este chat.</p>
+                                )}
+                                {loadingMessages && <p className="text-sm text-gray-500 mt-auto text-center w-full py-4">Cargando mensajes...</p>}
+                                {messagesError && (
+                                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2 mt-auto">
+                                        Error cargando mensajes: {(messagesError as any)?.message || 'Intenta de nuevo.'}
+                                    </p>
+                                )}
                             </div>
 
                             <div className="shrink-0 border-t border-gray-100 bg-white p-4 space-y-3 min-h-[150px] max-h-[220px] overflow-visible">
