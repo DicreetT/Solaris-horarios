@@ -62,9 +62,9 @@ const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
-const CANET_ASSEMBLY_SYNC_START = '2026-02-24';
+const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 // Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
-const CANET_MOVEMENT_SYNC_START = '2026-02-24';
+const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
 const EDIT_GRANT_HOURS = 6;
@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V13-AV-HUARTE';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V14-AV-FIX';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -635,17 +635,19 @@ export default function InventoryFacturacionPage() {
         source: 'manual'
       },
       // Huarte AV-2507A07 (target: 100 units)
+      // Base calculation resulted in 96 (Correction 100 - 4 other movements). 
+      // We adjust to +104 to hit exactly 100.
       {
         id: 999997,
-        fecha: '2026-02-24',
+        fecha: '2026-02-23',
         tipo_movimiento: 'correcion_saldo_inicial',
         producto: 'AV',
         lote: '2507A07',
-        cantidad: 100,
-        cantidad_signed: 100,
+        cantidad: 104,
+        cantidad_signed: 104,
         signo: 1,
         bodega: 'HUARTE',
-        notas: 'Ajuste V13 - Saldo Huarte AV verificado (100)',
+        notas: 'Ajuste V14 - Saldo Huarte AV verificado (100)',
         source: 'manual'
       }
     ];
