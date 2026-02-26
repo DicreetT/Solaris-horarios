@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V25-RG-CANET';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V26-RG-FINAL';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -632,8 +632,14 @@ export default function InventoryFacturacionPage() {
 
       if (product === 'RG') {
         const isBilbao = normalizeSearch(m.bodega).includes('bilbao');
+        const isHuarte = isHuarteAlias(m.bodega);
+        const isMasBorras = normalizeSearch(m.bodega).includes('mas borras');
+
         // Bilbao: Purge residue movements to leave only the confirmed 33
         if (isBilbao) return false;
+
+        // Huarte & Mas Borras: Purge old/residue lots (like 241030) to keep it clean
+        if ((isHuarte || isMasBorras) && lot === '241030') return false;
       }
 
       return true;
@@ -849,6 +855,51 @@ export default function InventoryFacturacionPage() {
         signo: -1,
         bodega: 'CANET',
         notas: 'Ajuste V25 - Saldo Canet RG verificado (3386)',
+        source: 'manual'
+      },
+      // Huarte RG-2504A04 (target: 88 units)
+      // Base was 104, adjusting by -16.
+      {
+        id: 999985,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'RG',
+        lote: '2504A04',
+        cantidad: 16,
+        cantidad_signed: -16,
+        signo: -1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V26 - Saldo Huarte RG verificado (88)',
+        source: 'manual'
+      },
+      // Mas Borras RG-2504A04 (target: 15 units)
+      // Base was 14, adjusting by +1.
+      {
+        id: 999984,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'RG',
+        lote: '2504A04',
+        cantidad: 1,
+        cantidad_signed: 1,
+        signo: 1,
+        bodega: 'MAS BORRAS',
+        notas: 'Ajuste V26 - Saldo Mas Borras RG verificado (15)',
+        source: 'manual'
+      },
+      // Pamplona RG-2408A03 (target: 10 units)
+      // Base was 12, adjusting by -2.
+      {
+        id: 999983,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'RG',
+        lote: '2408A03',
+        cantidad: 2,
+        cantidad_signed: -2,
+        signo: -1,
+        bodega: 'PAMPLONA',
+        notas: 'Ajuste V26 - Saldo Pamplona RG verificado (10)',
         source: 'manual'
       }
     ];
