@@ -161,7 +161,8 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-25-1130';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V2';
+console.log('InventoryFacturacionPage version:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
   const { currentUser } = useAuth();
@@ -276,7 +277,11 @@ export default function InventoryFacturacionPage() {
     [],
   );
   const canetMovementSyncStartDate = useMemo(
-    () => parseDate(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
+    () => {
+      const d = parseDate(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00');
+      console.log('[Sync] Start date:', d.toISOString(), 'Raw:', CANET_MOVEMENT_SYNC_START);
+      return d;
+    },
     [],
   );
 
