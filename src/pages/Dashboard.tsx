@@ -81,6 +81,7 @@ type InventoryAlertsSummary = {
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
+const CANET_MOVEMENT_SYNC_START = '2026-02-24';
 
 const notificationFilterLabels: Record<NotificationFilter, string> = {
     all: 'Todas',
@@ -147,6 +148,28 @@ const parseDateKeySafe = (value?: string | null) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const dateFromAny = (v: string): Date | null => {
+    if (!v) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        const d = new Date(`${v}T00:00:00`);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const slash = clean(v).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slash) {
+        const dd = Number(slash[1]);
+        const mm = Number(slash[2]);
+        const yy = Number(slash[3]);
+        const d = new Date(yy, mm - 1, dd, 0, 0, 0, 0);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 20000) {
+        const d = new Date((n - 25569) * 86400 * 1000);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+};
+
 function Dashboard() {
     const { currentUser } = useAuth();
     const queryClient = useQueryClient();
@@ -162,7 +185,11 @@ function Dashboard() {
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
     const { calendarEvents, createEvent } = useCalendarEvents();
     const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
-    const { conversations: chatConversations } = useChat(currentUser, null);
+    const {
+        conversations: chatConversations,
+        unreadByConversation,
+        unreadTotal: chatUnreadTotal,
+    } = useChat(currentUser, null);
 
     const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
     const [eventDraft, setEventDraft] = useState('');
@@ -1005,6 +1032,32 @@ function Dashboard() {
         navigate(`/chat?user=${targetUserId}`);
     };
 
+    const chatConversationName = (conversation: any) => {
+        if (conversation?.title?.trim()) {
+            return conversation.title.trim();
+        }
+        if (conversation?.kind === 'group') {
+            return conversation.title || `Grupo (${conversation?.participants?.length || 0})`;
+        }
+        const otherUserId = (conversation?.participants || []).find((id: string) => id !== currentUser?.id);
+        return otherUserId ? (USERS.find((u) => u.id === otherUserId)?.name || `Usuario ${otherUserId.slice(0, 6)}`) : 'Chat directo';
+    };
+
+    const chatDashboardRows = useMemo(
+        () =>
+            chatConversations
+                .map((conversation) => ({
+                    conversation,
+                    unread: unreadByConversation[conversation.id] || 0,
+                }))
+                .sort((a, b) => {
+                    if ((a.unread > 0) !== (b.unread > 0)) return a.unread > 0 ? -1 : 1;
+                    return 0;
+                })
+                .slice(0, 3),
+        [chatConversations, unreadByConversation],
+    );
+
     const saveTimeRow = async (row: any) => {
         if (!row?.id) return;
         setSavingRow(true);
@@ -1457,12 +1510,19 @@ function Dashboard() {
             });
 
             const mountedByProduct = new Map<string, number>();
+            const syncStart = dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-24');
+
             source.forEach((m: any) => {
                 const producto = clean(m?.producto);
                 const lote = clean(m?.lote);
                 const bodega = clean(m?.bodega);
                 if (producto.toUpperCase() === 'PRODUCTO') return;
                 if (!producto || !lote || !bodega) return;
+
+                const src = clean(m?.source).toLowerCase();
+                const d = dateFromAny(clean(m?.fecha));
+                if ((src === 'canet' || src === 'canet_auto_in') && d && d < syncStart) return;
+
                 const signed = Number(m?.cantidad_signed);
                 const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
                 mountedByProduct.set(producto, (mountedByProduct.get(producto) || 0) + qty);
@@ -1520,11 +1580,17 @@ function Dashboard() {
     const maxPotentialVisual = Math.max(1, ...potentialVisualFromInventory.map((row) => row.cajasPotenciales || 0));
     const generalStockRowsWithBodega = useMemo(() => {
         const map = new Map<string, number>();
+        const syncStart = dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-24');
         huarteMovementsSource.forEach((m: any) => {
             const producto = clean(m?.producto);
             const lote = clean(m?.lote);
             const bodega = clean(m?.bodega);
             if (!producto || !lote || !bodega || producto.toUpperCase() === 'PRODUCTO') return;
+
+            const src = clean(m?.source).toLowerCase();
+            const d = dateFromAny(clean(m?.fecha));
+            if ((src === 'canet' || src === 'canet_auto_in') && d && d < syncStart) return;
+
             const signed = Number(m?.cantidad_signed);
             const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
             const key = `${producto}|${lote}|${bodega}`;
@@ -1767,14 +1833,7 @@ function Dashboard() {
         canetCriticalFromInventory.forEach((r) => set.add(r.producto));
         return set.size;
     }, [mountedCriticalFromInventory, potentialCriticalFromInventory, canetCriticalFromInventory]);
-    const chatBadgeCount = useMemo(
-        () =>
-            unreadPendingNotifications.filter((n) => {
-                const text = `${n.message || ''}`.toLowerCase();
-                return text.includes('chat') || text.includes('mensaje');
-            }).length,
-        [unreadPendingNotifications],
-    );
+    const chatBadgeCount = chatUnreadTotal;
     const absencesBadgeCount = isAdmin ? pendingManagedRows.length : weeklyTeamAbsences.length;
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
     const absencesTileLabel = isAdmin ? 'Gestionar solicitudes' : 'Ausencias';
@@ -1785,17 +1844,17 @@ function Dashboard() {
         label: string;
         Icon: any;
     }> = [
-        { key: 'events', label: 'Eventos', Icon: CalendarClock },
-        { key: 'quick', label: 'Solicitudes', Icon: Users },
-        { key: 'checklist', label: 'Checklist', Icon: Sparkles },
-        { key: 'time', label: 'Jornada', Icon: Clock3 },
-        { key: 'absences', label: absencesTileLabel, Icon: UserX },
-        { key: 'trainings', label: trainingsTileLabel, Icon: GraduationCap },
-        { key: 'alerts', label: 'Inventario', Icon: Info },
-        { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
-        { key: 'pulse', label: 'Pulso', Icon: Coffee },
-        { key: 'chat', label: 'Chat', Icon: MessageCircle },
-    ];
+            { key: 'events', label: 'Eventos', Icon: CalendarClock },
+            { key: 'quick', label: 'Solicitudes', Icon: Users },
+            { key: 'checklist', label: 'Checklist', Icon: Sparkles },
+            { key: 'time', label: 'Jornada', Icon: Clock3 },
+            { key: 'absences', label: absencesTileLabel, Icon: UserX },
+            { key: 'trainings', label: trainingsTileLabel, Icon: GraduationCap },
+            { key: 'alerts', label: 'Inventario', Icon: Info },
+            { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
+            { key: 'pulse', label: 'Pulso', Icon: Coffee },
+            { key: 'chat', label: 'Chat', Icon: MessageCircle },
+        ];
     const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
     const compactTileBadges: Partial<Record<typeof compactTiles[number]['key'], number>> = {
         events: todayEvents.length,
@@ -1957,19 +2016,17 @@ function Dashboard() {
                                 <button
                                     key={key}
                                     onClick={() => setCompactSection(key)}
-                                    className={`compact-card rounded-2xl border p-2 text-xs font-black transition ${
-                                        compactSection === key
-                                            ? 'border-violet-400 bg-violet-700 text-white'
-                                            : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
-                                    }`}
+                                    className={`compact-card rounded-2xl border p-2 text-xs font-black transition ${compactSection === key
+                                        ? 'border-violet-400 bg-violet-700 text-white'
+                                        : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+                                        }`}
                                 >
                                     <div className="flex flex-col items-center gap-1">
                                         <div className="relative">
                                             <Icon size={16} />
                                             {(compactTileBadges[key] || 0) > 0 && (
-                                                <span className={`absolute -top-2 -right-2 w-4 h-4 rounded-full text-[10px] leading-4 text-center font-black ${
-                                                    compactSection === key ? 'bg-white text-violet-700' : 'bg-rose-500 text-white'
-                                                }`}>
+                                                <span className={`absolute -top-2 -right-2 w-4 h-4 rounded-full text-[10px] leading-4 text-center font-black ${compactSection === key ? 'bg-white text-violet-700' : 'bg-rose-500 text-white'
+                                                    }`}>
                                                     {compactTileBadges[key]! > 9 ? '9+' : compactTileBadges[key]}
                                                 </span>
                                             )}
@@ -2006,53 +2063,53 @@ function Dashboard() {
                     )}
 
                     {(!isCompact || compactSection === 'events') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h2 className="text-lg font-black text-violet-950">Eventos del día</h2>
-                            <span className="text-xs font-bold text-violet-600">{todayEvents.length} evento(s)</span>
-                        </div>
-                        <form
-                            onSubmit={async (e) => {
-                                e.preventDefault();
-                                if (!eventDraft.trim() || !currentUser) return;
-                                try {
-                                    await createEvent({
-                                        date_key: todayKey,
-                                        title: eventDraft.trim(),
-                                        description: null,
-                                        created_by: currentUser.id,
-                                    });
-                                    setEventDraft('');
-                                } catch {
-                                    // fallback is handled in hook; prevent app-level error
-                                }
-                            }}
-                            className="mb-3"
-                        >
-                            <textarea
-                                value={eventDraft}
-                                onChange={(e) => setEventDraft(e.target.value)}
-                                className="w-full min-h-[84px] border border-violet-200 rounded-xl px-3 py-2 text-sm"
-                                placeholder="Ej: Hoy llega Solar Vital&#10;Recordar envío a las 11:00&#10;Notas del día"
-                            />
-                            <div className="mt-2 flex justify-end">
-                                <button className="px-3 py-2 bg-violet-700 text-white rounded-xl text-sm font-bold">
-                                    Añadir evento
-                                </button>
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-lg font-black text-violet-950">Eventos del día</h2>
+                                <span className="text-xs font-bold text-violet-600">{todayEvents.length} evento(s)</span>
                             </div>
-                        </form>
-                        <div className="space-y-2">
-                            {todayEvents.length > 0 ? todayEvents.map((event) => (
-                                <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900 whitespace-pre-line">
-                                    {event.title}
+                            <form
+                                onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    if (!eventDraft.trim() || !currentUser) return;
+                                    try {
+                                        await createEvent({
+                                            date_key: todayKey,
+                                            title: eventDraft.trim(),
+                                            description: null,
+                                            created_by: currentUser.id,
+                                        });
+                                        setEventDraft('');
+                                    } catch {
+                                        // fallback is handled in hook; prevent app-level error
+                                    }
+                                }}
+                                className="mb-3"
+                            >
+                                <textarea
+                                    value={eventDraft}
+                                    onChange={(e) => setEventDraft(e.target.value)}
+                                    className="w-full min-h-[84px] border border-violet-200 rounded-xl px-3 py-2 text-sm"
+                                    placeholder="Ej: Hoy llega Solar Vital&#10;Recordar envío a las 11:00&#10;Notas del día"
+                                />
+                                <div className="mt-2 flex justify-end">
+                                    <button className="px-3 py-2 bg-violet-700 text-white rounded-xl text-sm font-bold">
+                                        Añadir evento
+                                    </button>
                                 </div>
-                            )) : <div className="app-empty-card">Aún no hay eventos para hoy.</div>}
+                            </form>
+                            <div className="space-y-2">
+                                {todayEvents.length > 0 ? todayEvents.map((event) => (
+                                    <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900 whitespace-pre-line">
+                                        {event.title}
+                                    </div>
+                                )) : <div className="app-empty-card">Aún no hay eventos para hoy.</div>}
+                            </div>
                         </div>
-                    </div>
                     )}
 
                     {(!isCompact || compactSection === 'quick') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <h2 className="text-lg font-black text-violet-950 mb-3">Solicitudes rápidas</h2>
                             <p className="text-sm text-violet-700 mb-4">Todo desde el dashboard, sin cambiar de página.</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2119,197 +2176,222 @@ function Dashboard() {
                     )}
 
                     {(!isCompact || compactSection === 'checklist') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-base font-black text-violet-950">Check-list diario</h3>
-                            <div className="text-xs font-bold text-violet-700">
-                                {checklistDone}/{checklistTasks.length} completadas {checklistSaving ? '· guardando...' : ''}
+                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-base font-black text-violet-950">Check-list diario</h3>
+                                <div className="text-xs font-bold text-violet-700">
+                                    {checklistDone}/{checklistTasks.length} completadas {checklistSaving ? '· guardando...' : ''}
+                                </div>
                             </div>
-                        </div>
-                        {checklistLoading ? (
-                            <p className="text-sm text-violet-600">Cargando checklist...</p>
-                        ) : checklistTasks.length === 0 ? (
-                            <div className="app-empty-card">No tienes tareas en tu checklist de hoy.</div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                {checklistTasks.slice(0, 8).map((task) => (
-                                    <label key={task.id} className="flex items-center gap-2 p-2 rounded-xl border border-violet-100 bg-violet-50/70 text-sm cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={task.completed}
-                                            onChange={() => toggleChecklistTask(task.id)}
-                                            className="accent-violet-700"
-                                        />
-                                        <span className={task.completed ? 'line-through text-violet-500' : 'text-violet-900'}>{task.text}</span>
-                                    </label>
-                                ))}
+                            {checklistLoading ? (
+                                <p className="text-sm text-violet-600">Cargando checklist...</p>
+                            ) : checklistTasks.length === 0 ? (
+                                <div className="app-empty-card">No tienes tareas en tu checklist de hoy.</div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {checklistTasks.slice(0, 8).map((task) => (
+                                        <label key={task.id} className="flex items-center gap-2 p-2 rounded-xl border border-violet-100 bg-violet-50/70 text-sm cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={task.completed}
+                                                onChange={() => toggleChecklistTask(task.id)}
+                                                className="accent-violet-700"
+                                            />
+                                            <span className={task.completed ? 'line-through text-violet-500' : 'text-violet-900'}>{task.text}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="mt-3">
+                                <Link to="/checklist" className="text-xs font-bold text-violet-700">Abrir checklist completo</Link>
                             </div>
-                        )}
-                        <div className="mt-3">
-                            <Link to="/checklist" className="text-xs font-bold text-violet-700">Abrir checklist completo</Link>
-                        </div>
                         </div>
                     )}
 
                     {(!isCompact || compactSection === 'time') && (
-                    <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                            <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
-                            <div className="flex items-center gap-3">
-                                {!isAdmin && (
-                                    <button
-                                        onClick={downloadMonthlyPdf}
-                                        className="text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
-                                    >
-                                        Descargar PDF del mes
-                                    </button>
-                                )}
-                                <button
-                                    onClick={() => setShowAllTimeRows((prev) => !prev)}
-                                    className="text-xs font-bold text-violet-700"
-                                >
-                                    {showAllTimeRows ? 'Ver menos' : 'Ver todo el periodo'}
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-                            <div className="rounded-xl border border-violet-200 bg-white p-3">
-                                <p className="text-xs font-bold text-violet-600">Horas esta semana</p>
-                                <p className="text-xl font-black text-violet-950">{formatHours(weeklyWorkedHours)}</p>
-                            </div>
-                            <div className="rounded-xl border border-violet-200 bg-white p-3">
-                                <p className="text-xs font-bold text-violet-600">Faltan para objetivo</p>
-                                <p className="text-xl font-black text-violet-950">{formatHours(remainingWeeklyHours)}</p>
-                            </div>
-                            <div className="rounded-xl border border-violet-200 bg-white p-3">
-                                <p className="text-xs font-bold text-violet-600">Vacaciones usadas</p>
-                                <p className="text-xl font-black text-violet-950">{vacationUsed} / {vacationTotal}</p>
-                            </div>
-                        </div>
-
-                        <div className="app-table-wrap">
-                            <table className="app-table">
-                                <thead>
-                                    <tr className="text-left text-violet-700 border-b border-violet-200">
-                                        <th className="py-2">Fecha</th>
-                                        <th className="py-2">Entrada</th>
-                                        <th className="py-2">Salida</th>
-                                        <th className="py-2">Total</th>
-                                        <th className="py-2">Editar</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {recentTimeRows.length === 0 && (
-                                        <tr>
-                                            <td colSpan={5} className="py-3">
-                                                <div className="app-empty-card">No hay registros recientes.</div>
-                                            </td>
-                                        </tr>
+                        <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                                <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
+                                <div className="flex items-center gap-3">
+                                    {!isAdmin && (
+                                        <button
+                                            onClick={downloadMonthlyPdf}
+                                            className="text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                                        >
+                                            Descargar PDF del mes
+                                        </button>
                                     )}
-                                    {(showAllTimeRows ? recentTimeRows : recentTimeRows.slice(0, 7)).map((row) => {
-                                        const isEditing = editingDateKey === row.date_key;
-                                        return (
-                                            <tr key={row.date_key} className="border-b border-violet-100">
-                                                <td className="py-2 text-violet-900 font-semibold">{row.date_key}</td>
-                                                <td className="py-2">
-                                                    {isEditing ? (
-                                                        <input
-                                                            type="time"
-                                                            value={timeEdit.entry}
-                                                            onChange={(e) => setTimeEdit((prev) => ({ ...prev, entry: e.target.value }))}
-                                                            className="px-2 py-1 rounded-lg border border-violet-200"
-                                                        />
-                                                    ) : (row.entry || '-')} 
-                                                </td>
-                                                <td className="py-2">
-                                                    {isEditing ? (
-                                                        <input
-                                                            type="time"
-                                                            value={timeEdit.exit}
-                                                            onChange={(e) => setTimeEdit((prev) => ({ ...prev, exit: e.target.value }))}
-                                                            className="px-2 py-1 rounded-lg border border-violet-200"
-                                                        />
-                                                    ) : (row.exit || '-')}
-                                                </td>
-                                                <td className="py-2 text-violet-900 font-bold">{formatHours(row.total || 0)}</td>
-                                                <td className="py-2">
-                                                    {isEditing ? (
-                                                        <button
-                                                            onClick={() => saveTimeRow(row)}
-                                                            disabled={savingRow}
-                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-700 text-white text-xs font-bold"
-                                                        >
-                                                            <Save size={12} /> Guardar
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => {
-                                                                setEditingDateKey(row.date_key);
-                                                                setTimeEdit({ entry: row.entry || '', exit: row.exit || '' });
-                                                            }}
-                                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-100 text-violet-700 text-xs font-bold"
-                                                        >
-                                                            <Edit2 size={12} /> Editar
-                                                        </button>
-                                                    )}
+                                    <button
+                                        onClick={() => setShowAllTimeRows((prev) => !prev)}
+                                        className="text-xs font-bold text-violet-700"
+                                    >
+                                        {showAllTimeRows ? 'Ver menos' : 'Ver todo el periodo'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+                                <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                    <p className="text-xs font-bold text-violet-600">Horas esta semana</p>
+                                    <p className="text-xl font-black text-violet-950">{formatHours(weeklyWorkedHours)}</p>
+                                </div>
+                                <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                    <p className="text-xs font-bold text-violet-600">Faltan para objetivo</p>
+                                    <p className="text-xl font-black text-violet-950">{formatHours(remainingWeeklyHours)}</p>
+                                </div>
+                                <div className="rounded-xl border border-violet-200 bg-white p-3">
+                                    <p className="text-xs font-bold text-violet-600">Vacaciones usadas</p>
+                                    <p className="text-xl font-black text-violet-950">{vacationUsed} / {vacationTotal}</p>
+                                </div>
+                            </div>
+
+                            <div className="app-table-wrap">
+                                <table className="app-table">
+                                    <thead>
+                                        <tr className="text-left text-violet-700 border-b border-violet-200">
+                                            <th className="py-2">Fecha</th>
+                                            <th className="py-2">Entrada</th>
+                                            <th className="py-2">Salida</th>
+                                            <th className="py-2">Total</th>
+                                            <th className="py-2">Editar</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {recentTimeRows.length === 0 && (
+                                            <tr>
+                                                <td colSpan={5} className="py-3">
+                                                    <div className="app-empty-card">No hay registros recientes.</div>
                                                 </td>
                                             </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
+                                        )}
+                                        {(showAllTimeRows ? recentTimeRows : recentTimeRows.slice(0, 7)).map((row) => {
+                                            const isEditing = editingDateKey === row.date_key;
+                                            return (
+                                                <tr key={row.date_key} className="border-b border-violet-100">
+                                                    <td className="py-2 text-violet-900 font-semibold">{row.date_key}</td>
+                                                    <td className="py-2">
+                                                        {isEditing ? (
+                                                            <input
+                                                                type="time"
+                                                                value={timeEdit.entry}
+                                                                onChange={(e) => setTimeEdit((prev) => ({ ...prev, entry: e.target.value }))}
+                                                                className="px-2 py-1 rounded-lg border border-violet-200"
+                                                            />
+                                                        ) : (row.entry || '-')}
+                                                    </td>
+                                                    <td className="py-2">
+                                                        {isEditing ? (
+                                                            <input
+                                                                type="time"
+                                                                value={timeEdit.exit}
+                                                                onChange={(e) => setTimeEdit((prev) => ({ ...prev, exit: e.target.value }))}
+                                                                className="px-2 py-1 rounded-lg border border-violet-200"
+                                                            />
+                                                        ) : (row.exit || '-')}
+                                                    </td>
+                                                    <td className="py-2 text-violet-900 font-bold">{formatHours(row.total || 0)}</td>
+                                                    <td className="py-2">
+                                                        {isEditing ? (
+                                                            <button
+                                                                onClick={() => saveTimeRow(row)}
+                                                                disabled={savingRow}
+                                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-700 text-white text-xs font-bold"
+                                                            >
+                                                                <Save size={12} /> Guardar
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => {
+                                                                    setEditingDateKey(row.date_key);
+                                                                    setTimeEdit({ entry: row.entry || '', exit: row.exit || '' });
+                                                                }}
+                                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-100 text-violet-700 text-xs font-bold"
+                                                            >
+                                                                <Edit2 size={12} /> Editar
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                    </div>
                     )}
 
                     {(!isCompact || compactSection === 'absences') && (
-                    <div id="dashboard-my-requests" className={`grid grid-cols-1 ${!isCompact && canSeeTrainingsPanel ? 'lg:grid-cols-2' : ''} gap-6`}>
-                        <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                            <h3 className="text-base font-black text-violet-950 mb-3">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
-                            {isAdmin ? (
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        onClick={() => {
-                                            setSelectedManagedRequest(null);
-                                            setManageRequestsTab('pending');
-                                            setShowAbsencesManageModal(true);
-                                        }}
-                                        className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-900"
-                                    >
-                                        Pendientes ({pendingManagedRows.length})
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setSelectedManagedRequest(null);
-                                            setManageRequestsTab('resolved');
-                                            setShowAbsencesManageModal(true);
-                                        }}
-                                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-900"
-                                    >
-                                        Aprobadas ({resolvedManagedRows.length})
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    {requestPreviewRows.map((item) => (
+                        <div id="dashboard-my-requests" className={`grid grid-cols-1 ${!isCompact && canSeeTrainingsPanel ? 'lg:grid-cols-2' : ''} gap-6`}>
+                            <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                                <h3 className="text-base font-black text-violet-950 mb-3">{isAdmin ? 'Gestionar solicitudes' : 'Mis ausencias y vacaciones'}</h3>
+                                {isAdmin ? (
+                                    <div className="grid grid-cols-2 gap-2">
                                         <button
-                                            key={`${item.source}-${item.id}`}
-                                            onClick={() => openMyRequest(item)}
-                                            className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm"
+                                            onClick={() => {
+                                                setSelectedManagedRequest(null);
+                                                setManageRequestsTab('pending');
+                                                setShowAbsencesManageModal(true);
+                                            }}
+                                            className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-900"
                                         >
-                                            <p className="font-bold text-violet-900">{item.source === 'meeting' ? `Reunión · ${item.title}` : `${item.title} · ${item.dateText}`}</p>
-                                            <p className="text-xs text-violet-700">Estado: {item.status}</p>
+                                            Pendientes ({pendingManagedRows.length})
                                         </button>
-                                    ))}
-                                    {managedRequestRows.length === 0 && (
-                                        <div className="app-empty-card">No hay solicitudes para mostrar.</div>
-                                    )}
+                                        <button
+                                            onClick={() => {
+                                                setSelectedManagedRequest(null);
+                                                setManageRequestsTab('resolved');
+                                                setShowAbsencesManageModal(true);
+                                            }}
+                                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-900"
+                                        >
+                                            Aprobadas ({resolvedManagedRows.length})
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {requestPreviewRows.map((item) => (
+                                            <button
+                                                key={`${item.source}-${item.id}`}
+                                                onClick={() => openMyRequest(item)}
+                                                className="w-full text-left block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm"
+                                            >
+                                                <p className="font-bold text-violet-900">{item.source === 'meeting' ? `Reunión · ${item.title}` : `${item.title} · ${item.dateText}`}</p>
+                                                <p className="text-xs text-violet-700">Estado: {item.status}</p>
+                                            </button>
+                                        ))}
+                                        {managedRequestRows.length === 0 && (
+                                            <div className="app-empty-card">No hay solicitudes para mostrar.</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {canSeeTrainingsPanel && !isCompact && (
+                                <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-base font-black text-violet-950">Gestionar formaciones</h3>
+                                        <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar formaciones</Link>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {trainingRequests
+                                            .filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected')
+                                            .slice(0, 4)
+                                            .map((training) => (
+                                                <Link key={training.id} to="/trainings" className="block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
+                                                    <p className="font-bold text-violet-900">{training.scheduled_date_key || training.requested_date_key}</p>
+                                                    <p className="text-xs text-violet-700">Estado: {training.status}</p>
+                                                </Link>
+                                            ))}
+                                        {trainingRequests.filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected').length === 0 && (
+                                            <div className="app-empty-card">No tienes formaciones pendientes.</div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>
+                    )}
 
-                        {canSeeTrainingsPanel && !isCompact && (
+                    {canSeeTrainingsPanel && isCompact && compactSection === 'trainings' && (
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="text-base font-black text-violet-950">Gestionar formaciones</h3>
@@ -2330,411 +2412,408 @@ function Dashboard() {
                                 )}
                             </div>
                         </div>
-                        )}
-                    </div>
-                    )}
-
-                    {canSeeTrainingsPanel && isCompact && compactSection === 'trainings' && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-base font-black text-violet-950">Gestionar formaciones</h3>
-                            <Link to="/trainings" className="text-xs font-bold text-violet-700">Gestionar formaciones</Link>
-                        </div>
-                        <div className="space-y-2">
-                            {trainingRequests
-                                .filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected')
-                                .slice(0, 4)
-                                .map((training) => (
-                                    <Link key={training.id} to="/trainings" className="block p-3 rounded-xl border border-violet-100 bg-violet-50/70 text-sm">
-                                        <p className="font-bold text-violet-900">{training.scheduled_date_key || training.requested_date_key}</p>
-                                        <p className="text-xs text-violet-700">Estado: {training.status}</p>
-                                    </Link>
-                                ))}
-                            {trainingRequests.filter((training) => (currentUser?.isTrainingManager || training.user_id === currentUser?.id) && training.status !== 'rejected').length === 0 && (
-                                <div className="app-empty-card">No tienes formaciones pendientes.</div>
-                            )}
-                        </div>
-                    </div>
                     )}
                 </div>
 
                 <div className="space-y-6">
                     {(!isCompact || compactSection === 'alerts') && (
-                    <div id="dashboard-inventory-panel" className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h2 className="text-lg font-black text-violet-950">Inventario · Visión general</h2>
-                        </div>
-                        <div className="flex gap-2 mb-3">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setInventoryPanelMode('critical');
-                                    setSelectedInventoryDetail(null);
-                                    setSelectedGeneralLotDetail(null);
-                                }}
-                                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${
-                                    inventoryPanelMode === 'critical'
+                        <div id="dashboard-inventory-panel" className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-lg font-black text-violet-950">Inventario · Visión general</h2>
+                            </div>
+                            <div className="flex gap-2 mb-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInventoryPanelMode('critical');
+                                        setSelectedInventoryDetail(null);
+                                        setSelectedGeneralLotDetail(null);
+                                    }}
+                                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${inventoryPanelMode === 'critical'
                                         ? 'bg-rose-600 text-white border-rose-600'
                                         : 'bg-white text-rose-700 border-rose-200'
-                                }`}
-                            >
-                                <AlertTriangle size={14} />
-                                Stock crítico
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setInventoryPanelMode('general');
-                                    setSelectedInventoryDetail(null);
-                                    setSelectedGeneralLotDetail(null);
-                                }}
-                                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${
-                                    inventoryPanelMode === 'general'
+                                        }`}
+                                >
+                                    <AlertTriangle size={14} />
+                                    Stock crítico
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInventoryPanelMode('general');
+                                        setSelectedInventoryDetail(null);
+                                        setSelectedGeneralLotDetail(null);
+                                    }}
+                                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${inventoryPanelMode === 'general'
                                         ? 'bg-violet-700 text-white border-violet-700'
                                         : 'bg-white text-violet-700 border-violet-200'
-                                }`}
-                            >
-                                <Info size={14} />
-                                Datos generales
-                            </button>
-                        </div>
-
-                        {mountedVisualFromInventory.length === 0 &&
-                        potentialVisualFromInventory.length === 0 &&
-                        globalStockByProductLotFromInventory.length === 0 &&
-                        canetCriticalFromInventory.length === 0 &&
-                        mountedCriticalFromInventory.length === 0 &&
-                        potentialCriticalFromInventory.length === 0 &&
-                        caducityAlertsFromInventory.length === 0 ? (
-                            <div className="app-empty-card">Sin alertas críticas de stock o caducidad por ahora.</div>
-                        ) : (
-                            <div className="space-y-3">
-                                {inventoryPanelMode === 'critical' && mountedCriticalFromInventory.length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico · Cajas montadas (todas las bodegas)</p>
-                                        <div className="space-y-1.5">
-                                            {mountedCriticalFromInventory.slice(0, 6).map((item) => (
-                                                <button
-                                                    key={`mounted-${item.producto}`}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const detail =
-                                                            mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto)) ||
-                                                            mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
-                                                        setSelectedInventoryDetail({
-                                                            tipo: 'mounted',
-                                                            producto: item.producto,
-                                                            byBodega: detail?.byBodega || [],
-                                                            byLote: detail?.byLote || [],
-                                                        });
-                                                    }}
-                                                    className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
-                                                >
-                                                    <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                    <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {inventoryPanelMode === 'critical' && potentialCriticalFromInventory.length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-1.5">Stock crítico · Cajas potenciales</p>
-                                        <div className="space-y-1.5">
-                                            {potentialCriticalFromInventory.slice(0, 6).map((item) => (
-                                                <button
-                                                    key={`potential-${item.producto}`}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const detail = potentialCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
-                                                        setSelectedInventoryDetail({
-                                                            tipo: 'potential',
-                                                            producto: item.producto,
-                                                            byLote: detail?.byLote || [],
-                                                        });
-                                                    }}
-                                                    className="w-full text-left p-2 rounded-xl border border-amber-100 bg-amber-50 hover:bg-amber-100/70"
-                                                >
-                                                    <p className="text-sm font-bold text-amber-900">{item.producto}</p>
-                                                    <p className="text-xs text-amber-700">Potencial: {item.cajasPotenciales.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {inventoryPanelMode === 'critical' && canetCriticalFromInventory.length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
-                                        <div className="space-y-1.5">
-                                            {canetCriticalFromInventory.slice(0, 6).map((item) => (
-                                                <button
-                                                    key={`canet-${item.producto}`}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const detail = canetCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
-                                                        setSelectedInventoryDetail({
-                                                            tipo: 'canet',
-                                                            producto: item.producto,
-                                                            byLote: detail?.byLote || [],
-                                                        });
-                                                    }}
-                                                    className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
-                                                >
-                                                    <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                    <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {inventoryPanelMode === 'general' && generalStockByProduct.length > 0 && (
-                                    <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
-                                        <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Datos generales · Stock total por producto (segmentado por lote)</p>
-                                        <div className="space-y-2">
-                                            {generalStockByProduct.slice(0, 6).map((row) => (
-                                                <div key={`gsp-${row.producto}`}>
-                                                    <div className="flex items-center justify-between text-[11px] mb-1">
-                                                        <span className="font-black text-violet-900 inline-flex items-center gap-1">
-                                                            <span
-                                                                className="inline-block w-2.5 h-2.5 rounded-full"
-                                                                style={{ background: PRODUCT_COLORS[row.producto] || '#7c3aed' }}
-                                                            />
-                                                            {row.producto}
-                                                        </span>
-                                                        <span className="font-semibold text-violet-700">{row.total.toLocaleString('es-ES')}</span>
-                                                    </div>
-                                                    <div className="h-3 rounded-full bg-violet-100 overflow-hidden flex">
-                                                        {row.byLote.map((lot, idx) => (
-                                                            <button
-                                                                key={`${row.producto}-${lot.lote}`}
-                                                                type="button"
-                                                                title={`${row.producto} · ${lot.lote}: ${lot.total.toLocaleString('es-ES')}`}
-                                                                onClick={() =>
-                                                                    setSelectedGeneralLotDetail({
-                                                                        producto: row.producto,
-                                                                        lote: lot.lote,
-                                                                        total: lot.total,
-                                                                        byBodega: lot.byBodega.slice().sort((a, b) => b.cantidad - a.cantidad),
-                                                                    })
-                                                                }
-                                                                className="h-full"
-                                                                style={{
-                                                                    width: `${Math.max(4, (lot.total / Math.max(1, row.total)) * 100)}%`,
-                                                                    background:
-                                                                        PRODUCT_LOT_PALETTES[row.producto]?.[idx % PRODUCT_LOT_PALETTES[row.producto].length] ||
-                                                                        PRODUCT_COLORS[row.producto] ||
-                                                                        '#7c3aed',
-                                                                }}
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                    <div className="mt-1 flex flex-wrap gap-1">
-                                                        {row.byBodega.slice(0, 4).map((b, idx) => (
-                                                            <span key={`${row.producto}-b-${b.bodega}`} className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-violet-800 bg-white border border-violet-200">
-                                                                <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: BODEGA_COLORS[idx % BODEGA_COLORS.length] }} />
-                                                                {b.bodega}: {b.cantidad.toLocaleString('es-ES')}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {inventoryPanelMode === 'general' && generalStockByProduct.length === 0 && (
-                                    <div className="app-empty-card">
-                                        No hay datos generales de inventario para mostrar todavía.
-                                    </div>
-                                )}
-
-                                {caducityAlertsFromInventory.length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-bold uppercase tracking-widest text-amber-600 mb-1.5">Caducidad próxima</p>
-                                        <div className="space-y-1.5">
-                                            {caducityAlertsFromInventory.slice(0, 4).map((item) => (
-                                                <div key={`${item.producto}-${item.lote}`} className="p-2 rounded-xl border border-amber-100 bg-amber-50">
-                                                    <p className="text-sm font-bold text-amber-900">{item.producto} · {item.lote}</p>
-                                                    <p className="text-xs text-amber-700">{item.days <= 0 ? 'Caducado' : `${item.days} días para caducar`} · {item.fecha}</p>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
+                                        }`}
+                                >
+                                    <Info size={14} />
+                                    Datos generales
+                                </button>
                             </div>
-                        )}
-                        {inventoryAlerts?.updatedAt && (
-                            <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryAlerts.updatedAt))}</p>
-                        )}
-                    </div>
+
+                            {mountedVisualFromInventory.length === 0 &&
+                                potentialVisualFromInventory.length === 0 &&
+                                globalStockByProductLotFromInventory.length === 0 &&
+                                canetCriticalFromInventory.length === 0 &&
+                                mountedCriticalFromInventory.length === 0 &&
+                                potentialCriticalFromInventory.length === 0 &&
+                                caducityAlertsFromInventory.length === 0 ? (
+                                <div className="app-empty-card">Sin alertas críticas de stock o caducidad por ahora.</div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {inventoryPanelMode === 'critical' && mountedCriticalFromInventory.length > 0 && (
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico · Cajas montadas (todas las bodegas)</p>
+                                            <div className="space-y-1.5">
+                                                {mountedCriticalFromInventory.slice(0, 6).map((item) => (
+                                                    <button
+                                                        key={`mounted-${item.producto}`}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const detail =
+                                                                mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto)) ||
+                                                                mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
+                                                            setSelectedInventoryDetail({
+                                                                tipo: 'mounted',
+                                                                producto: item.producto,
+                                                                byBodega: detail?.byBodega || [],
+                                                                byLote: detail?.byLote || [],
+                                                            });
+                                                        }}
+                                                        className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
+                                                    >
+                                                        <p className="text-sm font-bold text-rose-900">{item.producto}</p>
+                                                        <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {inventoryPanelMode === 'critical' && potentialCriticalFromInventory.length > 0 && (
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-1.5">Stock crítico · Cajas potenciales</p>
+                                            <div className="space-y-1.5">
+                                                {potentialCriticalFromInventory.slice(0, 6).map((item) => (
+                                                    <button
+                                                        key={`potential-${item.producto}`}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const detail = potentialCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
+                                                            setSelectedInventoryDetail({
+                                                                tipo: 'potential',
+                                                                producto: item.producto,
+                                                                byLote: detail?.byLote || [],
+                                                            });
+                                                        }}
+                                                        className="w-full text-left p-2 rounded-xl border border-amber-100 bg-amber-50 hover:bg-amber-100/70"
+                                                    >
+                                                        <p className="text-sm font-bold text-amber-900">{item.producto}</p>
+                                                        <p className="text-xs text-amber-700">Potencial: {item.cajasPotenciales.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {inventoryPanelMode === 'critical' && canetCriticalFromInventory.length > 0 && (
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
+                                            <div className="space-y-1.5">
+                                                {canetCriticalFromInventory.slice(0, 6).map((item) => (
+                                                    <button
+                                                        key={`canet-${item.producto}`}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const detail = canetCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
+                                                            setSelectedInventoryDetail({
+                                                                tipo: 'canet',
+                                                                producto: item.producto,
+                                                                byLote: detail?.byLote || [],
+                                                            });
+                                                        }}
+                                                        className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
+                                                    >
+                                                        <p className="text-sm font-bold text-rose-900">{item.producto}</p>
+                                                        <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {inventoryPanelMode === 'general' && generalStockByProduct.length > 0 && (
+                                        <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+                                            <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Datos generales · Stock total por producto (segmentado por lote)</p>
+                                            <div className="space-y-2">
+                                                {generalStockByProduct.slice(0, 6).map((row) => (
+                                                    <div key={`gsp-${row.producto}`}>
+                                                        <div className="flex items-center justify-between text-[11px] mb-1">
+                                                            <span className="font-black text-violet-900 inline-flex items-center gap-1">
+                                                                <span
+                                                                    className="inline-block w-2.5 h-2.5 rounded-full"
+                                                                    style={{ background: PRODUCT_COLORS[row.producto] || '#7c3aed' }}
+                                                                />
+                                                                {row.producto}
+                                                            </span>
+                                                            <span className="font-semibold text-violet-700">{row.total.toLocaleString('es-ES')}</span>
+                                                        </div>
+                                                        <div className="h-3 rounded-full bg-violet-100 overflow-hidden flex">
+                                                            {row.byLote.map((lot, idx) => (
+                                                                <button
+                                                                    key={`${row.producto}-${lot.lote}`}
+                                                                    type="button"
+                                                                    title={`${row.producto} · ${lot.lote}: ${lot.total.toLocaleString('es-ES')}`}
+                                                                    onClick={() =>
+                                                                        setSelectedGeneralLotDetail({
+                                                                            producto: row.producto,
+                                                                            lote: lot.lote,
+                                                                            total: lot.total,
+                                                                            byBodega: lot.byBodega.slice().sort((a, b) => b.cantidad - a.cantidad),
+                                                                        })
+                                                                    }
+                                                                    className="h-full"
+                                                                    style={{
+                                                                        width: `${Math.max(4, (lot.total / Math.max(1, row.total)) * 100)}%`,
+                                                                        background:
+                                                                            PRODUCT_LOT_PALETTES[row.producto]?.[idx % PRODUCT_LOT_PALETTES[row.producto].length] ||
+                                                                            PRODUCT_COLORS[row.producto] ||
+                                                                            '#7c3aed',
+                                                                    }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                        <div className="mt-1 flex flex-wrap gap-1">
+                                                            {row.byBodega.slice(0, 4).map((b, idx) => (
+                                                                <span key={`${row.producto}-b-${b.bodega}`} className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-violet-800 bg-white border border-violet-200">
+                                                                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: BODEGA_COLORS[idx % BODEGA_COLORS.length] }} />
+                                                                    {b.bodega}: {b.cantidad.toLocaleString('es-ES')}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {inventoryPanelMode === 'general' && generalStockByProduct.length === 0 && (
+                                        <div className="app-empty-card">
+                                            No hay datos generales de inventario para mostrar todavía.
+                                        </div>
+                                    )}
+
+                                    {caducityAlertsFromInventory.length > 0 && (
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-amber-600 mb-1.5">Caducidad próxima</p>
+                                            <div className="space-y-1.5">
+                                                {caducityAlertsFromInventory.slice(0, 4).map((item) => (
+                                                    <div key={`${item.producto}-${item.lote}`} className="p-2 rounded-xl border border-amber-100 bg-amber-50">
+                                                        <p className="text-sm font-bold text-amber-900">{item.producto} · {item.lote}</p>
+                                                        <p className="text-xs text-amber-700">{item.days <= 0 ? 'Caducado' : `${item.days} días para caducar`} · {item.fecha}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {inventoryAlerts?.updatedAt && (
+                                <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryAlerts.updatedAt))}</p>
+                            )}
+                        </div>
                     )}
 
                     {(!isCompact || compactSection === 'notifications') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
+                        <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
+                                <button
+                                    type="button"
+                                    onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
+                                    className="text-xs font-bold text-violet-700"
+                                >
+                                    Ver todas
+                                </button>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                                {(['all', 'tasks', 'schedule', 'meetings', 'absences', 'trainings', 'stock'] as NotificationFilter[]).map((tab) => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setNotificationFilter(tab)}
+                                        className={`px-2 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${notificationFilter === tab ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'
+                                            }`}
+                                    >
+                                        {notificationFilterLabels[tab]}
+                                        {notificationCounts[tab] > 0 && (
+                                            <span className={`w-4 h-4 rounded-full text-[10px] leading-4 text-center ${notificationFilter === tab ? 'bg-white text-violet-700' : 'bg-violet-700 text-white'}`}>
+                                                {notificationCounts[tab]}
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+
                             <button
                                 type="button"
-                                onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
-                                className="text-xs font-bold text-violet-700"
+                                onClick={markFilteredAsRead}
+                                className="mb-3 inline-flex items-center gap-2 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5"
                             >
-                                Ver todas
+                                <span className="w-3.5 h-3.5 rounded border border-violet-400 bg-white" />
+                                Marcar filtro como leído
                             </button>
-                        </div>
 
-                        <div className="flex flex-wrap gap-1.5 mb-3">
-                            {(['all', 'tasks', 'schedule', 'meetings', 'absences', 'trainings', 'stock'] as NotificationFilter[]).map((tab) => (
-                                <button
-                                    key={tab}
-                                    onClick={() => setNotificationFilter(tab)}
-                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${
-                                        notificationFilter === tab ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'
-                                    }`}
-                                >
-                                    {notificationFilterLabels[tab]}
-                                    {notificationCounts[tab] > 0 && (
-                                        <span className={`w-4 h-4 rounded-full text-[10px] leading-4 text-center ${notificationFilter === tab ? 'bg-white text-violet-700' : 'bg-violet-700 text-white'}`}>
-                                            {notificationCounts[tab]}
-                                        </span>
-                                    )}
-                                </button>
-                            ))}
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={markFilteredAsRead}
-                            className="mb-3 inline-flex items-center gap-2 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5"
-                        >
-                            <span className="w-3.5 h-3.5 rounded border border-violet-400 bg-white" />
-                            Marcar filtro como leído
-                        </button>
-
-                        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                            {compactNotifications.length > 0 ? compactNotifications.map((notification) => (
-                                <div key={notification.id} className="p-3 rounded-xl border border-violet-100 bg-white">
+                            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                {compactNotifications.length > 0 ? compactNotifications.map((notification) => (
+                                    <div key={notification.id} className="p-3 rounded-xl border border-violet-100 bg-white">
+                                        <button
+                                            onClick={() => handleNotificationClick(notification)}
+                                            className="w-full text-left"
+                                        >
+                                            <p className="text-sm text-violet-900 font-medium">{notification.message}</p>
+                                            <p className="text-[11px] text-violet-500 mt-1">{formatDatePretty(new Date(notification.created_at))}</p>
+                                        </button>
+                                        {categorizeNotification(notification) === 'schedule' && (
+                                            <div className="mt-2">
+                                                <button
+                                                    onClick={() => {
+                                                        const block = document.getElementById('dashboard-time-summary');
+                                                        if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                    }}
+                                                    className="text-xs px-2 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                                                >
+                                                    Pausa / Retomar
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )) : (
+                                    <div className="app-empty-card">No hay notificaciones pendientes.</div>
+                                )}
+                                {filteredNotifications.length > compactNotifications.length && (
                                     <button
-                                        onClick={() => handleNotificationClick(notification)}
-                                        className="w-full text-left"
+                                        onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
+                                        className="w-full mt-1 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 hover:bg-violet-100 transition-colors"
                                     >
-                                        <p className="text-sm text-violet-900 font-medium">{notification.message}</p>
-                                        <p className="text-[11px] text-violet-500 mt-1">{formatDatePretty(new Date(notification.created_at))}</p>
+                                        Ver {filteredNotifications.length - compactNotifications.length} mas
                                     </button>
-                                    {categorizeNotification(notification) === 'schedule' && (
-                                        <div className="mt-2">
-                                            <button
-                                                onClick={() => {
-                                                    const block = document.getElementById('dashboard-time-summary');
-                                                    if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                                }}
-                                                className="text-xs px-2 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
-                                            >
-                                                Pausa / Retomar
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            )) : (
-                                <div className="app-empty-card">No hay notificaciones pendientes.</div>
-                            )}
-                            {filteredNotifications.length > compactNotifications.length && (
-                                <button
-                                    onClick={() => window.dispatchEvent(new CustomEvent('open-notifications-modal'))}
-                                    className="w-full mt-1 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 hover:bg-violet-100 transition-colors"
-                                >
-                                    Ver {filteredNotifications.length - compactNotifications.length} mas
-                                </button>
-                            )}
+                                )}
+                            </div>
                         </div>
-                    </div>
                     )}
 
                     {(!isCompact || compactSection === 'pulse') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
-                        <h2 className="text-lg font-black text-violet-950 mb-3">Pulso del equipo</h2>
-                        <div className="grid grid-cols-2 gap-2 mb-3">
-                            {[
-                                { emoji: '✨', label: 'Protagonista' },
-                                { emoji: '🌸', label: 'Zen' },
-                                { emoji: '☁️', label: 'Paciencia' },
-                                { emoji: '🔥', label: 'A tope' },
-                            ].map((mood) => (
-                                <button
-                                    key={mood.emoji}
-                                    onClick={() => handleMoodSelect(mood.emoji, mood.label)}
-                                    className={`px-2 py-2 rounded-xl border text-xs font-bold ${
-                                        myStatusToday?.custom_emoji === mood.emoji
+                        <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                            <h2 className="text-lg font-black text-violet-950 mb-3">Pulso del equipo</h2>
+                            <div className="grid grid-cols-2 gap-2 mb-3">
+                                {[
+                                    { emoji: '✨', label: 'Protagonista' },
+                                    { emoji: '🌸', label: 'Zen' },
+                                    { emoji: '☁️', label: 'Paciencia' },
+                                    { emoji: '🔥', label: 'A tope' },
+                                ].map((mood) => (
+                                    <button
+                                        key={mood.emoji}
+                                        onClick={() => handleMoodSelect(mood.emoji, mood.label)}
+                                        className={`px-2 py-2 rounded-xl border text-xs font-bold ${myStatusToday?.custom_emoji === mood.emoji
                                             ? 'bg-violet-700 text-white border-violet-700'
                                             : 'bg-white border-violet-200 text-violet-700'
-                                    }`}
-                                >
-                                    <span className="mr-1">{mood.emoji}</span>
-                                    {mood.label}
-                                    {savingMood === mood.emoji ? ' ...' : ''}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="space-y-2">
-                            {teamPulse.map((item) => (
-                                <div key={item.user.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center gap-3">
-                                    <UserAvatar name={item.user.name} size="sm" />
-                                    <div className="flex-1">
-                                        <p className="text-sm font-bold text-violet-900">{item.user.name}</p>
-                                        <p className="text-xs text-violet-600">
-                                            {item.mood?.custom_emoji || '🙂'} {item.mood?.custom_status || (item.isActive ? 'Activo' : 'Sin estado')}
-                                        </p>
-                                    </div>
-                                    {item.user.id !== currentUser?.id && (
-                                        <button
-                                            onClick={() => openDirectChat(item.user.id)}
-                                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
-                                            title={`Abrir chat con ${item.user.name}`}
-                                        >
-                                            <MessageCircle size={14} />
-                                        </button>
-                                    )}
-                                    {item.user.id !== currentUser?.id && (
-                                        <button
-                                            onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
-                                            disabled={sendingBoostTo === item.user.id}
-                                            className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${
-                                                sendingBoostTo === item.user.id
+                                            }`}
+                                    >
+                                        <span className="mr-1">{mood.emoji}</span>
+                                        {mood.label}
+                                        {savingMood === mood.emoji ? ' ...' : ''}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="space-y-2">
+                                {teamPulse.map((item) => (
+                                    <div key={item.user.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center gap-3">
+                                        <UserAvatar name={item.user.name} size="sm" />
+                                        <div className="flex-1">
+                                            <p className="text-sm font-bold text-violet-900">{item.user.name}</p>
+                                            <p className="text-xs text-violet-600">
+                                                {item.mood?.custom_emoji || '🙂'} {item.mood?.custom_status || (item.isActive ? 'Activo' : 'Sin estado')}
+                                            </p>
+                                        </div>
+                                        {item.user.id !== currentUser?.id && (
+                                            <button
+                                                onClick={() => openDirectChat(item.user.id)}
+                                                className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
+                                                title={`Abrir chat con ${item.user.name}`}
+                                            >
+                                                <MessageCircle size={14} />
+                                            </button>
+                                        )}
+                                        {item.user.id !== currentUser?.id && (
+                                            <button
+                                                onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
+                                                disabled={sendingBoostTo === item.user.id}
+                                                className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${sendingBoostTo === item.user.id
                                                     ? 'bg-violet-300 text-violet-900'
                                                     : 'bg-violet-200 text-violet-800 hover:bg-violet-300 hover:scale-[1.03] active:scale-[0.98]'
-                                            }`}
-                                            title="Enviar chute de energía"
-                                        >
-                                            <Coffee size={14} />
-                                            {sendingBoostTo === item.user.id ? 'Enviando...' : 'Café'}
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
+                                                    }`}
+                                                title="Enviar chute de energía"
+                                            >
+                                                <Coffee size={14} />
+                                                {sendingBoostTo === item.user.id ? 'Enviando...' : 'Café'}
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         </div>
-                    </div>
                     )}
 
                     {(!isCompact || compactSection === 'chat') && (
-                    <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
-                        <div className="flex items-center justify-between mb-3">
-                            <h2 className="text-lg font-black text-violet-950">Chat interno</h2>
-                            <Link to="/chat" className="text-xs font-bold text-violet-700">Abrir</Link>
+                        <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-lg font-black text-violet-950">Chat interno</h2>
+                                <Link to="/chat" className="text-xs font-bold text-violet-700">Abrir</Link>
+                            </div>
+                            <div className="space-y-2">
+                                {chatDashboardRows.map(({ conversation, unread }) => (
+                                    <button
+                                        key={conversation.id}
+                                        onClick={() => navigate(`/chat?id=${conversation.id}`)}
+                                        className="w-full group p-3 rounded-2xl border border-gray-100 bg-white hover:border-violet-200 hover:bg-violet-50/30 transition-all text-left"
+                                    >
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center text-violet-700 font-bold flex-shrink-0">
+                                                    {chatConversationName(conversation).charAt(0).toUpperCase()}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-sm font-bold text-gray-900 truncate">
+                                                            {chatConversationName(conversation)}
+                                                        </p>
+                                                        {unread > 0 && (
+                                                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 truncate mt-0.5">
+                                                        {conversation.last_message?.message || 'Sin mensajes aún'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            {unread > 0 && (
+                                                <div className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full text-[10px] font-black">
+                                                    {unread}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </button>
+                                ))}
+                                {chatConversations.length === 0 && (
+                                    <div className="app-empty-card">No tienes chats activos todavía.</div>
+                                )}
+                            </div>
                         </div>
-                        <div className="space-y-2">
-                            {chatConversations.slice(0, 3).map((conversation) => (
-                                <Link key={conversation.id} to="/chat" className="block p-2 rounded-xl border border-gray-200 hover:border-violet-200">
-                                    <p className="text-sm font-bold text-gray-900 truncate">{conversation.title || (conversation.kind === 'group' ? 'Grupo' : 'Chat directo')}</p>
-                                    <p className="text-xs text-gray-500 truncate">{conversation.last_message?.message || 'Sin mensajes'}</p>
-                                </Link>
-                            ))}
-                            {chatConversations.length === 0 && (
-                                <div className="app-empty-card">No tienes chats activos todavía.</div>
-                            )}
-                        </div>
-                    </div>
                     )}
                 </div>
             </div>
@@ -2768,21 +2847,19 @@ function Dashboard() {
                             <div className="flex flex-wrap gap-2">
                                 <button
                                     onClick={() => setManageRequestsTab('pending')}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${
-                                        manageRequestsTab === 'pending'
-                                            ? 'bg-amber-600 text-white border-amber-600'
-                                            : 'bg-amber-50 text-amber-800 border-amber-200'
-                                    }`}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${manageRequestsTab === 'pending'
+                                        ? 'bg-amber-600 text-white border-amber-600'
+                                        : 'bg-amber-50 text-amber-800 border-amber-200'
+                                        }`}
                                 >
                                     Pendientes ({pendingManagedRows.length})
                                 </button>
                                 <button
                                     onClick={() => setManageRequestsTab('resolved')}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${
-                                        manageRequestsTab === 'resolved'
-                                            ? 'bg-emerald-600 text-white border-emerald-600'
-                                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                    }`}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-black border ${manageRequestsTab === 'resolved'
+                                        ? 'bg-emerald-600 text-white border-emerald-600'
+                                        : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                        }`}
                                 >
                                     Aprobadas ({resolvedManagedRows.length})
                                 </button>
@@ -3334,9 +3411,9 @@ function Dashboard() {
                 <div
                     className="fixed inset-y-0 right-0 left-0 md:left-[var(--layout-sidebar-current-width)] z-[9999] bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4"
                     onClick={() => {
-                    setSelectedInventoryDetail(null);
-                    setSelectedGeneralLotDetail(null);
-                }}
+                        setSelectedInventoryDetail(null);
+                        setSelectedGeneralLotDetail(null);
+                    }}
                 >
                     <div
                         className="w-full max-w-[min(46rem,96vw)] rounded-2xl border border-violet-200 bg-white shadow-2xl"

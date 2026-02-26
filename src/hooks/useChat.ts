@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { Attachment, User } from '../types';
@@ -44,11 +44,40 @@ interface SendMessageInput {
 
 const DELETED_MESSAGE_MARKER = '__LUNARIS_DELETED__';
 const LEGACY_DELETED_MESSAGE_TEXT = 'Mensaje eliminado';
+const CHAT_READ_STATE_KEY = 'chat_last_read_v1';
+
+type ChatReadMap = Record<string, string>;
+
+const loadReadState = (userId?: string | null): ChatReadMap => {
+    if (!userId || typeof window === 'undefined') return {};
+    try {
+        const raw = window.localStorage.getItem(`${CHAT_READ_STATE_KEY}:${userId}`);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+const saveReadState = (userId?: string | null, map?: ChatReadMap) => {
+    if (!userId || typeof window === 'undefined' || !map) return;
+    try {
+        window.localStorage.setItem(`${CHAT_READ_STATE_KEY}:${userId}`, JSON.stringify(map));
+    } catch {
+        // noop
+    }
+};
 
 export function useChat(currentUser: User | null, selectedConversationId?: number | null) {
     const queryClient = useQueryClient();
     const conversationsKey = ['chat-conversations', currentUser?.id] as const;
     const messagesKey = ['chat-messages', selectedConversationId] as const;
+    const [readMap, setReadMap] = useState<ChatReadMap>({});
+
+    useEffect(() => {
+        setReadMap(loadReadState(currentUser?.id));
+    }, [currentUser?.id]);
 
     const { data: conversations = [], isLoading: loadingConversations, error: conversationsError } = useQuery<ChatConversation[]>({
         queryKey: conversationsKey,
@@ -305,12 +334,16 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
             const normalizedTitle = (title || '').trim();
             if (!normalizedTitle) throw new Error('El título del chat es obligatorio.');
 
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('chat_conversations')
                 .update({ title: normalizedTitle })
-                .eq('id', conversationId);
+                .eq('id', conversationId)
+                .select('id');
 
             if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('No se pudo actualizar el título. Puede que no tengas permisos (RLS) o que el chat no exista.');
+            }
             return { conversationId, title: normalizedTitle };
         },
         onSuccess: () => {
@@ -489,6 +522,50 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         },
     });
 
+    const markConversationRead = (conversationId: number, readAt?: string) => {
+        if (!currentUser?.id || !conversationId) return;
+        const key = String(conversationId);
+        setReadMap((prev) => {
+            const candidate = readAt || new Date().toISOString();
+            const prevIso = prev[key];
+            const nextIso =
+                prevIso && new Date(prevIso).getTime() > new Date(candidate).getTime()
+                    ? prevIso
+                    : candidate;
+            const next = { ...prev, [key]: nextIso };
+            saveReadState(currentUser.id, next);
+            return next;
+        });
+    };
+
+    const unreadByConversation = useMemo(() => {
+        const map: Record<number, number> = {};
+        for (const conversation of conversations) {
+            const last = conversation.last_message;
+            if (!last) {
+                map[conversation.id] = 0;
+                continue;
+            }
+            if (last.sender_id === currentUser?.id) {
+                map[conversation.id] = 0;
+                continue;
+            }
+            const readIso = readMap[String(conversation.id)];
+            if (!readIso) {
+                map[conversation.id] = 1;
+                continue;
+            }
+            const isUnread = new Date(last.created_at).getTime() > new Date(readIso).getTime();
+            map[conversation.id] = isUnread ? 1 : 0;
+        }
+        return map;
+    }, [conversations, currentUser?.id, readMap]);
+
+    const unreadTotal = useMemo(
+        () => Object.values(unreadByConversation).reduce((acc, value) => acc + (value > 0 ? 1 : 0), 0),
+        [unreadByConversation],
+    );
+
     return {
         conversations,
         messages,
@@ -511,5 +588,8 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
         deleteMessage: deleteMessageMutation.mutateAsync,
         deletedMessageMarker: DELETED_MESSAGE_MARKER,
         deletedMessageLegacyText: LEGACY_DELETED_MESSAGE_TEXT,
+        unreadByConversation,
+        unreadTotal,
+        markConversationRead,
     };
 }

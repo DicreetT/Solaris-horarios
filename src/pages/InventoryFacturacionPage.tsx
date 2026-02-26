@@ -62,9 +62,9 @@ const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
-const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
+const CANET_ASSEMBLY_SYNC_START = '2026-02-24';
 // Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
-const CANET_MOVEMENT_SYNC_START = '2026-02-23';
+const CANET_MOVEMENT_SYNC_START = '2026-02-24';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
 const EDIT_GRANT_HOURS = 6;
@@ -444,7 +444,12 @@ export default function InventoryFacturacionPage() {
       }));
 
     const mirrored = (movimientos || [])
-      .filter((m) => clean((m as any).source).toLowerCase() === 'canet')
+      .filter((m) => {
+        const src = clean((m as any).source).toLowerCase();
+        if (src !== 'canet') return false;
+        const d = parseDate(clean(m.fecha));
+        return !!d && d >= canetMovementSyncStartDate;
+      })
       .map((m) => ({
         ...m,
         lote: canonicalLotForProduct(clean(m.producto), clean(m.lote)),
@@ -1283,18 +1288,18 @@ export default function InventoryFacturacionPage() {
       {accessMode !== 'unset' && tab === 'dashboard' && (
         <section className="space-y-3">
           <div className="rounded-2xl border border-violet-200 bg-white p-2">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <KpiCard title={`Stock total · ${HUARTE_BUILD_TAG}`} value={String(safeKpiStockTotal)} tone="violet" onClick={() => setStockTotalModalOpen(true)} />
-            <KpiCard title="Movimientos (filtro)" value={String(dashboard.totalMovements)} tone="sky" onClick={() => setMovementTypesModalOpen(true)} />
-            <KpiCard title="Rectificativas (filtro)" value={String(dashboard.totalRect)} tone="amber" onClick={() => setRectByProductModalOpen(true)} />
-            <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
-          </div>
-          <div className="mt-2 flex justify-end">
-            <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
-              <Download size={14} />
-              PDF gerencial
-            </button>
-          </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <KpiCard title={`Stock total · ${HUARTE_BUILD_TAG}`} value={String(safeKpiStockTotal)} tone="violet" onClick={() => setStockTotalModalOpen(true)} />
+              <KpiCard title="Movimientos (filtro)" value={String(dashboard.totalMovements)} tone="sky" onClick={() => setMovementTypesModalOpen(true)} />
+              <KpiCard title="Rectificativas (filtro)" value={String(dashboard.totalRect)} tone="amber" onClick={() => setRectByProductModalOpen(true)} />
+              <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
+            </div>
+            <div className="mt-2 flex justify-end">
+              <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                <Download size={14} />
+                PDF gerencial
+              </button>
+            </div>
           </div>
 
           {isCompact && (
@@ -1924,7 +1929,7 @@ function StockVisual({
         {rows.map((row) => (
           <div key={`${row.producto}|${row.lote}`} className="grid grid-cols-[120px_1fr_52px] items-center gap-2">
             <div className="truncate text-[11px] font-bold text-violet-900">
-                <span className="inline-flex items-center gap-1">
+              <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: productColorMap.get(row.producto) || '#7c3aed' }} />
                 {row.producto}
               </span>{' '}

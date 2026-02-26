@@ -82,6 +82,8 @@ function ChatPage() {
         deletedMessageLegacyText,
         removeConversation,
         removingConversation,
+        unreadByConversation,
+        markConversationRead,
     } = useChat(currentUser, selectedConversationId);
 
     const selectedConversation = conversations.find((c) => c.id === selectedConversationId) || null;
@@ -120,6 +122,13 @@ function ChatPage() {
             setSelectedConversationId(conversations[0].id);
         }
     }, [conversations, selectedConversationId]);
+
+    useEffect(() => {
+        if (!selectedConversationId) return;
+        const selected = conversations.find((c) => c.id === selectedConversationId);
+        if (!selected) return;
+        markConversationRead(selectedConversationId, selected.last_message?.created_at);
+    }, [selectedConversationId, conversations, markConversationRead]);
 
     useEffect(() => {
         const directUserId = searchParams.get('user');
@@ -326,16 +335,19 @@ function ChatPage() {
     }, []);
 
     const mentionCandidates = useMemo(() => {
-        const pool = selectedConversationParticipants.length > 0
-            ? selectedConversationParticipants
-                .filter((id) => id !== currentUser?.id)
-                .map((id) => ({ id, name: userNameById(id) }))
-            : USERS.filter((user) => user.id !== currentUser?.id);
+        if (!mentionOpen || !selectedConversation) return [];
+        const query = mentionQuery.toLowerCase();
 
-        return pool
-            .filter((user) => user.name.toLowerCase().includes(mentionQuery.toLowerCase()))
-            .slice(0, 8);
-    }, [currentUser, mentionQuery, selectedConversationParticipants]);
+        // Filter USERS based on participants of the current conversation
+        const participants = selectedConversation.participants || [];
+        const candidates = USERS.filter((u) =>
+            participants.includes(u.id) &&
+            u.id !== currentUser?.id &&
+            (u.name.toLowerCase().includes(query) || query === '')
+        );
+
+        return candidates.slice(0, 8);
+    }, [mentionOpen, mentionQuery, selectedConversation, currentUser?.id]);
 
     const sendCurrentMessage = async () => {
         if (!selectedConversationId) return;
@@ -358,63 +370,63 @@ function ChatPage() {
         sendingRef.current = true;
         lastSendRef.current = { signature: rawSignature, at: now };
         try {
-        let messageWithAbsence = linkedAbsenceId
-            ? `${messageDraft}${messageDraft ? '\n' : ''}Solicitud vinculada #${linkedAbsenceId} (${linkedAbsenceKind === 'vacation' ? 'vacaciones' : 'ausencia'})`
-            : messageDraft;
+            let messageWithAbsence = linkedAbsenceId
+                ? `${messageDraft}${messageDraft ? '\n' : ''}Solicitud vinculada #${linkedAbsenceId} (${linkedAbsenceKind === 'vacation' ? 'vacaciones' : 'ausencia'})`
+                : messageDraft;
 
-        const audioAttachments = messageAttachments.filter((file) => file.type?.startsWith('audio/'));
-        if (audioAttachments.length > 0) {
-            setTranscribingAudioAttachments(true);
-            try {
-                const results = await Promise.all(
-                    audioAttachments.map(async (file) => {
-                        const { data, error } = await supabase.functions.invoke('transcribe-audio', {
-                            body: {
-                                audioUrl: file.url,
-                                fileName: file.name,
-                                language: 'es',
-                            },
-                        });
+            const audioAttachments = messageAttachments.filter((file) => file.type?.startsWith('audio/'));
+            if (audioAttachments.length > 0) {
+                setTranscribingAudioAttachments(true);
+                try {
+                    const results = await Promise.all(
+                        audioAttachments.map(async (file) => {
+                            const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+                                body: {
+                                    audioUrl: file.url,
+                                    fileName: file.name,
+                                    language: 'es',
+                                },
+                            });
 
-                        if (error) return null;
-                        const text = `${data?.text || ''}`.trim();
-                        if (!text) return null;
-                        return `- ${file.name}: ${text}`;
-                    }),
-                );
+                            if (error) return null;
+                            const text = `${data?.text || ''}`.trim();
+                            if (!text) return null;
+                            return `- ${file.name}: ${text}`;
+                        }),
+                    );
 
-                const transcripts = results.filter(Boolean) as string[];
-                if (transcripts.length > 0) {
-                    messageWithAbsence = `${messageWithAbsence}${messageWithAbsence ? '\n\n' : ''}Transcripción automática:\n${transcripts.join('\n')}`;
+                    const transcripts = results.filter(Boolean) as string[];
+                    if (transcripts.length > 0) {
+                        messageWithAbsence = `${messageWithAbsence}${messageWithAbsence ? '\n\n' : ''}Transcripción automática:\n${transcripts.join('\n')}`;
+                    }
+                } finally {
+                    setTranscribingAudioAttachments(false);
                 }
-            } finally {
-                setTranscribingAudioAttachments(false);
             }
-        }
 
-        await sendMessage({
-            conversationId: selectedConversationId,
-            message: messageWithAbsence,
-            attachments: messageAttachments,
-            mentions: mentionedIds,
-            replyTo: replyToId,
-            linkedTaskId,
-            linkedMeetingId,
-        });
+            await sendMessage({
+                conversationId: selectedConversationId,
+                message: messageWithAbsence,
+                attachments: messageAttachments,
+                mentions: mentionedIds,
+                replyTo: replyToId,
+                linkedTaskId,
+                linkedMeetingId,
+            });
 
-        setMessageDraft('');
-        setMessageAttachments([]);
-        setMentionedIds([]);
-        setReplyToId(null);
-        setLinkedTaskId(null);
-        setLinkedMeetingId(null);
-        setLinkedAbsenceId(null);
-        setLinkedAbsenceKind(null);
-        setAttachMode('none');
-        setLunarisAttachType('task');
-        setMentionOpen(false);
-        setMentionQuery('');
-        setMentionStartIndex(null);
+            setMessageDraft('');
+            setMessageAttachments([]);
+            setMentionedIds([]);
+            setReplyToId(null);
+            setLinkedTaskId(null);
+            setLinkedMeetingId(null);
+            setLinkedAbsenceId(null);
+            setLinkedAbsenceKind(null);
+            setAttachMode('none');
+            setLunarisAttachType('task');
+            setMentionOpen(false);
+            setMentionQuery('');
+            setMentionStartIndex(null);
         } finally {
             sendingRef.current = false;
         }
@@ -589,24 +601,50 @@ function ChatPage() {
                         {conversations.map((conversation) => (
                             <div
                                 key={conversation.id}
-                                className={`w-full p-2 rounded-2xl border transition ${
-                                    selectedConversationId === conversation.id
+                                onClick={() => {
+                                    setSelectedConversationId(conversation.id);
+                                    markConversationRead(conversation.id, conversation.last_message?.created_at);
+                                }}
+                                className={`w-full p-2 rounded-2xl border transition cursor-pointer ${selectedConversationId === conversation.id
                                         ? 'bg-violet-50 border-violet-200'
                                         : 'bg-white border-gray-200 hover:border-violet-200'
-                                }`}
+                                    }`}
                             >
                                 <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => setSelectedConversationId(conversation.id)}
-                                        className="flex-1 min-w-0 text-left p-1"
-                                    >
-                                        <p className="text-sm font-bold text-gray-900 truncate">{conversationName(conversation)}</p>
+                                    <div className="flex-1 min-w-0 flex flex-col">
+                                        <div className="flex items-center justify-between gap-1 pr-1">
+                                            <div className="flex items-center gap-1 min-w-0">
+                                                <p className={`text-sm ${unreadByConversation[conversation.id] > 0 ? 'font-black text-violet-950' : 'font-bold text-gray-900'} truncate`}>
+                                                    {conversationName(conversation)}
+                                                </p>
+                                                {selectedConversationId === conversation.id && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setIsEditingTitle(true);
+                                                        }}
+                                                        className="p-1 rounded hover:bg-violet-100 text-violet-400 hover:text-violet-600 transition-colors"
+                                                        title="Editar nombre"
+                                                    >
+                                                        <Plus size={12} className="rotate-45" /> {/* Using Plus rotated as a simple edit hint if Pencil is not imported */}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {(unreadByConversation[conversation.id] || 0) > 0 && (
+                                                <span className="flex-shrink-0 inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-black shadow-sm">
+                                                    {unreadByConversation[conversation.id]}
+                                                </span>
+                                            )}
+                                        </div>
                                         <p className="text-xs text-gray-500 truncate mt-1">
                                             {conversation.last_message?.message || 'Sin mensajes aún'}
                                         </p>
-                                    </button>
+                                    </div>
                                     <button
-                                        onClick={() => void handleRemoveConversation(conversation)}
+                                        onClick={(e) => {
+                                            e.stopPropagation(); // Prevent the parent div's onClick from firing
+                                            void handleRemoveConversation(conversation);
+                                        }}
                                         disabled={removingConversation}
                                         className="p-2 rounded-xl border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-60"
                                         title="Eliminar chat"
@@ -809,7 +847,7 @@ function ChatPage() {
                                 })}
                             </div>
 
-                            <div className="shrink-0 border-t border-gray-100 bg-white p-4 space-y-3 min-h-[150px] max-h-[220px] overflow-y-auto">
+                            <div className="shrink-0 border-t border-gray-100 bg-white p-4 space-y-3 min-h-[150px] max-h-[220px] overflow-visible">
                                 {replyToId && (
                                     <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2 flex items-center justify-between">
                                         <span>Respondiendo a: {(messageById.get(replyToId)?.message || '[adjunto]').slice(0, 80)}</span>
@@ -947,13 +985,12 @@ function ChatPage() {
                                         <button
                                             onClick={toggleTranscription}
                                             disabled={!speechSupported}
-                                            className={`px-3 py-2 rounded-xl border ${
-                                                isTranscribing
-                                                    ? 'bg-red-50 border-red-300 text-red-700'
-                                                    : speechSupported
-                                                        ? 'bg-white border-gray-200 text-gray-700 hover:border-violet-300'
-                                                        : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
-                                            }`}
+                                            className={`px-3 py-2 rounded-xl border ${isTranscribing
+                                                ? 'bg-red-50 border-red-300 text-red-700'
+                                                : speechSupported
+                                                    ? 'bg-white border-gray-200 text-gray-700 hover:border-violet-300'
+                                                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                }`}
                                             title={speechSupported ? (isTranscribing ? 'Detener transcripción' : 'Transcribir voz a texto') : 'No compatible en este navegador'}
                                         >
                                             {isTranscribing ? <Square size={16} /> : <Mic size={16} />}
@@ -974,7 +1011,7 @@ function ChatPage() {
                                     )}
 
                                     {mentionOpen && mentionCandidates.length > 0 && (
-                                        <div className="absolute z-10 mt-1 w-full max-w-sm border border-gray-200 rounded-xl bg-white shadow-sm max-h-36 overflow-y-auto">
+                                        <div className="absolute z-10 bottom-full mb-1 w-full max-w-sm border border-gray-200 rounded-xl bg-white shadow-sm max-h-36 overflow-y-auto">
                                             {mentionCandidates.map((user) => (
                                                 <button
                                                     key={user.id}

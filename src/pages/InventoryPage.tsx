@@ -124,7 +124,7 @@ const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
-const CANET_MOVEMENT_SYNC_START = '2026-02-23';
+const CANET_MOVEMENT_SYNC_START = '2026-02-24';
 const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
@@ -554,21 +554,36 @@ function InventoryPage() {
 
     setHuarteMovimientosShared((prev) => {
       const base = Array.isArray(prev) ? prev : [];
+
+      // Cleanup: Remove any old 'canet' or 'canet_auto_in' movements that are before the sync start date
+      const alreadyClean = base.every(m => {
+        const src = clean(m.source).toLowerCase();
+        if (src !== 'canet' && src !== 'canet_auto_in') return true;
+        const d = dateFromAny(clean(m.fecha));
+        return !!d && d >= canetMovementSyncStartDate;
+      });
+
       const prevCanet = base.filter((m) => clean(m.source).toLowerCase() === 'canet');
       const prevAuto = base.filter((m) => clean(m.source).toLowerCase() === 'canet_auto_in');
       const prevSig = prevCanet.map(signature).sort();
       const nextSig = mirrorRows.map(signature).sort();
       const prevAutoSig = prevAuto.map(signature).sort();
       const nextAutoSig = autoInRows.map(signature).sort();
+
       const sameCanet =
         prevSig.length === nextSig.length &&
         prevSig.every((item, idx) => item === nextSig[idx]);
       const sameAuto =
         prevAutoSig.length === nextAutoSig.length &&
         prevAutoSig.every((item, idx) => item === nextAutoSig[idx]);
-      if (sameCanet && sameAuto) return base;
+
+      if (sameCanet && sameAuto && alreadyClean) return base;
+
       const nonMirrored = base.filter((m) => {
         const src = clean(m.source).toLowerCase();
+        const d = dateFromAny(clean(m.fecha));
+        const isOldSync = (src === 'canet' || src === 'canet_auto_in') && (!d || d < canetMovementSyncStartDate);
+        if (isOldSync) return false;
         return src !== 'canet' && src !== 'canet_auto_in';
       });
       return [...mirrorRows, ...autoInRows, ...nonMirrored];
@@ -1971,11 +1986,10 @@ function InventoryPage() {
                   <button
                     key={key}
                     onClick={() => setCompactInventoryPanel(key)}
-                    className={`compact-card rounded-xl border p-2 text-xs font-black ${
-                      compactInventoryPanel === key
-                        ? 'border-violet-400 bg-violet-700 text-white'
-                        : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
-                    }`}
+                    className={`compact-card rounded-xl border p-2 text-xs font-black ${compactInventoryPanel === key
+                      ? 'border-violet-400 bg-violet-700 text-white'
+                      : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+                      }`}
                   >
                     <div className="flex flex-col items-center gap-1">
                       <Icon size={15} />
@@ -1988,174 +2002,173 @@ function InventoryPage() {
           )}
 
           <section className="rounded-2xl border border-violet-200 bg-white p-2">
-          <section className="grid gap-2 md:grid-cols-3">
-            <KpiCard
-              title="Productos en riesgo"
-              value={`${criticalProducts.length}`}
-              helper={criticalProducts.length > 0 ? `Críticos: ${criticalProducts.join(', ')}` : 'Sin riesgo crítico'}
-              tone={criticalProducts.length > 0 ? 'rose' : 'emerald'}
-              onClick={() => setRiskModalOpen(true)}
-            />
-            <KpiCard
-              title="Salidas del mes"
-              value={monthOutputTotal.toLocaleString('es-ES')}
-              helper="Ventas, envíos y traspasos"
-              tone="violet"
-              onClick={() => scrollToSection('inventory-output-section')}
-            />
-            <KpiCard
-              title="Ajustes del mes"
-              value={monthAdjustmentsTotal.toLocaleString('es-ES')}
-              helper="Suma absoluta de ajustes"
-              tone="amber"
-              onClick={() => scrollToSection('inventory-adjustments-section')}
-            />
-          </section>
-          <div className="mt-2 flex justify-end">
-            <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
-              <Download size={14} />
-              PDF gerencial
-            </button>
-          </div>
+            <section className="grid gap-2 md:grid-cols-3">
+              <KpiCard
+                title="Productos en riesgo"
+                value={`${criticalProducts.length}`}
+                helper={criticalProducts.length > 0 ? `Críticos: ${criticalProducts.join(', ')}` : 'Sin riesgo crítico'}
+                tone={criticalProducts.length > 0 ? 'rose' : 'emerald'}
+                onClick={() => setRiskModalOpen(true)}
+              />
+              <KpiCard
+                title="Salidas del mes"
+                value={monthOutputTotal.toLocaleString('es-ES')}
+                helper="Ventas, envíos y traspasos"
+                tone="violet"
+                onClick={() => scrollToSection('inventory-output-section')}
+              />
+              <KpiCard
+                title="Ajustes del mes"
+                value={monthAdjustmentsTotal.toLocaleString('es-ES')}
+                helper="Suma absoluta de ajustes"
+                tone="amber"
+                onClick={() => scrollToSection('inventory-adjustments-section')}
+              />
+            </section>
+            <div className="mt-2 flex justify-end">
+              <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                <Download size={14} />
+                PDF gerencial
+              </button>
+            </div>
           </section>
 
           {(!isCompact || compactInventoryPanel === 'stock') && (
-          <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
-            openTablePdf(
-              'Inventario - Stock por producto/lote/bodega',
-              `dashboard-stock-${monthFilter || 'todos'}.pdf`,
-              ['Producto', 'Lote', 'Bodega', 'Stock'],
-              stockByPLB.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
-            );
-            await notifyAnabela(`${actorName} descargó tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
-            appendAudit('Descarga PDF', `Dashboard stock (${monthFilter || 'todos'})`);
-          }}>
-            <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Stock', 'Estado']} rows={stockByPLB.map((r) => {
-              const stockVal = toNum(r.stock);
-              const status =
-                stockVal <= 0
-                  ? 'Agotado'
-                  : stockVal < 1000
-                    ? 'Crítico'
-                    : stockVal <= 2000
-                      ? 'Stock bajo'
-                      : 'OK';
-              return [
-                <ProductPill key={`${r.producto}-${r.lote}-${r.bodega}`} code={r.producto} colorMap={productColorMap} />,
-                r.lote,
-                r.bodega,
-                r.stock,
-                <span
-                  key={`${r.producto}-${r.lote}-status`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                    status === 'Agotado'
+            <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Stock por producto/lote/bodega',
+                `dashboard-stock-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Bodega', 'Stock'],
+                stockByPLB.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard stock (${monthFilter || 'todos'})`);
+            }}>
+              <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Stock', 'Estado']} rows={stockByPLB.map((r) => {
+                const stockVal = toNum(r.stock);
+                const status =
+                  stockVal <= 0
+                    ? 'Agotado'
+                    : stockVal < 1000
+                      ? 'Crítico'
+                      : stockVal <= 2000
+                        ? 'Stock bajo'
+                        : 'OK';
+                return [
+                  <ProductPill key={`${r.producto}-${r.lote}-${r.bodega}`} code={r.producto} colorMap={productColorMap} />,
+                  r.lote,
+                  r.bodega,
+                  r.stock,
+                  <span
+                    key={`${r.producto}-${r.lote}-status`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${status === 'Agotado'
                       ? 'bg-slate-100 text-slate-600'
                       : status === 'Crítico'
                         ? 'bg-rose-100 text-rose-700'
                         : status === 'Stock bajo'
                           ? 'bg-amber-100 text-amber-700'
                           : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                >
-                  {status}
-                </span>,
-              ];
-            })} />
-            <StockByProductVisual
-              rows={stockVisualByProduct}
-              colorMap={productColorMap}
-              onSelectLot={(producto, lote, cantidad) => setStockLotSelected({ producto, lote, cantidad: Number(cantidad.toFixed(2)) })}
-            />
-            {stockLotSelected && (
-              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-800">
-                <ProductPill code={stockLotSelected.producto} colorMap={productColorMap} /> Lote {stockLotSelected.lote}: {stockLotSelected.cantidad}
-              </div>
-            )}
-          </DataSection>
+                      }`}
+                  >
+                    {status}
+                  </span>,
+                ];
+              })} />
+              <StockByProductVisual
+                rows={stockVisualByProduct}
+                colorMap={productColorMap}
+                onSelectLot={(producto, lote, cantidad) => setStockLotSelected({ producto, lote, cantidad: Number(cantidad.toFixed(2)) })}
+              />
+              {stockLotSelected && (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-800">
+                  <ProductPill code={stockLotSelected.producto} colorMap={productColorMap} /> Lote {stockLotSelected.lote}: {stockLotSelected.cantidad}
+                </div>
+              )}
+            </DataSection>
           )}
 
           {(!isCompact || compactInventoryPanel === 'moves') && (
-          <DataSection title="Movimientos por lote del mes" subtitle="Detalle filtrable de movimientos mensuales." tone="indigo" onDownload={async () => {
-            openTablePdf(
-              'Inventario - Movimientos por lote del mes',
-              `dashboard-mov-lote-${monthFilter || 'todos'}.pdf`,
-              ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad'],
-              movementByLotDetail.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || 0]),
-            );
-            await notifyAnabela(`${actorName} descargó tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
-            appendAudit('Descarga PDF', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
-          }}>
-            <div className="grid gap-2 md:grid-cols-3 mb-3">
-              <SelectFilter label="Producto" value={dashMoveProduct} onChange={setDashMoveProduct} options={productOptions} />
-              <SelectFilter label="Lote" value={dashMoveLot} onChange={setDashMoveLot} options={dashMoveLotOptions} />
-              <SelectFilter label="Bodega" value={dashMoveBodega} onChange={setDashMoveBodega} options={warehouseOptions} />
-            </div>
-            <SimpleDataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad']} rows={takeRows(movementByLotDetail, showMovesAll).map((m) => [m.fecha, m.tipo_movimiento, <ProductPill key={`${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || 0])} />
-            {movementByLotDetail.length > 5 && (
-              <ToggleRowsButton showAll={showMovesAll} onToggle={() => setShowMovesAll((v) => !v)} />
-            )}
-          </DataSection>
+            <DataSection title="Movimientos por lote del mes" subtitle="Detalle filtrable de movimientos mensuales." tone="indigo" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Movimientos por lote del mes',
+                `dashboard-mov-lote-${monthFilter || 'todos'}.pdf`,
+                ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad'],
+                movementByLotDetail.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || 0]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
+            }}>
+              <div className="grid gap-2 md:grid-cols-3 mb-3">
+                <SelectFilter label="Producto" value={dashMoveProduct} onChange={setDashMoveProduct} options={productOptions} />
+                <SelectFilter label="Lote" value={dashMoveLot} onChange={setDashMoveLot} options={dashMoveLotOptions} />
+                <SelectFilter label="Bodega" value={dashMoveBodega} onChange={setDashMoveBodega} options={warehouseOptions} />
+              </div>
+              <SimpleDataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad']} rows={takeRows(movementByLotDetail, showMovesAll).map((m) => [m.fecha, m.tipo_movimiento, <ProductPill key={`${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || 0])} />
+              {movementByLotDetail.length > 5 && (
+                <ToggleRowsButton showAll={showMovesAll} onToggle={() => setShowMovesAll((v) => !v)} />
+              )}
+            </DataSection>
           )}
 
           {(!isCompact || compactInventoryPanel === 'clients') && (
-          <DataSection title="Stock por cliente o bodega por producto y lote" subtitle="Solo ventas." tone="emerald" onDownload={async () => {
-            openTablePdf(
-              'Inventario - Stock por cliente o bodega',
-              `dashboard-clientes-${monthFilter || 'todos'}.pdf`,
-              ['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad'],
-              stockByClient.map((r) => [r.destino_cliente, r.producto, r.lote, r.cantidad]),
-            );
-            await notifyAnabela(`${actorName} descargó tablero: Stock por cliente/bodega (${monthFilter || 'todos'}).`);
-            appendAudit('Descarga PDF', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
-          }}>
-            <div className="mb-3">
-              <SelectFilter label="Cliente/Bodega" value={dashClientTarget} onChange={setDashClientTarget} options={clientTargetOptions} />
-            </div>
-            <SimpleDataTable headers={['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad']} rows={takeRows(stockByClient, showClientsAll).map((r) => [r.destino_cliente, <ProductPill key={`${r.destino_cliente}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.cantidad])} />
-            {stockByClient.length > 5 && (
-              <ToggleRowsButton showAll={showClientsAll} onToggle={() => setShowClientsAll((v) => !v)} />
-            )}
-          </DataSection>
+            <DataSection title="Stock por cliente o bodega por producto y lote" subtitle="Solo ventas." tone="emerald" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Stock por cliente o bodega',
+                `dashboard-clientes-${monthFilter || 'todos'}.pdf`,
+                ['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad'],
+                stockByClient.map((r) => [r.destino_cliente, r.producto, r.lote, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Stock por cliente/bodega (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
+            }}>
+              <div className="mb-3">
+                <SelectFilter label="Cliente/Bodega" value={dashClientTarget} onChange={setDashClientTarget} options={clientTargetOptions} />
+              </div>
+              <SimpleDataTable headers={['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad']} rows={takeRows(stockByClient, showClientsAll).map((r) => [r.destino_cliente, <ProductPill key={`${r.destino_cliente}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.cantidad])} />
+              {stockByClient.length > 5 && (
+                <ToggleRowsButton showAll={showClientsAll} onToggle={() => setShowClientsAll((v) => !v)} />
+              )}
+            </DataSection>
           )}
 
           {(!isCompact || compactInventoryPanel === 'adjust') && (
-          <DataSection id="inventory-adjustments-section" title="Control de ajustes" subtitle="Ajustes positivos y negativos." tone="amber" onDownload={async () => {
-            openTablePdf(
-              'Inventario - Control de ajustes',
-              `dashboard-ajustes-${monthFilter || 'todos'}.pdf`,
-              ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
-              adjustmentControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
-            );
-            await notifyAnabela(`${actorName} descargó tablero: Control de ajustes (${monthFilter || 'todos'}).`);
-            appendAudit('Descarga PDF', `Dashboard ajustes (${monthFilter || 'todos'})`);
-          }}>
-            <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(adjustmentControl, showAdjustAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
-            {adjustmentControl.length > 5 && (
-              <ToggleRowsButton showAll={showAdjustAll} onToggle={() => setShowAdjustAll((v) => !v)} />
-            )}
-          </DataSection>
+            <DataSection id="inventory-adjustments-section" title="Control de ajustes" subtitle="Ajustes positivos y negativos." tone="amber" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Control de ajustes',
+                `dashboard-ajustes-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
+                adjustmentControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Control de ajustes (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard ajustes (${monthFilter || 'todos'})`);
+            }}>
+              <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(adjustmentControl, showAdjustAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
+              {adjustmentControl.length > 5 && (
+                <ToggleRowsButton showAll={showAdjustAll} onToggle={() => setShowAdjustAll((v) => !v)} />
+              )}
+            </DataSection>
           )}
 
           {(!isCompact || compactInventoryPanel === 'outputs') && (
-          <DataSection id="inventory-output-section" title="Control de salidas por lote" subtitle="Traspaso, venta y envio." tone="rose" onDownload={async () => {
-            openTablePdf(
-              'Inventario - Control de salidas por lote',
-              `dashboard-salidas-${monthFilter || 'todos'}.pdf`,
-              ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
-              outputControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
-            );
-            await notifyAnabela(`${actorName} descargó tablero: Control de salidas (${monthFilter || 'todos'}).`);
-            appendAudit('Descarga PDF', `Dashboard salidas (${monthFilter || 'todos'})`);
-          }}>
-            <div className="grid gap-2 md:grid-cols-2 mb-3">
-              <SelectFilter label="Producto" value={dashOutProduct} onChange={setDashOutProduct} options={productOptions} />
-              <SelectFilter label="Lote" value={dashOutLot} onChange={setDashOutLot} options={dashOutLotOptions} />
-            </div>
-            <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(outputControl, showOutputAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
-            {outputControl.length > 5 && (
-              <ToggleRowsButton showAll={showOutputAll} onToggle={() => setShowOutputAll((v) => !v)} />
-            )}
-          </DataSection>
+            <DataSection id="inventory-output-section" title="Control de salidas por lote" subtitle="Traspaso, venta y envio." tone="rose" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Control de salidas por lote',
+                `dashboard-salidas-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
+                outputControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Control de salidas (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard salidas (${monthFilter || 'todos'})`);
+            }}>
+              <div className="grid gap-2 md:grid-cols-2 mb-3">
+                <SelectFilter label="Producto" value={dashOutProduct} onChange={setDashOutProduct} options={productOptions} />
+                <SelectFilter label="Lote" value={dashOutLot} onChange={setDashOutLot} options={dashOutLotOptions} />
+              </div>
+              <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(outputControl, showOutputAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
+              {outputControl.length > 5 && (
+                <ToggleRowsButton showAll={showOutputAll} onToggle={() => setShowOutputAll((v) => !v)} />
+              )}
+            </DataSection>
           )}
         </div>
       )}
@@ -2206,15 +2219,14 @@ function InventoryPage() {
                 formatCoverage(r.coberturaMeses),
                 <span
                   key={`${r.producto}-${r.lote}-sem`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                    r.semaforo === 'AGOTADO'
-                      ? 'bg-slate-100 text-slate-600'
-                      : r.semaforo === 'ROJO'
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${r.semaforo === 'AGOTADO'
+                    ? 'bg-slate-100 text-slate-600'
+                    : r.semaforo === 'ROJO'
                       ? 'bg-rose-100 text-rose-700'
                       : r.semaforo === 'AMARILLO'
                         ? 'bg-amber-100 text-amber-700'
                         : 'bg-emerald-100 text-emerald-700'
-                  }`}
+                    }`}
                 >
                   {r.semaforo}
                 </span>,
