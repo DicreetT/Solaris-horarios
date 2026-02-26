@@ -26,7 +26,7 @@ export function FileUploader({
     onUploadComplete,
     existingFiles = [],
     maxSizeMB = 5,
-    acceptedTypes = 'image/*,.pdf,.doc,.docx,.xls,.xlsx',
+    acceptedTypes = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*',
     compact = false,
     resetOnUpload = false
 }: FileUploaderProps) {

@@ -54,6 +54,7 @@ function ChatPage() {
     const [transcribingAudioAttachments, setTranscribingAudioAttachments] = useState(false);
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+    const messagesEndRef = useRef<HTMLDivElement | null>(null);
     const sendingRef = useRef(false);
     const lastSendRef = useRef<{ signature: string; at: number }>({ signature: '', at: 0 });
     const recognitionRef = useRef<any>(null);
@@ -303,21 +304,19 @@ function ChatPage() {
     }, []);
 
     useLayoutEffect(() => {
-        const container = messagesContainerRef.current;
-        if (!container) return;
         const scrollToBottom = () => {
-            const live = messagesContainerRef.current;
-            if (!live) return;
-            live.scrollTop = live.scrollHeight;
+            messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
         };
         scrollToBottom();
         const raf = window.requestAnimationFrame(scrollToBottom);
-        const id = window.setTimeout(scrollToBottom, 80);
+        const id1 = window.setTimeout(scrollToBottom, 100);
+        const id2 = window.setTimeout(scrollToBottom, 500);
         return () => {
             window.cancelAnimationFrame(raf);
-            window.clearTimeout(id);
+            window.clearTimeout(id1);
+            window.clearTimeout(id2);
         };
-    }, [selectedConversationId, messages]);
+    }, [selectedConversationId, messages, loadingMessages]);
 
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
@@ -606,8 +605,8 @@ function ChatPage() {
                                     markConversationRead(conversation.id, conversation.last_message?.created_at);
                                 }}
                                 className={`w-full p-2 rounded-2xl border transition cursor-pointer ${selectedConversationId === conversation.id
-                                        ? 'bg-violet-50 border-violet-200'
-                                        : 'bg-white border-gray-200 hover:border-violet-200'
+                                    ? 'bg-violet-50 border-violet-200'
+                                    : 'bg-white border-gray-200 hover:border-violet-200'
                                     }`}
                             >
                                 <div className="flex items-center gap-2">
@@ -845,6 +844,7 @@ function ChatPage() {
                                         </div>
                                     );
                                 })}
+                                <div ref={messagesEndRef} className="h-4" />
                             </div>
 
                             <div className="shrink-0 border-t border-gray-100 bg-white p-4 space-y-3 min-h-[150px] max-h-[220px] overflow-visible">
