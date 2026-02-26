@@ -55,6 +55,7 @@ function ChatPage() {
     const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
+    const isUserScrolledUp = useRef(false);
     const sendingRef = useRef(false);
     const lastSendRef = useRef<{ signature: string; at: number }>({ signature: '', at: 0 });
     const recognitionRef = useRef<any>(null);
@@ -303,12 +304,30 @@ function ChatPage() {
         };
     }, []);
 
-    useLayoutEffect(() => {
-        const scrollToBottom = () => {
-            if (messagesContainerRef.current) {
-                messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-            }
+    useEffect(() => {
+        const container = messagesContainerRef.current;
+        if (!container) return;
+
+        const handleScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = container;
+            // User is "scrolled up" if they are more than 150px away from the bottom
+            const isAtBottom = scrollHeight - scrollTop - clientHeight < 150;
+            isUserScrolledUp.current = !isAtBottom;
         };
+
+        container.addEventListener('scroll', handleScroll, { passive: true });
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    const scrollToBottom = () => {
+        if (messagesContainerRef.current) {
+            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }
+    };
+
+    useLayoutEffect(() => {
+        // Reset scroll awareness and force scroll on conversation change
+        isUserScrolledUp.current = false;
         scrollToBottom();
         const raf = window.requestAnimationFrame(scrollToBottom);
         const id1 = window.setTimeout(scrollToBottom, 100);
@@ -318,7 +337,16 @@ function ChatPage() {
             window.clearTimeout(id1);
             window.clearTimeout(id2);
         };
-    }, [selectedConversationId, messages, loadingMessages]);
+    }, [selectedConversationId]);
+
+    useLayoutEffect(() => {
+        // Only auto-scroll on new messages if the user is AT the bottom already
+        if (!isUserScrolledUp.current) {
+            scrollToBottom();
+            const id = window.setTimeout(scrollToBottom, 50);
+            return () => window.clearTimeout(id);
+        }
+    }, [messages, loadingMessages]);
 
     useEffect(() => {
         const prevBodyOverflow = document.body.style.overflow;
