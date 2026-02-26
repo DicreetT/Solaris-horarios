@@ -580,12 +580,35 @@ export default function InventoryFacturacionPage() {
       })
       .map((m) => ({ ...m, source: m.source || 'facturacion' }));
 
+    // 1.5 Auto-In for internal transfers (e.g., Huarte -> Pamplona)
+    const internalTransfersAutoIn = own
+      .filter(m => normalizeSearch(m.tipo_movimiento).includes('traspaso'))
+      .filter(m => m.destino && clean(m.destino) !== clean(m.bodega))
+      .map(m => {
+        const qty = Math.abs(toNum(m.cantidad_signed || m.cantidad));
+        return {
+          ...m,
+          id: -2_000_000_000 - toNum(m.id), // Unique negative ID to prevent conflicts
+          bodega: clean(m.destino).toUpperCase(), // The new destination warehouse
+          tipo_movimiento: clean(m.tipo_movimiento) || 'traspaso',
+          cliente: clean(m.bodega).toUpperCase(), // Sender warehouse
+          destino: clean(m.destino).toUpperCase(),
+          cantidad: qty,
+          cantidad_signed: qty,
+          signo: 1, // It's an entrance
+          source: 'internal_auto_in',
+          notas: clean(m.notas)
+            ? `${clean(m.notas)} · Auto entrada por traspaso ${m.bodega}→${m.destino}`
+            : `Auto entrada por traspaso ${m.bodega}→${m.destino}`,
+        } as Movement;
+      });
+
     // 2. Canet and Auto-In movements (Including all)
     const canetEffective = canetMovimientosEffective;
     const autoIn = canetTransferAutoInMovements;
 
     // 3. Purge inactive SV lots
-    const filteredBase = [...canetEffective, ...autoIn, ...own.filter(m => {
+    const filteredBase = [...canetEffective, ...autoIn, ...internalTransfersAutoIn, ...own.filter(m => {
       const src = clean(m.source).toLowerCase();
       return src !== 'canet' && src !== 'canet_auto_in';
     })].filter(m => {
