@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V22-ISO-HUARTE-FIX';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V23-KL-FIX';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -624,6 +624,12 @@ export default function InventoryFacturacionPage() {
         if (isHuarte && lot === '240931') return false;
       }
 
+      if (product === 'KL') {
+        const isHuarte = isHuarteAlias(m.bodega);
+        // Huarte: Purge residue lots to leave only the confirmed 50
+        if (isHuarte && (lot === '250932' || lot === '260101')) return false;
+      }
+
       return true;
     });
 
@@ -762,6 +768,51 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'HUARTE',
         notas: 'Ajuste V22 - Saldo Huarte ISO verificado (133)',
+        source: 'manual'
+      },
+      // Canet KL-260101 (target: 1925 units)
+      // Base was 1650, adding 275.
+      {
+        id: 999990,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'KL',
+        lote: '260101',
+        cantidad: 275,
+        cantidad_signed: 275,
+        signo: 1,
+        bodega: 'CANET',
+        notas: 'Ajuste V23 - Saldo Canet KL 260101 verificado (1925)',
+        source: 'manual'
+      },
+      // Canet KL-241030 (target: 13 units)
+      // Base was 12, adding 1.
+      {
+        id: 999989,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'KL',
+        lote: '241030',
+        cantidad: 1,
+        cantidad_signed: 1,
+        signo: 1,
+        bodega: 'CANET',
+        notas: 'Ajuste V23 - Saldo Canet KL 241030 verificado (13)',
+        source: 'manual'
+      },
+      // Huarte KL-241030 (target: 50 units)
+      // Base is 0 due to 'main' filter, adding 50.
+      {
+        id: 999988,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'KL',
+        lote: '241030',
+        cantidad: 50,
+        cantidad_signed: 50,
+        signo: 1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V23 - Saldo Huarte KL verificado (50)',
         source: 'manual'
       }
     ];
