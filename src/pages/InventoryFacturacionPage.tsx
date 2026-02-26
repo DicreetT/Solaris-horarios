@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V12-GLOBAL-CLEAN';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V13-AV-HUARTE';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -632,6 +632,20 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'BILBAO',
         notas: 'Ajuste V10 - Saldo Bilbao verificado (Lote 2511A34: 50)',
+        source: 'manual'
+      },
+      // Huarte AV-2507A07 (target: 100 units)
+      {
+        id: 999997,
+        fecha: '2026-02-24',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'AV',
+        lote: '2507A07',
+        cantidad: 100,
+        cantidad_signed: 100,
+        signo: 1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V13 - Saldo Huarte AV verificado (100)',
         source: 'manual'
       }
     ];
