@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V17-AV-BILBAO-FIX';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V18-ENT-CANET';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -601,6 +601,13 @@ export default function InventoryFacturacionPage() {
         // User requested to clean it anywhere it shows 0 (Logroño, Bilbao, MIMEDICO, etc.)
         if (lot === '2509A32') return false;
       }
+
+      if (product === 'ENT') {
+        // Canet: Purge old lot 2504A18 (16 units) to match requested 1599 + 760 view
+        const isCanet = normalizeSearch(m.bodega).includes('canet');
+        if (isCanet && lot === '2504A18') return false;
+      }
+
       return true;
     });
 
@@ -678,6 +685,21 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'BILBAO',
         notas: 'Ajuste V17 - Saldo Bilbao AV verificado (36)',
+        source: 'manual'
+      },
+      // Canet ENT-2507A19 (target: 1599 units)
+      // Base was 1659, subtracting 60.
+      {
+        id: 999994,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'ENT',
+        lote: '2507A19',
+        cantidad: 60,
+        cantidad_signed: -60,
+        signo: -1,
+        bodega: 'CANET',
+        notas: 'Ajuste V18 - Saldo Canet ENT verificado (1599)',
         source: 'manual'
       }
     ];
