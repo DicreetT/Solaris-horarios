@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V11-LOGRONO';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V12-GLOBAL-CLEAN';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -584,7 +584,7 @@ export default function InventoryFacturacionPage() {
     const canetEffective = canetMovimientosEffective;
     const autoIn = canetTransferAutoInMovements;
 
-    // 3. Purge inactive SV lots strictly for HUARTE, BILBAO and LOGRONO
+    // 3. Purge inactive SV lots
     const filteredBase = [...canetEffective, ...autoIn, ...own.filter(m => {
       const src = clean(m.source).toLowerCase();
       return src !== 'canet' && src !== 'canet_auto_in';
@@ -592,16 +592,14 @@ export default function InventoryFacturacionPage() {
       const product = clean(m.producto);
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
-      const isBilbao = normalizeSearch(m.bodega).includes('bilbao');
-      const isLogrono = normalizeSearch(m.bodega).includes('logrono');
 
       if (product === 'SV') {
-        // Huarte: Only 2511A34 is active
+        // Huarte: Only 2511A34 is active (strict seeds purge)
         if (isHuarte && (lot === '2502A30' || lot === '2510A33')) return false;
-        // Bilbao: Purge 2509A32
-        if (isBilbao && lot === '2509A32') return false;
-        // Logrono: Purge 2509A32 (stays 0 in screenshot, user confirms only 2510A33 exists)
-        if (isLogrono && lot === '2509A32') return false;
+
+        // Global Cleanup: Purge lot 2509A32 for SV from ALL warehouses 
+        // User requested to clean it anywhere it shows 0 (Logroño, Bilbao, MIMEDICO, etc.)
+        if (lot === '2509A32') return false;
       }
       return true;
     });
