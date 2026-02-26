@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V2';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-DEBUG-V3';
 console.log('InventoryFacturacionPage version:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
