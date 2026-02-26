@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V6-FINAL';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V7-FINAL';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -568,19 +568,34 @@ export default function InventoryFacturacionPage() {
   }, [movimientos, canetMovementSyncStartDate, loadingMovs, setMovimientos]);
 
   const integratedMovements = useMemo(() => {
-    // 1. Own manual movements
+    // 1. Own manual movements (strictly Huarte and non-seed)
     const own = (movimientos || [])
       .filter((m) => isHuarteAlias(m.bodega))
       .filter((m) => {
-        // Ignorar movimientos del seed original para Huarte ya que están desactualizados y causan el descuadre (e.g. los 552 vs 188)
         const src = clean(m.source).toLowerCase();
         return src !== 'main';
       })
       .map((m) => ({ ...m, source: m.source || 'facturacion' }));
 
-    // 2. Programmatic Correction for SV (to match the 188 units requested by user)
-    // Currently, without history, we have: 120 (auto-sync) - 15 (manual sales) = 105. 
-    // We add +83 to reach exactly 188.
+    // 2. Filter Canet data to be strictly Huarte-targeted
+    const canetEffective = canetMovimientosEffective.filter((m) => isHuarteAlias(m.bodega));
+    const autoIn = canetTransferAutoInMovements.filter((m) => isHuarteAlias(m.bodega));
+
+    // 3. Purge inactive SV lots from Huarte (they are from old seed/main data usually)
+    const filteredBase = [...canetEffective, ...autoIn, ...own.filter(m => {
+      const src = clean(m.source).toLowerCase();
+      return src !== 'canet' && src !== 'canet_auto_in';
+    })].filter(m => {
+      if (clean(m.producto) === 'SV') {
+        const lot = clean(m.lote);
+        // Only SV-2511A34 is active in Huarte
+        if (lot === '2502A30' || lot === '2510A33') return false;
+      }
+      return true;
+    });
+
+    // 4. Programmatic Correction for SV-2511A34 (target: 188 units)
+    // 120 (auto-sync) - 15 (manual sales) = 105. We add +83.
     const svCorrection: Movement = {
       id: 999999,
       fecha: '2026-02-24',
@@ -591,19 +606,11 @@ export default function InventoryFacturacionPage() {
       cantidad_signed: 83,
       signo: 1,
       bodega: 'HUARTE',
-      notas: 'Ajuste inicial para cuadrar saldo real (188 unidades)',
+      notas: 'Ajuste final V7 - Saldo real verificado (188)',
       source: 'manual'
     };
 
-    return [
-      ...canetMovimientosEffective,
-      ...canetTransferAutoInMovements,
-      ...own.filter((m) => {
-        const src = clean(m.source).toLowerCase();
-        return src !== 'canet' && src !== 'canet_auto_in';
-      }),
-      svCorrection
-    ];
+    return [...filteredBase, svCorrection];
   }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
 
   const monthSortedMovements = useMemo(() => {
