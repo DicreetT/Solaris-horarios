@@ -10,7 +10,7 @@ import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
-type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
+type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'movimientos_cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
 type EditRequestStatus = 'pending' | 'approved' | 'denied';
 
@@ -262,7 +262,13 @@ function InventoryPage() {
   const [quickSearch, setQuickSearch] = useState<string>('');
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
-  const [newProducto, setNewProducto] = useState('');
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [newProductForm, setNewProductForm] = useState({ producto: '', tipo_producto: 'COMPLEMENTO ALIMENTICIO', stock_min: '', stock_optimo: '', modo_stock: 'ENSAMBLAJE', activo_si_no: 'SI' });
+
+  const [cartonajeModalOpen, setCartonajeModalOpen] = useState(false);
+  const [cartonajeForm, setCartonajeForm] = useState({ tipo_movimiento: 'ENTRADA de cartonaje', producto: '', lote: '', cantidad: '' });
+
+  const cartonajeProducts = useMemo(() => productos.filter(p => p.tipo_producto === 'CARTONAJE').map(p => clean(p.producto)), [productos]);
 
   const [dashMoveProduct, setDashMoveProduct] = useState('');
   const [dashMoveLot, setDashMoveLot] = useState('');
@@ -676,6 +682,21 @@ function InventoryPage() {
     }
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [stockBase]);
+
+  const stockCartonaje = useMemo(() => {
+    const map = new Map<string, { producto: string; lote: string; stock: number }>();
+    for (const row of stockByPLB) {
+      if (!cartonajeProducts.includes(row.producto)) continue;
+      const key = `${row.producto}|${row.lote}`;
+      if (!map.has(key)) map.set(key, { ...row, stock: 0 });
+      map.get(key)!.stock += row.stock;
+    }
+    return Array.from(map.values())
+      .filter(r => r.stock !== 0)
+      .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
+  }, [stockByPLB, cartonajeProducts]);
+
+
 
   const stockVisualByProduct = useMemo(() => {
     const map = new Map<string, { producto: string; total: number; byLote: Record<string, number> }>();
@@ -1704,12 +1725,42 @@ function InventoryPage() {
   };
 
   const createProducto = () => {
-    const code = clean(newProducto).toUpperCase();
+    const code = clean(newProductForm.producto).toUpperCase();
     if (!code) return;
     if (productos.some((p) => clean(p.producto) === code)) return;
-    setProductos((prev) => [...prev, { producto: code, activo_si_no: 'SI' }]);
-    setNewProducto('');
+    setProductos((prev) => [...prev, { ...newProductForm, producto: code }]);
+    setNewProductForm({ producto: '', tipo_producto: 'COMPLEMENTO ALIMENTICIO', stock_min: '', stock_optimo: '', modo_stock: 'ENSAMBLAJE', activo_si_no: 'SI' });
+    setProductModalOpen(false);
     emitSuccessFeedback('Producto creado con éxito.');
+  };
+
+  const createCartonajeMovement = () => {
+    const qty = toNum(cartonajeForm.cantidad);
+    if (!qty || !clean(cartonajeForm.producto) || !clean(cartonajeForm.lote)) {
+      alert('Por favor completa todos los campos (Producto, Lote, Cantidad).');
+      return;
+    }
+    const sign = clean(cartonajeForm.tipo_movimiento) === 'ENTRADA de cartonaje' ? 1 : -1;
+    const nowIso = new Date().toISOString();
+    const payload: Movement = {
+      id: Date.now(),
+      fecha: nowIso.slice(0, 10),
+      tipo_movimiento: clean(cartonajeForm.tipo_movimiento),
+      producto: clean(cartonajeForm.producto),
+      lote: clean(cartonajeForm.lote),
+      cantidad: qty,
+      bodega: 'CANET',
+      signo: sign,
+      cantidad_signed: qty * sign,
+      source: 'manual',
+      created_at: nowIso,
+      updated_at: nowIso,
+      updated_by: currentUser?.name || actorName,
+    };
+    setMovimientos((prev) => [payload, ...prev]);
+    setCartonajeModalOpen(false);
+    setCartonajeForm({ tipo_movimiento: 'ENTRADA de cartonaje', producto: '', lote: '', cantidad: '' });
+    emitSuccessFeedback('Movimiento cartonaje registrado con éxito.');
   };
 
   const downloadMovements = async () => {
@@ -1744,6 +1795,7 @@ function InventoryPage() {
     { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { key: 'control_stock', label: 'Control stock', icon: Wrench },
     { key: 'movimientos', label: 'Movimientos', icon: ClipboardList },
+    { key: 'movimientos_cartonaje', label: 'Mov. Cartonaje', icon: Package, compact: true },
     { key: 'bitacora', label: 'Bitácora', icon: AlertTriangle, compact: true },
     { key: 'productos', label: 'Productos', icon: Package, compact: true },
     { key: 'lotes', label: 'Lotes', icon: Layers3, compact: true },
@@ -2047,6 +2099,26 @@ function InventoryPage() {
             </div>
           </section>
 
+          {(!isCompact || compactInventoryPanel === 'stock') && stockCartonaje.length > 0 && (
+            <DataSection title="Stock Cartonaje Canet" subtitle="Stock acumulado por producto (CARTONAJE) y lote" tone="violet" onDownload={async () => {
+              openTablePdf(
+                'Inventario Canet - Stock Cartonaje',
+                `dashboard-stock-cartonaje-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Stock'],
+                stockCartonaje.map((r) => [r.producto, r.lote, r.stock]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Stock Cartonaje (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Dashboard stock cartonaje (${monthFilter || 'todos'})`);
+            }}>
+              <SimpleDataTable headers={['Producto', 'Lote', 'Stock']} rows={stockCartonaje.map((r) => [
+                <ProductPill key={`${r.producto}-${r.lote}-cart`} code={r.producto} colorMap={productColorMap} />,
+                r.lote,
+                <span key={`${r.producto}-${r.lote}-qty`} className="font-mono text-sm font-semibold">{Number(r.stock.toFixed(2)).toLocaleString('es-ES')}</span>
+              ])}
+              />
+            </DataSection>
+          )}
+
           {(!isCompact || compactInventoryPanel === 'stock') && (
             <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
               openTablePdf(
@@ -2304,6 +2376,36 @@ function InventoryPage() {
         </div>
       )}
 
+      {accessMode !== 'unset' && tab === 'movimientos_cartonaje' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-violet-950">Movimientos Cartonaje</h3>
+              <button onClick={() => setCartonajeModalOpen(true)} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}>
+                <Plus size={14} /> Nuevo movimiento cartonaje
+              </button>
+            </div>
+          </div>
+          <SimpleDataTable
+            headers={['Fecha/hora', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Usuario', 'Acción']}
+            rows={visibleMovements.filter(m => cartonajeProducts.includes(clean(m.producto))).map(m => [
+              new Date(m.created_at || m.fecha).toLocaleString('es-ES'),
+              clean(m.tipo_movimiento),
+              <ProductPill key={m.id} code={clean(m.producto)} colorMap={productColorMap} />,
+              clean(m.lote),
+              <span key={`${m.id}-qty`} className={`rounded-md px-1.5 py-0.5 text-sm font-bold ${toNum(m.cantidad_signed || m.cantidad) < 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {(m.cantidad_signed ?? m.cantidad) > 0 ? `+${m.cantidad_signed ?? m.cantidad}` : m.cantidad_signed ?? m.cantidad}
+              </span>,
+              clean(m.bodega),
+              clean(m.updated_by || 'Sistema'),
+              <button key={`dm-${m.id}`} onClick={() => deleteMovement(m.id)} disabled={!isEditModeActive} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`} title="Eliminar">
+                <Trash2 size={13} />
+              </button>,
+            ])}
+          />
+        </div>
+      )}
+
       {accessMode !== 'unset' && tab === 'bitacora' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
@@ -2328,24 +2430,17 @@ function InventoryPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Productos</h3>
               {isEditModeActive && (
-                <div className="flex items-center gap-2">
-                  <input
-                    value={newProducto}
-                    onChange={(e) => setNewProducto(e.target.value)}
-                    placeholder="Nuevo producto"
-                    className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-semibold focus:border-violet-500 focus:outline-none"
-                  />
-                  <button onClick={createProducto} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
-                    <Plus size={14} /> Agregar
-                  </button>
-                </div>
+                <button onClick={() => setProductModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
+                  <Plus size={14} /> Crear Producto
+                </button>
               )}
             </div>
           </div>
           <SimpleDataTable
-            headers={['Producto', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo']}
+            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo']}
             rows={productos.map((p) => [
               <ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />,
+              clean(p.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
               <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />,
               p.stock_min || '-',
               p.stock_opt || '-',
@@ -2516,6 +2611,91 @@ function InventoryPage() {
             <div className="mt-4 flex gap-2">
               <button onClick={() => void saveBodega()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"><Plus size={14} /> Guardar bodega</button>
               <button onClick={() => setBodegaModalOpen(false)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {productModalOpen && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
+          <div className="w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-black text-violet-950">Añadir producto</h3>
+              <button onClick={() => setProductModalOpen(false)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input label="Siglas Producto" value={newProductForm.producto} onChange={(v) => setNewProductForm({ ...newProductForm, producto: v })} />
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Tipo de Producto
+                <select value={newProductForm.tipo_producto} onChange={(e) => setNewProductForm({ ...newProductForm, tipo_producto: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="COMPLEMENTO ALIMENTICIO">COMPLEMENTO ALIMENTICIO</option>
+                  <option value="CARTONAJE">CARTONAJE</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-4">
+              <Input label="Stock Mínimo" value={newProductForm.stock_min} onChange={(v) => setNewProductForm({ ...newProductForm, stock_min: v })} />
+              <Input label="Stock Óptimo" value={newProductForm.stock_optimo} onChange={(v) => setNewProductForm({ ...newProductForm, stock_optimo: v })} />
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Modo
+                <select value={newProductForm.modo_stock} onChange={(e) => setNewProductForm({ ...newProductForm, modo_stock: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="ENSAMBLAJE">ENSAMBLAJE</option>
+                  <option value="DIRECTO">DIRECTO</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Activo
+                <select value={newProductForm.activo_si_no} onChange={(e) => setNewProductForm({ ...newProductForm, activo_si_no: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="SI">SI</option>
+                  <option value="NO">NO</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => void createProducto()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"><Plus size={14} /> Guardar producto</button>
+              <button onClick={() => setProductModalOpen(false)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cartonajeModalOpen && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
+          <div className="w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-black text-violet-950">Movimiento cartonaje</h3>
+              <button onClick={() => setCartonajeModalOpen(false)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Tipo
+                <select value={cartonajeForm.tipo_movimiento} onChange={(e) => setCartonajeForm({ ...cartonajeForm, tipo_movimiento: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="ENTRADA de cartonaje">ENTRADA de cartonaje</option>
+                  <option value="SALIDA cartonaje">SALIDA cartonaje</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Producto
+                <select value={cartonajeForm.producto} onChange={(e) => setCartonajeForm({ ...cartonajeForm, producto: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="">Selecciona un producto</option>
+                  {cartonajeProducts.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Lote
+                <select value={cartonajeForm.lote} onChange={(e) => setCartonajeForm({ ...cartonajeForm, lote: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="">Selecciona un lote</option>
+                  {Array.from(new Set(lotes.filter(l => clean(l.producto) === cartonajeForm.producto).map(l => clean(l.lote)))).sort().map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Cantidad
+                <input type="number" step="0.01" value={cartonajeForm.cantidad} onChange={(e) => setCartonajeForm({ ...cartonajeForm, cantidad: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none" />
+              </label>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => void createCartonajeMovement()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"><Plus size={14} /> Registrar movimiento</button>
+              <button onClick={() => setCartonajeModalOpen(false)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
             </div>
           </div>
         </div>
