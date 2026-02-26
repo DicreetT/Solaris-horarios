@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V23-KL-FIX';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V24-RG-BILBAO';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -630,6 +630,12 @@ export default function InventoryFacturacionPage() {
         if (isHuarte && (lot === '250932' || lot === '260101')) return false;
       }
 
+      if (product === 'RG') {
+        const isBilbao = normalizeSearch(m.bodega).includes('bilbao');
+        // Bilbao: Purge residue movements to leave only the confirmed 33
+        if (isBilbao) return false;
+      }
+
       return true;
     });
 
@@ -813,6 +819,21 @@ export default function InventoryFacturacionPage() {
         signo: 1,
         bodega: 'HUARTE',
         notas: 'Ajuste V23 - Saldo Huarte KL verificado (50)',
+        source: 'manual'
+      },
+      // Bilbao RG-2504A04 (target: 33 units)
+      // Purged all base, adding 33.
+      {
+        id: 999987,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'RG',
+        lote: '2504A04',
+        cantidad: 33,
+        cantidad_signed: 33,
+        signo: 1,
+        bodega: 'BILBAO',
+        notas: 'Ajuste V24 - Saldo Bilbao RG verificado (33)',
         source: 'manual'
       }
     ];
