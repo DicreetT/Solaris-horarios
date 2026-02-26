@@ -161,7 +161,7 @@ const EMPTY_MOV = {
   motivo: '',
   notas: '',
 };
-const HUARTE_BUILD_TAG = 'HF-2026-02-26-V20-ISO-CANET';
+const HUARTE_BUILD_TAG = 'HF-2026-02-26-V21-ISO-HUARTE';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
 
 export default function InventoryFacturacionPage() {
@@ -614,9 +614,14 @@ export default function InventoryFacturacionPage() {
       }
 
       if (product === 'ISO') {
-        // Canet: Purge zero-stock lot 230730
         const isCanet = normalizeSearch(m.bodega).includes('canet');
+        const isHuarte = isHuarteAlias(m.bodega);
+
+        // Canet: Purge zero-stock lot 230730
         if (isCanet && lot === '230730') return false;
+
+        // Huarte: Purge old lot 240931 to leave only the confirmed 133
+        if (isHuarte && lot === '240931') return false;
       }
 
       return true;
@@ -741,6 +746,21 @@ export default function InventoryFacturacionPage() {
         signo: -1,
         bodega: 'CANET',
         notas: 'Ajuste V20 - Saldo Canet ISO verificado (2630)',
+        source: 'manual'
+      },
+      // Huarte ISO-250932 (target: 133 units)
+      // Base is 0 due to 'main' filter, adding 133.
+      {
+        id: 999991,
+        fecha: '2026-02-23',
+        tipo_movimiento: 'correcion_saldo_inicial',
+        producto: 'ISO',
+        lote: '250932',
+        cantidad: 133,
+        cantidad_signed: 133,
+        signo: 1,
+        bodega: 'HUARTE',
+        notas: 'Ajuste V21 - Saldo Huarte ISO verificado (133)',
         source: 'manual'
       }
     ];
