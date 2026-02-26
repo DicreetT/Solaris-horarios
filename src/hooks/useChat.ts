@@ -153,16 +153,15 @@ export function useChat(currentUser: User | null, selectedConversationId?: numbe
                     return aTime < bTime ? 1 : -1;
                 });
 
-            // Deduplica chats con misma firma (directo por par, grupo por título + participantes).
             const seenSignature = new Set<string>();
             const deduped: ChatConversation[] = [];
             for (const conversation of normalized) {
                 const participantsSig = [...(conversation.participants || [])].sort().join('|');
                 const titleSig = (conversation.title || '').trim().toLowerCase();
                 const signature =
-                    conversation.kind === 'direct'
+                    conversation.kind === 'direct' && !titleSig
                         ? `direct:${participantsSig}`
-                        : `group:${titleSig}:${participantsSig}`;
+                        : `${conversation.kind}:${titleSig}:${participantsSig}`;
                 if (seenSignature.has(signature)) continue;
                 seenSignature.add(signature);
                 deduped.push(conversation);

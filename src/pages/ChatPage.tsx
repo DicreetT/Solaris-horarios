@@ -305,7 +305,9 @@ function ChatPage() {
 
     useLayoutEffect(() => {
         const scrollToBottom = () => {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+            if (messagesContainerRef.current) {
+                messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+            }
         };
         scrollToBottom();
         const raf = window.requestAnimationFrame(scrollToBottom);
