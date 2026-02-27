@@ -135,6 +135,15 @@ const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   RG: '#1e3a8a',
 };
 
+const MIN_STOCK_CANET_HUARTE: Record<string, number> = {
+  SV: 7500,
+  ENT: 3000,
+  AV: 450,
+  KL: 500,
+  RG: 600,
+  ISO: 1800,
+};
+
 const formatCoverage = (months: number) => {
   if (!Number.isFinite(months) || months <= 0) return '0 días';
   const totalDays = Math.round(months * MONTH_DAYS);
@@ -907,8 +916,11 @@ function InventoryPage() {
 
     const stockByProductLot = new Map<string, number>();
     for (const row of stockByPLB) {
-      const key = `${row.producto}|${row.lote}`;
-      stockByProductLot.set(key, (stockByProductLot.get(key) || 0) + toNum(row.stock));
+      const bodega = clean(row.bodega).toUpperCase();
+      if (bodega === 'CANET' || bodega === 'HUARTE') {
+        const key = `${row.producto}|${row.lote}`;
+        stockByProductLot.set(key, (stockByProductLot.get(key) || 0) + toNum(row.stock));
+      }
     }
 
     return lotes
@@ -934,6 +946,9 @@ function InventoryPage() {
         else if (coberturaMeses < 2) semaforo = 'ROJO';
         else if (coberturaMeses < 4) semaforo = 'AMARILLO';
 
+        const minStock = MIN_STOCK_CANET_HUARTE[producto] || 0;
+        const isBelowMin = minStock > 0 && stockActualCajas < minStock;
+
         return {
           producto,
           lote,
@@ -945,6 +960,8 @@ function InventoryPage() {
           consumoMensual: meta.consumoMensual,
           coberturaMeses,
           semaforo,
+          minStock,
+          isBelowMin,
         };
       })
       .filter(Boolean)
@@ -1040,12 +1057,16 @@ function InventoryPage() {
     }
 
     const mountedByProduct = new Map<string, number>();
+    const mountedByProductCanetHuarte = new Map<string, number>();
     const mountedByProductBodega = new Map<string, Map<string, number>>();
     const mountedByProductLote = new Map<string, Map<string, number>>();
     for (const [key, qty] of stockByPLB.entries()) {
       const [producto, lote, bodega] = key.split('|');
       const safeQty = Math.max(0, qty);
       mountedByProduct.set(producto, (mountedByProduct.get(producto) || 0) + safeQty);
+      if (bodega.toUpperCase() === 'CANET' || bodega.toUpperCase() === 'HUARTE') {
+        mountedByProductCanetHuarte.set(producto, (mountedByProductCanetHuarte.get(producto) || 0) + safeQty);
+      }
       if (!mountedByProductBodega.has(producto)) mountedByProductBodega.set(producto, new Map<string, number>());
       const perBodega = mountedByProductBodega.get(producto)!;
       perBodega.set(bodega, (perBodega.get(bodega) || 0) + safeQty);
@@ -1088,12 +1109,14 @@ function InventoryPage() {
 
     const mountedCritical = Array.from(allProducts)
       .map((producto) => {
+        const minStock = MIN_STOCK_CANET_HUARTE[producto] || 0;
+        const stockTotalCanetHuarte = toNum(mountedByProductCanetHuarte.get(producto) || 0);
         const consumo = productMeta.get(producto)?.consumoMensual || 0;
         const stockTotal = toNum(mountedByProduct.get(producto) || 0);
         const coberturaMeses = consumo > 0 ? stockTotal / consumo : 0;
-        return { producto, stockTotal, coberturaMeses };
+        return { producto, stockTotal, coberturaMeses, minStock, stockTotalCanetHuarte };
       })
-      .filter((row) => row.stockTotal > 0 && row.coberturaMeses > 0 && row.coberturaMeses < 2)
+      .filter((row) => row.minStock > 0 && row.stockTotalCanetHuarte < row.minStock)
       .sort((a, b) => a.coberturaMeses - b.coberturaMeses);
 
     const potentialCritical = Array.from(allProducts)
@@ -2269,12 +2292,13 @@ function InventoryPage() {
               openTablePdf(
                 'Inventario - Control de stock',
                 `control-stock-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lote', 'Viales recibidos', 'Stock actual cajas', 'Cajas potenciales', 'Consumo mensual', 'Cobertura', 'Semáforo'],
+                ['Producto', 'Lote', 'Viales recibidos', 'Cajas (Canet+Huarte)', 'Stock min (C+H)', 'Cajas potenciales', 'Consumo mensual', 'Cobertura', 'Semáforo'],
                 controlStockRows.map((r: any) => [
                   r.producto,
                   r.lote,
                   r.vialesRecibidos,
                   Number(r.stockActualCajas.toFixed(2)),
+                  r.minStock || '-',
                   Number(r.cajasPotenciales.toFixed(2)),
                   r.consumoMensual,
                   formatCoverage(r.coberturaMeses),
@@ -2294,12 +2318,15 @@ function InventoryPage() {
               />
             </div>
             <SimpleDataTable
-              headers={['Producto', 'Lote', 'Viales', 'Stock cajas', 'Potencial cajas', 'Consumo mes', 'Cobertura', 'Semáforo']}
+              headers={['Producto', 'Lote', 'Viales', 'Cajas (Canet+Huarte)', 'Stock min (C+H)', 'Potencial cajas', 'Consumo mes', 'Cobertura', 'Semáforo']}
               rows={controlStockRows.map((r: any) => [
                 <ProductPill key={`${r.producto}-${r.lote}-control`} code={r.producto} colorMap={productColorMap} />,
                 r.lote,
                 r.vialesRecibidos,
-                Number(r.stockActualCajas.toFixed(2)),
+                <span key={`${r.producto}-${r.lote}-cajas`} className={r.isBelowMin ? 'text-rose-600 font-bold' : ''}>
+                  {Number(r.stockActualCajas.toFixed(2))}
+                </span>,
+                r.minStock || '-',
                 Number(r.cajasPotenciales.toFixed(2)),
                 r.consumoMensual,
                 formatCoverage(r.coberturaMeses),
