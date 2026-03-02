@@ -30,11 +30,10 @@ type AlertSummary = {
 
 async function buildMountedCriticalFromHuarte(): Promise<Array<{ producto: string; stockTotal: number; coberturaMeses: number }>> {
     const { data } = await supabase
-        .from('shared_json_state')
-        .select('payload')
-        .eq('key', INVENTORY_HUARTE_MOVS_KEY)
-        .maybeSingle();
-    const source = Array.isArray(data?.payload) ? data?.payload : (huarteSeed.movimientos || []);
+        .from('inventory_movements')
+        .select('*')
+        .eq('inventory_id', 'huarte');
+    const source = data && Array.isArray(data) && data.length > 0 ? data : (huarteSeed.movimientos || []);
 
     const productos = (canetSeed.productos as any[]) || [];
     const consumoByProduct = new Map<string, number>();

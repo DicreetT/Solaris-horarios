@@ -8,6 +8,7 @@ import { openPrintablePdfReport } from '../utils/pdfReport';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
 type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'movimientos_cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
@@ -79,19 +80,28 @@ const toNum = (v: any) => {
 const isValidHexColor = (v: string) => /^#([0-9a-fA-F]{6})$/.test(v);
 const contains = (a: string, b: string) => clean(a).toLowerCase().includes(clean(b).toLowerCase());
 
-const dateFromAny = (v: string): Date | null => {
+const dateFromAny = (v: string | number): Date | null => {
   if (!v) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-    const d = new Date(`${v}T00:00:00`);
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(`${s}T00:00:00`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
-  const slash = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (slash) {
     const dd = Number(slash[1]);
     const mm = Number(slash[2]);
     const yy = Number(slash[3]);
     const d = new Date(yy, mm - 1, dd, 0, 0, 0, 0);
     return Number.isNaN(d.getTime()) ? null : d;
+  }
+  // Support numeric Excel serial dates
+  if (/^[0-9.]+$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isNaN(n) && n > 40000) { // Safety check for plausible dates
+      const d = new Date((n - 25569) * 86400 * 1000);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
   }
   return null;
 };
@@ -220,11 +230,12 @@ function InventoryPage() {
     { userId: actorId },
   );
 
-  const [movimientos, setMovimientos, movimientosLoading] = useSharedJsonState<Movement[]>(
-    INVENTORY_CANET_MOVS_KEY,
-    seed.movimientos as Movement[],
-    { userId: actorId, pollIntervalMs: 300 },
-  );
+  const [
+    movimientos,
+    setMovimientos,
+    movimientosLoading,
+    canetDB,
+  ] = useInventoryMovementsDB('canet');
   const [productos, setProductos] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_productos_v1',
     seed.productos as GenericRow[],
@@ -255,11 +266,12 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
-  const [huarteMovimientosShared, setHuarteMovimientosShared, huarteMovimientosLoading] = useSharedJsonState<any[]>(
-    INVENTORY_HUARTE_MOVS_KEY,
-    (huarteSeed.movimientos as any[]) || [],
-    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 300 },
-  );
+  const [
+    huarteMovimientosShared,
+    setHuarteMovimientosShared,
+    huarteMovimientosLoading,
+    huarteDB,
+  ] = useInventoryMovementsDB('huarte');
 
   const [monthFilter, setMonthFilter] = useState<string>('');
   const [productFilterInput, setProductFilterInput] = useState<string>('');
@@ -355,39 +367,42 @@ function InventoryPage() {
       ? `${clean(m.notas)} · Auto entrada por traspaso Canet→Huarte`
       : 'Auto entrada por traspaso Canet→Huarte',
   });
-  const syncMirrorUpsert = (m: Movement) => {
+  const syncMirrorUpsert = async (m: Movement) => {
     const mirror = toHuarteMirrorMovement(m);
     const shouldAutoIn = isCanetTransferToHuarte(m);
     const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m) : null;
-    setHuarteMovimientosShared((prev) => {
-      const base = Array.isArray(prev) ? prev : [];
-      const next = [...base];
-      const mirrorIdx = next.findIndex(
-        (row: any) => clean(row.source).toLowerCase() === 'canet' && toNum(row.origin_canet_id) === toNum(m.id),
-      );
-      if (mirrorIdx >= 0) next[mirrorIdx] = mirror;
-      else next.unshift(mirror);
-      const autoIdx = next.findIndex(
-        (row: any) => clean(row.source).toLowerCase() === 'canet_auto_in' && toNum(row.origin_canet_id) === toNum(m.id),
-      );
-      if (autoIn) {
-        if (autoIdx >= 0) next[autoIdx] = autoIn;
-        else next.unshift(autoIn);
-      } else if (autoIdx >= 0) {
-        next.splice(autoIdx, 1);
+
+    const mirrorIdx = huarteMovimientosShared.findIndex(
+      (row: any) => clean(row.source).toLowerCase() === 'canet' && toNum(row.origin_canet_id) === toNum(m.id),
+    );
+    if (mirrorIdx >= 0) {
+      await huarteDB.updateMovement(huarteMovimientosShared[mirrorIdx].id, mirror);
+    } else {
+      await huarteDB.addMovement(mirror);
+    }
+
+    const autoIdx = huarteMovimientosShared.findIndex(
+      (row: any) => clean(row.source).toLowerCase() === 'canet_auto_in' && toNum(row.origin_canet_id) === toNum(m.id),
+    );
+    if (autoIn) {
+      if (autoIdx >= 0) {
+        await huarteDB.updateMovement(huarteMovimientosShared[autoIdx].id, autoIn);
+      } else {
+        await huarteDB.addMovement(autoIn);
       }
-      return next;
-    });
+    } else if (autoIdx >= 0) {
+      await huarteDB.deleteMovement(huarteMovimientosShared[autoIdx].id);
+    }
   };
-  const syncMirrorDelete = (canetId: number) => {
-    setHuarteMovimientosShared((prev) => {
-      const base = Array.isArray(prev) ? prev : [];
-      return base.filter((row: any) => {
-        const src = clean(row.source).toLowerCase();
-        if (toNum(row.origin_canet_id) !== toNum(canetId)) return true;
-        return src !== 'canet' && src !== 'canet_auto_in';
-      });
+  const syncMirrorDelete = async (canetId: number) => {
+    const toDelete = huarteMovimientosShared.filter((row: any) => {
+      const src = clean(row.source).toLowerCase();
+      if (toNum(row.origin_canet_id) !== toNum(canetId)) return false;
+      return src === 'canet' || src === 'canet_auto_in';
     });
+    for (const row of toDelete) {
+      await huarteDB.deleteMovement(row.id);
+    }
   };
 
   const addProductFilter = (value: string) => {
@@ -572,7 +587,7 @@ function InventoryPage() {
       clean(m.source),
     ].join('|');
 
-    setHuarteMovimientosShared((prev) => {
+    setHuarteMovimientosShared((prev: any) => {
       const base = Array.isArray(prev) ? prev : [];
 
       // Cleanup: Remove any old 'canet' or 'canet_auto_in' movements that are before the sync start date
@@ -1483,8 +1498,7 @@ function InventoryPage() {
     const nowIso = new Date().toISOString();
 
     if (editingId) {
-      setMovimientos((prev) => prev.map((m) => m.id === editingId ? {
-        ...m,
+      const edited = {
         fecha: movementForm.fecha,
         tipo_movimiento: movementForm.tipo_movimiento,
         producto: movementForm.producto,
@@ -1494,35 +1508,24 @@ function InventoryPage() {
         cliente: movementForm.cliente,
         destino: movementForm.destino,
         notas: movementForm.notas,
-        signo: sign,
-        cantidad_signed: qty * sign,
-        updated_at: nowIso,
-        updated_by: actorName,
-      } : m));
-      const editedMirrorCandidate: Movement = {
-        id: editingId,
-        fecha: movementForm.fecha,
-        tipo_movimiento: movementForm.tipo_movimiento,
-        producto: movementForm.producto,
-        lote: movementForm.lote,
-        cantidad: qty,
-        bodega: movementForm.bodega,
-        cliente: movementForm.cliente,
-        destino: movementForm.destino,
-        notas: movementForm.notas,
-        afecta_stock: 'SI',
         signo: sign,
         cantidad_signed: qty * sign,
         updated_at: nowIso,
         updated_by: actorName,
       };
-      syncMirrorUpsert(editedMirrorCandidate);
+
+      const nextMovement = await canetDB.updateMovement(editingId, edited);
+
+      const editedMirrorCandidate: Movement = {
+        ...nextMovement,
+        afecta_stock: 'SI'
+      };
+      await syncMirrorUpsert(editedMirrorCandidate);
       await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
       appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
       emitSuccessFeedback('Movimiento actualizado con éxito.');
     } else {
-      const next: Movement = {
-        id: normalizedMovements.length ? Math.max(...normalizedMovements.map((m) => m.id || 0)) + 1 : 1,
+      const nextPayload = {
         fecha: movementForm.fecha,
         tipo_movimiento: movementForm.tipo_movimiento,
         producto: movementForm.producto,
@@ -1538,11 +1541,12 @@ function InventoryPage() {
         created_at: nowIso,
         updated_at: nowIso,
         updated_by: actorName,
+        source: 'manual',
       };
-      setMovimientos((prev) => [next, ...prev]);
-      syncMirrorUpsert(next);
-      await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${next.tipo_movimiento} · ${next.producto} ${next.lote}.`);
-      appendAudit('Creación de movimiento', `${next.tipo_movimiento} · ${next.producto} ${next.lote} · ${next.cantidad_signed}`);
+      const nextMovement = await canetDB.addMovement(nextPayload as any);
+      await syncMirrorUpsert(nextMovement);
+      await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
+      appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
       emitSuccessFeedback('Movimiento creado con éxito.');
     }
 
@@ -1554,8 +1558,8 @@ function InventoryPage() {
     if (!canEditNow) return;
     const ok = window.confirm('¿Estás segura de eliminar este movimiento?');
     if (!ok) return;
-    setMovimientos((prev) => prev.filter((m) => m.id !== id));
-    syncMirrorDelete(id);
+    await canetDB.deleteMovement(id);
+    await syncMirrorDelete(id);
     await notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${id}).`);
     appendAudit('Eliminación de movimiento', `ID ${id}`);
     emitSuccessFeedback('Movimiento eliminado con éxito.');
@@ -1623,9 +1627,10 @@ function InventoryPage() {
           updated_by: actorName,
         }));
       if (changedMovements.length > 0) {
-        const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
-        setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
-        changedMovements.forEach((m) => syncMirrorUpsert(m));
+        for (const m of changedMovements) {
+          const nextMovement = await canetDB.updateMovement(m.id, { lote: newLote, updated_by: m.updated_by });
+          await syncMirrorUpsert(nextMovement);
+        }
       }
       await notifyAnabela(`${actorName} editó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
       appendAudit(
@@ -1705,9 +1710,10 @@ function InventoryPage() {
         updated_by: actorName,
       }));
     if (changedMovements.length > 0) {
-      const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
-      setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
-      changedMovements.forEach((m) => syncMirrorUpsert(m));
+      for (const m of changedMovements) {
+        const nextMovement = await canetDB.updateMovement(m.id, { cliente: nextClient, updated_by: m.updated_by });
+        await syncMirrorUpsert(nextMovement);
+      }
     }
     await notifyAnabela(`${actorName} editó cliente en Inventario: ${oldClientRaw} → ${nextClient}.`);
     appendAudit('Edición de cliente', `${oldClientRaw} → ${nextClient} · Movimientos actualizados: ${changedMovements.length}`);
@@ -1738,9 +1744,10 @@ function InventoryPage() {
         updated_by: actorName,
       }));
     if (changedMovements.length > 0) {
-      const changedById = new Map<number, Movement>(changedMovements.map((m) => [m.id, m]));
-      setMovimientos((prev) => prev.map((m) => changedById.get(m.id) || m));
-      changedMovements.forEach((m) => syncMirrorUpsert(m));
+      for (const m of changedMovements) {
+        const nextMovement = await canetDB.updateMovement(m.id, { tipo_movimiento: nextTipo, updated_by: m.updated_by });
+        await syncMirrorUpsert(nextMovement);
+      }
     }
     await notifyAnabela(`${actorName} editó tipo de movimiento: ${oldTipoRaw} → ${nextTipo}.`);
     appendAudit('Edición de tipo', `${oldTipoRaw} → ${nextTipo} · Movimientos actualizados: ${changedMovements.length}`);
@@ -1757,7 +1764,7 @@ function InventoryPage() {
     emitSuccessFeedback('Producto creado con éxito.');
   };
 
-  const createCartonajeMovement = () => {
+  const createCartonajeMovement = async () => {
     const qty = toNum(cartonajeForm.cantidad);
     if (!qty || !clean(cartonajeForm.producto) || !clean(cartonajeForm.lote)) {
       alert('Por favor completa todos los campos (Producto, Lote, Cantidad).');
@@ -1765,8 +1772,7 @@ function InventoryPage() {
     }
     const sign = clean(cartonajeForm.tipo_movimiento) === 'ENTRADA de cartonaje' ? 1 : -1;
     const nowIso = new Date().toISOString();
-    const payload: Movement = {
-      id: Date.now(),
+    const payload = {
       fecha: nowIso.slice(0, 10),
       tipo_movimiento: clean(cartonajeForm.tipo_movimiento),
       producto: clean(cartonajeForm.producto),
@@ -1780,7 +1786,7 @@ function InventoryPage() {
       updated_at: nowIso,
       updated_by: currentUser?.name || actorName,
     };
-    setMovimientos((prev) => [payload, ...prev]);
+    await canetDB.addMovement(payload as any);
     setCartonajeModalOpen(false);
     setCartonajeForm({ tipo_movimiento: 'ENTRADA de cartonaje', producto: '', lote: '', cantidad: '' });
     emitSuccessFeedback('Movimiento cartonaje registrado con éxito.');

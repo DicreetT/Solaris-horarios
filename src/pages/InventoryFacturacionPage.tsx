@@ -9,6 +9,7 @@ import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 
 type TabKey = 'dashboard' | 'movimientos' | 'rectificativas' | 'ensamblajes' | 'maestros';
 type DashboardKey = 'stock' | 'control' | 'rect' | 'ventas_anual' | 'envios_mes' | 'ensam_anual';
@@ -214,16 +215,12 @@ export default function InventoryFacturacionPage() {
   const [lotsActiveModalOpen, setLotsActiveModalOpen] = useState(false);
   const [stockSectionSelected, setStockSectionSelected] = useState<{ bodega: string; qty: number } | null>(null);
 
-  const [movimientos, setMovimientos, loadingMovs] = useSharedJsonState<Movement[]>(
-    STORAGE_MOVS_KEY,
-    seed.movimientos as Movement[],
-    { userId: actorId, pollIntervalMs: 300 },
-  );
-  const [canetMovimientos, , canetMovimientosLoading] = useSharedJsonState<Movement[]>(
-    STORAGE_CANET_MOVS_KEY,
-    [],
-    { userId: actorId, initializeIfMissing: false, pollIntervalMs: 300 },
-  );
+  const [
+    movimientos,
+    setMovimientos,
+    loadingMovs,
+    huarteDB
+  ] = useInventoryMovementsDB('huarte');
   const [canetAssembliesSeenIds, setCanetAssembliesSeenIds] = useSharedJsonState<number[]>(
     `${STORAGE_CANET_ASSEMBLIES_SEEN}:${actorId || 'anon'}`,
     [],
@@ -415,157 +412,10 @@ export default function InventoryFacturacionPage() {
     }
   };
 
-  const canetMovimientosEffective = useMemo(() => {
-    const canonicalLotForProduct = (productoRaw: string, loteRaw: string) => {
-      const producto = clean(productoRaw);
-      const lote = clean(loteRaw);
-      if (!producto || !lote) return lote;
-      const lotToken = normalizeLotToken(lote);
-      const allLots = (lotes || [])
-        .filter((l) => clean(l.producto) === producto)
-        .map((l) => clean(l.lote))
-        .filter(Boolean);
-      const suffixMatches = allLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
-      if (suffixMatches.length > 0) {
-        const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
-        if (preferred) return preferred;
-      }
-      const globalLots = (lotes || []).map((l) => clean(l.lote)).filter(Boolean);
-      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
-      if (globalSuffix.length === 1) return globalSuffix[0];
-      return lote;
-    };
-
-    const direct = (canetMovimientos || [])
-      .filter((m) => {
-        const d = parseDate(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
-      })
-      .map((m) => ({
-        ...m,
-        lote: canonicalLotForProduct(clean(m.producto), clean(m.lote)),
-        source: 'canet' as const,
-        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
-      }));
-
-    const mirrored = (movimientos || [])
-      .filter((m) => {
-        const src = clean((m as any).source).toLowerCase();
-        if (src !== 'canet') return false;
-        const d = parseDate(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
-      })
-      .map((m) => ({
-        ...m,
-        lote: canonicalLotForProduct(clean(m.producto), clean(m.lote)),
-        source: 'canet' as const,
-        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
-      }));
-
-    // Prioriza la fuente directa de Canet y usa el espejo solo como respaldo.
-    const merged = new Map<number, Movement>();
-    direct.forEach((m) => merged.set(toNum((m as any).origin_canet_id) || toNum(m.id), m));
-    mirrored.forEach((m) => {
-      const key = toNum((m as any).origin_canet_id) || toNum(m.id);
-      if (!merged.has(key)) merged.set(key, m);
-    });
-
-    return Array.from(merged.values()).sort(
-      (a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0),
-    );
-  }, [movimientos, canetMovimientos, canetMovementSyncStartDate, lotes]);
-
-  const canetTransferAutoInMovements = useMemo(() => {
-    const isTransfer = (v: unknown) => normalizeSearch(v).includes('traspaso');
-
-    return canetMovimientosEffective
-      .filter((m) => isTransfer(m.tipo_movimiento))
-      .filter((m) => isHuarteAlias(m.destino) || isHuarteAlias(m.cliente))
-      .filter((m) => !isHuarteAlias(m.bodega))
-      .map((m) => {
-        const qty = Math.abs(toNum(m.cantidad_signed || m.cantidad));
-        const baseId = toNum((m as any).origin_canet_id) || toNum(m.id);
-        return {
-          ...m,
-          id: -1_000_000_000 - baseId,
-          bodega: 'HUARTE',
-          tipo_movimiento: clean(m.tipo_movimiento) || 'traspaso',
-          cliente: clean(m.bodega) || 'CANET',
-          destino: 'HUARTE',
-          cantidad: qty,
-          cantidad_signed: qty,
-          signo: 1,
-          source: 'canet_auto_in',
-          notas: clean(m.notas)
-            ? `${clean(m.notas)} · Auto entrada por traspaso Canet→Huarte`
-            : 'Auto entrada por traspaso Canet→Huarte',
-        } as Movement;
-      });
-  }, [canetMovimientosEffective]);
-
-  useEffect(() => {
-    if (canetMovimientosLoading) return;
-    const direct = (canetMovimientos || [])
-      .filter((m) => {
-        const d = parseDate(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
-      })
-      .map((m) => ({
-        ...m,
-        source: 'canet',
-        origin_canet_id: toNum((m as any).origin_canet_id) || toNum(m.id),
-      }));
-
-    const signature = (m: any) =>
-      [
-        String(toNum((m as any).origin_canet_id) || toNum(m.id)),
-        clean(m.fecha),
-        clean(m.tipo_movimiento),
-        clean(m.producto),
-        clean(m.lote),
-        clean(m.bodega),
-        String(toNum(m.cantidad_signed || m.cantidad)),
-        clean(m.cliente),
-        clean(m.destino),
-        clean(m.notas),
-      ].join('|');
-
-    setMovimientos((prev) => {
-      const base = Array.isArray(prev) ? prev : [];
-      const prevCanet = base.filter((m) => clean((m as any).source).toLowerCase() === 'canet');
-      const prevSig = prevCanet.map(signature).sort();
-      const nextSig = direct.map(signature).sort();
-      const same =
-        prevSig.length === nextSig.length &&
-        prevSig.every((item, idx) => item === nextSig[idx]);
-      if (same) return base;
-
-      const nonCanet = base.filter((m) => clean((m as any).source).toLowerCase() !== 'canet');
-      return [...direct, ...nonCanet];
-    });
-  }, [canetMovimientos, canetMovementSyncStartDate, setMovimientos, canetMovimientosLoading]);
+  // Dynamic Canet fetching removed as Huarte DB now stores mirror movements natively
 
   // Robust cleanup for old movements in state
-  useEffect(() => {
-    if (loadingMovs || !Array.isArray(movimientos)) return;
-    const syncStart = canetMovementSyncStartDate;
-    const hasOld = movimientos.some(m => {
-      const src = clean(m.source).toLowerCase();
-      if (src !== 'canet' && src !== 'canet_auto_in') return false;
-      const d = parseDate(clean(m.fecha));
-      return !d || d < syncStart;
-    });
-
-    if (hasOld) {
-      console.log('[Cleanup] Found old movements in shared state. Filtering...');
-      setMovimientos(prev => prev.filter(m => {
-        const src = clean(m.source).toLowerCase();
-        if (src !== 'canet' && src !== 'canet_auto_in') return true;
-        const d = parseDate(clean(m.fecha));
-        return !!d && d >= syncStart;
-      }));
-    }
-  }, [movimientos, canetMovementSyncStartDate, loadingMovs, setMovimientos]);
+  // Robust cleanup effect removed as DB state is canonical
 
   const integratedMovements = useMemo(() => {
     // 1. Own manual movements (All warehouses)
@@ -603,15 +453,8 @@ export default function InventoryFacturacionPage() {
         } as Movement;
       });
 
-    // 2. Canet and Auto-In movements (Including all)
-    const canetEffective = canetMovimientosEffective;
-    const autoIn = canetTransferAutoInMovements;
-
-    // 3. Purge inactive SV lots
-    const filteredBase = [...canetEffective, ...autoIn, ...internalTransfersAutoIn, ...own.filter(m => {
-      const src = clean(m.source).toLowerCase();
-      return src !== 'canet' && src !== 'canet_auto_in';
-    })].filter(m => {
+    // 2. Filter inactive SV lots from the combined list
+    const filteredBase = [...internalTransfersAutoIn, ...own].filter(m => {
       const product = clean(m.producto);
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
@@ -928,7 +771,7 @@ export default function InventoryFacturacionPage() {
     ];
 
     return [...filteredBase, ...corrections];
-  }, [movimientos, canetMovimientosEffective, canetTransferAutoInMovements]);
+  }, [movimientos]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -1101,40 +944,22 @@ export default function InventoryFacturacionPage() {
   }), [filteredMovements]);
 
   const ensamblajesMovements = useMemo(() => {
-    const own = filteredMovements
-      .filter((m) => m.source !== 'canet')
+    return filteredMovements
       .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
-      .map((m) => ({ ...m, source: m.source || 'facturacion' }));
-    const canet = canetMovimientosEffective
-      .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
-      .map((m) => ({ ...m, source: 'canet' }));
-    // Evita duplicados exactos entre Canet y Huarte, priorizando Canet en la fase nueva.
-    const dedup = new Map<string, Movement>();
-    [...canet, ...own].forEach((m) => {
-      const sig = [
-        clean(m.fecha),
-        clean(m.tipo_movimiento),
-        clean(m.producto),
-        clean(m.lote),
-        clean(m.bodega),
-        String(toNum(m.cantidad_signed || m.cantidad)),
-      ].join('|');
-      if (!dedup.has(sig)) dedup.set(sig, m);
-    });
-    return Array.from(dedup.values()).sort((a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0));
-  }, [filteredMovements, canetMovimientosEffective]);
+      .sort((a, b) => (parseDate(clean(b.fecha))?.getTime() || 0) - (parseDate(clean(a.fecha))?.getTime() || 0));
+  }, [filteredMovements]);
 
   const canetAssemblyIds = useMemo(
     () =>
-      canetMovimientosEffective
-        .filter((m) => clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
+      filteredMovements
+        .filter((m) => m.source === 'canet' && clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
         .map((m) => Number(m.id))
         .filter(Number.isFinite),
-    [canetMovimientosEffective],
+    [filteredMovements],
   );
   const unseenCanetAssemblies = useMemo(() => {
     const seen = new Set<number>((canetAssembliesSeenIds || []).map((id) => Number(id)).filter(Number.isFinite));
-    return canetAssemblyIds.filter((id) => !seen.has(id)).length;
+    return canetAssemblyIds.filter((id: number) => !seen.has(id)).length;
   }, [canetAssemblyIds, canetAssembliesSeenIds]);
 
   useEffect(() => {
@@ -2186,7 +2011,7 @@ export default function InventoryFacturacionPage() {
               <button onClick={() => setModalOpen(false)} className="rounded-full border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><X size={16} /></button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Input label="Fecha" value={form.fecha} onChange={(v) => setForm((s) => ({ ...s, fecha: v }))} />
+              <Input label="Fecha" type="date" value={form.fecha} onChange={(v) => setForm((s) => ({ ...s, fecha: v }))} />
               <AutocompleteInput label="Tipo movimiento" value={form.tipo_movimiento} onChange={(v) => setForm((s) => ({ ...s, tipo_movimiento: v }))} options={typeOptions} />
               <AutocompleteInput label="Producto" value={form.producto} onChange={(v) => setForm((s) => ({ ...s, producto: v.toUpperCase() }))} options={productOptions} />
               <AutocompleteInput label="Lote" value={form.lote} onChange={(v) => setForm((s) => ({ ...s, lote: v.toUpperCase() }))} options={lotOptions} />
@@ -2536,11 +2361,11 @@ function AutocompleteInput({ label, value, onChange, options }: { label: string;
   );
 }
 
-function Input({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function Input({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
   return (
     <label className="space-y-1">
       <span className="text-[11px] font-bold uppercase tracking-wide text-violet-700">{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-violet-200 px-2 py-2 text-sm font-semibold text-violet-900" />
+      <input type={type} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-violet-200 px-2 py-2 text-sm font-semibold text-violet-900" />
     </label>
   );
 }

@@ -1,5 +1,10 @@
 const { Client } = require('pg');
-const client = new Client({ connectionString: 'postgresql://postgres.ryemqddhchdmywmlmhlx:sOq_E1f@3H6bZ*@aws-0-eu-west-3.pooler.supabase.com:5432/postgres' });
+const user = 'postgres';
+const password = encodeURIComponent('sOq_E1f@3H6bZ*');
+const host = 'aws-0-eu-west-3.pooler.supabase.com';
+const port = 5432;
+const dbname = 'postgres';
+const client = new Client({ connectionString: `postgresql://${user}.${'ryemqddhchdmywmlmhlx'}:${password}@${host}:${port}/${dbname}` });
 async function check() {
   await client.connect();
   const res = await client.query(`
