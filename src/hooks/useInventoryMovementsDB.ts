@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '../lib/supabase';
 
 export type InventoryMovementRow = {
@@ -30,6 +30,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const [movements, setMovements] = useState<InventoryMovementRow[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const movementsRef = useRef<InventoryMovementRow[]>([]);
+    const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
 
     useEffect(() => {
         movementsRef.current = movements;
@@ -121,15 +122,75 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
     }, [inventoryId]);
 
-    // Expose the raw exact set shared state function signature to minimally disrupt the UI during refactor mappings
-    // Since the UI uses `setMovimientos((prev) => [...])` a lot, we provide a compat wrapper that converts
-    // entire array replacements into upserts/deletes if absolutely necessary, but ideally the UI is refactored 
-    // to use add/update/delete instead.
+    const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
+        const { id, inventory_id, created_at, ...rest } = row as any;
+        return rest;
+    };
 
-    // For canonicalization updates (where it maps over everything and updates a few lines):
-    const setSharedValueCompat = useCallback(async (action: any) => {
-        console.warn('setSharedValueCompat called on useInventoryMovementsDB. Please use addMovement/updateMovement instead.');
-    }, []);
+    const toInsertPayload = (row: Partial<InventoryMovementRow>) => {
+        const { id, inventory_id, ...rest } = row as any;
+        return rest;
+    };
+
+    const payloadSignature = (row: Partial<InventoryMovementRow>) => {
+        const payload = toUpdatePayload(row);
+        const ordered = Object.keys(payload)
+            .sort()
+            .reduce((acc, key) => {
+                (acc as any)[key] = (payload as any)[key];
+                return acc;
+            }, {} as Record<string, unknown>);
+        return JSON.stringify(ordered);
+    };
+
+    // Compat setter used by legacy screens that still do full-array replacements.
+    const setSharedValueCompat = useCallback<Dispatch<SetStateAction<InventoryMovementRow[]>>>((action) => {
+        syncQueueRef.current = syncQueueRef.current.then(async () => {
+            const prev = movementsRef.current;
+            const next = typeof action === 'function'
+                ? (action as (prevState: InventoryMovementRow[]) => InventoryMovementRow[])(prev)
+                : action;
+
+            if (!Array.isArray(next)) {
+                console.warn('setSharedValueCompat ignored non-array value.');
+                return;
+            }
+
+            const prevById = new Map<number, InventoryMovementRow>();
+            for (const row of prev) {
+                const id = Number((row as any).id);
+                if (Number.isFinite(id)) prevById.set(id, row);
+            }
+
+            const nextById = new Map<number, InventoryMovementRow>();
+            for (const row of next) {
+                const id = Number((row as any).id);
+                if (Number.isFinite(id)) nextById.set(id, row as InventoryMovementRow);
+            }
+
+            for (const [id] of prevById) {
+                if (!nextById.has(id)) {
+                    await deleteMovement(id);
+                }
+            }
+
+            for (const row of next) {
+                const id = Number((row as any).id);
+                const prevRow = Number.isFinite(id) ? prevById.get(id) : undefined;
+                if (prevRow) {
+                    if (payloadSignature(prevRow) !== payloadSignature(row)) {
+                        await updateMovement(id, toUpdatePayload(row) as any);
+                    }
+                } else {
+                    await addMovement(toInsertPayload(row) as any);
+                }
+            }
+
+            await loadMovements(true);
+        }).catch((error) => {
+            console.error(`setSharedValueCompat failed for ${inventoryId}:`, error);
+        });
+    }, [addMovement, deleteMovement, inventoryId, loadMovements, updateMovement]);
 
     return [movements, setSharedValueCompat, isLoading, { addMovement, updateMovement, deleteMovement }] as const;
 }

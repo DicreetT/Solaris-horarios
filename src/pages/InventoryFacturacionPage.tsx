@@ -217,7 +217,7 @@ export default function InventoryFacturacionPage() {
 
   const [
     movimientos,
-    setMovimientos,
+    ,
     loadingMovs,
     huarteDB
   ] = useInventoryMovementsDB('huarte');
@@ -234,6 +234,7 @@ export default function InventoryFacturacionPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [savingMovement, setSavingMovement] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_MOV });
 
   const [productos, setProductos] = useSharedJsonState<GenericRow[]>(
@@ -1138,10 +1139,6 @@ export default function InventoryFacturacionPage() {
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
   };
 
-  const persist = (next: Movement[]) => {
-    setMovimientos(next);
-  };
-
   const openCreate = () => {
     setEditingId(null);
     setForm({ ...EMPTY_MOV, responsable: currentUser?.name || '' });
@@ -1177,7 +1174,8 @@ export default function InventoryFacturacionPage() {
     setModalOpen(true);
   };
 
-  const saveMovement = () => {
+  const saveMovement = async () => {
+    if (savingMovement) return;
     const qty = Math.abs(toNum(form.cantidad));
     if (!form.tipo_movimiento || !form.producto || !form.lote || !form.bodega || !qty) return;
     const producto = clean(form.producto);
@@ -1189,9 +1187,13 @@ export default function InventoryFacturacionPage() {
       return;
     }
     const t = clean(form.tipo_movimiento).toLowerCase();
-    let sign = 1;
-    if (t.includes('venta') || t.includes('envio') || t.includes('ajuste-')) sign = -1;
-    if (t.includes('nota credito')) sign = 1;
+    const isNegativeType =
+      t.includes('venta') ||
+      t.includes('envio') ||
+      t.includes('traspaso') ||
+      /ajuste[\s_-]*negativo/.test(t);
+    let sign = isNegativeType ? -1 : 1;
+    if (t.includes('nota credito') || t.includes('nota_credito')) sign = 1;
     const signedQty = qty * sign;
     const key = `${producto}|${lote}|${bodega}`;
     const base = monthSortedMovements
@@ -1207,8 +1209,7 @@ export default function InventoryFacturacionPage() {
       return;
     }
     const nowIso = new Date().toISOString();
-    const payload: Movement = {
-      id: editingId ?? (Math.max(0, ...movimientos.map((m) => toNum(m.id))) + 1),
+    const payload = {
       fecha: clean(form.fecha),
       tipo_movimiento: clean(form.tipo_movimiento),
       producto,
@@ -1224,24 +1225,39 @@ export default function InventoryFacturacionPage() {
       signo: sign,
       cantidad_signed: qty * sign,
       source: editingId ? 'edited' : 'manual',
-      created_at: editingId ? movimientos.find((m) => m.id === editingId)?.created_at : nowIso,
       updated_at: nowIso,
       updated_by: currentUser?.name || actorName,
     };
-    if (editingId) {
-      persist(movimientos.map((m) => (m.id === editingId ? payload : m)));
-      emitSuccessFeedback('Movimiento actualizado con éxito.');
-    } else {
-      persist([payload, ...movimientos]);
-      emitSuccessFeedback('Movimiento creado con éxito.');
+    setSavingMovement(true);
+    try {
+      if (editingId) {
+        await huarteDB.updateMovement(editingId, payload);
+        emitSuccessFeedback('Movimiento actualizado con éxito.');
+      } else {
+        await huarteDB.addMovement({
+          ...payload,
+          created_at: nowIso,
+        } as any);
+        emitSuccessFeedback('Movimiento creado con éxito.');
+      }
+      setModalOpen(false);
+    } catch (error) {
+      console.error('Error guardando movimiento de Huarte:', error);
+      window.alert('No se pudo guardar el movimiento. Revisa tu conexión e inténtalo de nuevo.');
+    } finally {
+      setSavingMovement(false);
     }
-    setModalOpen(false);
   };
 
-  const deleteMovement = (id: number) => {
+  const deleteMovement = async (id: number) => {
     if (!window.confirm('¿Seguro que quieres eliminar este movimiento?')) return;
-    persist(movimientos.filter((m) => m.id !== id));
-    emitSuccessFeedback('Movimiento eliminado con éxito.');
+    try {
+      await huarteDB.deleteMovement(id);
+      emitSuccessFeedback('Movimiento eliminado con éxito.');
+    } catch (error) {
+      console.error('Error eliminando movimiento de Huarte:', error);
+      window.alert('No se pudo eliminar el movimiento. Revisa tu conexión e inténtalo de nuevo.');
+    }
   };
 
   const createProducto = () => {
@@ -1772,7 +1788,7 @@ export default function InventoryFacturacionPage() {
               canEdit && m.source !== 'canet' && m.source !== 'canet_auto_in' ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
-                  <button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
+                  <button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
                 </div>
               ) : '-',
             ])}
@@ -1794,7 +1810,7 @@ export default function InventoryFacturacionPage() {
             }
             onDownload={() => exportPdf('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
           <Panel title="Auditoría de rectificativas" onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}>
             <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r, idx) => [r.fecha, r.tipo, r.factura, <ProductPill key={`h-ra-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
@@ -1809,7 +1825,7 @@ export default function InventoryFacturacionPage() {
             actions={canEdit ? <button onClick={() => openCreateWithType('ensamblaje_esp')} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Nuevo ensamblaje</button> : undefined}
             onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
 
           <Panel title="Archivos de ensamblaje importados (fase 0)">
@@ -2025,9 +2041,13 @@ export default function InventoryFacturacionPage() {
               <Input label="Notas" value={form.notas} onChange={(v) => setForm((s) => ({ ...s, notas: v }))} />
             </div>
             <div className="mt-3 flex justify-end">
-              <button onClick={saveMovement} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white hover:bg-violet-700">
+              <button
+                onClick={() => void saveMovement()}
+                disabled={savingMovement}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white ${savingMovement ? 'bg-violet-300 cursor-not-allowed' : 'bg-violet-600 hover:bg-violet-700'}`}
+              >
                 <Save size={14} />
-                Guardar
+                {savingMovement ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
           </div>
