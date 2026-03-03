@@ -37,6 +37,7 @@ type Movement = {
   created_at?: string;
   updated_at?: string;
   updated_by?: string;
+  origin_canet_id?: number;
 };
 
 type GenericRow = Record<string, any>;
@@ -89,6 +90,11 @@ const normalizeSearch = (v: unknown) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const normalizeWarehouseAlias = (v: unknown) => {
+  const value = clean(v).toUpperCase();
+  if (value === 'CAN') return 'CANET';
+  return value;
+};
 const getCurrentMonthKey = () => {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
@@ -437,7 +443,7 @@ export default function InventoryFacturacionPage() {
 
   const integratedMovements = useMemo(() => {
     // 1. Own manual movements (All warehouses)
-    const own = (movimientos || [])
+    const ownBase = (movimientos || [])
       .filter((m) => {
         // Solo limpiamos el seed "main" si es de la bodega HUARTE
         if (isHuarteAlias(m.bodega)) {
@@ -446,7 +452,36 @@ export default function InventoryFacturacionPage() {
         }
         return true;
       })
-      .map((m) => ({ ...m, source: m.source || 'facturacion' }));
+      .map((m) => ({
+        ...m,
+        source: m.source || 'facturacion',
+        bodega: normalizeWarehouseAlias(m.bodega),
+      }));
+
+    // Deduplicate mirrored Canet rows that might have been inserted more than once.
+    const mirroredSeen = new Set<string>();
+    const own = ownBase.filter((m) => {
+      const src = clean(m.source).toLowerCase();
+      if (src !== 'canet' && src !== 'canet_auto_in') return true;
+
+      const originCanetId = toNum(m.origin_canet_id);
+      const signedQty = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      const payloadKey = [
+        clean(m.fecha),
+        clean(m.tipo_movimiento),
+        clean(m.producto),
+        clean(m.lote),
+        clean(m.bodega),
+        String(signedQty),
+        clean(m.cliente),
+        clean(m.destino),
+        clean(m.factura_doc),
+      ].join('|');
+      const dedupeKey = originCanetId > 0 ? `${src}|origin:${originCanetId}` : `${src}|payload:${payloadKey}`;
+      if (mirroredSeen.has(dedupeKey)) return false;
+      mirroredSeen.add(dedupeKey);
+      return true;
+    });
 
     // 1.5 Auto-In for internal transfers (e.g., Huarte -> Pamplona)
     const internalTransfersAutoIn = own

@@ -77,6 +77,11 @@ const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+const normalizeWarehouseAlias = (v: any) => {
+  const value = clean(v).toUpperCase();
+  if (value === 'CAN') return 'CANET';
+  return value;
+};
 const getCurrentMonthKey = () => {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
@@ -338,6 +343,7 @@ function InventoryPage() {
   const toHuarteMirrorMovement = (m: Movement): Movement => ({
     ...m,
     id: 900000000 + toNum(m.id),
+    bodega: normalizeWarehouseAlias(m.bodega),
     source: 'canet',
     origin_canet_id: toNum(m.id),
   });
@@ -362,7 +368,7 @@ function InventoryPage() {
     origin_canet_id: toNum(m.id),
     tipo_movimiento: 'entrada_traspaso',
     bodega: 'HUARTE',
-    cliente: clean(m.bodega) || 'CANET',
+    cliente: normalizeWarehouseAlias(clean(m.bodega) || 'CANET'),
     destino: 'HUARTE',
     cantidad: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
     cantidad_signed: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
