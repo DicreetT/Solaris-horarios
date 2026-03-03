@@ -515,12 +515,8 @@ export default function InventoryFacturacionPage() {
       }
 
       if (product === 'RG') {
-        const isBilbao = normalizeSearch(m.bodega).includes('bilbao');
         const isHuarte = isHuarteAlias(m.bodega);
         const isMasBorras = normalizeSearch(m.bodega).includes('mas borras');
-
-        // Bilbao: Purge residue movements to leave only the confirmed 33
-        if (isBilbao) return false;
 
         // Huarte & Mas Borras: Purge old/residue lots (like 241030) to keep it clean
         if ((isHuarte || isMasBorras) && lot === '241030') return false;
