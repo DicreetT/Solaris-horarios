@@ -89,6 +89,10 @@ const normalizeSearch = (v: unknown) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const getCurrentMonthKey = () => {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
+};
 const isHuarteAlias = (v: unknown) => {
   const x = normalizeSearch(v);
   return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
@@ -195,7 +199,7 @@ export default function InventoryFacturacionPage() {
     { userId: actorId },
   );
 
-  const [monthFilter, setMonthFilter] = useState('');
+  const [monthFilter, setMonthFilter] = useState(() => getCurrentMonthKey());
   const [productFilter, setProductFilter] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [lotFilter, setLotFilter] = useState('');
@@ -781,15 +785,17 @@ export default function InventoryFacturacionPage() {
       return db - da;
     });
   }, [integratedMovements]);
+  const currentMonth = useMemo(() => getCurrentMonthKey(), []);
 
   const monthOptions = useMemo(() => {
     const keys = new Set<string>();
+    keys.add(currentMonth);
     monthSortedMovements.forEach((m) => {
       const d = parseDate(clean(m.fecha));
       if (d) keys.add(monthKeyFromDate(d));
     });
     return Array.from(keys).sort();
-  }, [monthSortedMovements]);
+  }, [monthSortedMovements, currentMonth]);
 
   const productOptions = useMemo(
     () =>
@@ -819,6 +825,13 @@ export default function InventoryFacturacionPage() {
     if (selectedProducts.length === 0) return all;
     return all.filter((lot) => lotes.some((l) => clean(l.lote) === lot && selectedProducts.includes(clean(l.producto))));
   }, [lotes, selectedProducts]);
+  const modalLotOptions = useMemo(() => {
+    const selectedProduct = clean(form.producto);
+    const source = selectedProduct
+      ? lotes.filter((l) => clean(l.producto) === selectedProduct)
+      : lotes;
+    return Array.from(new Set(source.map((l) => clean(l.lote)).filter(Boolean))).sort();
+  }, [lotes, form.producto]);
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
@@ -2029,8 +2042,17 @@ export default function InventoryFacturacionPage() {
             <div className="grid grid-cols-2 gap-2">
               <Input label="Fecha" type="date" value={form.fecha} onChange={(v) => setForm((s) => ({ ...s, fecha: v }))} />
               <AutocompleteInput label="Tipo movimiento" value={form.tipo_movimiento} onChange={(v) => setForm((s) => ({ ...s, tipo_movimiento: v }))} options={typeOptions} />
-              <AutocompleteInput label="Producto" value={form.producto} onChange={(v) => setForm((s) => ({ ...s, producto: v.toUpperCase() }))} options={productOptions} />
-              <AutocompleteInput label="Lote" value={form.lote} onChange={(v) => setForm((s) => ({ ...s, lote: v.toUpperCase() }))} options={lotOptions} />
+              <AutocompleteInput
+                label="Producto"
+                value={form.producto}
+                onChange={(v) => setForm((s) => {
+                  const nextProduct = v.toUpperCase();
+                  if (clean(s.producto) === clean(nextProduct)) return { ...s, producto: nextProduct };
+                  return { ...s, producto: nextProduct, lote: '' };
+                })}
+                options={productOptions}
+              />
+              <AutocompleteInput label="Lote" value={form.lote} onChange={(v) => setForm((s) => ({ ...s, lote: v.toUpperCase() }))} options={modalLotOptions} />
               <Input label="Cantidad" value={form.cantidad} onChange={(v) => setForm((s) => ({ ...s, cantidad: v }))} />
               <AutocompleteInput label="Bodega" value={form.bodega} onChange={(v) => setForm((s) => ({ ...s, bodega: v.toUpperCase() }))} options={warehouseOptions} />
               <AutocompleteInput label="Cliente" value={form.cliente} onChange={(v) => setForm((s) => ({ ...s, cliente: v }))} options={clientOptions} />

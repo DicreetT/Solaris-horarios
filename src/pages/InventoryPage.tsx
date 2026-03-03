@@ -77,6 +77,10 @@ const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+const getCurrentMonthKey = () => {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
+};
 const isValidHexColor = (v: string) => /^#([0-9a-fA-F]{6})$/.test(v);
 const contains = (a: string, b: string) => clean(a).toLowerCase().includes(clean(b).toLowerCase());
 
@@ -273,7 +277,7 @@ function InventoryPage() {
     huarteDB,
   ] = useInventoryMovementsDB('huarte');
 
-  const [monthFilter, setMonthFilter] = useState<string>('');
+  const [monthFilter, setMonthFilter] = useState<string>(() => getCurrentMonthKey());
   const [productFilterInput, setProductFilterInput] = useState<string>('');
   const [productFilters, setProductFilters] = useState<string[]>([]);
   const [lotFilter, setLotFilter] = useState<string>('');
@@ -632,23 +636,17 @@ function InventoryPage() {
   ]);
 
   const validDates = useMemo(() => normalizedMovements.map((m) => dateFromAny(clean(m.fecha))).filter(Boolean) as Date[], [normalizedMovements]);
-  const currentMonth = useMemo(() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
-  }, []);
+  const currentMonth = useMemo(() => getCurrentMonthKey(), []);
 
   const monthOptions = useMemo(() => {
     const set = new Set<string>();
+    set.add(currentMonth);
     for (const d of validDates) {
       const mk = monthKeyFromDate(d);
       if (mk <= currentMonth && d.getFullYear() >= 2024) set.add(mk);
     }
     return Array.from(set).sort();
   }, [validDates, currentMonth]);
-
-  useEffect(() => {
-    if (!monthFilter && monthOptions.length > 0) setMonthFilter(monthOptions[monthOptions.length - 1]);
-  }, [monthOptions, monthFilter]);
 
   const monthEnd = useMemo(() => {
     if (!monthFilter) return null;
