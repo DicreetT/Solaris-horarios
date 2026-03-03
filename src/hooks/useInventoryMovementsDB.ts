@@ -36,6 +36,29 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         movementsRef.current = movements;
     }, [movements]);
 
+    const getErrorText = (error: unknown) => {
+        const e = error as any;
+        return [e?.message, e?.details, e?.hint]
+            .map((v) => (v == null ? '' : String(v)))
+            .filter(Boolean)
+            .join(' | ');
+    };
+
+    const getMissingColumn = (error: unknown): string | null => {
+        const text = getErrorText(error);
+        if (!text) return null;
+        const patterns = [
+            /column ["']?([a-zA-Z0-9_]+)["']? does not exist/i,
+            /Could not find the ['"]([a-zA-Z0-9_]+)['"] column/i,
+            /missing ['"]?([a-zA-Z0-9_]+)['"]? column/i,
+        ];
+        for (const p of patterns) {
+            const m = text.match(p);
+            if (m?.[1]) return m[1];
+        }
+        return null;
+    };
+
     const loadMovements = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
 
@@ -80,33 +103,69 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId, loadMovements]);
 
     const addMovement = useCallback(async (movement: Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>) => {
-        const { data, error } = await supabase
-            .from('inventory_movements')
-            .insert({ ...movement, inventory_id: inventoryId })
-            .select()
-            .single();
+        const payload: Record<string, unknown> = { ...(movement as any), inventory_id: inventoryId };
+        let lastError: unknown = null;
 
-        if (error) {
-            console.error('Error adding movement:', error);
-            throw error;
+        for (let i = 0; i < 6; i++) {
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .insert(payload)
+                .select()
+                .single();
+
+            if (!error) {
+                return data as InventoryMovementRow;
+            }
+
+            lastError = error;
+            const missingColumn = getMissingColumn(error);
+            if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+                delete (payload as any)[missingColumn];
+                console.warn(`[inventory_movements:${inventoryId}] insert ignored missing column "${missingColumn}"`);
+                continue;
+            }
+            break;
         }
-        return data as InventoryMovementRow;
+
+        console.error('Error adding movement:', lastError);
+        throw lastError;
     }, [inventoryId]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
-        const { data, error } = await supabase
-            .from('inventory_movements')
-            .update(updates)
-            .eq('id', id)
-            .eq('inventory_id', inventoryId)
-            .select()
-            .single();
+        const payload: Record<string, unknown> = { ...(updates as any) };
+        let lastError: unknown = null;
 
-        if (error) {
-            console.error('Error updating movement:', error);
-            throw error;
+        for (let i = 0; i < 6; i++) {
+            if (Object.keys(payload).length === 0) {
+                const cached = movementsRef.current.find((m) => Number(m.id) === Number(id));
+                if (cached) return cached;
+                break;
+            }
+
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .update(payload)
+                .eq('id', id)
+                .eq('inventory_id', inventoryId)
+                .select()
+                .single();
+
+            if (!error) {
+                return data as InventoryMovementRow;
+            }
+
+            lastError = error;
+            const missingColumn = getMissingColumn(error);
+            if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+                delete (payload as any)[missingColumn];
+                console.warn(`[inventory_movements:${inventoryId}] update ignored missing column "${missingColumn}"`);
+                continue;
+            }
+            break;
         }
-        return data as InventoryMovementRow;
+
+        console.error('Error updating movement:', lastError);
+        throw lastError;
     }, [inventoryId]);
 
     const deleteMovement = useCallback(async (id: number) => {

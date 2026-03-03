@@ -93,6 +93,19 @@ const getCurrentMonthKey = () => {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
 };
+const describeDbError = (error: unknown) => {
+  const e = error as any;
+  const text = [e?.message, e?.details, e?.hint].map((v) => clean(v)).filter(Boolean).join(' · ');
+  const low = text.toLowerCase();
+  if (low.includes('row-level security') || low.includes('permission') || low.includes('not authorized')) {
+    return 'Sin permisos de base de datos para guardar en Inventario Huarte.';
+  }
+  if (low.includes('jwt') || low.includes('token') || low.includes('session') || low.includes('auth')) {
+    return 'La sesión parece caducada. Cierra sesión y vuelve a entrar.';
+  }
+  if (!text) return 'Error desconocido de base de datos.';
+  return text;
+};
 const isHuarteAlias = (v: unknown) => {
   const x = normalizeSearch(v);
   return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
@@ -1256,7 +1269,7 @@ export default function InventoryFacturacionPage() {
       setModalOpen(false);
     } catch (error) {
       console.error('Error guardando movimiento de Huarte:', error);
-      window.alert('No se pudo guardar el movimiento. Revisa tu conexión e inténtalo de nuevo.');
+      window.alert(`No se pudo guardar el movimiento.\n\nDetalle: ${describeDbError(error)}`);
     } finally {
       setSavingMovement(false);
     }
@@ -1269,7 +1282,7 @@ export default function InventoryFacturacionPage() {
       emitSuccessFeedback('Movimiento eliminado con éxito.');
     } catch (error) {
       console.error('Error eliminando movimiento de Huarte:', error);
-      window.alert('No se pudo eliminar el movimiento. Revisa tu conexión e inténtalo de nuevo.');
+      window.alert(`No se pudo eliminar el movimiento.\n\nDetalle: ${describeDbError(error)}`);
     }
   };
 
