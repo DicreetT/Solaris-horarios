@@ -178,6 +178,31 @@ html[data-mood='Eléctrico'] {
     overflow-x: hidden;
   }
 
+  /* Keep modal form fields readable even with browser autofill/dark extensions */
+  .app-modal-panel input,
+  .app-modal-panel select,
+  .app-modal-panel textarea {
+    color: #312e81 !important;
+    -webkit-text-fill-color: #312e81 !important;
+    caret-color: #312e81;
+  }
+
+  .app-modal-panel input::placeholder,
+  .app-modal-panel textarea::placeholder {
+    color: #6d28d9 !important;
+    opacity: 0.75;
+  }
+
+  .app-modal-panel input:-webkit-autofill,
+  .app-modal-panel input:-webkit-autofill:hover,
+  .app-modal-panel input:-webkit-autofill:focus,
+  .app-modal-panel textarea:-webkit-autofill,
+  .app-modal-panel select:-webkit-autofill {
+    -webkit-text-fill-color: #312e81 !important;
+    box-shadow: 0 0 0 1000px #f5f3ff inset !important;
+    transition: background-color 9999s ease-out 0s;
+  }
+
   @media (max-width: 767px) {
     .app-modal-panel {
       width: 100%;
