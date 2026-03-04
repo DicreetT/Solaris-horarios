@@ -79,6 +79,9 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
     useEffect(() => {
         void loadMovements();
+        const refresh = () => {
+            void loadMovements(true);
+        };
 
         const channel = supabase
             .channel(`inventory_movements_${inventoryId}`)
@@ -92,12 +95,28 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 },
                 () => {
                     // On any change, intelligently reload to keep the exact ordering
-                    void loadMovements(true);
+                    refresh();
                 }
             )
-            .subscribe();
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    refresh();
+                }
+            });
+
+        // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
+        const intervalId = window.setInterval(refresh, 2000);
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') refresh();
+        };
+        const onFocus = () => refresh();
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('focus', onFocus);
 
         return () => {
+            window.clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', onVisibility);
+            window.removeEventListener('focus', onFocus);
             void supabase.removeChannel(channel);
         };
     }, [inventoryId, loadMovements]);
