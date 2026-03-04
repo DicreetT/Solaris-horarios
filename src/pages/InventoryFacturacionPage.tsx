@@ -130,6 +130,10 @@ const inferMovementSign = (typeRaw: string, qtyRaw: number) => {
   if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
   return qtyRaw < 0 ? -1 : 1;
 };
+const isBalanceCorrectionType = (typeRaw: string) => {
+  const t = normalizeSearch(typeRaw);
+  return t.includes('correcion_saldo_inicial') || t.includes('correccion_saldo_inicial');
+};
 const suggestionMatches = (option: string, query: string) => {
   const q = normalizeSearch(query);
   if (!q) return true;
@@ -1280,6 +1284,7 @@ export default function InventoryFacturacionPage() {
     }
     const sign = inferMovementSign(form.tipo_movimiento, rawQty);
     const signedQty = qty * sign;
+    const isBalanceCorrection = isBalanceCorrectionType(form.tipo_movimiento);
     const key = `${producto}|${lote}|${bodega}`;
     const base = monthSortedMovements
       .filter((m) => (editingId && m.source !== 'canet' ? m.id !== editingId : true))
@@ -1289,8 +1294,11 @@ export default function InventoryFacturacionPage() {
         const currentSigned = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
         return acc + currentSigned;
       }, 0);
-    if (base + signedQty < 0) {
-      window.alert(`Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.`);
+    if (!isBalanceCorrection && base + signedQty < 0) {
+      window.alert(
+        `Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.\n` +
+        `Stock disponible actual: ${Math.round(base)}.`,
+      );
       return;
     }
     const nowIso = new Date().toISOString();
