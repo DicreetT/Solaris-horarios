@@ -63,6 +63,7 @@ const STORAGE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
+const STORAGE_HUARTE_HIDDEN_CORRECTIONS = 'inventory_huarte_hidden_corrections_v1';
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
 const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 // Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
@@ -78,6 +79,11 @@ const HUARTE_PRODUCT_COLORS: Record<string, string> = {
   AV: '#f9cb9c',
   RG: '#1e3a8a',
 };
+const STATIC_CORRECTION_IDS = [
+  999999, 999998, 999997, 999996, 999995, 999994, 999993, 999992, 999991,
+  999990, 999989, 999988, 999987, 999986, 999985, 999984, 999983,
+];
+const STATIC_CORRECTION_ID_SET = new Set<number>(STATIC_CORRECTION_IDS);
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
 const toNum = (v: unknown) => {
@@ -115,6 +121,14 @@ const describeDbError = (error: unknown) => {
 const isHuarteAlias = (v: unknown) => {
   const x = normalizeSearch(v);
   return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
+};
+const inferMovementSign = (typeRaw: string, qtyRaw: number) => {
+  const t = normalizeSearch(typeRaw);
+  if (t.includes('nota credito') || t.includes('nota_credito')) return 1;
+  if (t.includes('venta') || t.includes('envio') || t.includes('traspaso')) return -1;
+  if (/ajuste[\s_-]*negativ/.test(t) || /ajuste\s*-/.test(t) || t.includes('ajuste-')) return -1;
+  if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
+  return qtyRaw < 0 ? -1 : 1;
 };
 const suggestionMatches = (option: string, query: string) => {
   const q = normalizeSearch(query);
@@ -248,6 +262,11 @@ export default function InventoryFacturacionPage() {
     `${STORAGE_CANET_ASSEMBLIES_SEEN}:${actorId || 'anon'}`,
     [],
     { userId: actorId, initializeIfMissing: !!actorId },
+  );
+  const [hiddenCorrectionIds, setHiddenCorrectionIds] = useSharedJsonState<number[]>(
+    STORAGE_HUARTE_HIDDEN_CORRECTIONS,
+    [],
+    { userId: actorId },
   );
   const [canetAssembliesNotifiedKey, setCanetAssembliesNotifiedKey] = useSharedJsonState<string>(
     `${STORAGE_CANET_ASSEMBLIES_NOTIFIED}:${actorId || 'anon'}`,
@@ -828,8 +847,10 @@ export default function InventoryFacturacionPage() {
       }
     ];
 
-    return [...filteredBase, ...corrections];
-  }, [movimientos]);
+    const hiddenSet = new Set((hiddenCorrectionIds || []).map((id) => toNum(id)).filter(Number.isFinite));
+    const visibleCorrections = corrections.filter((c) => !hiddenSet.has(toNum(c.id)));
+    return [...filteredBase, ...visibleCorrections];
+  }, [movimientos, hiddenCorrectionIds]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -1222,6 +1243,10 @@ export default function InventoryFacturacionPage() {
   };
 
   const openEdit = (m: Movement) => {
+    if (STATIC_CORRECTION_ID_SET.has(toNum(m.id))) {
+      window.alert('Esta corrección de saldo es una base histórica. Si quieres cambiarla, elimínala y crea un movimiento nuevo.');
+      return;
+    }
     setEditingId(m.id);
     setForm({
       fecha: clean(m.fecha),
@@ -1242,7 +1267,8 @@ export default function InventoryFacturacionPage() {
 
   const saveMovement = async () => {
     if (savingMovement) return;
-    const qty = Math.abs(toNum(form.cantidad));
+    const rawQty = toNum(form.cantidad);
+    const qty = Math.abs(rawQty);
     if (!form.tipo_movimiento || !form.producto || !form.lote || !form.bodega || !qty) return;
     const producto = clean(form.producto);
     const lote = clean(form.lote);
@@ -1252,14 +1278,7 @@ export default function InventoryFacturacionPage() {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}. Revisa producto/lote.`);
       return;
     }
-    const t = clean(form.tipo_movimiento).toLowerCase();
-    const isNegativeType =
-      t.includes('venta') ||
-      t.includes('envio') ||
-      t.includes('traspaso') ||
-      /ajuste[\s_-]*negativo/.test(t);
-    let sign = isNegativeType ? -1 : 1;
-    if (t.includes('nota credito') || t.includes('nota_credito')) sign = 1;
+    const sign = inferMovementSign(form.tipo_movimiento, rawQty);
     const signedQty = qty * sign;
     const key = `${producto}|${lote}|${bodega}`;
     const base = monthSortedMovements
@@ -1289,7 +1308,7 @@ export default function InventoryFacturacionPage() {
       motivo: clean(form.motivo),
       notas: clean(form.notas),
       signo: sign,
-      cantidad_signed: qty * sign,
+      cantidad_signed: signedQty,
       source: editingId ? 'edited' : 'manual',
       updated_at: nowIso,
       updated_by: currentUser?.name || actorName,
@@ -1317,6 +1336,16 @@ export default function InventoryFacturacionPage() {
 
   const deleteMovement = async (id: number) => {
     if (!window.confirm('¿Seguro que quieres eliminar este movimiento?')) return;
+    const safeId = toNum(id);
+    if (STATIC_CORRECTION_ID_SET.has(safeId)) {
+      setHiddenCorrectionIds((prev) => {
+        const list = Array.isArray(prev) ? prev.map((x) => toNum(x)).filter(Number.isFinite) : [];
+        if (list.includes(safeId)) return list;
+        return [...list, safeId];
+      });
+      emitSuccessFeedback('Corrección de saldo eliminada con éxito.');
+      return;
+    }
     try {
       await huarteDB.deleteMovement(id);
       emitSuccessFeedback('Movimiento eliminado con éxito.');
