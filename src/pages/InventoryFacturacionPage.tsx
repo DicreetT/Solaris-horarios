@@ -134,6 +134,18 @@ const inferMovementSign = (typeRaw: string, qtyRaw: number) => {
   if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
   return qtyRaw < 0 ? -1 : 1;
 };
+const inferSignedQuantity = (movement: Pick<Movement, 'cantidad' | 'cantidad_signed' | 'signo' | 'tipo_movimiento'>) => {
+  const hasSigned =
+    movement.cantidad_signed !== undefined &&
+    movement.cantidad_signed !== null &&
+    clean(movement.cantidad_signed) !== '';
+  if (hasSigned) return toNum(movement.cantidad_signed);
+  const rawQty = toNum(movement.cantidad);
+  const absQty = Math.abs(rawQty);
+  const explicitSign = toNum(movement.signo);
+  if (explicitSign !== 0) return absQty * explicitSign;
+  return absQty * inferMovementSign(clean(movement.tipo_movimiento), rawQty);
+};
 const isBalanceCorrectionType = (typeRaw: string) => {
   const t = normalizeSearch(typeRaw);
   return t.includes('correcion_saldo_inicial') || t.includes('correccion_saldo_inicial');
@@ -222,8 +234,15 @@ export default function InventoryFacturacionPage() {
   });
   const actorName = currentUser?.name || 'Usuario';
   const actorId = currentUser?.id || '';
+  const actorEmail = clean((currentUser as any)?.email).toLowerCase();
+  const actorNameLower = clean(currentUser?.name).toLowerCase();
   const actorIsAdmin = !!currentUser?.isAdmin;
-  const actorIsItziar = !!(currentUser && itziar && currentUser.id === itziar.id);
+  const actorIsItziar = !!(
+    (currentUser && itziar && currentUser.id === itziar.id) ||
+    actorNameLower.includes('itzi') ||
+    actorNameLower.includes('itz') ||
+    actorEmail.includes('itzi')
+  );
 
   const [tab, setTab] = useState<TabKey>('dashboard');
   const [dashboardSection, setDashboardSection] = useState<DashboardKey>('stock');
@@ -550,11 +569,19 @@ export default function InventoryFacturacionPage() {
         }
         return true;
       })
-      .map((m) => ({
-        ...m,
-        source: m.source || 'facturacion',
-        bodega: normalizeWarehouseAlias(m.bodega),
-      }));
+      .map((m) => {
+        const rawQty = toNum(m.cantidad);
+        const sign = toNum(m.signo) || inferMovementSign(clean(m.tipo_movimiento), rawQty);
+        const signed = inferSignedQuantity(m);
+        return {
+          ...m,
+          cantidad: Math.abs(rawQty),
+          signo: sign,
+          cantidad_signed: signed,
+          source: m.source || 'facturacion',
+          bodega: normalizeWarehouseAlias(m.bodega),
+        };
+      });
 
     const allBase = [...canetLiveMirror, ...ownBase];
 
@@ -565,7 +592,7 @@ export default function InventoryFacturacionPage() {
       if (src !== 'canet' && src !== 'canet_auto_in' && src !== 'canet_live') return true;
 
       const originCanetId = toNum(m.origin_canet_id);
-      const signedQty = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      const signedQty = inferSignedQuantity(m);
       const payloadKey = [
         clean(m.fecha),
         clean(m.tipo_movimiento),
@@ -1079,7 +1106,7 @@ export default function InventoryFacturacionPage() {
         map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
       }
       const row = map.get(key)!;
-      const signed = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+      const signed = inferSignedQuantity(m);
       row.stock += signed;
     });
     return Array.from(map.values())
@@ -1140,7 +1167,7 @@ export default function InventoryFacturacionPage() {
   const canetAssemblyIds = useMemo(
     () =>
       filteredMovements
-        .filter((m) => m.source === 'canet' && clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
+        .filter((m) => (m.source === 'canet' || m.source === 'canet_live') && clean(m.tipo_movimiento).toLowerCase().includes('ensamblaje'))
         .map((m) => Number(m.id))
         .filter(Number.isFinite),
     [filteredMovements],
@@ -1346,6 +1373,11 @@ export default function InventoryFacturacionPage() {
   };
 
   const openEdit = (m: Movement) => {
+    const src = clean(m.source).toLowerCase();
+    if (src === 'canet' || src === 'canet_live' || src === 'canet_auto_in') {
+      window.alert('Este movimiento viene sincronizado desde Inventario Canet y no se puede editar desde Huarte.');
+      return;
+    }
     if (STATIC_CORRECTION_ID_SET.has(toNum(m.id))) {
       window.alert('Esta corrección de saldo es una base histórica. Si quieres cambiarla, elimínala y crea un movimiento nuevo.');
       return;
@@ -1404,11 +1436,11 @@ export default function InventoryFacturacionPage() {
     const isBalanceCorrection = isBalanceCorrectionType(form.tipo_movimiento);
     const key = `${producto}|${lote}|${bodega}`;
     const base = monthSortedMovements
-      .filter((m) => (editingId && m.source !== 'canet' ? m.id !== editingId : true))
+      .filter((m) => (editingId && m.source !== 'canet' && m.source !== 'canet_live' ? m.id !== editingId : true))
       .reduce((acc, m) => {
         const mk = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
         if (mk !== key) return acc;
-        const currentSigned = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
+        const currentSigned = inferSignedQuantity(m);
         return acc + currentSigned;
       }, 0);
     if (!isBalanceCorrection && base + signedQty < 0) {
@@ -1461,6 +1493,12 @@ export default function InventoryFacturacionPage() {
 
   const deleteMovement = async (id: number) => {
     if (!window.confirm('¿Seguro que quieres eliminar este movimiento?')) return;
+    const row = monthSortedMovements.find((m) => toNum(m.id) === toNum(id));
+    const src = clean(row?.source).toLowerCase();
+    if (src === 'canet' || src === 'canet_live' || src === 'canet_auto_in') {
+      window.alert('Este movimiento está sincronizado desde Inventario Canet. Debes eliminarlo en Inventario Canet.');
+      return;
+    }
     const safeId = toNum(id);
     if (STATIC_CORRECTION_ID_SET.has(safeId)) {
       setHiddenCorrectionIds((prev) => {
@@ -1995,7 +2033,7 @@ export default function InventoryFacturacionPage() {
           title="Movimientos"
           actions={
             <div className="flex items-center gap-2">
-              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', m.source === 'canet' ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
                 <Download size={14} />
                 Descargar PDF
               </button>
@@ -2023,9 +2061,9 @@ export default function InventoryFacturacionPage() {
               m.cliente || '',
               m.factura_doc || '',
               m.responsable || '',
-              m.source === 'canet' ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación',
+              (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación',
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
-              canEdit && m.source !== 'canet' && m.source !== 'canet_auto_in' ? (
+              canEdit && m.source !== 'canet' && m.source !== 'canet_live' && m.source !== 'canet_auto_in' ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
                   <button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
@@ -2065,7 +2103,7 @@ export default function InventoryFacturacionPage() {
             actions={canEdit ? <button onClick={() => openCreateWithType('ensamblaje_esp')} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Nuevo ensamblaje</button> : undefined}
             onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source === 'canet' ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' && m.source !== 'canet_live' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
 
           <Panel title="Archivos de ensamblaje importados (fase 0)">

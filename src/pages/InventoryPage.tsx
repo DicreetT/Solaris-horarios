@@ -196,6 +196,14 @@ const EMPTY_FORM = {
   destino: '',
   notas: '',
 };
+const EMPTY_PRODUCT_FORM = {
+  producto: '',
+  tipo_producto: 'COMPLEMENTO ALIMENTICIO',
+  stock_min: '',
+  stock_optimo: '',
+  modo_stock: 'ENSAMBLAJE',
+  activo_si_no: 'SI',
+};
 
 function InventoryPage() {
   const { currentUser } = useAuth();
@@ -296,7 +304,8 @@ function InventoryPage() {
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ producto: '', tipo_producto: 'COMPLEMENTO ALIMENTICIO', stock_min: '', stock_optimo: '', modo_stock: 'ENSAMBLAJE', activo_si_no: 'SI' });
+  const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
+  const [newProductForm, setNewProductForm] = useState({ ...EMPTY_PRODUCT_FORM });
 
   const [cartonajeModalOpen, setCartonajeModalOpen] = useState(false);
   const [cartonajeForm, setCartonajeForm] = useState({ tipo_movimiento: 'ENTRADA de cartonaje', producto: '', lote: '', cantidad: '' });
@@ -1818,13 +1827,70 @@ function InventoryPage() {
     emitSuccessFeedback('Tipo de movimiento actualizado con éxito.');
   };
 
-  const createProducto = () => {
+  const closeProductModal = () => {
+    setProductModalOpen(false);
+    setEditingProductCode(null);
+    setNewProductForm({ ...EMPTY_PRODUCT_FORM });
+  };
+
+  const openProductCreateModal = () => {
+    if (!canEditNow) return;
+    setEditingProductCode(null);
+    setNewProductForm({ ...EMPTY_PRODUCT_FORM });
+    setProductModalOpen(true);
+  };
+
+  const openProductEditModal = (row: GenericRow) => {
+    if (!canEditNow) return;
+    const code = clean(row.producto).toUpperCase();
+    if (!code) return;
+    setEditingProductCode(code);
+    setNewProductForm({
+      producto: code,
+      tipo_producto: clean(row.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
+      stock_min: clean(row.stock_min),
+      stock_optimo: clean((row as any).stock_optimo || (row as any).stock_opt),
+      modo_stock: clean(row.modo_stock) || 'ENSAMBLAJE',
+      activo_si_no: clean(row.activo_si_no) || 'SI',
+    });
+    setProductModalOpen(true);
+  };
+
+  const createProducto = async () => {
     const code = clean(newProductForm.producto).toUpperCase();
     if (!code) return;
+    if (editingProductCode) {
+      const target = editingProductCode.toUpperCase();
+      setProductos((prev) =>
+        prev.map((p) =>
+          clean(p.producto).toUpperCase() === target
+            ? {
+              ...p,
+              ...newProductForm,
+              producto: target,
+              stock_optimo: clean(newProductForm.stock_optimo),
+              stock_opt: clean(newProductForm.stock_optimo),
+            }
+            : p,
+        ),
+      );
+      await notifyAnabela(`${actorName} editó producto en Inventario: ${target}.`);
+      appendAudit('Edición de producto', target);
+      closeProductModal();
+      emitSuccessFeedback('Producto actualizado con éxito.');
+      return;
+    }
     if (productos.some((p) => clean(p.producto) === code)) return;
-    setProductos((prev) => [...prev, { ...newProductForm, producto: code }]);
-    setNewProductForm({ producto: '', tipo_producto: 'COMPLEMENTO ALIMENTICIO', stock_min: '', stock_optimo: '', modo_stock: 'ENSAMBLAJE', activo_si_no: 'SI' });
-    setProductModalOpen(false);
+    setProductos((prev) => [
+      ...prev,
+      {
+        ...newProductForm,
+        producto: code,
+        stock_optimo: clean(newProductForm.stock_optimo),
+        stock_opt: clean(newProductForm.stock_optimo),
+      },
+    ]);
+    closeProductModal();
     emitSuccessFeedback('Producto creado con éxito.');
   };
 
@@ -2527,22 +2593,30 @@ function InventoryPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Productos</h3>
               {isEditModeActive && (
-                <button onClick={() => setProductModalOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
+                <button onClick={openProductCreateModal} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
                   <Plus size={14} /> Crear Producto
                 </button>
               )}
             </div>
           </div>
           <SimpleDataTable
-            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo']}
+            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo', 'Acciones']}
             rows={productos.map((p) => [
               <ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />,
               clean(p.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
               <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />,
               p.stock_min || '-',
-              p.stock_opt || '-',
+              p.stock_opt || p.stock_optimo || '-',
               p.modo_stock || '-',
               p.activo_si_no || 'SI',
+              <button
+                key={`product-edit-${clean(p.producto)}`}
+                disabled={!isEditModeActive}
+                onClick={() => openProductEditModal(p)}
+                className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+              >
+                <Pencil size={13} />
+              </button>,
             ])}
           />
         </div>
@@ -2739,11 +2813,19 @@ function InventoryPage() {
         <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-black text-violet-950">Añadir producto</h3>
-              <button onClick={() => setProductModalOpen(false)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+              <h3 className="text-lg font-black text-violet-950">{editingProductCode ? 'Editar producto' : 'Añadir producto'}</h3>
+              <button onClick={closeProductModal} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Input label="Siglas Producto" value={newProductForm.producto} onChange={(v) => setNewProductForm({ ...newProductForm, producto: v })} />
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Siglas Producto
+                <input
+                  value={newProductForm.producto}
+                  disabled={!!editingProductCode}
+                  onChange={(e) => setNewProductForm({ ...newProductForm, producto: e.target.value })}
+                  className={`rounded-xl border p-2 text-sm outline-none ${editingProductCode ? 'border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed' : 'border-violet-200 bg-violet-50 text-violet-900'}`}
+                />
+              </label>
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
                 Tipo de Producto
                 <select value={newProductForm.tipo_producto} onChange={(e) => setNewProductForm({ ...newProductForm, tipo_producto: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
@@ -2770,9 +2852,12 @@ function InventoryPage() {
                 </select>
               </label>
             </div>
+            {editingProductCode && (
+              <p className="mt-2 text-xs text-violet-600">El código de producto se mantiene fijo para no romper movimientos históricos.</p>
+            )}
             <div className="mt-4 flex gap-2">
-              <button onClick={() => void createProducto()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"><Plus size={14} /> Guardar producto</button>
-              <button onClick={() => setProductModalOpen(false)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
+              <button onClick={() => void createProducto()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">{editingProductCode ? <Pencil size={14} /> : <Plus size={14} />} {editingProductCode ? 'Guardar cambios' : 'Guardar producto'}</button>
+              <button onClick={closeProductModal} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
             </div>
           </div>
         </div>
