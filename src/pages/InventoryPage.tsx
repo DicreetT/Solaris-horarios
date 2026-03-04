@@ -74,6 +74,8 @@ const normalizeSearch = (v: any) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const isInvalidLegacyLot = (producto: any, lote: any) =>
+  clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
 const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -508,25 +510,27 @@ function InventoryPage() {
       if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
     };
-    return movimientos.map((m) => {
-      const tipo = clean(m.tipo_movimiento);
-      const qty = Math.abs(toNum(m.cantidad));
-      const rowSign = toNum(m.signo);
-      const sign = rowSign !== 0 ? rowSign : (signByType.get(tipo) ?? (toNum(m.cantidad_signed) < 0 ? -1 : 1));
-      const hasSigned = m.cantidad_signed !== undefined && m.cantidad_signed !== null && clean(m.cantidad_signed) !== '';
-      const signedFromRow = toNum(m.cantidad_signed);
-      const producto = clean(m.producto);
-      const lote = canonicalLot(producto, clean(m.lote));
-      return {
-        ...m,
-        producto,
-        lote,
-        cantidad: qty,
-        signo: sign,
-        cantidad_signed: hasSigned ? signedFromRow : qty * sign,
-        afecta_stock: clean(m.afecta_stock) || 'SI',
-      };
-    });
+    return movimientos
+      .map((m) => {
+        const tipo = clean(m.tipo_movimiento);
+        const qty = Math.abs(toNum(m.cantidad));
+        const rowSign = toNum(m.signo);
+        const sign = rowSign !== 0 ? rowSign : (signByType.get(tipo) ?? (toNum(m.cantidad_signed) < 0 ? -1 : 1));
+        const hasSigned = m.cantidad_signed !== undefined && m.cantidad_signed !== null && clean(m.cantidad_signed) !== '';
+        const signedFromRow = toNum(m.cantidad_signed);
+        const producto = clean(m.producto);
+        const lote = canonicalLot(producto, clean(m.lote));
+        return {
+          ...m,
+          producto,
+          lote,
+          cantidad: qty,
+          signo: sign,
+          cantidad_signed: hasSigned ? signedFromRow : qty * sign,
+          afecta_stock: clean(m.afecta_stock) || 'SI',
+        };
+      })
+      .filter((m) => !isInvalidLegacyLot(m.producto, m.lote));
   }, [movimientos, signByType, lotes]);
 
   useEffect(() => {

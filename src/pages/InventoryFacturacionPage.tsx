@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BarChart3, Boxes, Calculator, Download, FileWarning, FolderTree, Plus, Save, Trash2, X } from 'lucide-react';
 import seed from '../data/inventory_facturacion_seed.json';
+import canetSeed from '../data/inventory_seed.json';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { USERS } from '../constants';
@@ -97,6 +98,8 @@ const normalizeSearch = (v: unknown) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const isInvalidLegacyLot = (producto: unknown, lote: unknown) =>
+  clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
 const normalizeWarehouseAlias = (v: unknown) => {
   const value = clean(v).toUpperCase();
   if (value === 'CAN') return 'CANET';
@@ -263,6 +266,17 @@ export default function InventoryFacturacionPage() {
     loadingMovs,
     huarteDB
   ] = useInventoryMovementsDB('huarte');
+  const [canetMovimientos] = useInventoryMovementsDB('canet');
+  const [canetLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_lotes_v1',
+    canetSeed.lotes as GenericRow[],
+    { userId: actorId },
+  );
+  const [canetTipos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_tipos_v1',
+    canetSeed.tipos_movimiento as GenericRow[],
+    { userId: actorId },
+  );
   const [canetAssembliesSeenIds, setCanetAssembliesSeenIds] = useSharedJsonState<number[]>(
     `${STORAGE_CANET_ASSEMBLIES_SEEN}:${actorId || 'anon'}`,
     [],
@@ -466,12 +480,72 @@ export default function InventoryFacturacionPage() {
   // Robust cleanup effect removed as DB state is canonical
 
   const integratedMovements = useMemo(() => {
-    // 1. Own manual movements (All warehouses)
+    const canetLotsByProduct = new Map<string, string[]>();
+    const allCanetLots = Array.from(new Set((canetLotes || []).map((row) => clean(row.lote)).filter(Boolean)));
+    for (const row of canetLotes || []) {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      if (!producto || !lote) continue;
+      if (!canetLotsByProduct.has(producto)) canetLotsByProduct.set(producto, []);
+      const list = canetLotsByProduct.get(producto)!;
+      if (!list.includes(lote)) list.push(lote);
+    }
+    const canetSignByType = new Map<string, number>();
+    for (const t of canetTipos || []) {
+      canetSignByType.set(clean(t.tipo_movimiento), toNum(t.signo_1_1));
+    }
+    const canonicalCanetLot = (productoRaw: string, loteRaw: string) => {
+      const producto = clean(productoRaw);
+      const lote = clean(loteRaw);
+      if (!producto || !lote) return lote;
+      const token = normalizeLotToken(lote);
+      const productLots = canetLotsByProduct.get(producto) || [];
+      const productMatches = productLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      if (productMatches.length > 0) {
+        const preferred = [...productMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
+        if (preferred) return preferred;
+      }
+      const globalMatches = allCanetLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      if (globalMatches.length === 1) return globalMatches[0];
+      return lote;
+    };
+
+    // Live mirror from Canet DB, so Huarte CANET stock stays in strict parity.
+    const canetLiveMirror: Movement[] = (canetMovimientos || [])
+      .map((m) => {
+        const tipo = clean(m.tipo_movimiento);
+        const producto = clean(m.producto);
+        const lote = canonicalCanetLot(producto, clean(m.lote));
+        if (isInvalidLegacyLot(producto, lote)) return null;
+        const qty = Math.abs(toNum(m.cantidad));
+        const rowSign = toNum(m.signo);
+        const hasSigned = m.cantidad_signed !== undefined && m.cantidad_signed !== null && clean(m.cantidad_signed) !== '';
+        const sign = rowSign !== 0 ? rowSign : (canetSignByType.get(tipo) ?? (toNum(m.cantidad_signed) < 0 ? -1 : 1));
+        const signed = hasSigned ? toNum(m.cantidad_signed) : qty * sign;
+        return {
+          ...m,
+          id: 3_000_000_000 + toNum(m.id),
+          tipo_movimiento: tipo,
+          producto,
+          lote,
+          cantidad: qty,
+          cantidad_signed: signed,
+          signo: sign,
+          afecta_stock: clean(m.afecta_stock) || 'SI',
+          bodega: normalizeWarehouseAlias(m.bodega),
+          source: 'canet_live',
+          origin_canet_id: toNum(m.id),
+        } as Movement;
+      })
+      .filter(Boolean) as Movement[];
+
+    // 1. Own Huarte movements (excluding stale mirrored Canet rows)
     const ownBase = (movimientos || [])
       .filter((m) => {
+        const src = clean(m.source).toLowerCase();
+        if (src === 'canet') return false;
         // Solo limpiamos el seed "main" si es de la bodega HUARTE
         if (isHuarteAlias(m.bodega)) {
-          const src = clean(m.source).toLowerCase();
           return src !== 'main';
         }
         return true;
@@ -482,11 +556,13 @@ export default function InventoryFacturacionPage() {
         bodega: normalizeWarehouseAlias(m.bodega),
       }));
 
+    const allBase = [...canetLiveMirror, ...ownBase];
+
     // Deduplicate mirrored Canet rows that might have been inserted more than once.
     const mirroredSeen = new Set<string>();
-    const own = ownBase.filter((m) => {
+    const own = allBase.filter((m) => {
       const src = clean(m.source).toLowerCase();
-      if (src !== 'canet' && src !== 'canet_auto_in') return true;
+      if (src !== 'canet' && src !== 'canet_auto_in' && src !== 'canet_live') return true;
 
       const originCanetId = toNum(m.origin_canet_id);
       const signedQty = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
@@ -536,6 +612,7 @@ export default function InventoryFacturacionPage() {
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
       const src = clean(m.source).toLowerCase();
+      if (isInvalidLegacyLot(product, lot)) return false;
 
       if (product === 'SV') {
         // Huarte: Only 2511A34 is active (strict seeds purge)
@@ -849,13 +926,16 @@ export default function InventoryFacturacionPage() {
     // Keep CANET warehouse as a strict mirror of Inventario Canet.
     // Huarte-only cleanups/corrections must not alter CANET stock parity.
     const canonicalCanetMirror = own.filter(
-      (m) => clean(m.source).toLowerCase() === 'canet' && clean(m.bodega).toUpperCase() === 'CANET',
+      (m) => {
+        const src = clean(m.source).toLowerCase();
+        return (src === 'canet' || src === 'canet_live') && clean(m.bodega).toUpperCase() === 'CANET';
+      },
     );
     const withoutCanetWarehouse = [...filteredBase, ...visibleCorrections].filter(
       (m) => clean(m.bodega).toUpperCase() !== 'CANET',
     );
     return [...withoutCanetWarehouse, ...canonicalCanetMirror];
-  }, [movimientos, hiddenCorrectionIds]);
+  }, [movimientos, canetMovimientos, canetLotes, canetTipos, hiddenCorrectionIds]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -962,7 +1042,8 @@ export default function InventoryFacturacionPage() {
       if (!movementPassesFilters(m, false)) return false;
       if (!monthEnd) return true;
       const d = parseDate(clean(m.fecha));
-      if (!d) return false;
+      // Keep undated/base rows, same as Inventario Canet stock logic.
+      if (!d) return true;
       return d.getTime() <= monthEnd.getTime();
     });
   }, [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
@@ -992,16 +1073,17 @@ export default function InventoryFacturacionPage() {
       return toNum(a.id) - toNum(b.id);
     });
     ordered.forEach((m) => {
+      if (clean((m as any).afecta_stock || 'SI').toUpperCase() !== 'SI') return;
       const key = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
       if (!map.has(key)) {
         map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
       }
       const row = map.get(key)!;
       const signed = toNum(m.cantidad_signed || toNum(m.cantidad) * (toNum(m.signo) || 1));
-      row.stock = Math.max(0, row.stock + signed);
+      row.stock += signed;
     });
     return Array.from(map.values())
-      .map((r) => ({ ...r, stock: Math.max(0, toNum(r.stock)) }))
+      .map((r) => ({ ...r, stock: toNum(r.stock) }))
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [filteredMovementsForStock]);
   const safeControlByLot = useMemo(
