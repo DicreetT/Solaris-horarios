@@ -511,6 +511,15 @@ export default function InventoryFacturacionPage() {
       const product = clean(m.producto);
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
+      const src = clean(m.source).toLowerCase();
+      const movementDate = parseDate(clean(m.fecha));
+
+      // Defensive guard: hide mirrored rows from Canet that are dated in the future.
+      if ((src === 'canet' || src === 'canet_auto_in') && movementDate) {
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+        if (movementDate > todayEnd) return false;
+      }
 
       if (product === 'SV') {
         // Huarte: Only 2511A34 is active (strict seeds purge)

@@ -574,10 +574,13 @@ function InventoryPage() {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
     if (movimientosLoading || huarteMovimientosLoading) return;
 
+    const syncUpperBound = new Date();
+    syncUpperBound.setHours(23, 59, 59, 999);
     const eligibleRows = normalizedMovements
       .filter((m) => {
         const d = dateFromAny(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
+        // Prevent accidental future-dated rows from being mirrored into Huarte.
+        return !!d && d >= canetMovementSyncStartDate && d <= syncUpperBound;
       });
     const mirrorRows = eligibleRows.map((m) => toHuarteMirrorMovement(m));
     const autoInRows = eligibleRows
