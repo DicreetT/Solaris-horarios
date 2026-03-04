@@ -86,6 +86,7 @@ const STATIC_CORRECTION_IDS = [
 const STATIC_CORRECTION_ID_SET = new Set<number>(STATIC_CORRECTION_IDS);
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
+const normalizeLotState = (v: unknown) => (clean(v).toUpperCase() === 'AGOTADO' ? 'AGOTADO' : 'ACTIVO');
 const toNum = (v: unknown) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -535,14 +536,6 @@ export default function InventoryFacturacionPage() {
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
       const src = clean(m.source).toLowerCase();
-      const movementDate = parseDate(clean(m.fecha));
-
-      // Defensive guard: hide mirrored rows from Canet that are dated in the future.
-      if ((src === 'canet' || src === 'canet_auto_in') && movementDate) {
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-        if (movementDate > todayEnd) return false;
-      }
 
       if (product === 'SV') {
         // Huarte: Only 2511A34 is active (strict seeds purge)
@@ -853,7 +846,15 @@ export default function InventoryFacturacionPage() {
 
     const hiddenSet = new Set((hiddenCorrectionIds || []).map((id) => toNum(id)).filter(Number.isFinite));
     const visibleCorrections = corrections.filter((c) => !hiddenSet.has(toNum(c.id)));
-    return [...filteredBase, ...visibleCorrections];
+    // Keep CANET warehouse as a strict mirror of Inventario Canet.
+    // Huarte-only cleanups/corrections must not alter CANET stock parity.
+    const canonicalCanetMirror = own.filter(
+      (m) => clean(m.source).toLowerCase() === 'canet' && clean(m.bodega).toUpperCase() === 'CANET',
+    );
+    const withoutCanetWarehouse = [...filteredBase, ...visibleCorrections].filter(
+      (m) => clean(m.bodega).toUpperCase() !== 'CANET',
+    );
+    return [...withoutCanetWarehouse, ...canonicalCanetMirror];
   }, [movimientos, hiddenCorrectionIds]);
 
   const monthSortedMovements = useMemo(() => {
@@ -905,11 +906,24 @@ export default function InventoryFacturacionPage() {
   }, [lotes, selectedProducts]);
   const modalLotOptions = useMemo(() => {
     const selectedProduct = clean(form.producto);
+    const editingMovement = editingId ? monthSortedMovements.find((m) => m.id === editingId) : null;
+    const keepKey = editingMovement ? `${clean(editingMovement.producto)}|${clean(editingMovement.lote)}` : '';
     const source = selectedProduct
       ? lotes.filter((l) => clean(l.producto) === selectedProduct)
       : lotes;
-    return Array.from(new Set(source.map((l) => clean(l.lote)).filter(Boolean))).sort();
-  }, [lotes, form.producto]);
+    return Array.from(
+      new Set(
+        source
+          .filter((l) => {
+            const key = `${clean(l.producto)}|${clean(l.lote)}`;
+            if (keepKey && key === keepKey) return true;
+            return normalizeLotState(l.estado) !== 'AGOTADO';
+          })
+          .map((l) => clean(l.lote))
+          .filter(Boolean),
+      ),
+    ).sort();
+  }, [lotes, form.producto, editingId, monthSortedMovements]);
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
@@ -1078,7 +1092,10 @@ export default function InventoryFacturacionPage() {
     const totalRect = rectificativas.length;
     const activeMaster = new Set(
       lotes
-        .filter((l) => clean(l.estado || 'ACTIVO').toLowerCase() !== 'cerrado')
+        .filter((l) => {
+          const state = clean(l.estado || 'ACTIVO').toUpperCase();
+          return state !== 'CERRADO' && state !== 'AGOTADO';
+        })
         .map((l) => `${clean(l.producto)}|${clean(l.lote)}|${clean(l.bodega)}`),
     );
     const totalLots = safeControlByLot.filter((r) => r.stock > 0).filter((r) => activeMaster.size === 0 || activeMaster.has(`${r.producto}|${r.lote}|${r.bodega}`)).length;
@@ -1277,10 +1294,28 @@ export default function InventoryFacturacionPage() {
     const producto = clean(form.producto);
     const lote = clean(form.lote);
     const bodega = clean(form.bodega);
-    const lotMatch = lotes.some((l) => clean(l.producto) === producto && clean(l.lote) === lote);
-    if (!lotMatch) {
+    const lotRow =
+      lotes.find(
+        (l) =>
+          clean(l.producto) === producto &&
+          clean(l.lote) === lote &&
+          (!clean(l.bodega) || clean(l.bodega) === bodega),
+      ) || lotes.find((l) => clean(l.producto) === producto && clean(l.lote) === lote);
+    if (!lotRow) {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}. Revisa producto/lote.`);
       return;
+    }
+    if (normalizeLotState(lotRow.estado) === 'AGOTADO') {
+      const originalMovement = editingId ? monthSortedMovements.find((m) => m.id === editingId) : null;
+      const isEditingSameLot = !!(
+        originalMovement &&
+        clean(originalMovement.producto) === producto &&
+        clean(originalMovement.lote) === lote
+      );
+      if (!isEditingSameLot) {
+        window.alert(`El lote ${lote} está marcado como AGOTADO. Reactívalo en Maestros > Lotes para usarlo.`);
+        return;
+      }
     }
     const sign = inferMovementSign(form.tipo_movimiento, rawQty);
     const signedQty = qty * sign;
@@ -1378,9 +1413,29 @@ export default function InventoryFacturacionPage() {
     const bodega = clean(newLote.bodega).toUpperCase();
     if (!producto || !lote || !bodega) return;
     if (lotes.some((l) => clean(l.producto) === producto && clean(l.lote) === lote && clean(l.bodega) === bodega)) return;
-    setLotes((prev) => [...prev, { producto, lote, bodega, estado: clean(newLote.estado || 'ACTIVO'), fecha_alta: new Date().toISOString().slice(0, 10) }]);
+    setLotes((prev) => [...prev, { producto, lote, bodega, estado: normalizeLotState(newLote.estado), fecha_alta: new Date().toISOString().slice(0, 10) }]);
     setNewLote({ producto: '', lote: '', bodega: '', estado: 'ACTIVO' });
     emitSuccessFeedback('Lote creado con éxito.');
+  };
+
+  const toggleLotState = (lotRow: GenericRow) => {
+    if (!canEdit) return;
+    const producto = clean(lotRow.producto);
+    const lote = clean(lotRow.lote);
+    const bodega = clean(lotRow.bodega);
+    let nextState = 'ACTIVO';
+    setLotes((prev) =>
+      prev.map((l) => {
+        const sameRow =
+          clean(l.producto) === producto &&
+          clean(l.lote) === lote &&
+          clean(l.bodega) === bodega;
+        if (!sameRow) return l;
+        nextState = normalizeLotState(l.estado) === 'AGOTADO' ? 'ACTIVO' : 'AGOTADO';
+        return { ...l, estado: nextState };
+      }),
+    );
+    emitSuccessFeedback(`Lote ${lote} en ${bodega} marcado como ${nextState}.`);
   };
 
   const createTipo = () => {
@@ -1978,16 +2033,43 @@ export default function InventoryFacturacionPage() {
               title="Lotes"
               actions={
                 canEdit ? (
-                  <div className="grid grid-cols-4 gap-1">
+                  <div className="grid grid-cols-5 gap-1">
                     <input value={newLote.producto} onChange={(e) => setNewLote((s) => ({ ...s, producto: e.target.value.toUpperCase() }))} placeholder="Producto" className="rounded-lg border border-violet-200 px-2 py-1.5 text-xs font-semibold" />
                     <input value={newLote.lote} onChange={(e) => setNewLote((s) => ({ ...s, lote: e.target.value.toUpperCase() }))} placeholder="Lote" className="rounded-lg border border-violet-200 px-2 py-1.5 text-xs font-semibold" />
                     <input value={newLote.bodega} onChange={(e) => setNewLote((s) => ({ ...s, bodega: e.target.value.toUpperCase() }))} placeholder="Bodega" className="rounded-lg border border-violet-200 px-2 py-1.5 text-xs font-semibold" />
+                    <select value={newLote.estado} onChange={(e) => setNewLote((s) => ({ ...s, estado: e.target.value }))} className="rounded-lg border border-violet-200 px-2 py-1.5 text-xs font-semibold">
+                      <option value="ACTIVO">ACTIVO</option>
+                      <option value="AGOTADO">AGOTADO</option>
+                    </select>
                     <button onClick={createLote} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Agregar</button>
                   </div>
                 ) : undefined
               }
             >
-              <DataTable headers={['Producto', 'Lote', 'Bodega', 'Estado', 'Fecha alta']} rows={limitRows('maestros_lotes', lotes).map((l, idx) => [<ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />, clean(l.lote), clean(l.bodega), clean(l.estado || 'ACTIVO'), clean(l.fecha_alta || '')])} />
+              <DataTable
+                headers={['Producto', 'Lote', 'Bodega', 'Estado', 'Fecha alta', 'Acciones']}
+                rows={limitRows('maestros_lotes', lotes).map((l, idx) => [
+                  <ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />,
+                  clean(l.lote),
+                  clean(l.bodega),
+                  <span
+                    key={`h-lote-state-${idx}`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
+                  >
+                    {normalizeLotState(l.estado)}
+                  </span>,
+                  clean(l.fecha_alta || ''),
+                  canEdit ? (
+                    <button
+                      key={`h-lot-toggle-${idx}`}
+                      onClick={() => toggleLotState(l)}
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      {normalizeLotState(l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
+                    </button>
+                  ) : '-',
+                ])}
+              />
               {lotes.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_lotes" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />

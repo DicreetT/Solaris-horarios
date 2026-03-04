@@ -67,6 +67,7 @@ type Movement = {
 type GenericRow = Record<string, any>;
 
 const clean = (v: any) => (v == null ? '' : String(v).trim());
+const normalizeLotState = (v: any) => (clean(v).toUpperCase() === 'AGOTADO' ? 'AGOTADO' : 'ACTIVO');
 const normalizeSearch = (v: any) =>
   clean(v)
     .toLowerCase()
@@ -143,7 +144,7 @@ const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
-const CANET_MOVEMENT_SYNC_START = '2026-02-24';
+const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
@@ -324,7 +325,7 @@ function InventoryPage() {
 
   const [lotModalOpen, setLotModalOpen] = useState(false);
   const [editingLotKey, setEditingLotKey] = useState<string | null>(null);
-  const [lotForm, setLotForm] = useState({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '' });
+  const [lotForm, setLotForm] = useState({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '', estado: 'ACTIVO' });
   const [bodegaModalOpen, setBodegaModalOpen] = useState(false);
   const [bodegaForm, setBodegaForm] = useState({ bodega: '', activo_si_no: 'SI' });
   const [tipoModalOpen, setTipoModalOpen] = useState(false);
@@ -574,13 +575,10 @@ function InventoryPage() {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
     if (movimientosLoading || huarteMovimientosLoading) return;
 
-    const syncUpperBound = new Date();
-    syncUpperBound.setHours(23, 59, 59, 999);
     const eligibleRows = normalizedMovements
       .filter((m) => {
         const d = dateFromAny(clean(m.fecha));
-        // Prevent accidental future-dated rows from being mirrored into Huarte.
-        return !!d && d >= canetMovementSyncStartDate && d <= syncUpperBound;
+        return !!d && d >= canetMovementSyncStartDate;
       });
     const mirrorRows = eligibleRows.map((m) => toHuarteMirrorMovement(m));
     const autoInRows = eligibleRows
@@ -963,8 +961,9 @@ function InventoryPage() {
             ? (stockActualCajas + cajasPotenciales) / meta.consumoMensual
             : 0;
 
+        const estadoLote = normalizeLotState(l.estado);
         let semaforo: 'AGOTADO' | 'ROJO' | 'AMARILLO' | 'VERDE' = 'VERDE';
-        if (coberturaMeses <= 0) semaforo = 'AGOTADO';
+        if (estadoLote === 'AGOTADO' || coberturaMeses <= 0) semaforo = 'AGOTADO';
         else if (coberturaMeses < 2) semaforo = 'ROJO';
         else if (coberturaMeses < 4) semaforo = 'AMARILLO';
 
@@ -977,6 +976,7 @@ function InventoryPage() {
           modo: meta.modo || 'DIRECTO',
           vialesRecibidos,
           vialesPorCaja: meta.vialesPorCaja,
+          estadoLote,
           stockActualCajas,
           cajasPotenciales,
           consumoMensual: meta.consumoMensual,
@@ -1303,14 +1303,32 @@ function InventoryPage() {
     return map;
   }, [normalizedMovements]);
 
+  const lotStateByProductLot = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto || !lote) continue;
+      map.set(`${producto}|${lote}`, normalizeLotState(l.estado));
+    }
+    return map;
+  }, [lotes]);
+
   const lotOptionsForForm = useMemo(() => {
+    const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
+    const keepKey = editingMovement ? `${clean(editingMovement.producto)}|${clean(editingMovement.lote)}` : '';
     const rows = lotes
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => (movementForm.producto ? l.producto === movementForm.producto : true))
+      .filter((l) => {
+        const key = `${l.producto}|${l.lote}`;
+        if (keepKey && key === keepKey) return true;
+        return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
+      })
       .filter((l) => (stockByProductLot.get(`${l.producto}|${l.lote}`) || 0) !== 0);
     return Array.from(new Set(rows.map((r) => r.lote))).sort();
-  }, [lotes, movementForm.producto, stockByProductLot]);
+  }, [lotes, movementForm.producto, stockByProductLot, lotStateByProductLot, editingId, normalizedMovements]);
 
   const visibleMovements = useMemo(() => {
     const base = monthFilter ? monthMovements : normalizedMovements.filter((m) => movementMatchesFilters(m, false));
@@ -1488,6 +1506,19 @@ function InventoryPage() {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
       return;
     }
+    const lotState = lotStateByProductLot.get(`${producto}|${lote}`) || 'ACTIVO';
+    if (lotState === 'AGOTADO') {
+      const originalMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
+      const isEditingSameLot = !!(
+        originalMovement &&
+        clean(originalMovement.producto) === producto &&
+        clean(originalMovement.lote) === lote
+      );
+      if (!isEditingSameLot) {
+        window.alert(`El lote ${lote} está marcado como AGOTADO. Reactívalo en Maestros > Lotes para usarlo.`);
+        return;
+      }
+    }
     const sign = signByType.get(movementForm.tipo_movimiento) ?? 1;
     const signedQty = qty * sign;
     const key = `${producto}|${lote}|${bodega}`;
@@ -1586,7 +1617,7 @@ function InventoryPage() {
   const openLotCreateModal = () => {
     if (!canEditNow) return;
     setEditingLotKey(null);
-    setLotForm({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '' });
+    setLotForm({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '', estado: 'ACTIVO' });
     setLotModalOpen(true);
   };
 
@@ -1598,6 +1629,7 @@ function InventoryPage() {
       lote: clean(l.lote),
       viales_recibidos: clean(l.viales_recibidos),
       fecha_caducidad: clean(l.fecha_caducidad),
+      estado: normalizeLotState(l.estado),
     });
     setLotModalOpen(true);
   };
@@ -1606,6 +1638,8 @@ function InventoryPage() {
     if (!canEditNow) return;
     if (!lotForm.producto || !lotForm.lote) return;
     const semaforo = getCaducitySemaforo(lotForm.fecha_caducidad);
+    const normalizedState = normalizeLotState(lotForm.estado);
+    const lotPatch = { ...lotForm, estado: normalizedState, semaforo_caducidad: semaforo };
     if (editingLotKey) {
       const [oldProductoRaw, oldLoteRaw] = editingLotKey.split('|');
       const oldProducto = clean(oldProductoRaw);
@@ -1615,7 +1649,7 @@ function InventoryPage() {
       setLotes((prev) =>
         prev.map((l) =>
           `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey
-            ? { ...l, ...lotForm, semaforo_caducidad: semaforo }
+            ? { ...l, ...lotPatch }
             : l,
         ),
       );
@@ -1646,13 +1680,32 @@ function InventoryPage() {
       );
       emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
-      setLotes((prev) => [{ ...lotForm, semaforo_caducidad: semaforo }, ...prev]);
+      setLotes((prev) => [{ ...lotPatch }, ...prev]);
       await notifyAnabela(`${actorName} creó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
       appendAudit('Creación de lote', `${lotForm.producto} ${lotForm.lote}`);
       emitSuccessFeedback('Lote creado con éxito.');
     }
     setLotModalOpen(false);
     setEditingLotKey(null);
+  };
+
+  const toggleLotExhausted = async (lot: GenericRow) => {
+    if (!canEditNow) return;
+    const producto = clean(lot.producto);
+    const lote = clean(lot.lote);
+    const key = `${producto}|${lote}`;
+    let nextState = 'ACTIVO';
+    setLotes((prev) =>
+      prev.map((row) => {
+        if (`${clean(row.producto)}|${clean(row.lote)}` !== key) return row;
+        const currentState = normalizeLotState(row.estado);
+        nextState = currentState === 'AGOTADO' ? 'ACTIVO' : 'AGOTADO';
+        return { ...row, estado: nextState };
+      }),
+    );
+    await notifyAnabela(`${actorName} marcó lote ${producto} ${lote} como ${nextState}.`);
+    appendAudit('Cambio estado lote', `${producto} ${lote} → ${nextState}`);
+    emitSuccessFeedback(`Lote ${lote} marcado como ${nextState}.`);
   };
 
   const saveBodega = async () => {
@@ -2500,14 +2553,29 @@ function InventoryPage() {
             </div>
           </div>
           <SimpleDataTable
-            headers={['Producto', 'Lote', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
+            headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
             rows={lotes.map((l, idx) => [
               <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,
               clean(l.lote),
+              <span
+                key={`lot-state-${idx}`}
+                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
+              >
+                {normalizeLotState(l.estado)}
+              </span>,
               clean(l.viales_recibidos) || '-',
               clean(l.fecha_caducidad) || '-',
               clean(l.semaforo_caducidad) || '-',
-              <button key={`lot-edit-${idx}`} disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>,
+              <div key={`lot-actions-${idx}`} className="flex items-center gap-1">
+                <button disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
+                <button
+                  disabled={!isEditModeActive}
+                  onClick={() => void toggleLotExhausted(l)}
+                  className={`rounded-lg px-2 py-1 text-[11px] font-bold ${isEditModeActive ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                >
+                  {normalizeLotState(l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
+                </button>
+              </div>,
             ])}
           />
         </div>
@@ -2622,6 +2690,13 @@ function InventoryPage() {
               <Input label="Lote" value={lotForm.lote} onChange={(v) => setLotForm({ ...lotForm, lote: v })} />
               <Input label="Cantidad viales" type="number" value={lotForm.viales_recibidos} onChange={(v) => setLotForm({ ...lotForm, viales_recibidos: v })} />
               <Input label="Fecha caducidad" type="date" value={lotForm.fecha_caducidad} onChange={(v) => setLotForm({ ...lotForm, fecha_caducidad: v })} />
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Estado
+                <select value={lotForm.estado} onChange={(e) => setLotForm({ ...lotForm, estado: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                  <option value="ACTIVO">ACTIVO</option>
+                  <option value="AGOTADO">AGOTADO</option>
+                </select>
+              </label>
             </div>
             <div className="mt-4 flex gap-2">
               <button onClick={() => void saveLot()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">{editingLotKey ? <Pencil size={14} /> : <Plus size={14} />} {editingLotKey ? 'Guardar lote' : 'Crear lote'}</button>
