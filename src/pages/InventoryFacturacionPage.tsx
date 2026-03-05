@@ -83,8 +83,115 @@ const HUARTE_PRODUCT_COLORS: Record<string, string> = {
 const STATIC_CORRECTION_IDS = [
   999999, 999998, 999997, 999996, 999995, 999994, 999993, 999992, 999991,
   999990, 999989, 999988, 999987, 999986, 999985, 999984, 999983,
+  999982, 999981, 999980, 999979, 999978, 999977, 999976, 999975,
 ];
 const STATIC_CORRECTION_ID_SET = new Set<number>(STATIC_CORRECTION_IDS);
+const LEGACY_FEB28_RECOVERY_ROWS: Movement[] = [
+  {
+    id: 999982,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'RG',
+    lote: '2504A04',
+    cantidad: 88,
+    cantidad_signed: 88,
+    signo: 1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999981,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'SV',
+    lote: '2511A34',
+    cantidad: 26,
+    cantidad_signed: -26,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999980,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'venta',
+    producto: 'SV',
+    lote: '2511A34',
+    cantidad: 115,
+    cantidad_signed: -115,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999979,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'KL',
+    lote: '241030',
+    cantidad: 4,
+    cantidad_signed: 4,
+    signo: 1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999978,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'ISO',
+    lote: '250932',
+    cantidad: 13,
+    cantidad_signed: -13,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999977,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'venta',
+    producto: 'ISO',
+    lote: '250932',
+    cantidad: 42,
+    cantidad_signed: -42,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999976,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'ENT',
+    lote: '2507A19',
+    cantidad: 1,
+    cantidad_signed: -1,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+  {
+    id: 999975,
+    fecha: '2026-02-28',
+    tipo_movimiento: 'CORRECION',
+    producto: 'AV',
+    lote: '2507A07',
+    cantidad: 4,
+    cantidad_signed: -4,
+    signo: -1,
+    bodega: 'HUARTE',
+    notas: 'Restauración automática de histórico 28/02/2026',
+    source: 'manual',
+  },
+];
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
 const normalizeLotState = (v: unknown) => (clean(v).toUpperCase() === 'AGOTADO' ? 'AGOTADO' : 'ACTIVO');
@@ -146,6 +253,13 @@ const inferSignedQuantity = (movement: Pick<Movement, 'cantidad' | 'cantidad_sig
   if (explicitSign !== 0) return absQty * explicitSign;
   return absQty * inferMovementSign(clean(movement.tipo_movimiento), rawQty);
 };
+const sameMovementFingerprint = (a: Movement, b: Movement) =>
+  clean(a.fecha) === clean(b.fecha) &&
+  clean(a.tipo_movimiento).toLowerCase() === clean(b.tipo_movimiento).toLowerCase() &&
+  clean(a.producto) === clean(b.producto) &&
+  clean(a.lote) === clean(b.lote) &&
+  clean(a.bodega).toUpperCase() === clean(b.bodega).toUpperCase() &&
+  toNum(inferSignedQuantity(a)) === toNum(inferSignedQuantity(b));
 const isBalanceCorrectionType = (typeRaw: string) => {
   const t = normalizeSearch(typeRaw);
   return t.includes('correcion_saldo_inicial') || t.includes('correccion_saldo_inicial');
@@ -950,6 +1064,10 @@ export default function InventoryFacturacionPage() {
 
     const hiddenSet = new Set((hiddenCorrectionIds || []).map((id) => toNum(id)).filter(Number.isFinite));
     const visibleCorrections = corrections.filter((c) => !hiddenSet.has(toNum(c.id)));
+    const feb28RecoveryRows = LEGACY_FEB28_RECOVERY_ROWS.filter((candidate) => {
+      if (hiddenSet.has(toNum(candidate.id))) return false;
+      return !filteredBase.some((existing) => sameMovementFingerprint(existing as Movement, candidate));
+    });
     // Keep CANET warehouse as a strict mirror of Inventario Canet.
     // Huarte-only cleanups/corrections must not alter CANET stock parity.
     const canonicalCanetMirror = own.filter(
@@ -958,7 +1076,7 @@ export default function InventoryFacturacionPage() {
         return (src === 'canet' || src === 'canet_live') && clean(m.bodega).toUpperCase() === 'CANET';
       },
     );
-    const withoutCanetWarehouse = [...filteredBase, ...visibleCorrections].filter(
+    const withoutCanetWarehouse = [...filteredBase, ...visibleCorrections, ...feb28RecoveryRows].filter(
       (m) => clean(m.bodega).toUpperCase() !== 'CANET',
     );
     return [...withoutCanetWarehouse, ...canonicalCanetMirror];

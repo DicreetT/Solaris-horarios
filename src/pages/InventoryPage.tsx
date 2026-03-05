@@ -346,6 +346,8 @@ function InventoryPage() {
     () => dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
     [],
   );
+  const isLocalRuntime = typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+  const canWriteHuarteMirrorFromCanet = !isLocalRuntime || import.meta.env.VITE_ALLOW_LOCAL_MIRROR_SYNC === 'true';
 
   const isCanetMirroredMovement = (m: Movement) => clean((m as any).source).toLowerCase() === 'canet';
   const isHuarteAlias = (v: string) => {
@@ -390,6 +392,7 @@ function InventoryPage() {
       : 'Auto entrada por traspaso Canet→Huarte',
   });
   const syncMirrorUpsert = async (m: Movement) => {
+    if (!canWriteHuarteMirrorFromCanet) return;
     const mirror = toHuarteMirrorMovement(m);
     const shouldAutoIn = isCanetTransferToHuarte(m);
     const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m) : null;
@@ -417,6 +420,7 @@ function InventoryPage() {
     }
   };
   const syncMirrorDelete = async (canetId: number) => {
+    if (!canWriteHuarteMirrorFromCanet) return;
     const toDelete = huarteMovimientosShared.filter((row: any) => {
       const src = clean(row.source).toLowerCase();
       if (toNum(row.origin_canet_id) !== toNum(canetId)) return false;
@@ -587,6 +591,7 @@ function InventoryPage() {
   useEffect(() => {
     // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
     if (movimientosLoading || huarteMovimientosLoading) return;
+    if (!canWriteHuarteMirrorFromCanet) return;
 
     const eligibleRows = normalizedMovements
       .filter((m) => {
@@ -650,6 +655,7 @@ function InventoryPage() {
   }, [
     normalizedMovements,
     canetMovementSyncStartDate,
+    canWriteHuarteMirrorFromCanet,
     setHuarteMovimientosShared,
     movimientosLoading,
     huarteMovimientosLoading,
