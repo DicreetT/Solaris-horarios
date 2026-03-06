@@ -81,6 +81,21 @@ window.addEventListener('error', (event) => {
 
 window.addEventListener('unhandledrejection', (event) => {
     const reason = (event.reason && (event.reason.message || String(event.reason))) || 'Error desconocido'
+    const normalized = String(reason).toLowerCase()
+    const isTransientNetwork =
+        normalized.includes('failed to fetch') ||
+        normalized.includes('networkerror') ||
+        normalized.includes('network error') ||
+        normalized.includes('load failed') ||
+        normalized.includes('timeout') ||
+        normalized.includes('tiempo de espera')
+
+    if (isTransientNetwork) {
+        console.warn('Transient unhandled rejection ignored:', reason)
+        event.preventDefault()
+        return
+    }
+
     renderFatal('Lunaris encontró un error al iniciar', reason)
 })
 

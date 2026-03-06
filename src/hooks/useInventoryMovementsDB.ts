@@ -60,45 +60,6 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         return null;
     };
 
-    const withTimeout = async <T,>(promiseLike: PromiseLike<T>, ms = 12000): Promise<T> => {
-        let timeoutId: number | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = window.setTimeout(() => {
-                reject(new Error('Tiempo de espera agotado al conectar con base de datos.'));
-            }, ms);
-        });
-        try {
-            return await Promise.race([Promise.resolve(promiseLike), timeoutPromise]);
-        } finally {
-            if (timeoutId !== undefined) {
-                window.clearTimeout(timeoutId);
-            }
-        }
-    };
-
-    const ensureWriteSession = async () => {
-        const sessionResult = await withTimeout(supabase.auth.getSession(), 6000);
-        const sessionError = (sessionResult as any)?.error;
-        if (sessionError) throw sessionError;
-
-        const session = (sessionResult as any)?.data?.session;
-        if (!session) {
-            throw new Error('Sesión caducada. Cierra sesión y vuelve a entrar.');
-        }
-
-        const nowSec = Math.floor(Date.now() / 1000);
-        const expSec = Number(session.expires_at || 0);
-        const shouldRefresh = Number.isFinite(expSec) && expSec > 0 && expSec <= nowSec + 120;
-        if (!shouldRefresh) return;
-
-        const refreshResult = await withTimeout(supabase.auth.refreshSession(), 8000);
-        const refreshError = (refreshResult as any)?.error;
-        const refreshedSession = (refreshResult as any)?.data?.session;
-        if (refreshError || !refreshedSession) {
-            throw new Error('Sesión caducada. Cierra sesión y vuelve a entrar.');
-        }
-    };
-
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
@@ -107,15 +68,12 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             if (!silent) setIsLoading(true);
             const maxRows = 5000;
             try {
-                const { data, error } = await withTimeout(
-                    supabase
-                        .from('inventory_movements')
-                        .select('*')
-                        .eq('inventory_id', inventoryId)
-                        .order('id', { ascending: false })
-                        .range(0, maxRows - 1),
-                    20000
-                );
+                const { data, error } = await supabase
+                    .from('inventory_movements')
+                    .select('*')
+                    .eq('inventory_id', inventoryId)
+                    .order('id', { ascending: false })
+                    .range(0, maxRows - 1);
                 if (error) {
                     console.error(`Error loading inventory movements for ${inventoryId}:`, error);
                 } else {
@@ -181,18 +139,15 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId, loadMovements]);
 
     const addMovement = useCallback(async (movement: Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>) => {
-        await ensureWriteSession();
         const payload: Record<string, unknown> = { ...(movement as any), inventory_id: inventoryId };
         let lastError: unknown = null;
 
         for (let i = 0; i < 6; i++) {
-            const { data, error } = await withTimeout(
-                supabase
-                    .from('inventory_movements')
-                    .insert(payload)
-                    .select()
-                    .single()
-            );
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .insert(payload)
+                .select()
+                .single();
 
             if (!error) {
                 return data as InventoryMovementRow;
@@ -213,7 +168,6 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
-        await ensureWriteSession();
         const payload: Record<string, unknown> = { ...(updates as any) };
         let lastError: unknown = null;
 
@@ -224,15 +178,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 break;
             }
 
-            const { data, error } = await withTimeout(
-                supabase
-                    .from('inventory_movements')
-                    .update(payload)
-                    .eq('id', id)
-                    .eq('inventory_id', inventoryId)
-                    .select()
-                    .single()
-            );
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .update(payload)
+                .eq('id', id)
+                .eq('inventory_id', inventoryId)
+                .select()
+                .single();
 
             if (!error) {
                 return data as InventoryMovementRow;
@@ -253,14 +205,11 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId]);
 
     const deleteMovement = useCallback(async (id: number) => {
-        await ensureWriteSession();
-        const { error } = await withTimeout(
-            supabase
-                .from('inventory_movements')
-                .delete()
-                .eq('id', id)
-                .eq('inventory_id', inventoryId)
-        );
+        const { error } = await supabase
+            .from('inventory_movements')
+            .delete()
+            .eq('id', id)
+            .eq('inventory_id', inventoryId);
 
         if (error) {
             console.error('Error deleting movement:', error);
