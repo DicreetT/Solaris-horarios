@@ -104,44 +104,29 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             return loadInFlightRef.current;
         }
         const run = (async () => {
-        if (!silent) setIsLoading(true);
-        const pageSize = 500;
-        const maxPages = 40;
-        const allRows: InventoryMovementRow[] = [];
-        let page = 0;
-        let hasMore = true;
-        let hadError = false;
-
-        while (hasMore && page < maxPages) {
-            const from = page * pageSize;
-            const to = from + pageSize - 1;
-            const { data, error } = await withTimeout(
-                supabase
-                    .from('inventory_movements')
-                    .select('*')
-                    .eq('inventory_id', inventoryId)
-                    .order('id', { ascending: false })
-                    .range(from, to),
-                10000
-            );
-
-            if (error) {
-                console.error(`Error loading inventory movements for ${inventoryId}:`, error);
-                hadError = true;
-                break;
+            if (!silent) setIsLoading(true);
+            const maxRows = 5000;
+            try {
+                const { data, error } = await withTimeout(
+                    supabase
+                        .from('inventory_movements')
+                        .select('*')
+                        .eq('inventory_id', inventoryId)
+                        .order('id', { ascending: false })
+                        .range(0, maxRows - 1),
+                    20000
+                );
+                if (error) {
+                    console.error(`Error loading inventory movements for ${inventoryId}:`, error);
+                } else {
+                    setMovements(((data || []) as InventoryMovementRow[]));
+                }
+            } catch (error) {
+                // Never crash UI on background sync read failures.
+                console.error(`Timeout/error loading inventory movements for ${inventoryId}:`, error);
+            } finally {
+                if (!silent) setIsLoading(false);
             }
-
-            const chunk = (data || []) as InventoryMovementRow[];
-            allRows.push(...chunk);
-            hasMore = chunk.length === pageSize;
-            page += 1;
-        }
-
-        if (!hadError) {
-            setMovements(allRows);
-        }
-
-        if (!silent) setIsLoading(false);
         })();
         loadInFlightRef.current = run;
         try {
