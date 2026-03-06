@@ -87,12 +87,12 @@ const SearchPalette: React.FC = () => {
     return (
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[10vh] px-4 sm:px-6 md:px-8">
+                <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[10vh] px-4 sm:px-6 md:px-8 md:left-[var(--layout-sidebar-current-width,256px)]">
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/40 backdrop-blur-sm"
+                        className="fixed inset-0 bg-black/40 backdrop-blur-sm md:left-[var(--layout-sidebar-current-width,256px)]"
                         onClick={() => setIsOpen(false)}
                     />
 

@@ -166,7 +166,8 @@ html[data-mood='Eléctrico'] {
 
   @media (min-width: 768px) {
     .app-modal-overlay {
-      padding-left: calc(var(--layout-sidebar-current-width, 256px) + 0.75rem);
+      left: var(--layout-sidebar-current-width, 256px);
+      padding-left: 0.75rem;
       padding-right: 0.75rem;
     }
   }
