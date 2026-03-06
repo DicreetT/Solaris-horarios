@@ -31,6 +31,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const [isLoading, setIsLoading] = useState(true);
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
+    const loadInFlightRef = useRef<Promise<void> | null>(null);
 
     useEffect(() => {
         movementsRef.current = movements;
@@ -76,6 +77,10 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     };
 
     const loadMovements = useCallback(async (silent = false) => {
+        if (loadInFlightRef.current) {
+            return loadInFlightRef.current;
+        }
+        const run = (async () => {
         if (!silent) setIsLoading(true);
         const pageSize = 1000;
         const maxPages = 200;
@@ -111,6 +116,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
 
         if (!silent) setIsLoading(false);
+        })();
+        loadInFlightRef.current = run;
+        try {
+            await run;
+        } finally {
+            loadInFlightRef.current = null;
+        }
     }, [inventoryId]);
 
     useEffect(() => {
@@ -141,7 +153,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             });
 
         // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
-        const intervalId = window.setInterval(refresh, 2000);
+        const intervalId = window.setInterval(refresh, 8000);
         const onVisibility = () => {
             if (document.visibilityState === 'visible') refresh();
         };
