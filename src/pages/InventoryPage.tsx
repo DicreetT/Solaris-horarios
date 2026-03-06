@@ -2129,8 +2129,17 @@ function InventoryPage() {
 
   const openCreateModal = () => {
     if (!canEditNow) return;
+    const preferredType =
+      tipos.find((t) => clean(t.tipo_movimiento).toLowerCase() === 'venta')?.tipo_movimiento ||
+      tipos.find((t) => clean(t.tipo_movimiento).toLowerCase().includes('ajuste'))?.tipo_movimiento ||
+      tipos.find((t) => clean(t.tipo_movimiento))?.tipo_movimiento ||
+      '';
     setEditingId(null);
-    setMovementForm({ ...EMPTY_FORM });
+    setMovementForm({
+      ...EMPTY_FORM,
+      tipo_movimiento: preferredType,
+      bodega: 'CANET',
+    });
     setMovementModalOpen(true);
   };
 
@@ -2158,8 +2167,14 @@ function InventoryPage() {
     }
     if (savingMovement) return;
     const qty = Math.abs(toNum(movementForm.cantidad));
-    if (!movementForm.tipo_movimiento || !movementForm.producto || !movementForm.lote || !movementForm.bodega || !qty) {
-      window.alert('Completa Tipo, Producto, Lote, Cantidad y Bodega para guardar.');
+    const missingFields: string[] = [];
+    if (!clean(movementForm.tipo_movimiento)) missingFields.push('Tipo');
+    if (!clean(movementForm.producto)) missingFields.push('Producto');
+    if (!clean(movementForm.lote)) missingFields.push('Lote');
+    if (!clean(movementForm.bodega)) missingFields.push('Bodega');
+    if (!qty) missingFields.push('Cantidad');
+    if (missingFields.length > 0) {
+      window.alert(`Completa estos campos para guardar:\n- ${missingFields.join('\n- ')}`);
       return;
     }
     const producto = clean(movementForm.producto);

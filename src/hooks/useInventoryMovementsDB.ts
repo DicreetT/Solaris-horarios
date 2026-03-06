@@ -59,6 +59,22 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         return null;
     };
 
+    const withTimeout = async <T,>(promiseLike: PromiseLike<T>, ms = 12000): Promise<T> => {
+        let timeoutId: number | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = window.setTimeout(() => {
+                reject(new Error('Tiempo de espera agotado al conectar con base de datos.'));
+            }, ms);
+        });
+        try {
+            return await Promise.race([Promise.resolve(promiseLike), timeoutPromise]);
+        } finally {
+            if (timeoutId !== undefined) {
+                window.clearTimeout(timeoutId);
+            }
+        }
+    };
+
     const loadMovements = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
         const pageSize = 1000;
@@ -146,11 +162,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         let lastError: unknown = null;
 
         for (let i = 0; i < 6; i++) {
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .insert(payload)
-                .select()
-                .single();
+            const { data, error } = await withTimeout(
+                supabase
+                    .from('inventory_movements')
+                    .insert(payload)
+                    .select()
+                    .single()
+            );
 
             if (!error) {
                 return data as InventoryMovementRow;
@@ -181,13 +199,15 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 break;
             }
 
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .update(payload)
-                .eq('id', id)
-                .eq('inventory_id', inventoryId)
-                .select()
-                .single();
+            const { data, error } = await withTimeout(
+                supabase
+                    .from('inventory_movements')
+                    .update(payload)
+                    .eq('id', id)
+                    .eq('inventory_id', inventoryId)
+                    .select()
+                    .single()
+            );
 
             if (!error) {
                 return data as InventoryMovementRow;
@@ -208,11 +228,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId]);
 
     const deleteMovement = useCallback(async (id: number) => {
-        const { error } = await supabase
-            .from('inventory_movements')
-            .delete()
-            .eq('id', id)
-            .eq('inventory_id', inventoryId);
+        const { error } = await withTimeout(
+            supabase
+                .from('inventory_movements')
+                .delete()
+                .eq('id', id)
+                .eq('inventory_id', inventoryId)
+        );
 
         if (error) {
             console.error('Error deleting movement:', error);
