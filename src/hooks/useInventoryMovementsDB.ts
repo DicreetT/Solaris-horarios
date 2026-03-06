@@ -61,17 +61,37 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
     const loadMovements = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
+        const pageSize = 1000;
+        const maxPages = 200;
+        const allRows: InventoryMovementRow[] = [];
+        let page = 0;
+        let hasMore = true;
+        let hadError = false;
 
-        const { data, error } = await supabase
-            .from('inventory_movements')
-            .select('*')
-            .eq('inventory_id', inventoryId)
-            .order('id', { ascending: false });
+        while (hasMore && page < maxPages) {
+            const from = page * pageSize;
+            const to = from + pageSize - 1;
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .select('*')
+                .eq('inventory_id', inventoryId)
+                .order('id', { ascending: false })
+                .range(from, to);
 
-        if (error) {
-            console.error(`Error loading inventory movements for ${inventoryId}:`, error);
-        } else if (data) {
-            setMovements(data as InventoryMovementRow[]);
+            if (error) {
+                console.error(`Error loading inventory movements for ${inventoryId}:`, error);
+                hadError = true;
+                break;
+            }
+
+            const chunk = (data || []) as InventoryMovementRow[];
+            allRows.push(...chunk);
+            hasMore = chunk.length === pageSize;
+            page += 1;
+        }
+
+        if (!hadError) {
+            setMovements(allRows);
         }
 
         if (!silent) setIsLoading(false);
