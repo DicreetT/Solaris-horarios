@@ -105,8 +105,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
         const run = (async () => {
         if (!silent) setIsLoading(true);
-        const pageSize = 1000;
-        const maxPages = 200;
+        const pageSize = 500;
+        const maxPages = 40;
         const allRows: InventoryMovementRow[] = [];
         let page = 0;
         let hasMore = true;
@@ -115,12 +115,15 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         while (hasMore && page < maxPages) {
             const from = page * pageSize;
             const to = from + pageSize - 1;
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .select('*')
-                .eq('inventory_id', inventoryId)
-                .order('id', { ascending: false })
-                .range(from, to);
+            const { data, error } = await withTimeout(
+                supabase
+                    .from('inventory_movements')
+                    .select('*')
+                    .eq('inventory_id', inventoryId)
+                    .order('id', { ascending: false })
+                    .range(from, to),
+                10000
+            );
 
             if (error) {
                 console.error(`Error loading inventory movements for ${inventoryId}:`, error);
@@ -176,7 +179,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             });
 
         // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
-        const intervalId = window.setInterval(refresh, 8000);
+        const intervalId = window.setInterval(refresh, 30000);
         const onVisibility = () => {
             if (document.visibilityState === 'visible') refresh();
         };
