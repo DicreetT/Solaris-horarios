@@ -3,7 +3,7 @@ import seed from '../data/inventory_seed.json';
 import { AlertTriangle, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { USERS } from '../constants';
+import { CARLOS_EMAIL, USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
@@ -14,6 +14,7 @@ import huarteSeed from '../data/inventory_facturacion_seed.json';
 type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'movimientos_cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
 type EditRequestStatus = 'pending' | 'approved' | 'denied';
+type HypotheticalScope = 'potential' | 'canet_huarte' | 'canet';
 
 type InventoryEditRequest = {
   id: string;
@@ -146,6 +147,7 @@ const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
+const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v1';
 const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
@@ -165,6 +167,16 @@ const MIN_STOCK_CANET_HUARTE: Record<string, number> = {
   RG: 600,
   ISO: 1800,
 };
+// Lotes heredados: llegaron ya "consumidos" antes de Lunaris.
+// Para estos lotes, salidas se estima como (potencial bruto histórico - stock real actual).
+const LEGACY_INHERITED_LOTS = new Set<string>([
+  'ENT|2405A14',
+  'ENT|2504A18',
+  'ISO|230730',
+  'KL|241030',
+  'RG|2408A03',
+  'SV|2510A33',
+]);
 
 const formatCoverage = (months: number) => {
   if (!Number.isFinite(months) || months <= 0) return '0 días';
@@ -183,6 +195,52 @@ const formatCoverage = (months: number) => {
   if (restDays === 0) return `${yearsText} y ${monthsLeft} ${monthsLeft === 1 ? 'mes' : 'meses'}`;
   if (monthsLeft === 0) return `${yearsText} y ${restDays} días`;
   return `${yearsText}, ${monthsLeft} ${monthsLeft === 1 ? 'mes' : 'meses'} y ${restDays} días`;
+};
+const getCoverageSemaforo = (coverageMonths: number, stock: number) => {
+  if (stock <= 0 || coverageMonths <= 0 || !Number.isFinite(coverageMonths)) return 'AGOTADO';
+  if (coverageMonths < 2) return 'CRITICO';
+  if (coverageMonths < 4) return 'ATENCION';
+  return 'OPTIMO';
+};
+const getCoverageSemaforoClass = (value: string) => {
+  if (value === 'AGOTADO') return 'bg-slate-100 text-slate-600';
+  if (value === 'CRITICO') return 'bg-rose-100 text-rose-700';
+  if (value === 'ATENCION') return 'bg-amber-100 text-amber-700';
+  return 'bg-emerald-100 text-emerald-700';
+};
+const getPotentialStatusClass = (value: string) => {
+  if (value === 'AGOTADO') return 'bg-slate-100 text-slate-600';
+  if (value === 'CRITICO') return 'bg-rose-100 text-rose-700';
+  if (value === 'ATENCION') return 'bg-amber-100 text-amber-700';
+  return 'bg-emerald-100 text-emerald-700';
+};
+const getPotentialSemaforo = (potencial: number, stockOptimo: number) => {
+  if (!Number.isFinite(potencial) || potencial <= 0) return 'AGOTADO';
+  if (stockOptimo > 0) {
+    if (potencial < stockOptimo * 0.5) return 'CRITICO';
+    if (potencial < stockOptimo) return 'ATENCION';
+  }
+  return 'OPTIMO';
+};
+const inferMovementSignByType = (typeRaw: string, qtyRaw: number) => {
+  const t = normalizeSearch(typeRaw);
+  if (t.includes('nota credito') || t.includes('nota_credito')) return 1;
+  if (t.includes('venta') || t.includes('envio') || t.includes('traspaso')) return -1;
+  if (/ajuste[\s_-]*negativ/.test(t) || /ajuste\s*-/.test(t) || t.includes('ajuste-')) return -1;
+  if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
+  return qtyRaw < 0 ? -1 : 1;
+};
+const inferSignedQuantityLoose = (movement: Pick<Movement, 'cantidad' | 'cantidad_signed' | 'signo' | 'tipo_movimiento'>) => {
+  const hasSigned =
+    movement.cantidad_signed !== undefined &&
+    movement.cantidad_signed !== null &&
+    clean(movement.cantidad_signed) !== '';
+  if (hasSigned) return toNum(movement.cantidad_signed);
+  const rawQty = toNum(movement.cantidad);
+  const absQty = Math.abs(rawQty);
+  const explicitSign = toNum(movement.signo);
+  if (explicitSign !== 0) return absQty * explicitSign;
+  return absQty * inferMovementSignByType(clean(movement.tipo_movimiento), rawQty);
 };
 
 const EMPTY_FORM = {
@@ -218,6 +276,7 @@ function InventoryPage() {
   const actorId = currentUser?.id || '';
   const actorEmail = clean(currentUser?.email).toLowerCase();
   const actorNameLower = clean(currentUser?.name).toLowerCase();
+  const isRestrictedUser = !!currentUser?.isRestricted || actorEmail === CARLOS_EMAIL;
   const actorIsAdmin = !!currentUser?.isAdmin;
   const actorIsAnabela = !!(
     (currentUser && anabela && currentUser.id === anabela.id) ||
@@ -286,6 +345,13 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
+  const [huarteVisualStockByLotCache] = useSharedJsonState<
+    { monthKey: string; updatedAt: string; byLot: Record<string, number>; byLotBodega?: Record<string, number> } | null
+  >(
+    STORAGE_HUARTE_VISUAL_STOCK_BY_LOT,
+    null,
+    { userId: actorId },
+  );
   const [
     huarteMovimientosShared,
     setHuarteMovimientosShared,
@@ -302,6 +368,7 @@ function InventoryPage() {
   const [clientFilter, setClientFilter] = useState<string>('');
   const [quickSearch, setQuickSearch] = useState<string>('');
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
+  const [potentialStatusFilter, setPotentialStatusFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
@@ -325,6 +392,31 @@ function InventoryPage() {
   const [showOutputAll, setShowOutputAll] = useState(false);
   const [showMovementsAll, setShowMovementsAll] = useState(false);
   const [riskModalOpen, setRiskModalOpen] = useState(false);
+  const [potentialDetailProduct, setPotentialDetailProduct] = useState<string | null>(null);
+  const [hypotheticalScope, setHypotheticalScope] = useState<HypotheticalScope | null>(null);
+  const [hypotheticalForm, setHypotheticalForm] = useState({ producto: '', lote: '', cantidad: '' });
+  const [hypotheticalResult, setHypotheticalResult] = useState<{
+    scope: HypotheticalScope;
+    producto: string;
+    lote: string;
+    venta: number;
+    stockInicial: number;
+    stockFinal: number;
+    consumoMes: number;
+    coberturaMeses: number;
+    semaforo: string;
+  } | null>(null);
+  const [canetHuarteDetailRow, setCanetHuarteDetailRow] = useState<{
+    producto: string;
+    lote: string;
+    stockCanetHuarte: number;
+    stockCanet: number;
+    stockHuarte: number;
+    stockMinCH: number;
+    consumoMes: number;
+    coberturaMeses: number;
+    semaforo: string;
+  } | null>(null);
   const [stockLotSelected, setStockLotSelected] = useState<{ producto: string; lote: string; cantidad: number } | null>(null);
   const densityMode = useDensityMode();
   const isCompact = densityMode === 'compact';
@@ -443,7 +535,7 @@ function InventoryPage() {
   };
 
   const canApproveRequests = actorIsAdmin || actorIsAnabela;
-  const canEditByDefault = actorIsAdmin || actorIsAnabela || actorIsFernando;
+  const canEditByDefault = !isRestrictedUser && (actorIsAdmin || actorIsAnabela || actorIsFernando);
 
   const normalizedActiveGrants = useMemo(() => {
     const nowMs = Date.now();
@@ -665,6 +757,7 @@ function InventoryPage() {
   const currentMonth = useMemo(() => getCurrentMonthKey(), []);
 
   const monthOptions = useMemo(() => {
+    if (isRestrictedUser) return [currentMonth];
     const set = new Set<string>();
     set.add(currentMonth);
     for (const d of validDates) {
@@ -672,7 +765,13 @@ function InventoryPage() {
       if (mk <= currentMonth && d.getFullYear() >= 2024) set.add(mk);
     }
     return Array.from(set).sort();
-  }, [validDates, currentMonth]);
+  }, [validDates, currentMonth, isRestrictedUser]);
+
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (accessMode !== 'consult') setAccessMode('consult');
+    if (monthFilter !== currentMonth) setMonthFilter(currentMonth);
+  }, [isRestrictedUser, accessMode, monthFilter, currentMonth]);
 
   const monthEnd = useMemo(() => {
     if (!monthFilter) return null;
@@ -1011,6 +1110,403 @@ function InventoryPage() {
       .sort((a: any, b: any) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
   }, [lotes, productos, stockByPLB, productFilters, controlSemaforoFilter]);
 
+  const stockControlTables = useMemo(() => {
+    const matchesScope = (producto: string, lote: string) => {
+      if (productFilters.length > 0 && !productFilters.includes(producto)) return false;
+      if (lotFilter && lotFilter !== lote) return false;
+      if (quickSearch) {
+        const q = normalizeSearch(quickSearch);
+        const hay = normalizeSearch(`${producto} ${lote}`);
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    };
+    const canetLotsByProduct = new Map<string, string[]>();
+    const allCanetLots: string[] = [];
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto || !lote) continue;
+      allCanetLots.push(lote);
+      if (!canetLotsByProduct.has(producto)) canetLotsByProduct.set(producto, []);
+      const list = canetLotsByProduct.get(producto)!;
+      if (!list.includes(lote)) list.push(lote);
+    }
+    const canonicalCanetLot = (productoRaw: string, loteRaw: string) => {
+      const producto = clean(productoRaw);
+      const lote = clean(loteRaw);
+      if (!producto || !lote) return lote;
+      const token = normalizeLotToken(lote);
+      const productLots = canetLotsByProduct.get(producto) || [];
+      const productMatches = productLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      if (productMatches.length > 0) {
+        const preferred = [...productMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
+        if (preferred) return preferred;
+      }
+      const globalMatches = allCanetLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      if (globalMatches.length === 1) return globalMatches[0];
+      return lote;
+    };
+    const signedFromMovement = (m: any) => {
+      const hasSigned = m?.cantidad_signed !== undefined && m?.cantidad_signed !== null && clean(m?.cantidad_signed) !== '';
+      if (hasSigned) return toNum(m?.cantidad_signed);
+      const qty = Math.abs(toNum(m?.cantidad));
+      const sign = toNum(m?.signo) || (toNum(m?.cantidad) < 0 ? -1 : 1);
+      return qty * sign;
+    };
+    const canetStockByLot = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
+      const d = dateFromAny(clean(m?.fecha));
+      if (monthEnd && d && d > monthEnd) continue;
+      const producto = clean(m?.producto);
+      const lote = canonicalCanetLot(producto, clean(m?.lote));
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
+      if (bodega !== 'CANET') continue;
+      const key = `${producto}|${lote}`;
+      canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + signedFromMovement(m));
+    }
+
+    const huarteRawStockByPLB = new Map<string, number>();
+    for (const m of huarteMovimientosShared) {
+      if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
+      const d = dateFromAny(clean(m?.fecha));
+      if (monthEnd && d && d > monthEnd) continue;
+      const producto = clean(m?.producto);
+      const lote = canonicalCanetLot(producto, clean(m?.lote));
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
+      // Keep this aligned with Inventario Huarte visual stock sign inference.
+      const signed = inferSignedQuantityLoose({
+        cantidad: toNum(m?.cantidad),
+        cantidad_signed: m?.cantidad_signed,
+        signo: toNum(m?.signo),
+        tipo_movimiento: clean(m?.tipo_movimiento),
+      });
+      const key = `${producto}|${lote}|${bodega}`;
+      huarteRawStockByPLB.set(key, (huarteRawStockByPLB.get(key) || 0) + signed);
+    }
+
+    // Reproduce "visual stock" behavior: stock is shown by bodega and clipped to non-negative.
+    const huarteVisualTotalByLot = new Map<string, number>();
+    const huarteVisualCanetByLot = new Map<string, number>();
+    const huarteVisualHuarteOnlyByLot = new Map<string, number>();
+    for (const [key, raw] of huarteRawStockByPLB.entries()) {
+      const [producto, lote, bodega] = key.split('|');
+      const safeStock = Math.max(0, Math.round(toNum(raw)));
+      if (safeStock <= 0) continue;
+      const lotKey = `${producto}|${lote}`;
+      huarteVisualTotalByLot.set(lotKey, (huarteVisualTotalByLot.get(lotKey) || 0) + safeStock);
+      if (bodega === 'CANET') {
+        huarteVisualCanetByLot.set(lotKey, (huarteVisualCanetByLot.get(lotKey) || 0) + safeStock);
+      }
+      if (isHuarteAlias(bodega)) {
+        huarteVisualHuarteOnlyByLot.set(lotKey, (huarteVisualHuarteOnlyByLot.get(lotKey) || 0) + safeStock);
+      }
+    }
+    const huarteVisualCacheByLot = new Map<string, number>();
+    const huarteVisualCacheCanetByLot = new Map<string, number>();
+    const huarteVisualCacheHuarteByLot = new Map<string, number>();
+    const hasCacheBreakdown = !!(
+      huarteVisualStockByLotCache &&
+      clean(huarteVisualStockByLotCache.monthKey) === clean(monthFilter) &&
+      huarteVisualStockByLotCache.byLotBodega &&
+      Object.keys(huarteVisualStockByLotCache.byLotBodega).length > 0
+    );
+    if (huarteVisualStockByLotCache && clean(huarteVisualStockByLotCache.monthKey) === clean(monthFilter)) {
+      Object.entries(huarteVisualStockByLotCache.byLot || {}).forEach(([key, value]) => {
+        const [producto, lote] = key.split('|');
+        if (!producto || !lote || !matchesScope(producto, lote)) return;
+        huarteVisualCacheByLot.set(`${producto}|${lote}`, Math.max(0, toNum(value)));
+      });
+      Object.entries(huarteVisualStockByLotCache.byLotBodega || {}).forEach(([key, value]) => {
+        const [producto, lote, bodegaRaw] = key.split('|');
+        if (!producto || !lote || !bodegaRaw || !matchesScope(producto, lote)) return;
+        const bodega = normalizeWarehouseAlias(bodegaRaw).toUpperCase();
+        const lotKey = `${producto}|${lote}`;
+        const safe = Math.max(0, toNum(value));
+        if (bodega === 'CANET') {
+          huarteVisualCacheCanetByLot.set(lotKey, (huarteVisualCacheCanetByLot.get(lotKey) || 0) + safe);
+        }
+        if (isHuarteAlias(bodega)) {
+          huarteVisualCacheHuarteByLot.set(lotKey, (huarteVisualCacheHuarteByLot.get(lotKey) || 0) + safe);
+        }
+      });
+    }
+
+    const productMeta = new Map<
+      string,
+      {
+        stockMin: number;
+        stockOptimo: number;
+        consumoMensual: number;
+        modo: string;
+        vialesPorCaja: number;
+      }
+    >();
+    for (const p of productos) {
+      const producto = clean(p.producto);
+      if (!producto) continue;
+      productMeta.set(producto, {
+        stockMin: toNum(p.stock_min),
+        stockOptimo: toNum(p.stock_optimo),
+        consumoMensual: toNum(p.consumo_mensual_cajas),
+        modo: clean(p.modo_stock).toUpperCase(),
+        vialesPorCaja: toNum(p.viales_por_caja),
+      });
+    }
+
+    const lotStateByKey = new Map<string, 'ACTIVO' | 'AGOTADO'>();
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto || !lote) continue;
+      lotStateByKey.set(`${producto}|${lote}`, normalizeLotState(l.estado));
+    }
+    const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
+    for (const l of lotes) {
+      const producto = clean(l.producto);
+      const lote = clean(l.lote);
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      const key = `${producto}|${lote}`;
+      const viales = toNum(l.viales_recibidos);
+      if (!lotBase.has(key)) {
+        lotBase.set(key, { producto, lote, viales });
+      } else {
+        lotBase.get(key)!.viales = Math.max(lotBase.get(key)!.viales, viales);
+      }
+    }
+    for (const key of new Set<string>([
+      ...Array.from(canetStockByLot.keys()),
+      ...Array.from(huarteVisualTotalByLot.keys()),
+      ...Array.from(huarteVisualCacheByLot.keys()),
+    ])) {
+      if (lotBase.has(key)) continue;
+      const [producto, lote] = key.split('|');
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      lotBase.set(key, { producto, lote, viales: 0 });
+    }
+
+    const potentialRows: Array<{
+      producto: string;
+      lotes: number;
+      viales: number;
+      salidas: number;
+      potencialCajas: number;
+      stockOptimo: number;
+      consumoMes: number;
+      coberturaMeses: number;
+      estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }> = [];
+    const potentialLotRows: Array<{
+      producto: string;
+      lote: string;
+      viales: number;
+      salidas: number;
+      potencialCajas: number;
+      stockOptimo: number;
+      consumoMes: number;
+      coberturaMeses: number;
+      estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }> = [];
+    const canetHuarteRows: Array<{
+      producto: string;
+      lote: string;
+      stockCanetHuarte: number;
+      stockCanet: number;
+      stockHuarte: number;
+      stockMinCH: number;
+      consumoMes: number;
+      coberturaMeses: number;
+      semaforo: string;
+    }> = [];
+    const canetRows: Array<{
+      producto: string;
+      lote: string;
+      stockCanet: number;
+      stockMin: number;
+      consumoMes: number;
+      coberturaMeses: number;
+      semaforo: string;
+    }> = [];
+
+    const potentialByProduct = new Map<
+      string,
+      {
+        producto: string;
+        lotesSet: Set<string>;
+        viales: number;
+        salidas: number;
+        potencialCajas: number;
+        stockOptimo: number;
+        consumoMes: number;
+        activeLotes: number;
+      }
+    >();
+
+    for (const [key, base] of lotBase.entries()) {
+      const meta = productMeta.get(base.producto) || {
+        stockMin: 0,
+        stockOptimo: 0,
+        consumoMensual: 0,
+        modo: 'DIRECTO',
+        vialesPorCaja: 0,
+      };
+      const stockCanet = Math.max(0, toNum(canetStockByLot.get(key) || 0));
+      const stockRealActual = huarteVisualCacheByLot.has(key)
+        ? Math.max(0, toNum(huarteVisualCacheByLot.get(key) || 0))
+        : Math.max(0, toNum(huarteVisualTotalByLot.get(key) || 0));
+      const lotState = lotStateByKey.get(key) || 'ACTIVO';
+      const potencialBruto =
+        meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
+          ? base.viales / meta.vialesPorCaja
+          : base.viales;
+      const salidas = LEGACY_INHERITED_LOTS.has(key)
+        ? Math.max(0, potencialBruto - stockRealActual)
+        : stockRealActual;
+      const potencialCajasRaw = Math.max(0, potencialBruto - salidas);
+      const potencialCajas = lotState === 'AGOTADO' ? 0 : potencialCajasRaw;
+      const stockOptimo = Math.max(0, meta.stockOptimo);
+      const consumoMes = Math.max(0, meta.consumoMensual);
+      const coberturaMesesLot = consumoMes > 0 ? potencialCajas / consumoMes : 0;
+      let lotEstadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
+      if (lotState === 'AGOTADO') {
+        lotEstadoStock = 'AGOTADO';
+      } else if (stockOptimo > 0) {
+        if (potencialCajas < stockOptimo * 0.5) lotEstadoStock = 'CRITICO';
+        else if (potencialCajas < stockOptimo) lotEstadoStock = 'ATENCION';
+      } else if (potencialCajas <= 0) {
+        lotEstadoStock = 'CRITICO';
+      }
+      potentialLotRows.push({
+        producto: base.producto,
+        lote: base.lote,
+        viales: base.viales,
+        salidas,
+        potencialCajas,
+        stockOptimo,
+        consumoMes,
+        coberturaMeses: coberturaMesesLot,
+        estadoStock: lotEstadoStock,
+      });
+      if (!potentialByProduct.has(base.producto)) {
+        potentialByProduct.set(base.producto, {
+          producto: base.producto,
+          lotesSet: new Set<string>(),
+          viales: 0,
+          salidas: 0,
+          potencialCajas: 0,
+          stockOptimo,
+          consumoMes,
+          activeLotes: 0,
+        });
+      }
+      const productAgg = potentialByProduct.get(base.producto)!;
+      productAgg.lotesSet.add(base.lote);
+      if (lotState !== 'AGOTADO') {
+        productAgg.viales += base.viales;
+        productAgg.salidas += salidas;
+        productAgg.potencialCajas += potencialCajas;
+        productAgg.activeLotes += 1;
+      }
+      productAgg.stockOptimo = Math.max(productAgg.stockOptimo, stockOptimo);
+      productAgg.consumoMes = Math.max(productAgg.consumoMes, consumoMes);
+
+      // Table 2 must read both sides directly from Inventario Huarte visual stock.
+      const stockCanetFromHuarte = hasCacheBreakdown
+        ? Math.max(0, toNum(huarteVisualCacheCanetByLot.get(key) || 0))
+        : Math.max(0, toNum(huarteVisualCanetByLot.get(key) || 0));
+      const stockHuarteOnly = hasCacheBreakdown
+        ? Math.max(0, toNum(huarteVisualCacheHuarteByLot.get(key) || 0))
+        : Math.max(0, toNum(huarteVisualHuarteOnlyByLot.get(key) || 0));
+      const stockCanetHuarte = stockCanetFromHuarte + stockHuarteOnly;
+      const stockMinCH = Math.max(0, toNum(MIN_STOCK_CANET_HUARTE[base.producto] || 0));
+      const coberturaCH = consumoMes > 0 ? stockCanetHuarte / consumoMes : 0;
+      const semaforoCH = getCoverageSemaforo(coberturaCH, stockCanetHuarte);
+      if (lotState !== 'AGOTADO' && semaforoCH !== 'AGOTADO' && (!controlSemaforoFilter || controlSemaforoFilter === semaforoCH)) {
+        canetHuarteRows.push({
+          producto: base.producto,
+          lote: base.lote,
+          stockCanetHuarte,
+          stockCanet: stockCanetFromHuarte,
+          stockHuarte: stockHuarteOnly,
+          stockMinCH,
+          consumoMes,
+          coberturaMeses: coberturaCH,
+          semaforo: semaforoCH,
+        });
+      }
+
+      const stockMin = Math.max(0, meta.stockMin);
+      const coberturaCanet = consumoMes > 0 ? stockCanet / consumoMes : 0;
+      const semaforoCanet = getCoverageSemaforo(coberturaCanet, stockCanet);
+      if (lotState !== 'AGOTADO' && semaforoCanet !== 'AGOTADO' && (!controlSemaforoFilter || controlSemaforoFilter === semaforoCanet)) {
+        canetRows.push({
+          producto: base.producto,
+          lote: base.lote,
+          stockCanet,
+          stockMin,
+          consumoMes,
+          coberturaMeses: coberturaCanet,
+          semaforo: semaforoCanet,
+        });
+      }
+    }
+    for (const row of potentialByProduct.values()) {
+      const stockOptimo = Math.max(0, row.stockOptimo);
+      const potencial = Math.max(0, row.potencialCajas);
+      const consumoMes = Math.max(0, row.consumoMes);
+      const coberturaMeses = consumoMes > 0 ? potencial / consumoMes : 0;
+      let estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
+      if (row.activeLotes === 0) {
+        estadoStock = 'AGOTADO';
+      } else if (stockOptimo > 0) {
+        if (potencial < stockOptimo * 0.5) estadoStock = 'CRITICO';
+        else if (potencial < stockOptimo) estadoStock = 'ATENCION';
+      } else if (potencial <= 0) {
+        estadoStock = 'CRITICO';
+      }
+      if (potentialStatusFilter && potentialStatusFilter !== estadoStock) continue;
+      potentialRows.push({
+        producto: row.producto,
+        lotes: row.lotesSet.size,
+        viales: row.viales,
+        salidas: row.salidas,
+        potencialCajas: potencial,
+        stockOptimo: stockOptimo,
+        consumoMes,
+        coberturaMeses,
+        estadoStock,
+      });
+    }
+
+    const sortByProductLot = <T extends { producto: string; lote: string }>(rows: T[]) =>
+      rows.sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
+    const sortByProduct = <T extends { producto: string }>(rows: T[]) =>
+      rows.sort((a, b) => a.producto.localeCompare(b.producto));
+    return {
+      potentialRows: sortByProduct(potentialRows),
+      potentialLotRows: sortByProductLot(potentialLotRows),
+      canetHuarteRows: sortByProductLot(canetHuarteRows),
+      canetRows: sortByProductLot(canetRows),
+    };
+  }, [
+    normalizedMovements,
+    huarteMovimientosShared,
+    huarteVisualStockByLotCache,
+    monthFilter,
+    monthEnd,
+    lotes,
+    productos,
+    productFilters,
+    lotFilter,
+    quickSearch,
+    potentialStatusFilter,
+    controlSemaforoFilter,
+    isHuarteAlias,
+  ]);
+
   const riskyProductsSummary = useMemo(() => {
     const acc = new Map<string, { producto: string; stockTotal: number; coberturaMeses: number }>();
     for (const row of controlStockRows as any[]) {
@@ -1035,6 +1531,117 @@ function InventoryPage() {
       }))
       .sort((a, b) => a.coberturaMeses - b.coberturaMeses);
   }, [controlStockRows, criticalProducts]);
+  const potentialDetailRows = useMemo(
+    () =>
+      potentialDetailProduct
+        ? stockControlTables.potentialLotRows.filter((r) => r.producto === potentialDetailProduct)
+        : [],
+    [potentialDetailProduct, stockControlTables.potentialLotRows],
+  );
+  const hypotheticalRows = useMemo(() => {
+    if (!hypotheticalScope) return [] as Array<{
+      producto: string;
+      lote: string;
+      stockBase: number;
+      consumoMes: number;
+      stockOptimo: number;
+    }>;
+    if (hypotheticalScope === 'potential') {
+      return stockControlTables.potentialLotRows.map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        stockBase: Math.max(0, toNum(r.potencialCajas)),
+        consumoMes: Math.max(0, toNum(r.consumoMes)),
+        stockOptimo: Math.max(0, toNum(r.stockOptimo)),
+      }));
+    }
+    if (hypotheticalScope === 'canet_huarte') {
+      return stockControlTables.canetHuarteRows.map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        stockBase: Math.max(0, toNum(r.stockCanetHuarte)),
+        consumoMes: Math.max(0, toNum(r.consumoMes)),
+        stockOptimo: Math.max(0, toNum(r.stockMinCH)),
+      }));
+    }
+    return stockControlTables.canetRows.map((r) => ({
+      producto: r.producto,
+      lote: r.lote,
+      stockBase: Math.max(0, toNum(r.stockCanet)),
+      consumoMes: Math.max(0, toNum(r.consumoMes)),
+      stockOptimo: Math.max(0, toNum(r.stockMin)),
+    }));
+  }, [hypotheticalScope, stockControlTables.potentialLotRows, stockControlTables.canetHuarteRows, stockControlTables.canetRows]);
+  const hypotheticalProducts = useMemo(
+    () => Array.from(new Set(hypotheticalRows.map((r) => r.producto))).sort(),
+    [hypotheticalRows],
+  );
+  const hypotheticalLots = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          hypotheticalRows
+            .filter((r) => !hypotheticalForm.producto || r.producto === hypotheticalForm.producto)
+            .map((r) => r.lote),
+        ),
+      ).sort(),
+    [hypotheticalRows, hypotheticalForm.producto],
+  );
+  const openHypotheticalModal = (scope: HypotheticalScope) => {
+    const scopeRows =
+      scope === 'potential'
+        ? stockControlTables.potentialLotRows
+        : scope === 'canet_huarte'
+          ? stockControlTables.canetHuarteRows
+          : stockControlTables.canetRows;
+    const first = scopeRows[0];
+    setHypotheticalScope(scope);
+    setHypotheticalForm({
+      producto: first?.producto || '',
+      lote: first?.lote || '',
+      cantidad: '',
+    });
+    setHypotheticalResult(null);
+  };
+  const closeHypotheticalModal = () => {
+    setHypotheticalScope(null);
+    setHypotheticalResult(null);
+    setHypotheticalForm({ producto: '', lote: '', cantidad: '' });
+  };
+  const runHypotheticalCalc = () => {
+    if (!hypotheticalScope) return;
+    const producto = clean(hypotheticalForm.producto);
+    const lote = clean(hypotheticalForm.lote);
+    const venta = Math.max(0, toNum(hypotheticalForm.cantidad));
+    if (!producto || !lote || venta <= 0) {
+      window.alert('Selecciona producto, lote y una cantidad válida para calcular.');
+      return;
+    }
+    const row = hypotheticalRows.find((r) => r.producto === producto && r.lote === lote);
+    if (!row) {
+      window.alert('No se encontró ese lote en la tabla seleccionada.');
+      return;
+    }
+    const stockInicial = Math.max(0, row.stockBase);
+    const stockFinal = Math.max(0, stockInicial - venta);
+    const consumoMes = Math.max(0, row.consumoMes);
+    const coberturaMeses = consumoMes > 0 ? stockFinal / consumoMes : 0;
+    const semaforo =
+      hypotheticalScope === 'potential'
+        ? getPotentialSemaforo(stockFinal, row.stockOptimo)
+        : getCoverageSemaforo(coberturaMeses, stockFinal);
+    setHypotheticalResult({
+      scope: hypotheticalScope,
+      producto,
+      lote,
+      venta,
+      stockInicial,
+      stockFinal,
+      consumoMes,
+      coberturaMeses,
+      semaforo,
+    });
+  };
 
   const caducityAlerts = useMemo(() => {
     const list = lotes
@@ -1968,13 +2575,19 @@ function InventoryPage() {
     { key: 'clientes', label: 'Clientes', icon: Users, compact: true },
     { key: 'tipos', label: 'Tipos', icon: Tags, compact: true },
   ];
+  const visibleTabs = isRestrictedUser
+    ? tabs.filter((item) => item.key === 'dashboard' || item.key === 'control_stock')
+    : tabs;
 
   const scrollToSection = (id: string) => {
     const node = document.getElementById(id);
     if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const isEditModeActive = accessMode === 'edit' && canEditNow;
+  const showAccessSelector = !isRestrictedUser;
+  const effectiveAccessMode: InventoryAccessMode = showAccessSelector ? accessMode : 'consult';
+  const accessReady = effectiveAccessMode !== 'unset';
+  const isEditModeActive = effectiveAccessMode === 'edit' && canEditNow;
   const activeMainFiltersCount = [productFilters.length > 0, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch].filter(Boolean).length;
   const compactInventoryTiles: Array<{ key: 'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'; label: string; Icon: any }> = [
     { key: 'stock', label: 'Stock', Icon: Package },
@@ -1983,6 +2596,9 @@ function InventoryPage() {
     { key: 'adjust', label: 'Ajustes', Icon: Wrench },
     { key: 'outputs', label: 'Salidas', Icon: ArrowDownCircle },
   ];
+  const visibleCompactInventoryTiles = isRestrictedUser
+    ? compactInventoryTiles.filter((tile) => tile.key === 'stock')
+    : compactInventoryTiles;
   const activeMainFilterChips = [
     ...productFilters.map((p) => ({ key: `producto-${p}`, label: `Producto: ${p}`, onClear: () => removeProductFilter(p) })),
     lotFilter ? { key: 'lote', label: `Lote: ${lotFilter}`, onClear: () => setLotFilter('') } : null,
@@ -2002,6 +2618,20 @@ function InventoryPage() {
     if (accessMode === 'unset') setShowMainFilters(false);
   }, [accessMode]);
 
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (tab !== 'dashboard' && tab !== 'control_stock') {
+      setTab('dashboard');
+    }
+  }, [isRestrictedUser, tab]);
+
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (compactInventoryPanel !== 'stock') {
+      setCompactInventoryPanel('stock');
+    }
+  }, [isRestrictedUser, compactInventoryPanel]);
+
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5 app-page-shell">
       <div className="rounded-2xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
@@ -2013,13 +2643,18 @@ function InventoryPage() {
           </div>
           <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
             Mes de análisis
-            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none min-w-[220px]">
-              <option value="">Todos</option>
+            <select
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              disabled={isRestrictedUser}
+              className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none min-w-[220px] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+            >
+              {!isRestrictedUser && <option value="">Todos</option>}
               {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
             </select>
           </label>
         </div>
-        {accessMode !== 'unset' && (
+        {accessReady && (
           <div className="mt-3 flex justify-end">
             <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
               <Download size={14} />
@@ -2029,7 +2664,7 @@ function InventoryPage() {
         )}
       </div>
 
-      {accessMode === 'unset' ? (
+      {showAccessSelector && accessMode === 'unset' ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <h2 className="text-base font-black text-violet-950">Acceso a Inventario</h2>
@@ -2095,24 +2730,28 @@ function InventoryPage() {
         <>
           <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => setAccessMode('consult')}
-                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${!isEditModeActive ? 'border-violet-500 bg-violet-600 text-white' : 'border-violet-100 bg-violet-50 text-violet-700'}`}
-              >
-                Consultar
-              </button>
-              <button
-                onClick={() => {
-                  if (canEditNow) {
-                    setAccessMode('edit');
-                    return;
-                  }
-                  void requestEditAccess();
-                }}
-                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isEditModeActive ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
-              >
-                Editar
-              </button>
+              {showAccessSelector && (
+                <>
+                  <button
+                    onClick={() => setAccessMode('consult')}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${!isEditModeActive ? 'border-violet-500 bg-violet-600 text-white' : 'border-violet-100 bg-violet-50 text-violet-700'}`}
+                  >
+                    Consultar
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (canEditNow) {
+                        setAccessMode('edit');
+                        return;
+                      }
+                      void requestEditAccess();
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isEditModeActive ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+                  >
+                    Editar
+                  </button>
+                </>
+              )}
               <span className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${isEditModeActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                 {isEditModeActive ? 'Modo edición activo' : 'Modo consulta'}
               </span>
@@ -2124,7 +2763,7 @@ function InventoryPage() {
             )}
           </div>
 
-          {canApproveRequests && pendingRequestsForApprover.length > 0 && (
+          {showAccessSelector && canApproveRequests && pendingRequestsForApprover.length > 0 && (
             <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
               <p className="text-sm font-black text-violet-950">Tienes {pendingRequestsForApprover.length} solicitud(es) de edición pendiente(s)</p>
               <div className="mt-2 space-y-2">
@@ -2144,7 +2783,7 @@ function InventoryPage() {
 
           <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
             <div className="flex flex-wrap gap-2">
-              {tabs.map((item) => {
+              {visibleTabs.map((item) => {
                 const isActive = item.key === tab;
                 return (
                   <button key={item.key} onClick={() => setTab(item.key)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-semibold transition ${item.compact ? 'text-xs' : 'text-sm'} ${isActive ? 'border-violet-500 bg-violet-600 text-white shadow-sm' : 'border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100'}`}>
@@ -2157,7 +2796,7 @@ function InventoryPage() {
         </>
       )}
 
-      {accessMode !== 'unset' && (tab === 'dashboard' || tab === 'movimientos') && (
+      {accessReady && (tab === 'dashboard' || tab === 'movimientos') && (
         <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -2208,12 +2847,12 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'dashboard' && (
+      {accessReady && tab === 'dashboard' && (
         <div className="space-y-4">
           {isCompact && (
             <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {compactInventoryTiles.map(({ key, label, Icon }) => (
+                {visibleCompactInventoryTiles.map(({ key, label, Icon }) => (
                   <button
                     key={key}
                     onClick={() => setCompactInventoryPanel(key)}
@@ -2338,7 +2977,7 @@ function InventoryPage() {
             </DataSection>
           )}
 
-          {(!isCompact || compactInventoryPanel === 'moves') && (
+          {!isRestrictedUser && (!isCompact || compactInventoryPanel === 'moves') && (
             <DataSection title="Movimientos por lote del mes" subtitle="Detalle filtrable de movimientos mensuales." tone="indigo" onDownload={async () => {
               openTablePdf(
                 'Inventario - Movimientos por lote del mes',
@@ -2361,7 +3000,7 @@ function InventoryPage() {
             </DataSection>
           )}
 
-          {(!isCompact || compactInventoryPanel === 'clients') && (
+          {!isRestrictedUser && (!isCompact || compactInventoryPanel === 'clients') && (
             <DataSection title="Stock por cliente o bodega por producto y lote" subtitle="Solo ventas." tone="emerald" onDownload={async () => {
               openTablePdf(
                 'Inventario - Stock por cliente o bodega',
@@ -2382,7 +3021,7 @@ function InventoryPage() {
             </DataSection>
           )}
 
-          {(!isCompact || compactInventoryPanel === 'adjust') && (
+          {!isRestrictedUser && (!isCompact || compactInventoryPanel === 'adjust') && (
             <DataSection id="inventory-adjustments-section" title="Control de ajustes" subtitle="Ajustes positivos y negativos." tone="amber" onDownload={async () => {
               openTablePdf(
                 'Inventario - Control de ajustes',
@@ -2400,7 +3039,7 @@ function InventoryPage() {
             </DataSection>
           )}
 
-          {(!isCompact || compactInventoryPanel === 'outputs') && (
+          {!isRestrictedUser && (!isCompact || compactInventoryPanel === 'outputs') && (
             <DataSection id="inventory-output-section" title="Control de salidas por lote" subtitle="Traspaso, venta y envio." tone="rose" onDownload={async () => {
               openTablePdf(
                 'Inventario - Control de salidas por lote',
@@ -2424,64 +3063,181 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'control_stock' && (
+      {accessReady && tab === 'control_stock' && (
         <div className="space-y-4">
+          <div className="grid gap-2 md:grid-cols-2">
+            <SelectFilter
+              label="Estado potencial"
+              value={potentialStatusFilter}
+              onChange={setPotentialStatusFilter}
+              options={['AGOTADO', 'OPTIMO', 'ATENCION', 'CRITICO']}
+            />
+            <SelectFilter
+              label="Semáforo cobertura"
+              value={controlSemaforoFilter}
+              onChange={setControlSemaforoFilter}
+              options={['AGOTADO', 'CRITICO', 'ATENCION', 'OPTIMO']}
+            />
+          </div>
           <DataSection
-            title="Control de stock"
-            subtitle="Cobertura por lote según viales, consumo mensual y modo de stock."
+            title="Control de stock potencial"
+            subtitle="Potencial consolidado por producto (suma de todos los lotes)."
             tone="indigo"
             onDownload={async () => {
               openTablePdf(
-                'Inventario - Control de stock',
-                `control-stock-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lote', 'Viales recibidos', 'Cajas (Canet+Huarte)', 'Stock min (C+H)', 'Cajas potenciales', 'Consumo mensual', 'Cobertura', 'Semáforo'],
-                controlStockRows.map((r: any) => [
+                'Inventario - Control stock potencial',
+                `control-stock-potencial-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
+                stockControlTables.potentialRows.map((r) => [
+                  r.producto,
+                  r.lotes,
+                  Number(r.viales.toFixed(2)),
+                  Number(r.salidas.toFixed(2)),
+                  Number(r.potencialCajas.toFixed(2)),
+                  r.stockOptimo || '-',
+                  r.consumoMes,
+                  formatCoverage(r.coberturaMeses),
+                  r.estadoStock,
+                ]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Control stock potencial (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Control stock potencial (${monthFilter || 'todos'})`);
+            }}
+          >
+            <div className="mb-2 flex justify-end">
+              <button
+                onClick={() => openHypotheticalModal('potential')}
+                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+              >
+                Ventas hipotéticas
+              </button>
+            </div>
+            <SimpleDataTable
+              headers={['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              rows={stockControlTables.potentialRows.map((r) => [
+                <ProductPill key={`${r.producto}-pot`} code={r.producto} colorMap={productColorMap} />,
+                r.lotes,
+                Number(r.viales.toFixed(2)),
+                Number(r.salidas.toFixed(2)),
+                Number(r.potencialCajas.toFixed(2)),
+                r.stockOptimo || '-',
+                r.consumoMes,
+                formatCoverage(r.coberturaMeses),
+                <span
+                  key={`${r.producto}-estado`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getPotentialStatusClass(r.estadoStock)}`}
+                >
+                  {r.estadoStock}
+                </span>,
+              ])}
+              onRowClick={(_, idx) => {
+                const row = stockControlTables.potentialRows[idx];
+                if (!row) return;
+                setPotentialDetailProduct(row.producto);
+              }}
+            />
+            <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un producto para ver el detalle por lote.</p>
+          </DataSection>
+
+          <DataSection
+            title="Control stock cajas Canet + Huarte"
+            subtitle="Stock madre (Canet) + sub-bodega Huarte, con cobertura mensual."
+            tone="emerald"
+            onDownload={async () => {
+              openTablePdf(
+                'Inventario - Control stock cajas Canet + Huarte',
+                `control-stock-canet-huarte-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo'],
+                stockControlTables.canetHuarteRows.map((r) => [
                   r.producto,
                   r.lote,
-                  r.vialesRecibidos,
-                  Number(r.stockActualCajas.toFixed(2)),
-                  r.minStock || '-',
-                  Number(r.cajasPotenciales.toFixed(2)),
-                  r.consumoMensual,
+                  Number(r.stockCanetHuarte.toFixed(2)),
+                  r.stockMinCH || '-',
+                  r.consumoMes,
                   formatCoverage(r.coberturaMeses),
                   r.semaforo,
                 ]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Control de stock (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Control de stock (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Control stock Canet + Huarte (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Control stock Canet + Huarte (${monthFilter || 'todos'})`);
             }}
           >
-            <div className="mb-3 grid gap-2 md:grid-cols-3">
-              <SelectFilter
-                label="Semáforo"
-                value={controlSemaforoFilter}
-                onChange={setControlSemaforoFilter}
-                options={['AGOTADO', 'ROJO', 'AMARILLO', 'VERDE']}
-              />
+            <div className="mb-2 flex justify-end">
+              <button
+                onClick={() => openHypotheticalModal('canet_huarte')}
+                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+              >
+                Ventas hipotéticas
+              </button>
             </div>
             <SimpleDataTable
-              headers={['Producto', 'Lote', 'Viales', 'Cajas (Canet+Huarte)', 'Stock min (C+H)', 'Potencial cajas', 'Consumo mes', 'Cobertura', 'Semáforo']}
-              rows={controlStockRows.map((r: any) => [
-                <ProductPill key={`${r.producto}-${r.lote}-control`} code={r.producto} colorMap={productColorMap} />,
+              headers={['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo']}
+              rows={stockControlTables.canetHuarteRows.map((r) => [
+                <ProductPill key={`${r.producto}-${r.lote}-ch`} code={r.producto} colorMap={productColorMap} />,
                 r.lote,
-                r.vialesRecibidos,
-                <span key={`${r.producto}-${r.lote}-cajas`} className={r.isBelowMin ? 'text-rose-600 font-bold' : ''}>
-                  {Number(r.stockActualCajas.toFixed(2))}
-                </span>,
-                r.minStock || '-',
-                Number(r.cajasPotenciales.toFixed(2)),
-                r.consumoMensual,
+                Number(r.stockCanetHuarte.toFixed(2)),
+                r.stockMinCH || '-',
+                r.consumoMes,
                 formatCoverage(r.coberturaMeses),
                 <span
-                  key={`${r.producto}-${r.lote}-sem`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${r.semaforo === 'AGOTADO'
-                    ? 'bg-slate-100 text-slate-600'
-                    : r.semaforo === 'ROJO'
-                      ? 'bg-rose-100 text-rose-700'
-                      : r.semaforo === 'AMARILLO'
-                        ? 'bg-amber-100 text-amber-700'
-                        : 'bg-emerald-100 text-emerald-700'
-                    }`}
+                  key={`${r.producto}-${r.lote}-ch-sem`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.semaforo)}`}
+                >
+                  {r.semaforo}
+                </span>,
+              ])}
+              onRowClick={(_, idx) => {
+                const row = stockControlTables.canetHuarteRows[idx];
+                if (!row) return;
+                setCanetHuarteDetailRow(row);
+              }}
+            />
+            <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un lote para ver el desglose por bodega (Canet/Huarte).</p>
+          </DataSection>
+
+          <DataSection
+            title="Control stock Canet"
+            subtitle="Stock de bodega Canet (madre) en lectura directa desde Inventario Canet."
+            tone="violet"
+            onDownload={async () => {
+              openTablePdf(
+                'Inventario - Control stock Canet',
+                `control-stock-canet-${monthFilter || 'todos'}.pdf`,
+                ['Producto', 'Lote', 'Stock Canet', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo'],
+                stockControlTables.canetRows.map((r) => [
+                  r.producto,
+                  r.lote,
+                  Number(r.stockCanet.toFixed(2)),
+                  r.stockMin || '-',
+                  r.consumoMes,
+                  formatCoverage(r.coberturaMeses),
+                  r.semaforo,
+                ]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Control stock Canet (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga PDF', `Control stock Canet (${monthFilter || 'todos'})`);
+            }}
+          >
+            <div className="mb-2 flex justify-end">
+              <button
+                onClick={() => openHypotheticalModal('canet')}
+                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+              >
+                Ventas hipotéticas
+              </button>
+            </div>
+            <SimpleDataTable
+              headers={['Producto', 'Lote', 'Stock Canet', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo']}
+              rows={stockControlTables.canetRows.map((r) => [
+                <ProductPill key={`${r.producto}-${r.lote}-canet`} code={r.producto} colorMap={productColorMap} />,
+                r.lote,
+                Number(r.stockCanet.toFixed(2)),
+                r.stockMin || '-',
+                r.consumoMes,
+                formatCoverage(r.coberturaMeses),
+                <span
+                  key={`${r.producto}-${r.lote}-canet-sem`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.semaforo)}`}
                 >
                   {r.semaforo}
                 </span>,
@@ -2491,7 +3247,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'movimientos' && (
+      {accessReady && tab === 'movimientos' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2545,7 +3301,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'movimientos_cartonaje' && (
+      {accessReady && tab === 'movimientos_cartonaje' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2575,7 +3331,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'bitacora' && (
+      {accessReady && tab === 'bitacora' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <h3 className="text-lg font-black text-violet-950">Bitácora de cambios</h3>
@@ -2593,7 +3349,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'productos' && (
+      {accessReady && tab === 'productos' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2628,7 +3384,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'lotes' && (
+      {accessReady && tab === 'lotes' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2665,7 +3421,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'bodegas' && (
+      {accessReady && tab === 'bodegas' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2677,7 +3433,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'clientes' && (
+      {accessReady && tab === 'clientes' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm space-y-2">
             <h3 className="text-lg font-black text-violet-950">Crear cliente</h3>
@@ -2703,7 +3459,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessMode !== 'unset' && tab === 'tipos' && (
+      {accessReady && tab === 'tipos' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -2963,6 +3719,177 @@ function InventoryPage() {
           </div>
         </div>
       )}
+      {potentialDetailProduct && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
+          <div className="w-full max-w-4xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-lg font-black text-violet-950">
+                <span>Detalle potencial por lote</span>
+                <ProductPill code={potentialDetailProduct} colorMap={productColorMap} />
+              </h3>
+              <button onClick={() => setPotentialDetailProduct(null)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+            </div>
+            <SimpleDataTable
+              headers={['Lote', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              rows={potentialDetailRows.map((r) => [
+                r.lote,
+                Number(r.viales.toFixed(2)),
+                Number(r.salidas.toFixed(2)),
+                Number(r.potencialCajas.toFixed(2)),
+                r.stockOptimo || '-',
+                r.consumoMes,
+                formatCoverage(r.coberturaMeses),
+                <span
+                  key={`${r.producto}-${r.lote}-detail-estado`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getPotentialStatusClass(r.estadoStock)}`}
+                >
+                  {r.estadoStock}
+                </span>,
+              ])}
+            />
+          </div>
+        </div>
+      )}
+      {canetHuarteDetailRow && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
+          <div className="w-full max-w-2xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-lg font-black text-violet-950">
+                <span>Desglose Canet + Huarte</span>
+                <ProductPill code={canetHuarteDetailRow.producto} colorMap={productColorMap} />
+                <span className="text-sm font-bold text-violet-700">{canetHuarteDetailRow.lote}</span>
+              </h3>
+              <button onClick={() => setCanetHuarteDetailRow(null)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+            </div>
+            <SimpleDataTable
+              headers={['Bodega', 'Stock']}
+              rows={[
+                ['CANET', Number(canetHuarteDetailRow.stockCanet.toFixed(2))],
+                ['HUARTE', Number(canetHuarteDetailRow.stockHuarte.toFixed(2))],
+                ['TOTAL CANET + HUARTE', Number(canetHuarteDetailRow.stockCanetHuarte.toFixed(2))],
+              ]}
+            />
+            <div className="mt-3 grid gap-2 sm:grid-cols-4">
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Stock mín (C+H)</p>
+                <p className="text-sm font-black text-violet-900">{canetHuarteDetailRow.stockMinCH || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-700">Consumo mes</p>
+                <p className="text-sm font-black text-indigo-900">{canetHuarteDetailRow.consumoMes}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Cobertura</p>
+                <p className="text-sm font-black text-emerald-900">{formatCoverage(canetHuarteDetailRow.coberturaMeses)}</p>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">Semáforo</p>
+                <p className="text-sm font-black text-amber-900">{canetHuarteDetailRow.semaforo}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {hypotheticalScope && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
+          <div className="w-full max-w-2xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-black text-violet-950">
+                Ventas hipotéticas · {hypotheticalScope === 'potential' ? 'Stock potencial' : hypotheticalScope === 'canet_huarte' ? 'Canet + Huarte' : 'Canet'}
+              </h3>
+              <button onClick={closeHypotheticalModal} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Producto
+                <select
+                  value={hypotheticalForm.producto}
+                  onChange={(e) => {
+                    const producto = e.target.value;
+                    const firstLot =
+                      hypotheticalRows.find((r) => r.producto === producto)?.lote ||
+                      '';
+                    setHypotheticalForm((prev) => ({ ...prev, producto, lote: firstLot }));
+                    setHypotheticalResult(null);
+                  }}
+                  className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+                >
+                  <option value="">Selecciona producto</option>
+                  {hypotheticalProducts.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Lote
+                <select
+                  value={hypotheticalForm.lote}
+                  onChange={(e) => {
+                    setHypotheticalForm((prev) => ({ ...prev, lote: e.target.value }));
+                    setHypotheticalResult(null);
+                  }}
+                  className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+                >
+                  <option value="">Selecciona lote</option>
+                  {hypotheticalLots.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Cajas a vender
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={hypotheticalForm.cantidad}
+                  onChange={(e) => {
+                    setHypotheticalForm((prev) => ({ ...prev, cantidad: e.target.value }));
+                    setHypotheticalResult(null);
+                  }}
+                  className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={runHypotheticalCalc} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">Calcular</button>
+              <button onClick={closeHypotheticalModal} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cerrar</button>
+            </div>
+            {hypotheticalResult && (
+              <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+                <SimpleDataTable
+                  headers={['Producto', 'Lote', 'Stock inicial', 'Venta hipotética', 'Stock final']}
+                  rows={[[
+                    <ProductPill key={`hyp-${hypotheticalResult.producto}`} code={hypotheticalResult.producto} colorMap={productColorMap} />,
+                    hypotheticalResult.lote,
+                    Number(hypotheticalResult.stockInicial.toFixed(2)),
+                    Number(hypotheticalResult.venta.toFixed(2)),
+                    Number(hypotheticalResult.stockFinal.toFixed(2)),
+                  ]]}
+                />
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-700">Consumo mes</p>
+                    <p className="text-sm font-black text-indigo-900">{hypotheticalResult.consumoMes}</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Cobertura resultante</p>
+                    <p className="text-sm font-black text-emerald-900">{formatCoverage(hypotheticalResult.coberturaMeses)}</p>
+                  </div>
+                  <div className="rounded-xl border border-violet-200 bg-white p-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Semáforo</p>
+                    <span
+                      className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                        hypotheticalResult.scope === 'potential'
+                          ? getPotentialStatusClass(hypotheticalResult.semaforo)
+                          : getCoverageSemaforoClass(hypotheticalResult.semaforo)
+                      }`}
+                    >
+                      {hypotheticalResult.semaforo}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -3195,7 +4122,15 @@ function ProductColorSelect({
   );
 }
 
-function SimpleDataTable({ headers, rows }: { headers: string[]; rows: Array<Array<any>> }) {
+function SimpleDataTable({
+  headers,
+  rows,
+  onRowClick,
+}: {
+  headers: string[];
+  rows: Array<Array<any>>;
+  onRowClick?: (row: Array<any>, idx: number) => void;
+}) {
   return (
     <div className="app-table-wrap">
       <table className="app-table">
@@ -3210,7 +4145,11 @@ function SimpleDataTable({ headers, rows }: { headers: string[]; rows: Array<Arr
               </td>
             </tr>
           ) : rows.map((row, idx) => (
-            <tr key={idx} className="border-t border-violet-100 hover:bg-violet-50/60">
+            <tr
+              key={idx}
+              className={`border-t border-violet-100 hover:bg-violet-50/60 ${onRowClick ? 'cursor-pointer' : ''}`}
+              onClick={onRowClick ? () => onRowClick(row, idx) : undefined}
+            >
               {row.map((cell, i) => <td key={i} className="px-3 py-2.5 text-violet-900">{cell}</td>)}
             </tr>
           ))}

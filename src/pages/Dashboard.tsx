@@ -1870,8 +1870,30 @@ function Dashboard() {
             <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">
                 <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                     <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'Carlos'}</h1>
-                    <p className="mt-2 text-sm text-gray-700">Hoy no tienes tareas que venzan.</p>
-                    <p className="text-sm text-gray-700">Tareas pendientes totales: {pendingTodos.length}.</p>
+                    <p className="mt-2 text-sm text-gray-700">Vista simplificada: acceso a Chat e Inventario.</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <Link
+                            to="/chat"
+                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                        >
+                            <MessageCircle size={16} />
+                            Ir a Chat
+                        </Link>
+                        <Link
+                            to="/inventory"
+                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                        >
+                            <Info size={16} />
+                            Inventario Canet
+                        </Link>
+                        <Link
+                            to="/inventory-facturacion"
+                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                        >
+                            <Info size={16} />
+                            Inventario Huarte
+                        </Link>
+                    </div>
                 </div>
 
                 <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">

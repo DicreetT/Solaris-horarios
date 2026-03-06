@@ -27,7 +27,7 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useShoppingList } from '../hooks/useShoppingList';
 import { useTodos } from '../hooks/useTodos';
-import { DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
+import { CARLOS_EMAIL, DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 
 /**
@@ -65,7 +65,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const userMenuRef = useRef(null);
 
     const isAdmin = !!currentUser?.isAdmin;
-    const isRestrictedUser = !!currentUser?.isRestricted;
+    const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const unreadCount = notifications.filter((n) => !n.read).length;
 
     // --- BADGE CALCULATIONS ---
@@ -150,26 +150,26 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             path: '/inventory',
             label: 'Inventario Canet',
             icon: Boxes,
-            show: !isRestrictedUser,
+            show: true,
         },
         {
             path: '/inventory-facturacion',
             label: 'Inventario Huarte',
             icon: Boxes,
-            show: !isRestrictedUser,
+            show: true,
         },
         {
             path: '/exports',
             label: 'Exportaciones',
             icon: FileText,
-            show: isAdmin,
+            show: isAdmin && !isRestrictedUser,
             isAdminItem: true
         },
         {
             path: '/folders',
             label: 'Carpetas',
             icon: Folder,
-            show: hasSharedFolders && !isRestrictedUser
+            show: isRestrictedUser || hasSharedFolders
         }
     ];
 

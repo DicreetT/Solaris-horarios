@@ -5,7 +5,7 @@ import seed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
-import { USERS } from '../constants';
+import { CARLOS_EMAIL, USERS } from '../constants';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { useDensityMode } from '../hooks/useDensityMode';
@@ -65,6 +65,7 @@ const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 const STORAGE_HUARTE_HIDDEN_CORRECTIONS = 'inventory_huarte_hidden_corrections_v1';
+const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v1';
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
 const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 // Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
@@ -335,6 +336,16 @@ const EMPTY_MOV = {
 };
 const HUARTE_BUILD_TAG = 'HF-2026-02-26-V26-RG-FINAL';
 console.log('InventoryFacturacionPage build:', HUARTE_BUILD_TAG);
+const INT32_MIN = -2147483648;
+const INT32_MAX = 2147483647;
+const isReadOnlySyncedSource = (sourceRaw: unknown) => {
+  const src = clean(sourceRaw).toLowerCase();
+  return src === 'canet' || src === 'canet_live' || src === 'canet_auto_in' || src === 'internal_auto_in';
+};
+const isPersistedMovementId = (idRaw: unknown) => {
+  const id = toNum(idRaw);
+  return Number.isInteger(id) && id >= 1 && id <= INT32_MAX;
+};
 
 export default function InventoryFacturacionPage() {
   const { currentUser } = useAuth();
@@ -349,6 +360,7 @@ export default function InventoryFacturacionPage() {
   const actorName = currentUser?.name || 'Usuario';
   const actorId = currentUser?.id || '';
   const actorEmail = clean((currentUser as any)?.email).toLowerCase();
+  const isRestrictedUser = !!currentUser?.isRestricted || actorEmail === CARLOS_EMAIL;
   const actorNameLower = clean(currentUser?.name).toLowerCase();
   const actorIsAdmin = !!currentUser?.isAdmin;
   const actorIsItziar = !!(
@@ -425,6 +437,13 @@ export default function InventoryFacturacionPage() {
     '',
     { userId: actorId, initializeIfMissing: !!actorId },
   );
+  const [huarteVisualStockByLotCache, setHuarteVisualStockByLotCache] = useSharedJsonState<
+    { monthKey: string; updatedAt: string; byLot: Record<string, number>; byLotBodega?: Record<string, number> } | null
+  >(
+    STORAGE_HUARTE_VISUAL_STOCK_BY_LOT,
+    null,
+    { userId: actorId },
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -495,7 +514,7 @@ export default function InventoryFacturacionPage() {
   }, [searchParams, setSearchParams]);
 
   const canApproveRequests = actorIsAdmin || actorIsItziar;
-  const canEditByDefault = actorIsAdmin || actorIsItziar;
+  const canEditByDefault = !isRestrictedUser && (actorIsAdmin || actorIsItziar);
   const normalizedActiveGrants = useMemo(() => {
     const nowMs = Date.now();
     return editGrants.filter((g) => new Date(g.expiresAt).getTime() > nowMs);
@@ -507,8 +526,13 @@ export default function InventoryFacturacionPage() {
   }, [normalizedActiveGrants, editGrants.length]);
   const actorGrant = useMemo(() => normalizedActiveGrants.find((g) => g.userId === actorId), [normalizedActiveGrants, actorId]);
   const canEditNow = canEditByDefault || !!actorGrant;
-  const isEditModeActive = accessMode === 'edit' && canEditNow;
+  const showAccessSelector = !isRestrictedUser;
+  const effectiveAccessMode: InventoryAccessMode = showAccessSelector ? accessMode : 'consult';
+  const accessReady = effectiveAccessMode !== 'unset';
+  const isEditModeActive = effectiveAccessMode === 'edit' && canEditNow;
   const canEdit = isEditModeActive;
+  const canMutateMovement = (movement: Movement | null | undefined) =>
+    !!movement && !isReadOnlySyncedSource(movement.source) && isPersistedMovementId(movement.id);
   const actorPendingRequest = useMemo(
     () => editRequests.find((r) => r.requesterId === actorId && r.status === 'pending'),
     [editRequests, actorId],
@@ -724,31 +748,8 @@ export default function InventoryFacturacionPage() {
       return true;
     });
 
-    // 1.5 Auto-In for internal transfers (e.g., Huarte -> Pamplona)
-    const internalTransfersAutoIn = own
-      .filter(m => normalizeSearch(m.tipo_movimiento).includes('traspaso'))
-      .filter(m => m.destino && clean(m.destino) !== clean(m.bodega))
-      .map(m => {
-        const qty = Math.abs(toNum(m.cantidad_signed || m.cantidad));
-        return {
-          ...m,
-          id: -2_000_000_000 - toNum(m.id), // Unique negative ID to prevent conflicts
-          bodega: clean(m.destino).toUpperCase(), // The new destination warehouse
-          tipo_movimiento: clean(m.tipo_movimiento) || 'traspaso',
-          cliente: clean(m.bodega).toUpperCase(), // Sender warehouse
-          destino: clean(m.destino).toUpperCase(),
-          cantidad: qty,
-          cantidad_signed: qty,
-          signo: 1, // It's an entrance
-          source: 'internal_auto_in',
-          notas: clean(m.notas)
-            ? `${clean(m.notas)} · Auto entrada por traspaso ${m.bodega}→${m.destino}`
-            : `Auto entrada por traspaso ${m.bodega}→${m.destino}`,
-        } as Movement;
-      });
-
-    // 2. Filter inactive SV lots from the combined list
-    const filteredBase = [...internalTransfersAutoIn, ...own].filter(m => {
+    // 2. Filter inactive SV lots from DB-backed rows only
+    const filteredBase = own.filter(m => {
       const product = clean(m.producto);
       const lot = clean(m.lote);
       const isHuarte = isHuarteAlias(m.bodega);
@@ -803,271 +804,6 @@ export default function InventoryFacturacionPage() {
       return true;
     });
 
-    // 4. Programmatic Corrections
-    const corrections: Movement[] = [
-      // Huarte SV-2511A34 (base target before new transfers: 188 units -> correction = 68)
-      {
-        id: 999999,
-        fecha: '2026-02-24',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'SV',
-        lote: '2511A34',
-        cantidad: 68,
-        cantidad_signed: 68,
-        signo: 1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V9 - Saldo Huarte verificado (base 188)',
-        source: 'manual'
-      },
-      // Bilbao SV-2511A34 (target: 50 units additional for a total matching user needs)
-      {
-        id: 999998,
-        fecha: '2026-02-24',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'SV',
-        lote: '2511A34',
-        cantidad: 50,
-        cantidad_signed: 50,
-        signo: 1,
-        bodega: 'BILBAO',
-        notas: 'Ajuste V10 - Saldo Bilbao verificado (Lote 2511A34: 50)',
-        source: 'manual'
-      },
-      // Huarte AV-2507A07 (target: 100 units)
-      // Base calculation resulted in 96 (Correction 100 - 4 other movements). 
-      // We adjust to +104 to hit exactly 100.
-      {
-        id: 999997,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'AV',
-        lote: '2507A07',
-        cantidad: 104,
-        cantidad_signed: 104,
-        signo: 1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V14 - Saldo Huarte AV verificado (100)',
-        source: 'manual'
-      },
-      // Canet AV-2507A07 (target: 198 units)
-      {
-        id: 999996,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'AV',
-        lote: '2507A07',
-        cantidad: 20,
-        cantidad_signed: -20,
-        signo: -1,
-        bodega: 'CANET',
-        notas: 'Ajuste V15 - Saldo Canet AV verificado (198)',
-        source: 'manual'
-      },
-      // Bilbao AV-2507A07 (target: 36 units)
-      // Base was 16, previous +9 resulted in 25. 
-      // We adjust to +20 to hit exactly 36.
-      {
-        id: 999995,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'AV',
-        lote: '2507A07',
-        cantidad: 20,
-        cantidad_signed: 20,
-        signo: 1,
-        bodega: 'BILBAO',
-        notas: 'Ajuste V17 - Saldo Bilbao AV verificado (36)',
-        source: 'manual'
-      },
-      // Canet ENT-2507A19 (target: 1599 units)
-      // Base was 1659, subtracting 60.
-      {
-        id: 999994,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'ENT',
-        lote: '2507A19',
-        cantidad: 60,
-        cantidad_signed: -60,
-        signo: -1,
-        bodega: 'CANET',
-        notas: 'Ajuste V18 - Saldo Canet ENT verificado (1599)',
-        source: 'manual'
-      },
-      // Huarte ENT-2507A19 (target: 174 units)
-      // Base was 80, adding 94.
-      {
-        id: 999993,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'ENT',
-        lote: '2507A19',
-        cantidad: 94,
-        cantidad_signed: 94,
-        signo: 1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V19 - Saldo Huarte ENT verificado (174)',
-        source: 'manual'
-      },
-      // Canet ISO-250932 (target: 2630 units)
-      // Base was 2641, subtracting 11.
-      {
-        id: 999992,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'ISO',
-        lote: '250932',
-        cantidad: 11,
-        cantidad_signed: -11,
-        signo: -1,
-        bodega: 'CANET',
-        notas: 'Ajuste V20 - Saldo Canet ISO verificado (2630)',
-        source: 'manual'
-      },
-      // Huarte ISO-250932 (target: 133 units)
-      // Base was 53, previous +133 resulted in 186. 
-      // We adjust to +80 to hit exactly 133.
-      {
-        id: 999991,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'ISO',
-        lote: '250932',
-        cantidad: 80,
-        cantidad_signed: 80,
-        signo: 1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V22 - Saldo Huarte ISO verificado (133)',
-        source: 'manual'
-      },
-      // Canet KL-260101 (target: 1925 units)
-      // Base was 1650, adding 275.
-      {
-        id: 999990,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'KL',
-        lote: '260101',
-        cantidad: 275,
-        cantidad_signed: 275,
-        signo: 1,
-        bodega: 'CANET',
-        notas: 'Ajuste V23 - Saldo Canet KL 260101 verificado (1925)',
-        source: 'manual'
-      },
-      // Canet KL-241030 (target: 13 units)
-      // Base was 12, adding 1.
-      {
-        id: 999989,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'KL',
-        lote: '241030',
-        cantidad: 1,
-        cantidad_signed: 1,
-        signo: 1,
-        bodega: 'CANET',
-        notas: 'Ajuste V23 - Saldo Canet KL 241030 verificado (13)',
-        source: 'manual'
-      },
-      // Huarte KL-241030 (target: 50 units)
-      // Base is 0 due to 'main' filter, adding 50.
-      {
-        id: 999988,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'KL',
-        lote: '241030',
-        cantidad: 50,
-        cantidad_signed: 50,
-        signo: 1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V23 - Saldo Huarte KL verificado (50)',
-        source: 'manual'
-      },
-      // Bilbao RG-2504A04 (target: 33 units)
-      // Purged all base, adding 33.
-      {
-        id: 999987,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'RG',
-        lote: '2504A04',
-        cantidad: 33,
-        cantidad_signed: 33,
-        signo: 1,
-        bodega: 'BILBAO',
-        notas: 'Ajuste V24 - Saldo Bilbao RG verificado (33)',
-        source: 'manual'
-      },
-      // Canet RG-2504A04 (target: 3386 units)
-      // Base was 3409, adjusting by -23.
-      {
-        id: 999986,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'RG',
-        lote: '2504A04',
-        cantidad: 23,
-        cantidad_signed: -23,
-        signo: -1,
-        bodega: 'CANET',
-        notas: 'Ajuste V25 - Saldo Canet RG verificado (3386)',
-        source: 'manual'
-      },
-      // Huarte RG-2504A04 (target: 88 units)
-      // Base was 104, adjusting by -16.
-      {
-        id: 999985,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'RG',
-        lote: '2504A04',
-        cantidad: 16,
-        cantidad_signed: -16,
-        signo: -1,
-        bodega: 'HUARTE',
-        notas: 'Ajuste V26 - Saldo Huarte RG verificado (88)',
-        source: 'manual'
-      },
-      // Mas Borras RG-2504A04 (target: 15 units)
-      // Base was 14, adjusting by +1.
-      {
-        id: 999984,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'RG',
-        lote: '2504A04',
-        cantidad: 1,
-        cantidad_signed: 1,
-        signo: 1,
-        bodega: 'MAS BORRAS',
-        notas: 'Ajuste V26 - Saldo Mas Borras RG verificado (15)',
-        source: 'manual'
-      },
-      // Pamplona RG-2408A03 (target: 10 units)
-      // Base was 12, adjusting by -2.
-      {
-        id: 999983,
-        fecha: '2026-02-23',
-        tipo_movimiento: 'correcion_saldo_inicial',
-        producto: 'RG',
-        lote: '2408A03',
-        cantidad: 2,
-        cantidad_signed: -2,
-        signo: -1,
-        bodega: 'PAMPLONA',
-        notas: 'Ajuste V26 - Saldo Pamplona RG verificado (10)',
-        source: 'manual'
-      }
-    ];
-
-    const hiddenSet = new Set((hiddenCorrectionIds || []).map((id) => toNum(id)).filter(Number.isFinite));
-    const visibleCorrections = corrections.filter((c) => !hiddenSet.has(toNum(c.id)));
-    const feb28RecoveryRows = LEGACY_FEB28_RECOVERY_ROWS.filter((candidate) => {
-      if (hiddenSet.has(toNum(candidate.id))) return false;
-      return !filteredBase.some((existing) => sameMovementFingerprint(existing as Movement, candidate));
-    });
     // Keep CANET warehouse as a strict mirror of Inventario Canet.
     // Huarte-only cleanups/corrections must not alter CANET stock parity.
     const canonicalCanetMirror = own.filter(
@@ -1076,11 +812,11 @@ export default function InventoryFacturacionPage() {
         return (src === 'canet' || src === 'canet_live') && clean(m.bodega).toUpperCase() === 'CANET';
       },
     );
-    const withoutCanetWarehouse = [...filteredBase, ...visibleCorrections, ...feb28RecoveryRows].filter(
+    const withoutCanetWarehouse = [...filteredBase].filter(
       (m) => clean(m.bodega).toUpperCase() !== 'CANET',
     );
     return [...withoutCanetWarehouse, ...canonicalCanetMirror];
-  }, [movimientos, canetMovimientos, canetLotes, canetTipos, hiddenCorrectionIds]);
+  }, [movimientos, canetMovimientos, canetLotes, canetTipos]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -1092,6 +828,7 @@ export default function InventoryFacturacionPage() {
   const currentMonth = useMemo(() => getCurrentMonthKey(), []);
 
   const monthOptions = useMemo(() => {
+    if (isRestrictedUser) return [currentMonth];
     const keys = new Set<string>();
     keys.add(currentMonth);
     monthSortedMovements.forEach((m) => {
@@ -1099,7 +836,13 @@ export default function InventoryFacturacionPage() {
       if (d) keys.add(monthKeyFromDate(d));
     });
     return Array.from(keys).sort();
-  }, [monthSortedMovements, currentMonth]);
+  }, [monthSortedMovements, currentMonth, isRestrictedUser]);
+
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (accessMode !== 'consult') setAccessMode('consult');
+    if (monthFilter !== currentMonth) setMonthFilter(currentMonth);
+  }, [isRestrictedUser, accessMode, monthFilter, currentMonth]);
 
   const productOptions = useMemo(
     () =>
@@ -1192,6 +935,16 @@ export default function InventoryFacturacionPage() {
       return d.getTime() <= monthEnd.getTime();
     });
   }, [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
+  const globalMovementsForStock = useMemo(() => {
+    const monthEnd = monthFilter ? monthEndFromKey(monthFilter) : null;
+    return monthSortedMovements.filter((m) => {
+      if (!monthEnd) return true;
+      const d = parseDate(clean(m.fecha));
+      // Keep undated/base rows for opening balances.
+      if (!d) return true;
+      return d.getTime() <= monthEnd.getTime();
+    });
+  }, [monthSortedMovements, monthFilter]);
   const visibleMovementsLast7Days = useMemo(() => {
     if (showAllRows.movimientos) return filteredMovements;
     const allowedDays = new Set<string>();
@@ -1239,6 +992,28 @@ export default function InventoryFacturacionPage() {
       })),
     [controlByLot],
   );
+  const globalSafeControlByLot = useMemo(() => {
+    const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
+    const ordered = [...globalMovementsForStock].sort((a, b) => {
+      const da = parseDate(clean(a.fecha))?.getTime() || 0;
+      const db = parseDate(clean(b.fecha))?.getTime() || 0;
+      if (da !== db) return da - db;
+      return toNum(a.id) - toNum(b.id);
+    });
+    ordered.forEach((m) => {
+      if (clean((m as any).afecta_stock || 'SI').toUpperCase() !== 'SI') return;
+      const key = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
+      if (!map.has(key)) {
+        map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
+      }
+      const row = map.get(key)!;
+      row.stock += inferSignedQuantity(m);
+    });
+    return Array.from(map.values()).map((r) => ({
+      ...r,
+      stock: Math.max(0, Math.round(toNum(r.stock))),
+    }));
+  }, [globalMovementsForStock]);
 
   const stockVisualRows = useMemo(() => {
     const byLot = new Map<
@@ -1267,6 +1042,40 @@ export default function InventoryFacturacionPage() {
       .sort((a, b) => b.total - a.total)
       .slice(0, 14);
   }, [safeControlByLot]);
+  useEffect(() => {
+    const byLot: Record<string, number> = {};
+    const byLotBodega: Record<string, number> = {};
+    globalSafeControlByLot.forEach((row) => {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      const bodega = clean(row.bodega);
+      if (!producto || !lote) return;
+      if (!bodega) return;
+      const key = `${producto}|${lote}`;
+      byLot[key] = (byLot[key] || 0) + Math.max(0, toNum(row.stock));
+      const bodegaKey = `${producto}|${lote}|${bodega}`;
+      byLotBodega[bodegaKey] = (byLotBodega[bodegaKey] || 0) + Math.max(0, toNum(row.stock));
+    });
+    const nextPayload = {
+      monthKey: monthFilter,
+      updatedAt: new Date().toISOString(),
+      byLot,
+      byLotBodega,
+    };
+    const prevStable = huarteVisualStockByLotCache
+      ? JSON.stringify({
+          monthKey: clean(huarteVisualStockByLotCache.monthKey),
+          byLot: huarteVisualStockByLotCache.byLot || {},
+          byLotBodega: huarteVisualStockByLotCache.byLotBodega || {},
+        })
+      : '';
+    const nextStable = JSON.stringify({
+      monthKey: nextPayload.monthKey,
+      byLot: nextPayload.byLot,
+      byLotBodega: nextPayload.byLotBodega,
+    });
+    if (prevStable !== nextStable) setHuarteVisualStockByLotCache(nextPayload);
+  }, [globalSafeControlByLot, monthFilter, huarteVisualStockByLotCache, setHuarteVisualStockByLotCache]);
   useEffect(() => {
     setStockSectionSelected(null);
   }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
@@ -1355,6 +1164,47 @@ export default function InventoryFacturacionPage() {
       .map(([producto, lots]) => ({ producto, lots: lots.size }))
       .sort((a, b) => b.lots - a.lots);
   }, [safeControlByLot]);
+  const masterLotesRows = useMemo(() => {
+    const byKey = new Map<string, { producto: string; lote: string; estado: 'ACTIVO' | 'AGOTADO'; fechaAlta: string }>();
+    const pickEarlierDate = (a: string, b: string) => {
+      const da = parseDate(clean(a));
+      const db = parseDate(clean(b));
+      if (!da && !db) return clean(a) || clean(b);
+      if (!da) return clean(b);
+      if (!db) return clean(a);
+      return da.getTime() <= db.getTime() ? clean(a) : clean(b);
+    };
+    lotes.forEach((row) => {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      if (!producto || !lote) return;
+      const key = `${producto}|${lote}`;
+      const state = normalizeLotState(row.estado);
+      const fechaAlta = clean(row.fecha_alta || '');
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          producto,
+          lote,
+          estado: state,
+          fechaAlta,
+        });
+        return;
+      }
+      const current = byKey.get(key)!;
+      if (state === 'ACTIVO') current.estado = 'ACTIVO';
+      current.fechaAlta = pickEarlierDate(current.fechaAlta, fechaAlta);
+    });
+    return Array.from(byKey.values())
+      .filter((r) => (selectedProducts.length > 0 ? selectedProducts.includes(r.producto) : true))
+      .filter((r) => (lotFilter ? r.lote === lotFilter : true))
+      .filter((r) => {
+        if (!quickSearch) return true;
+        const q = normalizeSearch(quickSearch);
+        const hay = normalizeSearch([r.producto, r.lote, r.estado, r.fechaAlta].join(' '));
+        return hay.includes(q);
+      })
+      .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
+  }, [lotes, selectedProducts, lotFilter, quickSearch]);
 
   const movementTypeSummary = useMemo(() => {
     const map = new Map<string, number>();
@@ -1491,9 +1341,12 @@ export default function InventoryFacturacionPage() {
   };
 
   const openEdit = (m: Movement) => {
-    const src = clean(m.source).toLowerCase();
-    if (src === 'canet' || src === 'canet_live' || src === 'canet_auto_in') {
-      window.alert('Este movimiento viene sincronizado desde Inventario Canet y no se puede editar desde Huarte.');
+    if (isReadOnlySyncedSource(m.source)) {
+      window.alert('Este movimiento es automático/sincronizado y no se puede editar desde aquí.');
+      return;
+    }
+    if (!isPersistedMovementId(m.id)) {
+      window.alert('Este movimiento es una vista calculada y no se puede editar desde aquí.');
       return;
     }
     if (STATIC_CORRECTION_ID_SET.has(toNum(m.id))) {
@@ -1610,14 +1463,21 @@ export default function InventoryFacturacionPage() {
   };
 
   const deleteMovement = async (id: number) => {
-    if (!window.confirm('¿Seguro que quieres eliminar este movimiento?')) return;
     const row = monthSortedMovements.find((m) => toNum(m.id) === toNum(id));
-    const src = clean(row?.source).toLowerCase();
-    if (src === 'canet' || src === 'canet_live' || src === 'canet_auto_in') {
-      window.alert('Este movimiento está sincronizado desde Inventario Canet. Debes eliminarlo en Inventario Canet.');
+    if (!window.confirm('¿Seguro que quieres eliminar este movimiento?')) return;
+    if (isReadOnlySyncedSource(row?.source)) {
+      window.alert('Este movimiento es automático/sincronizado. Debes eliminar el movimiento origen.');
+      return;
+    }
+    if (!isPersistedMovementId(id)) {
+      window.alert('Este movimiento es una vista calculada y no se elimina desde aquí.');
       return;
     }
     const safeId = toNum(id);
+    if (safeId < INT32_MIN || safeId > INT32_MAX) {
+      window.alert('ID de movimiento fuera de rango para base de datos. No se puede eliminar desde aquí.');
+      return;
+    }
     if (STATIC_CORRECTION_ID_SET.has(safeId)) {
       setHiddenCorrectionIds((prev) => {
         const list = Array.isArray(prev) ? prev.map((x) => toNum(x)).filter(Number.isFinite) : [];
@@ -1628,7 +1488,7 @@ export default function InventoryFacturacionPage() {
       return;
     }
     try {
-      await huarteDB.deleteMovement(id);
+      await huarteDB.deleteMovement(safeId);
       emitSuccessFeedback('Movimiento eliminado con éxito.');
     } catch (error) {
       console.error('Error eliminando movimiento de Huarte:', error);
@@ -1661,19 +1521,25 @@ export default function InventoryFacturacionPage() {
     const producto = clean(lotRow.producto);
     const lote = clean(lotRow.lote);
     const bodega = clean(lotRow.bodega);
-    let nextState = 'ACTIVO';
+    const matches = lotes.filter((l) => {
+      const sameLot = clean(l.producto) === producto && clean(l.lote) === lote;
+      if (!sameLot) return false;
+      if (!bodega) return true;
+      return clean(l.bodega) === bodega;
+    });
+    const allAgotado = matches.length > 0 && matches.every((l) => normalizeLotState(l.estado) === 'AGOTADO');
+    const nextState = allAgotado ? 'ACTIVO' : 'AGOTADO';
     setLotes((prev) =>
       prev.map((l) => {
         const sameRow =
           clean(l.producto) === producto &&
           clean(l.lote) === lote &&
-          clean(l.bodega) === bodega;
+          (bodega ? clean(l.bodega) === bodega : true);
         if (!sameRow) return l;
-        nextState = normalizeLotState(l.estado) === 'AGOTADO' ? 'ACTIVO' : 'AGOTADO';
         return { ...l, estado: nextState };
       }),
     );
-    emitSuccessFeedback(`Lote ${lote} en ${bodega} marcado como ${nextState}.`);
+    emitSuccessFeedback(`Lote ${lote} marcado como ${nextState}.`);
   };
 
   const createTipo = () => {
@@ -1768,6 +1634,26 @@ export default function InventoryFacturacionPage() {
       {badge > 0 && <span className="inline-flex min-w-5 h-5 px-1 items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-black">{badge}</span>}
     </button>
   );
+  const visibleTabKeys = useMemo<TabKey[]>(
+    () => (isRestrictedUser ? ['dashboard'] : ['dashboard', 'movimientos', 'rectificativas', 'ensamblajes', 'maestros']),
+    [isRestrictedUser],
+  );
+  const visibleDashboardSections = useMemo<DashboardKey[]>(
+    () => (isRestrictedUser ? ['stock', 'ventas_anual'] : ['stock', 'control', 'rect', 'ventas_anual', 'envios_mes', 'ensam_anual']),
+    [isRestrictedUser],
+  );
+
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (tab !== 'dashboard') setTab('dashboard');
+  }, [isRestrictedUser, tab]);
+
+  useEffect(() => {
+    if (!isRestrictedUser) return;
+    if (!visibleDashboardSections.includes(dashboardSection)) {
+      setDashboardSection('stock');
+    }
+  }, [isRestrictedUser, dashboardSection, visibleDashboardSections]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 pb-14">
@@ -1781,8 +1667,13 @@ export default function InventoryFacturacionPage() {
           </div>
           <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
             Mes de análisis
-            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="mt-1 block min-w-[220px] rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">
-              <option value="">Todos</option>
+            <select
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              disabled={isRestrictedUser}
+              className="mt-1 block min-w-[220px] rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+            >
+              {!isRestrictedUser && <option value="">Todos</option>}
               {monthOptions.map((m) => (
                 <option key={m} value={m}>
                   {monthLabel(m)}
@@ -1791,7 +1682,7 @@ export default function InventoryFacturacionPage() {
             </select>
           </label>
         </div>
-        {accessMode !== 'unset' && (
+        {accessReady && (
           <div className="mt-3 flex justify-end">
             <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
               <Download size={14} />
@@ -1801,7 +1692,7 @@ export default function InventoryFacturacionPage() {
         )}
       </section>
 
-      {accessMode === 'unset' ? (
+      {showAccessSelector && accessMode === 'unset' ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <h2 className="text-base font-black text-violet-950">Acceso a Inventario Huarte</h2>
@@ -1864,19 +1755,23 @@ export default function InventoryFacturacionPage() {
         <>
           <section className="rounded-2xl border border-violet-200 bg-white p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => setAccessMode('consult')} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${!isEditModeActive ? 'border-violet-500 bg-violet-600 text-white' : 'border-violet-100 bg-violet-50 text-violet-700'}`}>Consultar</button>
-              <button
-                onClick={() => {
-                  if (canEditNow) {
-                    setAccessMode('edit');
-                    return;
-                  }
-                  void requestEditAccess();
-                }}
-                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isEditModeActive ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
-              >
-                Editar
-              </button>
+              {showAccessSelector && (
+                <>
+                  <button onClick={() => setAccessMode('consult')} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${!isEditModeActive ? 'border-violet-500 bg-violet-600 text-white' : 'border-violet-100 bg-violet-50 text-violet-700'}`}>Consultar</button>
+                  <button
+                    onClick={() => {
+                      if (canEditNow) {
+                        setAccessMode('edit');
+                        return;
+                      }
+                      void requestEditAccess();
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isEditModeActive ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+                  >
+                    Editar
+                  </button>
+                </>
+              )}
               <span className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${isEditModeActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                 {isEditModeActive ? 'Modo edición activo' : 'Modo consulta'}
               </span>
@@ -1890,17 +1785,17 @@ export default function InventoryFacturacionPage() {
 
           <section className="rounded-2xl border border-violet-200 bg-white p-3">
             <div className="flex flex-wrap gap-2">
-              {tabButton('dashboard', 'Dashboard', BarChart3)}
-              {tabButton('movimientos', 'Movimientos', Plus)}
-              {tabButton('rectificativas', 'Rectificativas', FileWarning)}
-              {tabButton('ensamblajes', 'Ensamblajes', Boxes, unseenCanetAssemblies)}
-              {tabButton('maestros', 'Maestros', FolderTree)}
+              {visibleTabKeys.includes('dashboard') && tabButton('dashboard', 'Dashboard', BarChart3)}
+              {visibleTabKeys.includes('movimientos') && tabButton('movimientos', 'Movimientos', Plus)}
+              {visibleTabKeys.includes('rectificativas') && tabButton('rectificativas', 'Rectificativas', FileWarning)}
+              {visibleTabKeys.includes('ensamblajes') && tabButton('ensamblajes', 'Ensamblajes', Boxes, unseenCanetAssemblies)}
+              {visibleTabKeys.includes('maestros') && tabButton('maestros', 'Maestros', FolderTree)}
             </div>
           </section>
         </>
       )}
 
-      {accessMode !== 'unset' && tab === 'dashboard' && (
+      {accessReady && tab === 'dashboard' && (
         <section className="space-y-3">
           <div className="rounded-2xl border border-violet-200 bg-white p-2">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1920,12 +1815,24 @@ export default function InventoryFacturacionPage() {
           {isCompact && (
             <section className="rounded-2xl border border-violet-200 bg-white p-3">
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-                <DashSwitch label="Stock" active={dashboardSection === 'stock'} onClick={() => setDashboardSection('stock')} icon={<Boxes size={15} />} />
-                <DashSwitch label="Control lote" active={dashboardSection === 'control'} onClick={() => setDashboardSection('control')} icon={<Calculator size={15} />} />
-                <DashSwitch label="Rectificativas" active={dashboardSection === 'rect'} onClick={() => setDashboardSection('rect')} icon={<FileWarning size={15} />} />
-                <DashSwitch label="Ventas anual" active={dashboardSection === 'ventas_anual'} onClick={() => setDashboardSection('ventas_anual')} icon={<BarChart3 size={15} />} />
-                <DashSwitch label="Envíos mes" active={dashboardSection === 'envios_mes'} onClick={() => setDashboardSection('envios_mes')} icon={<BarChart3 size={15} />} />
-                <DashSwitch label="Ensamblajes anual" active={dashboardSection === 'ensam_anual'} onClick={() => setDashboardSection('ensam_anual')} icon={<BarChart3 size={15} />} />
+                {visibleDashboardSections.includes('stock') && (
+                  <DashSwitch label="Stock" active={dashboardSection === 'stock'} onClick={() => setDashboardSection('stock')} icon={<Boxes size={15} />} />
+                )}
+                {visibleDashboardSections.includes('control') && (
+                  <DashSwitch label="Control lote" active={dashboardSection === 'control'} onClick={() => setDashboardSection('control')} icon={<Calculator size={15} />} />
+                )}
+                {visibleDashboardSections.includes('rect') && (
+                  <DashSwitch label="Rectificativas" active={dashboardSection === 'rect'} onClick={() => setDashboardSection('rect')} icon={<FileWarning size={15} />} />
+                )}
+                {visibleDashboardSections.includes('ventas_anual') && (
+                  <DashSwitch label="Ventas anual" active={dashboardSection === 'ventas_anual'} onClick={() => setDashboardSection('ventas_anual')} icon={<BarChart3 size={15} />} />
+                )}
+                {visibleDashboardSections.includes('envios_mes') && (
+                  <DashSwitch label="Envíos mes" active={dashboardSection === 'envios_mes'} onClick={() => setDashboardSection('envios_mes')} icon={<BarChart3 size={15} />} />
+                )}
+                {visibleDashboardSections.includes('ensam_anual') && (
+                  <DashSwitch label="Ensamblajes anual" active={dashboardSection === 'ensam_anual'} onClick={() => setDashboardSection('ensam_anual')} icon={<BarChart3 size={15} />} />
+                )}
               </div>
             </section>
           )}
@@ -1992,7 +1899,7 @@ export default function InventoryFacturacionPage() {
             )}
           </section>
 
-          {(!isCompact || dashboardSection === 'stock') && (
+          {visibleDashboardSections.includes('stock') && (!isCompact || dashboardSection === 'stock') && (
             <Panel
               title={`Stock por producto/lote/bodega · ${HUARTE_BUILD_TAG}`}
               onDownload={() =>
@@ -2026,7 +1933,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {(!isCompact || dashboardSection === 'control') && (
+          {visibleDashboardSections.includes('control') && (!isCompact || dashboardSection === 'control') && (
             <Panel
               title={`Control por lote${monthFilter ? ` · ${monthLabel(monthFilter)}` : ''}`}
               onDownload={() =>
@@ -2049,7 +1956,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {(!isCompact || dashboardSection === 'rect') && (
+          {visibleDashboardSections.includes('rect') && (!isCompact || dashboardSection === 'rect') && (
             <Panel
               title="Rectificativas recientes"
               onDownload={() => exportPdf('Inventario Facturacion - Rectificativas', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc'], rectificativas.map((r) => [displayDate(r.fecha), r.tipo_movimiento, r.producto, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || '']))}
@@ -2059,7 +1966,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {(!isCompact || dashboardSection === 'ventas_anual') && (
+          {visibleDashboardSections.includes('ventas_anual') && (!isCompact || dashboardSection === 'ventas_anual') && (
             <Panel title="Ventas anuales" onDownload={() => exportPdf('Inventario Facturacion - Ventas anuales', ['Año', 'Cantidad'], ventasAnuales.map(([y, q]) => [y, q]))}>
               <DataTable
                 headers={['Año', 'Cantidad']}
@@ -2072,7 +1979,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {(!isCompact || dashboardSection === 'envios_mes') && (
+          {visibleDashboardSections.includes('envios_mes') && (!isCompact || dashboardSection === 'envios_mes') && (
             <Panel title="Envíos mensuales" onDownload={() => exportPdf('Inventario Facturacion - Envios mensuales', ['Mes', 'Cantidad'], enviosMensuales.map(([m, q]) => [monthLabel(m), q]))}>
               <DataTable
                 headers={['Mes', 'Cantidad']}
@@ -2085,7 +1992,7 @@ export default function InventoryFacturacionPage() {
             </Panel>
           )}
 
-          {(!isCompact || dashboardSection === 'ensam_anual') && (
+          {visibleDashboardSections.includes('ensam_anual') && (!isCompact || dashboardSection === 'ensam_anual') && (
             <Panel title="Ensamblajes anuales" onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes anuales', ['Año', 'Cantidad'], ensamblajesAnuales.map(([y, q]) => [y, q]))}>
               <DataTable
                 headers={['Año', 'Cantidad']}
@@ -2103,50 +2010,61 @@ export default function InventoryFacturacionPage() {
         </section>
       )}
 
-      {accessMode !== 'unset' && tab !== 'dashboard' && (
+      {accessReady && tab !== 'dashboard' && (
         <section className="rounded-2xl border border-violet-200 bg-white p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setShowMainFilters((s) => !s)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">
-              {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
-            </button>
-            {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
-              <button
-                onClick={() => {
-                  setProductFilter('');
-                  setSelectedProducts([]);
-                  setLotFilter('');
-                  setWarehouseFilter('');
-                  setTypeFilter('');
-                  setQuickSearch('');
-                }}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                Limpiar
-              </button>
-            )}
-          </div>
-          {showMainFilters && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
-              <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
-              <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
-              <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
-              <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
-              <TextFilter label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, factura..." />
-            </div>
-          )}
-          {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter, quickSearch].some(Boolean) && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {selectedProducts.map((p) => <button key={`pp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Producto: {p} ×</button>)}
-              {lotFilter && <button onClick={() => setLotFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Lote: {lotFilter} ×</button>}
-              {warehouseFilter && <button onClick={() => setWarehouseFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Bodega: {warehouseFilter} ×</button>}
-              {typeFilter && <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Tipo: {typeFilter} ×</button>}
-              {quickSearch && <button onClick={() => setQuickSearch('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Buscar: {quickSearch} ×</button>}
-            </div>
-          )}
+          {(() => {
+            const isMaestrosLotes = tab === 'maestros' && masterSection === 'lotes';
+            return (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={() => setShowMainFilters((s) => !s)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100">
+                    {showMainFilters ? 'Ocultar filtros' : 'Filtros'}
+                  </button>
+                  {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter].some(Boolean) && (
+                    <button
+                      onClick={() => {
+                        setProductFilter('');
+                        setSelectedProducts([]);
+                        setLotFilter('');
+                        setWarehouseFilter('');
+                        setTypeFilter('');
+                        setQuickSearch('');
+                      }}
+                      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+                {showMainFilters && (
+                  <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
+                    <TagAutocompleteFilter label="Producto" inputValue={productFilter} onInputChange={setProductFilter} onSelect={addSelectedProduct} options={productOptions} />
+                    <AutocompleteFilter label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} />
+                    {!isMaestrosLotes && (
+                      <>
+                        <AutocompleteFilter label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} />
+                        <AutocompleteFilter label="Tipo" value={typeFilter} onChange={setTypeFilter} options={typeOptions} />
+                      </>
+                    )}
+                    <TextFilter label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, factura..." />
+                  </div>
+                )}
+                {[selectedProducts.length > 0, lotFilter, warehouseFilter, typeFilter, quickSearch].some(Boolean) && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {selectedProducts.map((p) => <button key={`pp-${p}`} onClick={() => removeSelectedProduct(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Producto: {p} ×</button>)}
+                    {lotFilter && <button onClick={() => setLotFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Lote: {lotFilter} ×</button>}
+                    {!isMaestrosLotes && warehouseFilter && <button onClick={() => setWarehouseFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Bodega: {warehouseFilter} ×</button>}
+                    {!isMaestrosLotes && typeFilter && <button onClick={() => setTypeFilter('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Tipo: {typeFilter} ×</button>}
+                    {quickSearch && <button onClick={() => setQuickSearch('')} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">Buscar: {quickSearch} ×</button>}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
       )}
 
-      {accessMode !== 'unset' && tab === 'movimientos' && (
+      {accessReady && tab === 'movimientos' && (
         <Panel
           title="Movimientos"
           actions={
@@ -2181,7 +2099,7 @@ export default function InventoryFacturacionPage() {
               m.responsable || '',
               (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación',
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
-              canEdit && m.source !== 'canet' && m.source !== 'canet_live' && m.source !== 'canet_auto_in' ? (
+              canEdit && canMutateMovement(m) ? (
                 <div className="flex items-center gap-1" key={`a-${m.id}`}>
                   <button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button>
                   <button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
@@ -2192,7 +2110,7 @@ export default function InventoryFacturacionPage() {
         </Panel>
       )}
 
-      {accessMode !== 'unset' && tab === 'rectificativas' && (
+      {accessReady && tab === 'rectificativas' && (
         <section className="space-y-3">
           <Panel
             title="Facturas rectificativas / notas de crédito"
@@ -2206,7 +2124,7 @@ export default function InventoryFacturacionPage() {
             }
             onDownload={() => exportPdf('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit && canMutateMovement(m) ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
           <Panel title="Auditoría de rectificativas" onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}>
             <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r, idx) => [r.fecha, r.tipo, r.factura, <ProductPill key={`h-ra-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
@@ -2214,14 +2132,14 @@ export default function InventoryFacturacionPage() {
         </section>
       )}
 
-      {accessMode !== 'unset' && tab === 'ensamblajes' && (
+      {accessReady && tab === 'ensamblajes' && (
         <section className="space-y-3">
           <Panel
             title="Ensamblajes registrados por movimiento"
             actions={canEdit ? <button onClick={() => openCreateWithType('ensamblaje_esp')} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Nuevo ensamblaje</button> : undefined}
             onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
           >
-            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && m.source !== 'canet' && m.source !== 'canet_live' ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
+            <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && canMutateMovement(m) ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
 
           <Panel title="Archivos de ensamblaje importados (fase 0)">
@@ -2230,7 +2148,7 @@ export default function InventoryFacturacionPage() {
         </section>
       )}
 
-      {accessMode !== 'unset' && tab === 'maestros' && (
+      {accessReady && tab === 'maestros' && (
         <section className="space-y-3">
           <section className="rounded-2xl border border-violet-200 bg-white p-3">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -2285,18 +2203,17 @@ export default function InventoryFacturacionPage() {
               }
             >
               <DataTable
-                headers={['Producto', 'Lote', 'Bodega', 'Estado', 'Fecha alta', 'Acciones']}
-                rows={limitRows('maestros_lotes', lotes).map((l, idx) => [
+                headers={['Producto', 'Lote', 'Estado', 'Fecha alta', 'Acciones']}
+                rows={limitRows('maestros_lotes', masterLotesRows).map((l, idx) => [
                   <ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />,
                   clean(l.lote),
-                  clean(l.bodega),
                   <span
                     key={`h-lote-state-${idx}`}
                     className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
                   >
                     {normalizeLotState(l.estado)}
                   </span>,
-                  clean(l.fecha_alta || ''),
+                  clean((l as any).fechaAlta || ''),
                   canEdit ? (
                     <button
                       key={`h-lot-toggle-${idx}`}
@@ -2308,7 +2225,7 @@ export default function InventoryFacturacionPage() {
                   ) : '-',
                 ])}
               />
-              {lotes.length > 6 && (
+              {masterLotesRows.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_lotes" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />
                 </div>

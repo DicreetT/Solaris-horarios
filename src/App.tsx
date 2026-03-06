@@ -60,7 +60,8 @@ function withLazyPage(page: React.ReactElement) {
  */
 function App() {
   const { currentUser, login } = useAuth();
-  const isRestrictedUser = (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
+  const isRestrictedUser =
+    (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL || !!currentUser?.isRestricted;
 
   const handleLogin = (user: User) => {
     login(user);
@@ -106,12 +107,12 @@ function App() {
             <Route path="/trainings" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TrainingsPage />)} />
             <Route path="/time-tracking" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TimeTrackingPage />)} />
             <Route path="/exports" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ExportsPage />)} />
-            <Route path="/folders" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FoldersPage />)} />
+            <Route path="/folders" element={withLazyPage(<FoldersPage />)} />
             <Route path="/shopping" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ShoppingListPage />)} />
             <Route path="/checklist" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<DailyChecklistPage />)} />
             <Route path="/chat" element={withLazyPage(<ChatPage />)} />
-            <Route path="/inventory" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<InventoryPage />)} />
-            <Route path="/inventory-facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<InventoryFacturacionPage />)} />
+            <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
+            <Route path="/inventory-facturacion" element={withLazyPage(<InventoryFacturacionPage />)} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}

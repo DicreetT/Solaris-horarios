@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { DRIVE_FOLDERS } from '../constants';
+import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
 import { Folder, ExternalLink } from 'lucide-react';
 
 /**
@@ -9,11 +9,12 @@ import { Folder, ExternalLink } from 'lucide-react';
  */
 function FoldersPage() {
     const { currentUser } = useAuth();
+    const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
 
     // Filter folders for current user
-    const foldersForUser = DRIVE_FOLDERS.filter((f) =>
-        f.users.includes(currentUser?.id)
-    );
+    const foldersForUser = isRestrictedUser
+        ? DRIVE_FOLDERS.filter((f) => f.id === 'protocolos')
+        : DRIVE_FOLDERS.filter((f) => f.users.includes(currentUser?.id));
 
     return (
         <div className="max-w-6xl mx-auto pb-10">

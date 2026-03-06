@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Command, X, MapPin, CheckSquare, Users, FileText, Boxes } from 'lucide-react';
+import { Search, Command, MapPin, CheckSquare, Users, FileText, Boxes, Folder, MessageCircle, LayoutDashboard } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
@@ -41,15 +41,18 @@ const SearchPalette: React.FC = () => {
     const { meetingRequests } = useMeetings(currentUser);
 
     const navigationLinks = [
+        { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Chat', path: '/chat', icon: MessageCircle },
         { label: 'Calendario', path: '/calendar', icon: MapPin },
         { label: 'Tareas', path: '/tasks', icon: CheckSquare },
         { label: 'Reuniones', path: '/meetings', icon: Users },
         { label: 'Inventario Canet', path: '/inventory', icon: Boxes },
         { label: 'Inventario Huarte', path: '/inventory-facturacion', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
+        { label: 'Carpetas', path: '/folders', icon: Folder },
     ].filter((link) => {
         if (!isRestrictedUser) return true;
-        return link.path === '/tasks';
+        return ['/dashboard', '/chat', '/tasks', '/inventory', '/inventory-facturacion', '/folders'].includes(link.path);
     });
 
     const queryResults = [
