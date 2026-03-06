@@ -81,10 +81,25 @@ const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+const INT32_MIN = -2147483648;
+const INT32_MAX = 2147483647;
 const normalizeWarehouseAlias = (v: any) => {
   const value = clean(v).toUpperCase();
   if (value === 'CAN') return 'CANET';
   return value;
+};
+const describeDbError = (error: unknown) => {
+  const e = error as any;
+  const text = [e?.message, e?.details, e?.hint].map((v) => clean(v)).filter(Boolean).join(' · ');
+  const low = text.toLowerCase();
+  if (low.includes('row-level security') || low.includes('permission') || low.includes('not authorized')) {
+    return 'Sin permisos para guardar cambios en base de datos.';
+  }
+  if (low.includes('jwt') || low.includes('token') || low.includes('session') || low.includes('auth')) {
+    return 'La sesión parece caducada. Cierra sesión y vuelve a entrar.';
+  }
+  if (!text) return 'Error desconocido de base de datos.';
+  return text;
 };
 const getCurrentMonthKey = () => {
   const n = new Date();
@@ -432,6 +447,8 @@ function InventoryPage() {
   const [movementModalOpen, setMovementModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [movementForm, setMovementForm] = useState({ ...EMPTY_FORM });
+  const [savingMovement, setSavingMovement] = useState(false);
+  const [deletingMovementId, setDeletingMovementId] = useState<number | null>(null);
 
   const [lotModalOpen, setLotModalOpen] = useState(false);
   const [editingLotKey, setEditingLotKey] = useState<string | null>(null);
@@ -2135,9 +2152,16 @@ function InventoryPage() {
   };
 
   const saveMovement = async () => {
-    if (!canEditNow) return;
+    if (!canEditNow) {
+      window.alert('No tienes permisos de edición activos en este momento.');
+      return;
+    }
+    if (savingMovement) return;
     const qty = Math.abs(toNum(movementForm.cantidad));
-    if (!movementForm.tipo_movimiento || !movementForm.producto || !movementForm.lote || !movementForm.bodega || !qty) return;
+    if (!movementForm.tipo_movimiento || !movementForm.producto || !movementForm.lote || !movementForm.bodega || !qty) {
+      window.alert('Completa Tipo, Producto, Lote, Cantidad y Bodega para guardar.');
+      return;
+    }
     const producto = clean(movementForm.producto);
     const lote = clean(movementForm.lote);
     const bodega = clean(movementForm.bodega);
@@ -2174,73 +2198,126 @@ function InventoryPage() {
       return;
     }
     const nowIso = new Date().toISOString();
+    setSavingMovement(true);
+    try {
+      let mirrorSyncError: unknown = null;
 
-    if (editingId) {
-      const edited = {
-        fecha: movementForm.fecha,
-        tipo_movimiento: movementForm.tipo_movimiento,
-        producto: movementForm.producto,
-        lote: movementForm.lote,
-        cantidad: qty,
-        bodega: movementForm.bodega,
-        cliente: movementForm.cliente,
-        destino: movementForm.destino,
-        notas: movementForm.notas,
-        signo: sign,
-        cantidad_signed: qty * sign,
-        updated_at: nowIso,
-        updated_by: actorName,
-      };
+      if (editingId) {
+        const edited = {
+          fecha: movementForm.fecha,
+          tipo_movimiento: movementForm.tipo_movimiento,
+          producto: movementForm.producto,
+          lote: movementForm.lote,
+          cantidad: qty,
+          bodega: movementForm.bodega,
+          cliente: movementForm.cliente,
+          destino: movementForm.destino,
+          notas: movementForm.notas,
+          signo: sign,
+          cantidad_signed: qty * sign,
+          updated_at: nowIso,
+          updated_by: actorName,
+        };
 
-      const nextMovement = await canetDB.updateMovement(editingId, edited);
+        const nextMovement = await canetDB.updateMovement(editingId, edited);
 
-      const editedMirrorCandidate: Movement = {
-        ...nextMovement,
-        afecta_stock: 'SI'
-      };
-      await syncMirrorUpsert(editedMirrorCandidate);
-      await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
-      appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
-      emitSuccessFeedback('Movimiento actualizado con éxito.');
-    } else {
-      const nextPayload = {
-        fecha: movementForm.fecha,
-        tipo_movimiento: movementForm.tipo_movimiento,
-        producto: movementForm.producto,
-        lote: movementForm.lote,
-        cantidad: qty,
-        bodega: movementForm.bodega,
-        cliente: movementForm.cliente,
-        destino: movementForm.destino,
-        notas: movementForm.notas,
-        afecta_stock: 'SI',
-        signo: sign,
-        cantidad_signed: qty * sign,
-        created_at: nowIso,
-        updated_at: nowIso,
-        updated_by: actorName,
-        source: 'manual',
-      };
-      const nextMovement = await canetDB.addMovement(nextPayload as any);
-      await syncMirrorUpsert(nextMovement);
-      await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
-      appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
-      emitSuccessFeedback('Movimiento creado con éxito.');
+        const editedMirrorCandidate: Movement = {
+          ...nextMovement,
+          afecta_stock: 'SI'
+        };
+        try {
+          await syncMirrorUpsert(editedMirrorCandidate);
+        } catch (error) {
+          mirrorSyncError = error;
+          console.error('Error sincronizando espejo Huarte (update Canet):', error);
+        }
+        await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
+        appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
+        emitSuccessFeedback('Movimiento actualizado con éxito.');
+      } else {
+        const nextPayload = {
+          fecha: movementForm.fecha,
+          tipo_movimiento: movementForm.tipo_movimiento,
+          producto: movementForm.producto,
+          lote: movementForm.lote,
+          cantidad: qty,
+          bodega: movementForm.bodega,
+          cliente: movementForm.cliente,
+          destino: movementForm.destino,
+          notas: movementForm.notas,
+          afecta_stock: 'SI',
+          signo: sign,
+          cantidad_signed: qty * sign,
+          created_at: nowIso,
+          updated_at: nowIso,
+          updated_by: actorName,
+          source: 'manual',
+        };
+        const nextMovement = await canetDB.addMovement(nextPayload as any);
+        try {
+          await syncMirrorUpsert(nextMovement);
+        } catch (error) {
+          mirrorSyncError = error;
+          console.error('Error sincronizando espejo Huarte (create Canet):', error);
+        }
+        await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
+        appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
+        emitSuccessFeedback('Movimiento creado con éxito.');
+      }
+
+      setMovementModalOpen(false);
+      setEditingId(null);
+
+      if (mirrorSyncError) {
+        window.alert(
+          `El movimiento se guardó en Inventario Canet, pero falló la sincronización espejo en Inventario Huarte.\n\nDetalle: ${describeDbError(mirrorSyncError)}`,
+        );
+      }
+    } catch (error) {
+      console.error('Error guardando movimiento de Canet:', error);
+      window.alert(`No se pudo guardar el movimiento.\n\nDetalle: ${describeDbError(error)}`);
+    } finally {
+      setSavingMovement(false);
     }
-
-    setMovementModalOpen(false);
-    setEditingId(null);
   };
 
   const deleteMovement = async (id: number) => {
-    if (!canEditNow) return;
+    if (!canEditNow) {
+      window.alert('No tienes permisos de edición activos en este momento.');
+      return;
+    }
+    const safeId = toNum(id);
+    if (!Number.isFinite(safeId) || safeId < INT32_MIN || safeId > INT32_MAX) {
+      window.alert('ID de movimiento fuera de rango para base de datos. No se puede eliminar desde aquí.');
+      return;
+    }
+    if (deletingMovementId === safeId) return;
     const ok = window.confirm('¿Estás segura de eliminar este movimiento?');
     if (!ok) return;
-    await canetDB.deleteMovement(id);
-    await syncMirrorDelete(id);
-    await notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${id}).`);
-    appendAudit('Eliminación de movimiento', `ID ${id}`);
-    emitSuccessFeedback('Movimiento eliminado con éxito.');
+    setDeletingMovementId(safeId);
+    try {
+      await canetDB.deleteMovement(safeId);
+      let mirrorSyncError: unknown = null;
+      try {
+        await syncMirrorDelete(safeId);
+      } catch (error) {
+        mirrorSyncError = error;
+        console.error('Error sincronizando espejo Huarte (delete Canet):', error);
+      }
+      await notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${safeId}).`);
+      appendAudit('Eliminación de movimiento', `ID ${safeId}`);
+      emitSuccessFeedback('Movimiento eliminado con éxito.');
+      if (mirrorSyncError) {
+        window.alert(
+          `El movimiento se eliminó en Inventario Canet, pero falló la sincronización espejo en Inventario Huarte.\n\nDetalle: ${describeDbError(mirrorSyncError)}`,
+        );
+      }
+    } catch (error) {
+      console.error('Error eliminando movimiento de Canet:', error);
+      window.alert(`No se pudo eliminar el movimiento.\n\nDetalle: ${describeDbError(error)}`);
+    } finally {
+      setDeletingMovementId(null);
+    }
   };
 
   const getCaducitySemaforo = (dateKey: string) => {
@@ -3288,7 +3365,7 @@ function InventoryPage() {
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
               <div key={`act-${m.id}`} className="flex items-center gap-1">
                 <button disabled={!isEditModeActive} onClick={() => startEdit(m)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
-                <button disabled={!isEditModeActive} onClick={() => void deleteMovement(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={13} /></button>
+                <button disabled={!isEditModeActive || deletingMovementId === toNum(m.id)} onClick={() => void deleteMovement(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive && deletingMovementId !== toNum(m.id) ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={13} /></button>
               </div>,
             ])}
           />
@@ -3337,7 +3414,7 @@ function InventoryPage() {
               </span>,
               clean(m.bodega),
               clean(m.updated_by || 'Sistema'),
-              <button key={`dm-${m.id}`} onClick={() => deleteMovement(m.id)} disabled={!isEditModeActive} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`} title="Eliminar">
+              <button key={`dm-${m.id}`} onClick={() => void deleteMovement(m.id)} disabled={!isEditModeActive || deletingMovementId === toNum(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive && deletingMovementId !== toNum(m.id) ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`} title="Eliminar">
                 <Trash2 size={13} />
               </button>,
             ])}
@@ -3505,7 +3582,7 @@ function InventoryPage() {
           <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">{editingId ? 'Editar movimiento' : 'Crear movimiento'}</h3>
-              <button onClick={() => setMovementModalOpen(false)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
+              <button disabled={savingMovement} onClick={() => setMovementModalOpen(false)} className={`rounded-lg p-1.5 ${savingMovement ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'}`}><X size={14} /></button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <Input label="Fecha" type="date" value={movementForm.fecha} onChange={(v) => setMovementForm({ ...movementForm, fecha: v })} />
@@ -3525,8 +3602,8 @@ function InventoryPage() {
               <Input label="Notas" value={movementForm.notas} onChange={(v) => setMovementForm({ ...movementForm, notas: v })} />
             </div>
             <div className="mt-4 flex gap-2">
-              <button onClick={() => void saveMovement()} className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">{editingId ? <Pencil size={14} /> : <Plus size={14} />} {editingId ? 'Guardar cambios' : 'Crear movimiento'}</button>
-              <button onClick={() => setMovementModalOpen(false)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">Cancelar</button>
+              <button disabled={savingMovement} onClick={() => void saveMovement()} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white ${savingMovement ? 'bg-violet-300 cursor-wait' : 'bg-violet-600 hover:bg-violet-700'}`}>{editingId ? <Pencil size={14} /> : <Plus size={14} />} {savingMovement ? 'Guardando...' : (editingId ? 'Guardar cambios' : 'Crear movimiento')}</button>
+              <button disabled={savingMovement} onClick={() => setMovementModalOpen(false)} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${savingMovement ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-violet-200 bg-violet-50 text-violet-700'}`}>Cancelar</button>
             </div>
           </div>
         </div>
