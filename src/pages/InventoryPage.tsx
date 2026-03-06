@@ -175,6 +175,7 @@ const LEGACY_INHERITED_LOTS = new Set<string>([
   'ENT|2504A18',
   'ISO|230730',
   'KL|241030',
+  'KL|260101',
   'RG|2408A03',
   'SV|2510A33',
 ]);
