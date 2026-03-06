@@ -328,7 +328,7 @@ function InventoryPage() {
 
   const [
     movimientos,
-    setMovimientos,
+    ,
     movimientosLoading,
     canetDB,
   ] = useInventoryMovementsDB('canet');
@@ -661,48 +661,6 @@ function InventoryPage() {
       })
       .filter((m) => !isInvalidLegacyLot(m.producto, m.lote));
   }, [movimientos, signByType, lotes]);
-
-  useEffect(() => {
-    if (movimientosLoading) return;
-    const canonicalLot = (productoRaw: string, loteRaw: string) => {
-      const producto = clean(productoRaw);
-      const lote = clean(loteRaw);
-      if (!producto || !lote) return lote;
-      const lotToken = normalizeLotToken(lote);
-      const allLots = lotes
-        .filter((l) => clean(l.producto) === producto)
-        .map((l) => clean(l.lote))
-        .filter(Boolean);
-      const suffixMatches = allLots.filter((candidate) => {
-        const cand = normalizeLotToken(candidate);
-        return cand.endsWith(lotToken);
-      });
-      if (suffixMatches.length > 0) {
-        const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
-        if (preferred) return preferred;
-      }
-      const globalLots = lotes.map((l) => clean(l.lote)).filter(Boolean);
-      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
-      if (globalSuffix.length === 1) return globalSuffix[0];
-      return lote;
-    };
-
-    const next = movimientos.map((m) => {
-      const producto = clean(m.producto);
-      const lote = canonicalLot(producto, clean(m.lote));
-      if (lote === clean(m.lote) && producto === clean(m.producto)) return m;
-      return {
-        ...m,
-        producto,
-        lote,
-        updated_at: new Date().toISOString(),
-        updated_by: actorName,
-      };
-    });
-    const changed = next.some((m, idx) => clean(m.lote) !== clean(movimientos[idx]?.lote) || clean(m.producto) !== clean(movimientos[idx]?.producto));
-    if (!changed) return;
-    setMovimientos(next);
-  }, [movimientos, lotes, movimientosLoading, actorName]);
 
   // IMPORTANT: Never run full-array replacement of Huarte movements from Canet.
   // We only sync by per-movement upsert/delete (syncMirrorUpsert/syncMirrorDelete),
@@ -2215,8 +2173,6 @@ function InventoryPage() {
     const nowIso = new Date().toISOString();
     setSavingMovement(true);
     try {
-      let mirrorSyncError: unknown = null;
-
       if (editingId) {
         const edited = {
           fecha: movementForm.fecha,
@@ -2240,15 +2196,18 @@ function InventoryPage() {
           ...nextMovement,
           afecta_stock: 'SI'
         };
-        try {
-          await syncMirrorUpsert(editedMirrorCandidate);
-        } catch (error) {
-          mirrorSyncError = error;
-          console.error('Error sincronizando espejo Huarte (update Canet):', error);
-        }
-        await notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
+        void (async () => {
+          try {
+            await syncMirrorUpsert(editedMirrorCandidate);
+          } catch (error) {
+            console.error('Error sincronizando espejo Huarte (update Canet):', error);
+          }
+        })();
+        void notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
         appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
         emitSuccessFeedback('Movimiento actualizado con éxito.');
+        setMovementModalOpen(false);
+        setEditingId(null);
       } else {
         const nextPayload = {
           fecha: movementForm.fecha,
@@ -2269,24 +2228,18 @@ function InventoryPage() {
           source: 'manual',
         };
         const nextMovement = await canetDB.addMovement(nextPayload as any);
-        try {
-          await syncMirrorUpsert(nextMovement);
-        } catch (error) {
-          mirrorSyncError = error;
-          console.error('Error sincronizando espejo Huarte (create Canet):', error);
-        }
-        await notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
+        void (async () => {
+          try {
+            await syncMirrorUpsert(nextMovement);
+          } catch (error) {
+            console.error('Error sincronizando espejo Huarte (create Canet):', error);
+          }
+        })();
+        void notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
         appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
         emitSuccessFeedback('Movimiento creado con éxito.');
-      }
-
-      setMovementModalOpen(false);
-      setEditingId(null);
-
-      if (mirrorSyncError) {
-        window.alert(
-          `El movimiento se guardó en Inventario Canet, pero falló la sincronización espejo en Inventario Huarte.\n\nDetalle: ${describeDbError(mirrorSyncError)}`,
-        );
+        setMovementModalOpen(false);
+        setEditingId(null);
       }
     } catch (error) {
       console.error('Error guardando movimiento de Canet:', error);
@@ -2312,21 +2265,16 @@ function InventoryPage() {
     setDeletingMovementId(safeId);
     try {
       await canetDB.deleteMovement(safeId);
-      let mirrorSyncError: unknown = null;
-      try {
-        await syncMirrorDelete(safeId);
-      } catch (error) {
-        mirrorSyncError = error;
-        console.error('Error sincronizando espejo Huarte (delete Canet):', error);
-      }
-      await notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${safeId}).`);
+      void (async () => {
+        try {
+          await syncMirrorDelete(safeId);
+        } catch (error) {
+          console.error('Error sincronizando espejo Huarte (delete Canet):', error);
+        }
+      })();
+      void notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${safeId}).`);
       appendAudit('Eliminación de movimiento', `ID ${safeId}`);
       emitSuccessFeedback('Movimiento eliminado con éxito.');
-      if (mirrorSyncError) {
-        window.alert(
-          `El movimiento se eliminó en Inventario Canet, pero falló la sincronización espejo en Inventario Huarte.\n\nDetalle: ${describeDbError(mirrorSyncError)}`,
-        );
-      }
     } catch (error) {
       console.error('Error eliminando movimiento de Canet:', error);
       window.alert(`No se pudo eliminar el movimiento.\n\nDetalle: ${describeDbError(error)}`);

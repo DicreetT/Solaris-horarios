@@ -32,6 +32,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
+    const READ_TIMEOUT_MS = 12000;
+    const WRITE_TIMEOUT_MS = 15000;
 
     useEffect(() => {
         movementsRef.current = movements;
@@ -60,6 +62,31 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         return null;
     };
 
+    const withTimeout = useCallback(async <T,>(operation: () => unknown, timeoutMs: number, opLabel: string) => {
+        let settled = false;
+        return await new Promise<T>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+                settled = true;
+                reject(new Error(`${opLabel}: Tiempo de espera agotado al conectar con base de datos.`));
+            }, timeoutMs);
+
+            Promise.resolve(operation() as any)
+                .then((value) => {
+                    if (settled) return;
+                    window.clearTimeout(timer);
+                    resolve(value);
+                })
+                .catch((error) => {
+                    if (settled) {
+                        console.warn(`${opLabel} finished after timeout:`, error);
+                        return;
+                    }
+                    window.clearTimeout(timer);
+                    reject(error);
+                });
+        });
+    }, []);
+
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
@@ -68,12 +95,17 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             if (!silent) setIsLoading(true);
             const maxRows = 5000;
             try {
-                const { data, error } = await supabase
-                    .from('inventory_movements')
-                    .select('*')
-                    .eq('inventory_id', inventoryId)
-                    .order('id', { ascending: false })
-                    .range(0, maxRows - 1);
+                const { data, error } = await withTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .select('*')
+                            .eq('inventory_id', inventoryId)
+                            .order('id', { ascending: false })
+                            .range(0, maxRows - 1),
+                    READ_TIMEOUT_MS,
+                    `loadMovements(${inventoryId})`,
+                );
                 if (error) {
                     console.error(`Error loading inventory movements for ${inventoryId}:`, error);
                 } else {
@@ -92,7 +124,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         } finally {
             loadInFlightRef.current = null;
         }
-    }, [inventoryId]);
+    }, [inventoryId, withTimeout]);
 
     useEffect(() => {
         void loadMovements();
@@ -116,13 +148,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 }
             )
             .subscribe((status) => {
-                if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                if (status === 'SUBSCRIBED') {
                     refresh();
                 }
             });
 
         // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
-        const intervalId = window.setInterval(refresh, 30000);
+        const intervalId = window.setInterval(refresh, 120000);
         const onVisibility = () => {
             if (document.visibilityState === 'visible') refresh();
         };
@@ -143,29 +175,33 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         let lastError: unknown = null;
 
         for (let i = 0; i < 6; i++) {
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .insert(payload)
-                .select()
-                .single();
-
-            if (!error) {
-                return data as InventoryMovementRow;
+            try {
+                return await withTimeout(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .insert(payload)
+                            .select()
+                            .single()
+                            .throwOnError(),
+                    WRITE_TIMEOUT_MS,
+                    `addMovement(${inventoryId})`,
+                ) as InventoryMovementRow;
+            } catch (error) {
+                lastError = error;
+                const missingColumn = getMissingColumn(error);
+                if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+                    delete (payload as any)[missingColumn];
+                    console.warn(`[inventory_movements:${inventoryId}] insert ignored missing column "${missingColumn}"`);
+                    continue;
+                }
+                break;
             }
-
-            lastError = error;
-            const missingColumn = getMissingColumn(error);
-            if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
-                delete (payload as any)[missingColumn];
-                console.warn(`[inventory_movements:${inventoryId}] insert ignored missing column "${missingColumn}"`);
-                continue;
-            }
-            break;
         }
 
         console.error('Error adding movement:', lastError);
         throw lastError;
-    }, [inventoryId]);
+    }, [inventoryId, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
         const payload: Record<string, unknown> = { ...(updates as any) };
@@ -178,44 +214,54 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 break;
             }
 
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .update(payload)
-                .eq('id', id)
-                .eq('inventory_id', inventoryId)
-                .select()
-                .single();
-
-            if (!error) {
-                return data as InventoryMovementRow;
+            try {
+                return await withTimeout(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .update(payload)
+                            .eq('id', id)
+                            .eq('inventory_id', inventoryId)
+                            .select()
+                            .single()
+                            .throwOnError(),
+                    WRITE_TIMEOUT_MS,
+                    `updateMovement(${inventoryId})`,
+                ) as InventoryMovementRow;
+            } catch (error) {
+                lastError = error;
+                const missingColumn = getMissingColumn(error);
+                if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+                    delete (payload as any)[missingColumn];
+                    console.warn(`[inventory_movements:${inventoryId}] update ignored missing column "${missingColumn}"`);
+                    continue;
+                }
+                break;
             }
-
-            lastError = error;
-            const missingColumn = getMissingColumn(error);
-            if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
-                delete (payload as any)[missingColumn];
-                console.warn(`[inventory_movements:${inventoryId}] update ignored missing column "${missingColumn}"`);
-                continue;
-            }
-            break;
         }
 
         console.error('Error updating movement:', lastError);
         throw lastError;
-    }, [inventoryId]);
+    }, [inventoryId, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
-        const { error } = await supabase
-            .from('inventory_movements')
-            .delete()
-            .eq('id', id)
-            .eq('inventory_id', inventoryId);
-
-        if (error) {
+        try {
+            await withTimeout(
+                () =>
+                    supabase
+                        .from('inventory_movements')
+                        .delete()
+                        .eq('id', id)
+                        .eq('inventory_id', inventoryId)
+                        .throwOnError(),
+                WRITE_TIMEOUT_MS,
+                `deleteMovement(${inventoryId})`,
+            );
+        } catch (error) {
             console.error('Error deleting movement:', error);
             throw error;
         }
-    }, [inventoryId]);
+    }, [inventoryId, withTimeout]);
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;
