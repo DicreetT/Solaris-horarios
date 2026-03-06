@@ -145,6 +145,7 @@ const INVENTORY_EDIT_REQUESTS_KEY = 'inventory_edit_requests_v1';
 const INVENTORY_EDIT_GRANTS_KEY = 'inventory_edit_grants_v1';
 const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
+const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v1';
@@ -345,6 +346,11 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
+  const [, setInventoryStockControlSnapshotShared] = useSharedJsonState<any | null>(
+    INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY,
+    null,
+    { userId: actorId },
+  );
   const [huarteVisualStockByLotCache] = useSharedJsonState<
     { monthKey: string; updatedAt: string; byLot: Record<string, number>; byLotBodega?: Record<string, number> } | null
   >(
@@ -354,7 +360,7 @@ function InventoryPage() {
   );
   const [
     huarteMovimientosShared,
-    setHuarteMovimientosShared,
+    ,
     huarteMovimientosLoading,
     huarteDB,
   ] = useInventoryMovementsDB('huarte');
@@ -680,78 +686,9 @@ function InventoryPage() {
     setMovimientos(next);
   }, [movimientos, lotes, movimientosLoading, actorName]);
 
-  useEffect(() => {
-    // Evita sobreescribir Huarte con fallback local antes de que Canet cargue desde Supabase.
-    if (movimientosLoading || huarteMovimientosLoading) return;
-    if (!canWriteHuarteMirrorFromCanet) return;
-
-    const eligibleRows = normalizedMovements
-      .filter((m) => {
-        const d = dateFromAny(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
-      });
-    const mirrorRows = eligibleRows.map((m) => toHuarteMirrorMovement(m));
-    const autoInRows = eligibleRows
-      .filter((m) => isCanetTransferToHuarte(m))
-      .map((m) => toHuarteAutoInMovement(m));
-
-    const signature = (m: any) => [
-      clean(m.fecha),
-      clean(m.tipo_movimiento),
-      clean(m.producto),
-      clean(m.lote),
-      clean(m.bodega),
-      String(toNum(m.cantidad_signed)),
-      clean(m.cliente),
-      clean(m.destino),
-      clean(m.notas),
-      clean(m.source),
-    ].join('|');
-
-    setHuarteMovimientosShared((prev: any) => {
-      const base = Array.isArray(prev) ? prev : [];
-
-      // Cleanup: Remove any old 'canet' or 'canet_auto_in' movements that are before the sync start date
-      const alreadyClean = base.every(m => {
-        const src = clean(m.source).toLowerCase();
-        if (src !== 'canet' && src !== 'canet_auto_in') return true;
-        const d = dateFromAny(clean(m.fecha));
-        return !!d && d >= canetMovementSyncStartDate;
-      });
-
-      const prevCanet = base.filter((m) => clean(m.source).toLowerCase() === 'canet');
-      const prevAuto = base.filter((m) => clean(m.source).toLowerCase() === 'canet_auto_in');
-      const prevSig = prevCanet.map(signature).sort();
-      const nextSig = mirrorRows.map(signature).sort();
-      const prevAutoSig = prevAuto.map(signature).sort();
-      const nextAutoSig = autoInRows.map(signature).sort();
-
-      const sameCanet =
-        prevSig.length === nextSig.length &&
-        prevSig.every((item, idx) => item === nextSig[idx]);
-      const sameAuto =
-        prevAutoSig.length === nextAutoSig.length &&
-        prevAutoSig.every((item, idx) => item === nextAutoSig[idx]);
-
-      if (sameCanet && sameAuto && alreadyClean) return base;
-
-      const nonMirrored = base.filter((m) => {
-        const src = clean(m.source).toLowerCase();
-        const d = dateFromAny(clean(m.fecha));
-        const isOldSync = (src === 'canet' || src === 'canet_auto_in') && (!d || d < canetMovementSyncStartDate);
-        if (isOldSync) return false;
-        return src !== 'canet' && src !== 'canet_auto_in';
-      });
-      return [...mirrorRows, ...autoInRows, ...nonMirrored];
-    });
-  }, [
-    normalizedMovements,
-    canetMovementSyncStartDate,
-    canWriteHuarteMirrorFromCanet,
-    setHuarteMovimientosShared,
-    movimientosLoading,
-    huarteMovimientosLoading,
-  ]);
+  // IMPORTANT: Never run full-array replacement of Huarte movements from Canet.
+  // We only sync by per-movement upsert/delete (syncMirrorUpsert/syncMirrorDelete),
+  // so manual Huarte rows cannot be dropped by a reconciliation race.
 
   const validDates = useMemo(() => normalizedMovements.map((m) => dateFromAny(clean(m.fecha))).filter(Boolean) as Date[], [normalizedMovements]);
   const currentMonth = useMemo(() => getCurrentMonthKey(), []);
@@ -1247,7 +1184,7 @@ function InventoryPage() {
     >();
     for (const p of productos) {
       const producto = clean(p.producto);
-      if (!producto) continue;
+      if (!producto || producto.toUpperCase() === 'PRODUCTO') continue;
       productMeta.set(producto, {
         stockMin: toNum(p.stock_min),
         stockOptimo: toNum(p.stock_optimo),
@@ -1261,6 +1198,7 @@ function InventoryPage() {
     for (const l of lotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
+      if (producto.toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote) continue;
       lotStateByKey.set(`${producto}|${lote}`, normalizeLotState(l.estado));
     }
@@ -1268,6 +1206,7 @@ function InventoryPage() {
     for (const l of lotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
+      if (producto.toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       const key = `${producto}|${lote}`;
       const viales = toNum(l.viales_recibidos);
@@ -1284,6 +1223,7 @@ function InventoryPage() {
     ])) {
       if (lotBase.has(key)) continue;
       const [producto, lote] = key.split('|');
+      if (clean(producto).toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       lotBase.set(key, { producto, lote, viales: 0 });
     }
@@ -1959,7 +1899,21 @@ function InventoryPage() {
       })),
     };
     setInventoryAlertsShared(payload);
-  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts, setInventoryAlertsShared, stockControlTables]);
+    setInventoryStockControlSnapshotShared({
+      updatedAt: payload.updatedAt,
+      potentialRows: payload.potentialControlRows || [],
+      potentialLotRows: payload.potentialControlLotRows || [],
+      canetHuarteRows: payload.canetHuarteControlRows || [],
+      canetRows: payload.canetControlRows || [],
+    });
+  }, [
+    riskyProductsSummary,
+    caducityAlerts,
+    mountedAndPotentialAlerts,
+    setInventoryAlertsShared,
+    setInventoryStockControlSnapshotShared,
+    stockControlTables,
+  ]);
 
   const stockByProductLot = useMemo(() => {
     const map = new Map<string, number>();

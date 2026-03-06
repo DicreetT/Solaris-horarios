@@ -2069,7 +2069,7 @@ export default function InventoryFacturacionPage() {
           title="Movimientos"
           actions={
             <div className="flex items-center gap-2">
-              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.responsable || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+              <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Motivo', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.motivo || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
                 <Download size={14} />
                 Descargar PDF
               </button>
@@ -2086,7 +2086,7 @@ export default function InventoryFacturacionPage() {
           }
         >
           <DataTable
-            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Responsable', 'Fuente', 'Últ. edición', 'Acciones']}
+            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Motivo', 'Fuente', 'Últ. edición', 'Acciones']}
             rows={visibleMovementsLast7Days.map((m) => [
               displayDate(m.fecha),
               m.tipo_movimiento,
@@ -2096,7 +2096,7 @@ export default function InventoryFacturacionPage() {
               m.bodega,
               m.cliente || '',
               m.factura_doc || '',
-              m.responsable || '',
+              m.motivo || '',
               (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación',
               `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`,
               canEdit && canMutateMovement(m) ? (

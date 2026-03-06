@@ -120,7 +120,54 @@ type InventoryAlertsSummary = {
     }>;
 };
 
+type InventoryStockControlSnapshot = {
+    updatedAt?: string;
+    potentialRows?: Array<{
+        producto: string;
+        lotes: number;
+        viales: number;
+        salidas: number;
+        potencialCajas: number;
+        stockOptimo: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }>;
+    potentialLotRows?: Array<{
+        producto: string;
+        lote: string;
+        viales: number;
+        salidas: number;
+        potencialCajas: number;
+        stockOptimo: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }>;
+    canetHuarteRows?: Array<{
+        producto: string;
+        lote: string;
+        stockCanetHuarte: number;
+        stockCanet: number;
+        stockHuarte: number;
+        stockMinCH: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        semaforo: string;
+    }>;
+    canetRows?: Array<{
+        producto: string;
+        lote: string;
+        stockCanet: number;
+        stockMin: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        semaforo: string;
+    }>;
+};
+
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
+const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const CANET_MOVEMENT_SYNC_START = '2026-02-24';
@@ -265,6 +312,11 @@ function Dashboard() {
         INVENTORY_ALERTS_KEY,
         null,
         { userId: currentUser?.id, initializeIfMissing: false },
+    );
+    const [inventoryStockControlSnapshot] = useSharedJsonState<InventoryStockControlSnapshot | null>(
+        INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY,
+        null,
+        { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 2000 },
     );
     const [huarteMovementsShared] = useSharedJsonState<any[]>(
         INVENTORY_HUARTE_MOVS_KEY,
@@ -1518,13 +1570,26 @@ function Dashboard() {
     const mountedCriticalDetailsFromInventory = inventoryAlerts?.mountedCriticalDetails || [];
     const potentialCriticalDetailsFromInventory = inventoryAlerts?.potentialCriticalDetails || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
-    const potentialControlRowsFromInventory = inventoryAlerts?.potentialControlRows || [];
-    const potentialControlLotRowsFromInventory = inventoryAlerts?.potentialControlLotRows || [];
-    const canetHuarteControlRowsFromInventory = inventoryAlerts?.canetHuarteControlRows || [];
-    const canetControlRowsFromInventory = inventoryAlerts?.canetControlRows || [];
+    const potentialControlRowsFromInventory =
+        (inventoryStockControlSnapshot?.potentialRows && inventoryStockControlSnapshot.potentialRows.length > 0)
+            ? inventoryStockControlSnapshot.potentialRows
+            : (inventoryAlerts?.potentialControlRows || []);
+    const potentialControlLotRowsFromInventory =
+        (inventoryStockControlSnapshot?.potentialLotRows && inventoryStockControlSnapshot.potentialLotRows.length > 0)
+            ? inventoryStockControlSnapshot.potentialLotRows
+            : (inventoryAlerts?.potentialControlLotRows || []);
+    const canetHuarteControlRowsFromInventory =
+        (inventoryStockControlSnapshot?.canetHuarteRows && inventoryStockControlSnapshot.canetHuarteRows.length > 0)
+            ? inventoryStockControlSnapshot.canetHuarteRows
+            : (inventoryAlerts?.canetHuarteControlRows || []);
+    const canetControlRowsFromInventory =
+        (inventoryStockControlSnapshot?.canetRows && inventoryStockControlSnapshot.canetRows.length > 0)
+            ? inventoryStockControlSnapshot.canetRows
+            : (inventoryAlerts?.canetControlRows || []);
     const potentialControlCriticalRows = useMemo(
         () =>
             potentialControlRowsFromInventory
+                .filter((row) => productKey(row.producto) !== 'PRODUCTO')
                 .filter((row) => row.estadoStock === 'CRITICO' || row.estadoStock === 'ATENCION')
                 .sort((a, b) => {
                     const severityA = a.estadoStock === 'CRITICO' ? 0 : 1;
@@ -1538,7 +1603,7 @@ function Dashboard() {
         const map = new Map<string, Array<{ lote: string; cantidad: number }>>();
         potentialControlLotRowsFromInventory.forEach((row) => {
             const producto = productKey(row.producto);
-            if (!producto) return;
+            if (!producto || producto === 'PRODUCTO') return;
             const lote = clean(row.lote);
             if (!lote) return;
             if (!map.has(producto)) map.set(producto, []);
@@ -1556,6 +1621,7 @@ function Dashboard() {
     const canetHuarteControlCriticalRows = useMemo(
         () =>
             canetHuarteControlRowsFromInventory
+                .filter((row) => productKey(row.producto) !== 'PRODUCTO')
                 .filter((row) => {
                     const semaforo = clean(row.semaforo).toUpperCase();
                     return semaforo === 'CRITICO' || semaforo === 'ATENCION';
@@ -1571,6 +1637,7 @@ function Dashboard() {
     const canetControlCriticalRows = useMemo(
         () =>
             canetControlRowsFromInventory
+                .filter((row) => productKey(row.producto) !== 'PRODUCTO')
                 .filter((row) => {
                     const semaforo = clean(row.semaforo).toUpperCase();
                     return semaforo === 'CRITICO' || semaforo === 'ATENCION';
@@ -1583,6 +1650,7 @@ function Dashboard() {
                 }),
         [canetControlRowsFromInventory],
     );
+    const inventoryPanelUpdatedAt = inventoryStockControlSnapshot?.updatedAt || inventoryAlerts?.updatedAt;
     const huarteMovementsSource = useMemo(
         () =>
             Array.isArray(huarteMovementsShared) && huarteMovementsShared.length > 0
@@ -2870,8 +2938,8 @@ function Dashboard() {
                                     )}
                                 </div>
                             )}
-                            {inventoryAlerts?.updatedAt && (
-                                <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryAlerts.updatedAt))}</p>
+                            {inventoryPanelUpdatedAt && (
+                                <p className="mt-3 text-[11px] text-violet-500">Actualizado: {formatDatePretty(new Date(inventoryPanelUpdatedAt))}</p>
                             )}
                         </div>
                     )}
