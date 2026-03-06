@@ -1656,7 +1656,7 @@ export default function InventoryFacturacionPage() {
   }, [isRestrictedUser, dashboardSection, visibleDashboardSections]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-4 pb-14">
+    <div className="max-w-7xl mx-auto space-y-4 pb-14 inventory-readable">
       <section className="rounded-3xl border border-violet-200 bg-white p-4 md:p-5 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -2451,9 +2451,9 @@ function ToggleMore({ k, showAllRows, setShowAllRows }: { k: string; showAllRows
 
 function Panel({ title, children, actions, onDownload }: { title: string; children: React.ReactNode; actions?: React.ReactNode; onDownload?: () => void }) {
   return (
-    <section className="rounded-2xl border border-violet-200 bg-white p-3">
+    <section className="rounded-2xl border border-violet-200 bg-white p-3 adaptive-surface">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-black text-violet-950">{title}</h2>
+        <h2 className="text-base font-black text-violet-950 adaptive-text-strong">{title}</h2>
         <div className="flex items-center gap-2">
           {onDownload && (
             <button onClick={onDownload} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
@@ -2496,7 +2496,7 @@ function StockVisual({
 
   return (
     <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/40 p-3">
-      <h4 className="mb-2 text-xs font-black uppercase tracking-wide text-violet-700">Vista visual de stock (top lotes)</h4>
+      <h4 className="mb-2 text-xs font-black uppercase tracking-wide text-violet-700 adaptive-text-muted">Vista visual de stock (top lotes)</h4>
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={`${row.producto}|${row.lote}`} className="grid grid-cols-[120px_1fr_52px] items-center gap-2">
@@ -2530,7 +2530,7 @@ function StockVisual({
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un color para ver la bodega y cantidad.</p>
+      <p className="mt-2 text-[10px] font-semibold text-violet-600 adaptive-text-muted">Haz clic en un color para ver la bodega y cantidad.</p>
     </div>
   );
 }

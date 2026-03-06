@@ -1915,9 +1915,51 @@ function InventoryPage() {
         bodega: r.bodega,
         stockTotal: Number(r.stockTotal.toFixed(2)),
       })),
+      potentialControlRows: stockControlTables.potentialRows.slice(0, 400).map((r) => ({
+        producto: r.producto,
+        lotes: r.lotes,
+        viales: Number(r.viales.toFixed(2)),
+        salidas: Number(r.salidas.toFixed(2)),
+        potencialCajas: Number(r.potencialCajas.toFixed(2)),
+        stockOptimo: Number(r.stockOptimo.toFixed(2)),
+        consumoMes: Number(r.consumoMes.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+        estadoStock: r.estadoStock,
+      })),
+      potentialControlLotRows: stockControlTables.potentialLotRows.slice(0, 800).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        viales: Number(r.viales.toFixed(2)),
+        salidas: Number(r.salidas.toFixed(2)),
+        potencialCajas: Number(r.potencialCajas.toFixed(2)),
+        stockOptimo: Number(r.stockOptimo.toFixed(2)),
+        consumoMes: Number(r.consumoMes.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+        estadoStock: r.estadoStock,
+      })),
+      canetHuarteControlRows: stockControlTables.canetHuarteRows.slice(0, 800).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        stockCanetHuarte: Number(r.stockCanetHuarte.toFixed(2)),
+        stockCanet: Number(r.stockCanet.toFixed(2)),
+        stockHuarte: Number(r.stockHuarte.toFixed(2)),
+        stockMinCH: Number(r.stockMinCH.toFixed(2)),
+        consumoMes: Number(r.consumoMes.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+        semaforo: r.semaforo,
+      })),
+      canetControlRows: stockControlTables.canetRows.slice(0, 800).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        stockCanet: Number(r.stockCanet.toFixed(2)),
+        stockMin: Number(r.stockMin.toFixed(2)),
+        consumoMes: Number(r.consumoMes.toFixed(2)),
+        coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
+        semaforo: r.semaforo,
+      })),
     };
     setInventoryAlertsShared(payload);
-  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts, setInventoryAlertsShared]);
+  }, [riskyProductsSummary, caducityAlerts, mountedAndPotentialAlerts, setInventoryAlertsShared, stockControlTables]);
 
   const stockByProductLot = useMemo(() => {
     const map = new Map<string, number>();
@@ -2633,7 +2675,7 @@ function InventoryPage() {
   }, [isRestrictedUser, compactInventoryPanel]);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5 app-page-shell">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5 app-page-shell inventory-readable">
       <div className="rounded-2xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -3998,11 +4040,11 @@ function DataSection({ id, title, subtitle, children, tone, onDownload }: { id?:
     rose: 'border-rose-200 bg-rose-50/30',
   };
   return (
-    <section id={id} className={`rounded-2xl border p-4 shadow-sm space-y-3 compact-card ${toneMap[tone]}`}>
+    <section id={id} className={`rounded-2xl border p-4 shadow-sm space-y-3 compact-card adaptive-surface ${toneMap[tone]}`}>
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h2 className="text-base md:text-lg font-black text-violet-950">{title}</h2>
-          {subtitle && <p className="text-xs text-violet-700/80">{subtitle}</p>}
+          <h2 className="text-base md:text-lg font-black text-violet-950 adaptive-text-strong">{title}</h2>
+          {subtitle && <p className="text-xs text-violet-700/80 adaptive-text-muted">{subtitle}</p>}
         </div>
         {onDownload && <button onClick={onDownload} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"><Download size={12} /> Descargar</button>}
       </div>

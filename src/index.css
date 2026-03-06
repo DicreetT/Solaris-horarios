@@ -281,4 +281,35 @@ html[data-mood='Eléctrico'] {
   html[data-density='compact'] .compact-gap {
     gap: 0.45rem !important;
   }
+
+  /* Inventory text contrast helpers for light/dark backgrounds */
+  .inventory-readable .adaptive-text-strong {
+    color: #312e81;
+  }
+
+  .inventory-readable .adaptive-text-muted {
+    color: #5b21b6;
+  }
+
+  html[data-time='night'] .inventory-readable .adaptive-text-strong,
+  .dark .inventory-readable .adaptive-text-strong {
+    color: #f8fafc;
+  }
+
+  html[data-time='night'] .inventory-readable .adaptive-text-muted,
+  .dark .inventory-readable .adaptive-text-muted {
+    color: #cbd5e1;
+  }
+
+  html[data-time='night'] .inventory-readable .adaptive-surface [class*='text-violet-'],
+  .dark .inventory-readable .adaptive-surface [class*='text-violet-'] {
+    color: #e2e8f0 !important;
+  }
+
+  html[data-time='night'] .inventory-readable .adaptive-surface .bg-white [class*='text-violet-'],
+  html[data-time='night'] .inventory-readable .adaptive-surface table [class*='text-violet-'],
+  .dark .inventory-readable .adaptive-surface .bg-white [class*='text-violet-'],
+  .dark .inventory-readable .adaptive-surface table [class*='text-violet-'] {
+    color: #312e81 !important;
+  }
 }

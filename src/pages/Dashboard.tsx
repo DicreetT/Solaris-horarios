@@ -76,6 +76,48 @@ type InventoryAlertsSummary = {
     globalStockByProductLot?: Array<{ producto: string; lote: string; stockTotal: number }>;
     globalStockByProductLotBodega?: Array<{ producto: string; lote: string; bodega: string; stockTotal: number }>;
     caducity?: Array<{ producto: string; lote: string; fecha: string; days: number }>;
+    potentialControlRows?: Array<{
+        producto: string;
+        lotes: number;
+        viales: number;
+        salidas: number;
+        potencialCajas: number;
+        stockOptimo: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }>;
+    potentialControlLotRows?: Array<{
+        producto: string;
+        lote: string;
+        viales: number;
+        salidas: number;
+        potencialCajas: number;
+        stockOptimo: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO';
+    }>;
+    canetHuarteControlRows?: Array<{
+        producto: string;
+        lote: string;
+        stockCanetHuarte: number;
+        stockCanet: number;
+        stockHuarte: number;
+        stockMinCH: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        semaforo: string;
+    }>;
+    canetControlRows?: Array<{
+        producto: string;
+        lote: string;
+        stockCanet: number;
+        stockMin: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        semaforo: string;
+    }>;
 };
 
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
@@ -1476,6 +1518,71 @@ function Dashboard() {
     const mountedCriticalDetailsFromInventory = inventoryAlerts?.mountedCriticalDetails || [];
     const potentialCriticalDetailsFromInventory = inventoryAlerts?.potentialCriticalDetails || [];
     const caducityAlertsFromInventory = inventoryAlerts?.caducity || [];
+    const potentialControlRowsFromInventory = inventoryAlerts?.potentialControlRows || [];
+    const potentialControlLotRowsFromInventory = inventoryAlerts?.potentialControlLotRows || [];
+    const canetHuarteControlRowsFromInventory = inventoryAlerts?.canetHuarteControlRows || [];
+    const canetControlRowsFromInventory = inventoryAlerts?.canetControlRows || [];
+    const potentialControlCriticalRows = useMemo(
+        () =>
+            potentialControlRowsFromInventory
+                .filter((row) => row.estadoStock === 'CRITICO' || row.estadoStock === 'ATENCION')
+                .sort((a, b) => {
+                    const severityA = a.estadoStock === 'CRITICO' ? 0 : 1;
+                    const severityB = b.estadoStock === 'CRITICO' ? 0 : 1;
+                    if (severityA !== severityB) return severityA - severityB;
+                    return a.coberturaMeses - b.coberturaMeses;
+                }),
+        [potentialControlRowsFromInventory],
+    );
+    const potentialControlLotByProduct = useMemo(() => {
+        const map = new Map<string, Array<{ lote: string; cantidad: number }>>();
+        potentialControlLotRowsFromInventory.forEach((row) => {
+            const producto = productKey(row.producto);
+            if (!producto) return;
+            const lote = clean(row.lote);
+            if (!lote) return;
+            if (!map.has(producto)) map.set(producto, []);
+            map.get(producto)!.push({
+                lote,
+                cantidad: Math.max(0, toNum(row.potencialCajas)),
+            });
+        });
+        map.forEach((rows, producto) => {
+            rows.sort((a, b) => b.cantidad - a.cantidad);
+            map.set(producto, rows);
+        });
+        return map;
+    }, [potentialControlLotRowsFromInventory]);
+    const canetHuarteControlCriticalRows = useMemo(
+        () =>
+            canetHuarteControlRowsFromInventory
+                .filter((row) => {
+                    const semaforo = clean(row.semaforo).toUpperCase();
+                    return semaforo === 'CRITICO' || semaforo === 'ATENCION';
+                })
+                .sort((a, b) => {
+                    const severityA = clean(a.semaforo).toUpperCase() === 'CRITICO' ? 0 : 1;
+                    const severityB = clean(b.semaforo).toUpperCase() === 'CRITICO' ? 0 : 1;
+                    if (severityA !== severityB) return severityA - severityB;
+                    return a.coberturaMeses - b.coberturaMeses;
+                }),
+        [canetHuarteControlRowsFromInventory],
+    );
+    const canetControlCriticalRows = useMemo(
+        () =>
+            canetControlRowsFromInventory
+                .filter((row) => {
+                    const semaforo = clean(row.semaforo).toUpperCase();
+                    return semaforo === 'CRITICO' || semaforo === 'ATENCION';
+                })
+                .sort((a, b) => {
+                    const severityA = clean(a.semaforo).toUpperCase() === 'CRITICO' ? 0 : 1;
+                    const severityB = clean(b.semaforo).toUpperCase() === 'CRITICO' ? 0 : 1;
+                    if (severityA !== severityB) return severityA - severityB;
+                    return a.coberturaMeses - b.coberturaMeses;
+                }),
+        [canetControlRowsFromInventory],
+    );
     const huarteMovementsSource = useMemo(
         () =>
             Array.isArray(huarteMovementsShared) && huarteMovementsShared.length > 0
@@ -1827,12 +1934,26 @@ function Dashboard() {
         [unreadPendingNotifications],
     );
     const inventoryBadgeCount = useMemo(() => {
+        if (
+            potentialControlCriticalRows.length > 0 ||
+            canetHuarteControlCriticalRows.length > 0 ||
+            canetControlCriticalRows.length > 0
+        ) {
+            return potentialControlCriticalRows.length + canetHuarteControlCriticalRows.length + canetControlCriticalRows.length;
+        }
         const set = new Set<string>();
         mountedCriticalFromInventory.forEach((r) => set.add(r.producto));
         potentialCriticalFromInventory.forEach((r) => set.add(r.producto));
         canetCriticalFromInventory.forEach((r) => set.add(r.producto));
         return set.size;
-    }, [mountedCriticalFromInventory, potentialCriticalFromInventory, canetCriticalFromInventory]);
+    }, [
+        potentialControlCriticalRows,
+        canetHuarteControlCriticalRows,
+        canetControlCriticalRows,
+        mountedCriticalFromInventory,
+        potentialCriticalFromInventory,
+        canetCriticalFromInventory,
+    ]);
     const chatBadgeCount = chatUnreadTotal;
     const absencesBadgeCount = isAdmin ? pendingManagedRows.length : weeklyTeamAbsences.length;
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
@@ -1927,38 +2048,114 @@ function Dashboard() {
                         {inventoryPanelMode === 'critical' && (
                             <div className="space-y-3">
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico · Cajas montadas (todas las bodegas)</p>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock potencial · Crítico / Atención</p>
                                     <div className="space-y-1.5">
-                                        {mountedCriticalFromInventory.map((item) => (
-                                            <div key={`rm-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50">
-                                                <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                            </div>
+                                        {potentialControlCriticalRows.slice(0, 6).map((item) => (
+                                            <button
+                                                key={`rpotential-${item.producto}`}
+                                                type="button"
+                                                onClick={() => {
+                                                    const byLote = potentialControlLotByProduct.get(productKey(item.producto)) || [];
+                                                    setSelectedInventoryDetail({
+                                                        tipo: 'potential',
+                                                        producto: item.producto,
+                                                        byLote,
+                                                    });
+                                                }}
+                                                className={`w-full text-left p-2 rounded-xl border ${item.estadoStock === 'CRITICO'
+                                                    ? 'border-rose-100 bg-rose-50 hover:bg-rose-100/70'
+                                                    : 'border-amber-100 bg-amber-50 hover:bg-amber-100/70'
+                                                    }`}
+                                            >
+                                                <p className={`text-sm font-bold ${item.estadoStock === 'CRITICO' ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                    {item.producto}
+                                                </p>
+                                                <p className={`text-xs ${item.estadoStock === 'CRITICO' ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                    Potencial: {item.potencialCajas.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.estadoStock}
+                                                </p>
+                                            </button>
                                         ))}
+                                        {potentialControlCriticalRows.length === 0 && (
+                                            <div className="app-empty-card">Sin filas críticas/atención en control potencial.</div>
+                                        )}
                                     </div>
                                 </div>
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-1.5">Stock crítico · Cajas potenciales</p>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock cajas Canet + Huarte · Crítico / Atención</p>
                                     <div className="space-y-1.5">
-                                        {potentialCriticalFromInventory.map((item) => (
-                                            <div key={`rp-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-amber-100 bg-amber-50">
-                                                <p className="text-sm font-bold text-amber-900">{item.producto}</p>
-                                                <p className="text-xs text-amber-700">Potencial: {item.cajasPotenciales.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                            </div>
-                                        ))}
+                                        {canetHuarteControlCriticalRows.slice(0, 6).map((item) => {
+                                            const isCritico = clean(item.semaforo).toUpperCase() === 'CRITICO';
+                                            return (
+                                                <button
+                                                    key={`rch-${item.producto}-${item.lote}`}
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setSelectedGeneralLotDetail({
+                                                            producto: item.producto,
+                                                            lote: item.lote,
+                                                            total: item.stockCanetHuarte,
+                                                            byBodega: [
+                                                                { bodega: 'CANET', cantidad: item.stockCanet },
+                                                                { bodega: 'HUARTE', cantidad: item.stockHuarte },
+                                                            ],
+                                                        })
+                                                    }
+                                                    className={`w-full text-left p-2 rounded-xl border ${isCritico
+                                                        ? 'border-rose-100 bg-rose-50 hover:bg-rose-100/70'
+                                                        : 'border-amber-100 bg-amber-50 hover:bg-amber-100/70'
+                                                        }`}
+                                                >
+                                                    <p className={`text-sm font-bold ${isCritico ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                        {item.producto} · {item.lote}
+                                                    </p>
+                                                    <p className={`text-xs ${isCritico ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                        Stock C+H: {item.stockCanetHuarte.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.semaforo}
+                                                    </p>
+                                                </button>
+                                            );
+                                        })}
+                                        {canetHuarteControlCriticalRows.length === 0 && (
+                                            <div className="app-empty-card">Sin filas críticas/atención en Canet + Huarte.</div>
+                                        )}
                                     </div>
                                 </div>
                                 <div>
-                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
+                                    <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock Canet · Crítico / Atención</p>
                                     <div className="space-y-1.5">
-                                        {canetCriticalFromInventory.map((item) => (
-                                            <div key={`rc-${item.producto}`} className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50">
-                                                <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                            </div>
-                                        ))}
+                                        {canetControlCriticalRows.slice(0, 6).map((item) => {
+                                            const isCritico = clean(item.semaforo).toUpperCase() === 'CRITICO';
+                                            return (
+                                                <div
+                                                    key={`rcanet-${item.producto}-${item.lote}`}
+                                                    className={`w-full text-left p-2 rounded-xl border ${isCritico ? 'border-rose-100 bg-rose-50' : 'border-amber-100 bg-amber-50'}`}
+                                                >
+                                                    <p className={`text-sm font-bold ${isCritico ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                        {item.producto} · {item.lote}
+                                                    </p>
+                                                    <p className={`text-xs ${isCritico ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                        Stock Canet: {item.stockCanet.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.semaforo}
+                                                    </p>
+                                                </div>
+                                            );
+                                        })}
+                                        {canetControlCriticalRows.length === 0 && (
+                                            <div className="app-empty-card">Sin filas críticas/atención en Canet.</div>
+                                        )}
                                     </div>
                                 </div>
+                                {caducityAlertsFromInventory.length > 0 && (
+                                    <div>
+                                        <p className="text-xs font-bold uppercase tracking-widest text-amber-600 mb-1.5">Caducidad próxima</p>
+                                        <div className="space-y-1.5">
+                                            {caducityAlertsFromInventory.slice(0, 4).map((item) => (
+                                                <div key={`cad-restricted-${item.producto}-${item.lote}`} className="p-2 rounded-xl border border-amber-100 bg-amber-50">
+                                                    <p className="text-sm font-bold text-amber-900">{item.producto} · {item.lote}</p>
+                                                    <p className="text-xs text-amber-700">{item.days <= 0 ? 'Caducado' : `${item.days} días para caducar`} · {item.fecha}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -2482,87 +2679,117 @@ function Dashboard() {
                                 canetCriticalFromInventory.length === 0 &&
                                 mountedCriticalFromInventory.length === 0 &&
                                 potentialCriticalFromInventory.length === 0 &&
-                                caducityAlertsFromInventory.length === 0 ? (
+                                caducityAlertsFromInventory.length === 0 &&
+                                potentialControlCriticalRows.length === 0 &&
+                                canetHuarteControlCriticalRows.length === 0 &&
+                                canetControlCriticalRows.length === 0 ? (
                                 <div className="app-empty-card">Sin alertas críticas de stock o caducidad por ahora.</div>
                             ) : (
                                 <div className="space-y-3">
-                                    {inventoryPanelMode === 'critical' && mountedCriticalFromInventory.length > 0 && (
+                                    {inventoryPanelMode === 'critical' && (
                                         <div>
-                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico · Cajas montadas (todas las bodegas)</p>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock potencial · Crítico / Atención</p>
                                             <div className="space-y-1.5">
-                                                {mountedCriticalFromInventory.slice(0, 6).map((item) => (
+                                                {potentialControlCriticalRows.slice(0, 6).map((item) => (
                                                     <button
-                                                        key={`mounted-${item.producto}`}
+                                                        key={`potential-control-${item.producto}`}
                                                         type="button"
                                                         onClick={() => {
-                                                            const detail =
-                                                                mountedCriticalDetailsFallback.find((d) => productKey(d.producto) === productKey(item.producto)) ||
-                                                                mountedCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
-                                                            setSelectedInventoryDetail({
-                                                                tipo: 'mounted',
-                                                                producto: item.producto,
-                                                                byBodega: detail?.byBodega || [],
-                                                                byLote: detail?.byLote || [],
-                                                            });
-                                                        }}
-                                                        className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
-                                                    >
-                                                        <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                        <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {inventoryPanelMode === 'critical' && potentialCriticalFromInventory.length > 0 && (
-                                        <div>
-                                            <p className="text-xs font-bold uppercase tracking-widest text-amber-700 mb-1.5">Stock crítico · Cajas potenciales</p>
-                                            <div className="space-y-1.5">
-                                                {potentialCriticalFromInventory.slice(0, 6).map((item) => (
-                                                    <button
-                                                        key={`potential-${item.producto}`}
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const detail = potentialCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
+                                                            const byLote = potentialControlLotByProduct.get(productKey(item.producto)) || [];
                                                             setSelectedInventoryDetail({
                                                                 tipo: 'potential',
                                                                 producto: item.producto,
-                                                                byLote: detail?.byLote || [],
+                                                                byLote,
                                                             });
                                                         }}
-                                                        className="w-full text-left p-2 rounded-xl border border-amber-100 bg-amber-50 hover:bg-amber-100/70"
+                                                        className={`w-full text-left p-2 rounded-xl border ${item.estadoStock === 'CRITICO'
+                                                            ? 'border-rose-100 bg-rose-50 hover:bg-rose-100/70'
+                                                            : 'border-amber-100 bg-amber-50 hover:bg-amber-100/70'
+                                                            }`}
                                                     >
-                                                        <p className="text-sm font-bold text-amber-900">{item.producto}</p>
-                                                        <p className="text-xs text-amber-700">Potencial: {item.cajasPotenciales.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
+                                                        <p className={`text-sm font-bold ${item.estadoStock === 'CRITICO' ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                            {item.producto}
+                                                        </p>
+                                                        <p className={`text-xs ${item.estadoStock === 'CRITICO' ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                            Potencial: {item.potencialCajas.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.estadoStock}
+                                                        </p>
                                                     </button>
                                                 ))}
+                                                {potentialControlCriticalRows.length === 0 && (
+                                                    <div className="app-empty-card">Sin filas críticas/atención en control potencial.</div>
+                                                )}
                                             </div>
                                         </div>
                                     )}
 
-                                    {inventoryPanelMode === 'critical' && canetCriticalFromInventory.length > 0 && (
+                                    {inventoryPanelMode === 'critical' && (
                                         <div>
-                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Stock crítico Canet</p>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock cajas Canet + Huarte · Crítico / Atención</p>
                                             <div className="space-y-1.5">
-                                                {canetCriticalFromInventory.slice(0, 6).map((item) => (
-                                                    <button
-                                                        key={`canet-${item.producto}`}
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const detail = canetCriticalDetailsFromInventory.find((d) => productKey(d.producto) === productKey(item.producto));
-                                                            setSelectedInventoryDetail({
-                                                                tipo: 'canet',
-                                                                producto: item.producto,
-                                                                byLote: detail?.byLote || [],
-                                                            });
-                                                        }}
-                                                        className="w-full text-left p-2 rounded-xl border border-rose-100 bg-rose-50 hover:bg-rose-100/70"
-                                                    >
-                                                        <p className="text-sm font-bold text-rose-900">{item.producto}</p>
-                                                        <p className="text-xs text-rose-700">Stock: {item.stockTotal.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)}</p>
-                                                    </button>
-                                                ))}
+                                                {canetHuarteControlCriticalRows.slice(0, 6).map((item) => {
+                                                    const isCritico = clean(item.semaforo).toUpperCase() === 'CRITICO';
+                                                    return (
+                                                        <button
+                                                            key={`canet-huarte-control-${item.producto}-${item.lote}`}
+                                                            type="button"
+                                                            onClick={() =>
+                                                                setSelectedGeneralLotDetail({
+                                                                    producto: item.producto,
+                                                                    lote: item.lote,
+                                                                    total: item.stockCanetHuarte,
+                                                                    byBodega: [
+                                                                        { bodega: 'CANET', cantidad: item.stockCanet },
+                                                                        { bodega: 'HUARTE', cantidad: item.stockHuarte },
+                                                                    ],
+                                                                })
+                                                            }
+                                                            className={`w-full text-left p-2 rounded-xl border ${isCritico
+                                                                ? 'border-rose-100 bg-rose-50 hover:bg-rose-100/70'
+                                                                : 'border-amber-100 bg-amber-50 hover:bg-amber-100/70'
+                                                                }`}
+                                                        >
+                                                            <p className={`text-sm font-bold ${isCritico ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                                {item.producto} · {item.lote}
+                                                            </p>
+                                                            <p className={`text-xs ${isCritico ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                                Stock C+H: {item.stockCanetHuarte.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.semaforo}
+                                                            </p>
+                                                        </button>
+                                                    );
+                                                })}
+                                                {canetHuarteControlCriticalRows.length === 0 && (
+                                                    <div className="app-empty-card">Sin filas críticas/atención en Canet + Huarte.</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {inventoryPanelMode === 'critical' && (
+                                        <div>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-rose-600 mb-1.5">Control stock Canet · Crítico / Atención</p>
+                                            <div className="space-y-1.5">
+                                                {canetControlCriticalRows.slice(0, 6).map((item) => {
+                                                    const isCritico = clean(item.semaforo).toUpperCase() === 'CRITICO';
+                                                    return (
+                                                        <div
+                                                            key={`canet-control-${item.producto}-${item.lote}`}
+                                                            className={`w-full text-left p-2 rounded-xl border ${isCritico
+                                                                ? 'border-rose-100 bg-rose-50'
+                                                                : 'border-amber-100 bg-amber-50'
+                                                                }`}
+                                                        >
+                                                            <p className={`text-sm font-bold ${isCritico ? 'text-rose-900' : 'text-amber-900'}`}>
+                                                                {item.producto} · {item.lote}
+                                                            </p>
+                                                            <p className={`text-xs ${isCritico ? 'text-rose-700' : 'text-amber-700'}`}>
+                                                                Stock Canet: {item.stockCanet.toLocaleString('es-ES')} · Cobertura: {formatCoverageText(item.coberturaMeses)} · {item.semaforo}
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {canetControlCriticalRows.length === 0 && (
+                                                    <div className="app-empty-card">Sin filas críticas/atención en Canet.</div>
+                                                )}
                                             </div>
                                         </div>
                                     )}
