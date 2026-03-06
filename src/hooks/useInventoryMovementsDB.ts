@@ -76,6 +76,29 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
     };
 
+    const ensureWriteSession = async () => {
+        const sessionResult = await withTimeout(supabase.auth.getSession(), 6000);
+        const sessionError = (sessionResult as any)?.error;
+        if (sessionError) throw sessionError;
+
+        const session = (sessionResult as any)?.data?.session;
+        if (!session) {
+            throw new Error('Sesión caducada. Cierra sesión y vuelve a entrar.');
+        }
+
+        const nowSec = Math.floor(Date.now() / 1000);
+        const expSec = Number(session.expires_at || 0);
+        const shouldRefresh = Number.isFinite(expSec) && expSec > 0 && expSec <= nowSec + 120;
+        if (!shouldRefresh) return;
+
+        const refreshResult = await withTimeout(supabase.auth.refreshSession(), 8000);
+        const refreshError = (refreshResult as any)?.error;
+        const refreshedSession = (refreshResult as any)?.data?.session;
+        if (refreshError || !refreshedSession) {
+            throw new Error('Sesión caducada. Cierra sesión y vuelve a entrar.');
+        }
+    };
+
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
@@ -170,6 +193,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId, loadMovements]);
 
     const addMovement = useCallback(async (movement: Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>) => {
+        await ensureWriteSession();
         const payload: Record<string, unknown> = { ...(movement as any), inventory_id: inventoryId };
         let lastError: unknown = null;
 
@@ -201,6 +225,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
+        await ensureWriteSession();
         const payload: Record<string, unknown> = { ...(updates as any) };
         let lastError: unknown = null;
 
@@ -240,6 +265,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [inventoryId]);
 
     const deleteMovement = useCallback(async (id: number) => {
+        await ensureWriteSession();
         const { error } = await withTimeout(
             supabase
                 .from('inventory_movements')
