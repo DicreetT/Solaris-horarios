@@ -12,15 +12,20 @@ export function useSharedJsonState<T>(
   fallbackValue: T,
   options: Options = {},
 ): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
-  const { userId, initializeIfMissing = true, pollIntervalMs = 2000 } = options;
+  const { userId, initializeIfMissing = true, pollIntervalMs = 30000 } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
   const valueRef = useRef<T>(fallbackValue);
+  const fallbackRef = useRef<T>(fallbackValue);
   const keyRef = useRef(key);
 
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  useEffect(() => {
+    fallbackRef.current = fallbackValue;
+  }, [fallbackValue]);
 
   const persist = useCallback(
     async (next: T) => {
@@ -57,21 +62,21 @@ export function useSharedJsonState<T>(
 
       if (error) {
         console.error(`[shared_json_state] load failed for key ${key}:`, error);
-        setValue(fallbackValue);
-        valueRef.current = fallbackValue;
+        setValue(fallbackRef.current);
+        valueRef.current = fallbackRef.current;
         setLoading(false);
         return;
       }
 
       const hasPayload = data && Object.prototype.hasOwnProperty.call(data, 'payload');
       if (hasPayload && data?.payload !== undefined) {
-        setValue((data.payload as T) ?? fallbackValue);
-        valueRef.current = ((data.payload as T) ?? fallbackValue);
+        setValue((data.payload as T) ?? fallbackRef.current);
+        valueRef.current = ((data.payload as T) ?? fallbackRef.current);
       } else {
-        setValue(fallbackValue);
-        valueRef.current = fallbackValue;
+        setValue(fallbackRef.current);
+        valueRef.current = fallbackRef.current;
         if (initializeIfMissing) {
-          await persist(fallbackValue);
+          await persist(fallbackRef.current);
         }
       }
 
@@ -110,7 +115,7 @@ export function useSharedJsonState<T>(
         },
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        if (status === 'SUBSCRIBED') {
           refresh();
         }
       });
@@ -122,7 +127,7 @@ export function useSharedJsonState<T>(
       window.removeEventListener('focus', onFocus);
       void supabase.removeChannel(channel);
     };
-  }, [key, fallbackValue, initializeIfMissing, persist, pollIntervalMs]);
+  }, [key, initializeIfMissing, persist, pollIntervalMs]);
 
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {
