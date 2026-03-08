@@ -178,7 +178,14 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                             .throwOnError(),
                     WRITE_TIMEOUT_MS,
                     `addMovement(${inventoryId})`,
-                ) as InventoryMovementRow;
+                ).then((row) => {
+                    const created = row as InventoryMovementRow;
+                    setMovements((prev) => {
+                        const next = prev.filter((m) => Number(m.id) !== Number(created.id));
+                        return [created, ...next];
+                    });
+                    return created;
+                });
             } catch (error) {
                 lastError = error;
                 const missingColumn = getMissingColumn(error);
@@ -219,7 +226,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                             .throwOnError(),
                     WRITE_TIMEOUT_MS,
                     `updateMovement(${inventoryId})`,
-                ) as InventoryMovementRow;
+                ).then((row) => {
+                    const updated = row as InventoryMovementRow;
+                    setMovements((prev) =>
+                        prev.map((m) => (Number(m.id) === Number(updated.id) ? updated : m)),
+                    );
+                    return updated;
+                });
             } catch (error) {
                 lastError = error;
                 const missingColumn = getMissingColumn(error);
@@ -238,17 +251,21 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
     const deleteMovement = useCallback(async (id: number) => {
         try {
-            await withTimeout(
+            const deleted = await withTimeout<{ id: number; inventory_id: 'canet' | 'huarte' } | null>(
                 () =>
                     supabase
                         .from('inventory_movements')
                         .delete()
                         .eq('id', id)
-                        .eq('inventory_id', inventoryId)
-                        .throwOnError(),
+                        .select('id, inventory_id')
+                        .maybeSingle(),
                 WRITE_TIMEOUT_MS,
                 `deleteMovement(${inventoryId})`,
             );
+            if (!deleted) {
+                throw new Error(`No se encontró el movimiento ${id} para eliminar.`);
+            }
+            setMovements((prev) => prev.filter((m) => Number(m.id) !== Number(id)));
         } catch (error) {
             console.error('Error deleting movement:', error);
             throw error;
