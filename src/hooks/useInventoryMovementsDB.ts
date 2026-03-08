@@ -33,7 +33,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
     const READ_TIMEOUT_MS = 12000;
-    const WRITE_TIMEOUT_MS = 15000;
+    const WRITE_TIMEOUT_MS = 45000;
 
     useEffect(() => {
         movementsRef.current = movements;
