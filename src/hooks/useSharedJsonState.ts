@@ -12,7 +12,7 @@ export function useSharedJsonState<T>(
   fallbackValue: T,
   options: Options = {},
 ): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
-  const { userId, initializeIfMissing = true, pollIntervalMs = 30000 } = options;
+  const { userId, initializeIfMissing = true, pollIntervalMs = 120000 } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
   const valueRef = useRef<T>(fallbackValue);
@@ -90,13 +90,6 @@ export function useSharedJsonState<T>(
     };
 
     const intervalId = window.setInterval(refresh, pollIntervalMs);
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') refresh();
-    };
-    const onFocus = () => refresh();
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onFocus);
-
     const channel = supabase
       .channel(`shared-json:${key}`)
       .on(
@@ -123,8 +116,6 @@ export function useSharedJsonState<T>(
     return () => {
       active = false;
       window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', onFocus);
       void supabase.removeChannel(channel);
     };
   }, [key, initializeIfMissing, persist, pollIntervalMs]);

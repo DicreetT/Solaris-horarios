@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import seed from '../data/inventory_seed.json';
 import { AlertTriangle, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -374,6 +374,7 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
+  const inventoryAlertsFingerprintRef = useRef<string>('');
   const [
     huarteMovimientosShared,
     ,
@@ -1780,8 +1781,9 @@ function InventoryPage() {
   }, [productos, lotes]);
 
   useEffect(() => {
+    // Prevent write saturation: only admins publish shared dashboard snapshots.
+    if (!actorIsAdmin) return;
     const payload = {
-      updatedAt: new Date().toISOString(),
       criticalProducts: riskyProductsSummary.slice(0, 12).map((r) => ({
         producto: r.producto,
         stockTotal: Number(r.stockTotal.toFixed(2)),
@@ -1874,9 +1876,13 @@ function InventoryPage() {
         semaforo: r.semaforo,
       })),
     };
-    setInventoryAlertsShared(payload);
+    const fingerprint = JSON.stringify(payload);
+    if (fingerprint === inventoryAlertsFingerprintRef.current) return;
+    inventoryAlertsFingerprintRef.current = fingerprint;
+    const payloadWithTimestamp = { ...payload, updatedAt: new Date().toISOString() };
+    setInventoryAlertsShared(payloadWithTimestamp);
     setInventoryStockControlSnapshotShared({
-      updatedAt: payload.updatedAt,
+      updatedAt: payloadWithTimestamp.updatedAt,
       potentialRows: payload.potentialControlRows || [],
       potentialLotRows: payload.potentialControlLotRows || [],
       canetHuarteRows: payload.canetHuarteControlRows || [],
@@ -1889,6 +1895,7 @@ function InventoryPage() {
     setInventoryAlertsShared,
     setInventoryStockControlSnapshotShared,
     stockControlTables,
+    actorIsAdmin,
   ]);
 
   const stockByProductLot = useMemo(() => {

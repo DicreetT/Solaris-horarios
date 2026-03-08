@@ -155,17 +155,9 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
         const intervalId = window.setInterval(refresh, 120000);
-        const onVisibility = () => {
-            if (document.visibilityState === 'visible') refresh();
-        };
-        const onFocus = () => refresh();
-        document.addEventListener('visibilitychange', onVisibility);
-        window.addEventListener('focus', onFocus);
 
         return () => {
             window.clearInterval(intervalId);
-            document.removeEventListener('visibilitychange', onVisibility);
-            window.removeEventListener('focus', onFocus);
             void supabase.removeChannel(channel);
         };
     }, [inventoryId, loadMovements]);
