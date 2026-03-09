@@ -1922,9 +1922,6 @@ function InventoryPage() {
   const lotOptionsForForm = useMemo(() => {
     const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
     const keepKey = editingMovement ? `${clean(editingMovement.producto)}|${clean(editingMovement.lote)}` : '';
-    const selectedType = clean(movementForm.tipo_movimiento);
-    const selectedSign = selectedType ? (signByType.get(selectedType) ?? 1) : 0;
-    const isStockOutputType = selectedSign < 0;
     const rows = lotes
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote) }))
       .filter((l) => !!l.producto && !!l.lote)
@@ -1933,23 +1930,14 @@ function InventoryPage() {
         const key = `${l.producto}|${l.lote}`;
         if (keepKey && key === keepKey) return true;
         return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
-      })
-      .filter((l) => {
-        if (!isStockOutputType) return true;
-        const key = `${l.producto}|${l.lote}`;
-        if (keepKey && key === keepKey) return true;
-        return (stockByProductLot.get(key) || 0) > 0;
       });
     return Array.from(new Set(rows.map((r) => r.lote))).sort();
   }, [
     lotes,
     movementForm.producto,
-    movementForm.tipo_movimiento,
-    stockByProductLot,
     lotStateByProductLot,
     editingId,
     normalizedMovements,
-    signByType,
   ]);
 
   const visibleMovements = useMemo(() => {
