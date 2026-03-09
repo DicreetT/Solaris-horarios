@@ -33,8 +33,11 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
     const lastMutationAtRef = useRef<number>(0);
+    const pendingUpsertsRef = useRef<Map<number, { row: InventoryMovementRow; at: number }>>(new Map());
+    const pendingDeletesRef = useRef<Map<number, number>>(new Map());
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
+    const PENDING_GUARD_WINDOW_MS = 120000;
 
     useEffect(() => {
         movementsRef.current = movements;
@@ -62,6 +65,68 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
         return null;
     };
+
+    const sweepPendingGuards = useCallback(() => {
+        const now = Date.now();
+        for (const [id, meta] of pendingUpsertsRef.current.entries()) {
+            if (now - meta.at > PENDING_GUARD_WINDOW_MS) {
+                pendingUpsertsRef.current.delete(id);
+            }
+        }
+        for (const [id, at] of pendingDeletesRef.current.entries()) {
+            if (now - at > PENDING_GUARD_WINDOW_MS) {
+                pendingDeletesRef.current.delete(id);
+            }
+        }
+    }, []);
+
+    const mergeServerRowsWithPending = useCallback((rows: InventoryMovementRow[]) => {
+        sweepPendingGuards();
+        const serverRows = Array.isArray(rows) ? rows : [];
+        const serverIdSet = new Set<number>();
+        const mergedById = new Map<number, InventoryMovementRow>();
+
+        for (const row of serverRows) {
+            const id = Number((row as any)?.id);
+            if (!Number.isFinite(id)) continue;
+            serverIdSet.add(id);
+            if (pendingDeletesRef.current.has(id)) continue;
+            mergedById.set(id, row);
+        }
+
+        for (const [id, meta] of pendingUpsertsRef.current.entries()) {
+            if (!mergedById.has(id)) {
+                mergedById.set(id, meta.row);
+            }
+        }
+
+        for (const id of Array.from(pendingUpsertsRef.current.keys())) {
+            if (serverIdSet.has(id)) {
+                pendingUpsertsRef.current.delete(id);
+            }
+        }
+        for (const id of Array.from(pendingDeletesRef.current.keys())) {
+            if (!serverIdSet.has(id)) {
+                pendingDeletesRef.current.delete(id);
+            }
+        }
+
+        return Array.from(mergedById.values()).sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+    }, [sweepPendingGuards]);
+
+    const markPendingUpsert = useCallback((row: InventoryMovementRow) => {
+        const id = Number((row as any)?.id);
+        if (!Number.isFinite(id)) return;
+        pendingUpsertsRef.current.set(id, { row, at: Date.now() });
+        pendingDeletesRef.current.delete(id);
+    }, []);
+
+    const markPendingDelete = useCallback((idRaw: number) => {
+        const id = Number(idRaw);
+        if (!Number.isFinite(id)) return;
+        pendingDeletesRef.current.set(id, Date.now());
+        pendingUpsertsRef.current.delete(id);
+    }, []);
 
     const withTimeout = useCallback(async <T,>(operation: () => unknown, timeoutMs: number, opLabel: string) => {
         let settled = false;
@@ -113,7 +178,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 } else {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
-                    setMovements(((data || []) as InventoryMovementRow[]));
+                    setMovements(mergeServerRowsWithPending(((data || []) as InventoryMovementRow[])));
                 }
             } catch (error) {
                 // Never crash UI on background sync read failures.
@@ -128,7 +193,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         } finally {
             loadInFlightRef.current = null;
         }
-    }, [inventoryId, withTimeout]);
+    }, [inventoryId, mergeServerRowsWithPending, withTimeout]);
 
     useEffect(() => {
         void loadMovements();
@@ -185,9 +250,10 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 ).then((row) => {
                     const created = row as InventoryMovementRow;
                     lastMutationAtRef.current = Date.now();
+                    markPendingUpsert(created);
                     setMovements((prev) => {
                         const next = prev.filter((m) => Number(m.id) !== Number(created.id));
-                        return [created, ...next];
+                        return [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
                     });
                     return created;
                 });
@@ -205,7 +271,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error adding movement:', lastError);
         throw lastError;
-    }, [inventoryId, withTimeout]);
+    }, [inventoryId, markPendingUpsert, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
         const payload: Record<string, unknown> = { ...(updates as any) };
@@ -234,6 +300,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 ).then((row) => {
                     const updated = row as InventoryMovementRow;
                     lastMutationAtRef.current = Date.now();
+                    markPendingUpsert(updated);
                     setMovements((prev) =>
                         prev.map((m) => (Number(m.id) === Number(updated.id) ? updated : m)),
                     );
@@ -253,7 +320,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error updating movement:', lastError);
         throw lastError;
-    }, [inventoryId, withTimeout]);
+    }, [inventoryId, markPendingUpsert, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
         try {
@@ -272,12 +339,13 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 throw new Error(`No se encontró el movimiento ${id} para eliminar.`);
             }
             lastMutationAtRef.current = Date.now();
+            markPendingDelete(id);
             setMovements((prev) => prev.filter((m) => Number(m.id) !== Number(id)));
         } catch (error) {
             console.error('Error deleting movement:', error);
             throw error;
         }
-    }, [inventoryId, withTimeout]);
+    }, [inventoryId, markPendingDelete, withTimeout]);
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;
