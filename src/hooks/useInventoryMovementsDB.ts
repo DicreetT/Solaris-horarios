@@ -32,6 +32,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
+    const lastMutationAtRef = useRef<number>(0);
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
 
@@ -92,6 +93,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             return loadInFlightRef.current;
         }
         const run = (async () => {
+            const startedAt = Date.now();
             if (!silent) setIsLoading(true);
             const maxRows = 5000;
             try {
@@ -109,6 +111,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 if (error) {
                     console.error(`Error loading inventory movements for ${inventoryId}:`, error);
                 } else {
+                    // Ignore stale reads that started before a successful local mutation.
+                    if (startedAt < lastMutationAtRef.current) return;
                     setMovements(((data || []) as InventoryMovementRow[]));
                 }
             } catch (error) {
@@ -180,6 +184,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     `addMovement(${inventoryId})`,
                 ).then((row) => {
                     const created = row as InventoryMovementRow;
+                    lastMutationAtRef.current = Date.now();
                     setMovements((prev) => {
                         const next = prev.filter((m) => Number(m.id) !== Number(created.id));
                         return [created, ...next];
@@ -228,6 +233,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     `updateMovement(${inventoryId})`,
                 ).then((row) => {
                     const updated = row as InventoryMovementRow;
+                    lastMutationAtRef.current = Date.now();
                     setMovements((prev) =>
                         prev.map((m) => (Number(m.id) === Number(updated.id) ? updated : m)),
                     );
@@ -265,6 +271,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             if (!deleted) {
                 throw new Error(`No se encontró el movimiento ${id} para eliminar.`);
             }
+            lastMutationAtRef.current = Date.now();
             setMovements((prev) => prev.filter((m) => Number(m.id) !== Number(id)));
         } catch (error) {
             console.error('Error deleting movement:', error);
