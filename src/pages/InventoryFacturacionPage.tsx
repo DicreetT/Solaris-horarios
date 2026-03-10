@@ -206,6 +206,8 @@ const normalizeSearch = (v: unknown) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+// Compatibilidad histórica: algunos registros viejos llegaron con "O" en vez de "0" (ej: O30).
+const normalizeLotCompareToken = (v: unknown) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: unknown, lote: unknown) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
 const normalizeWarehouseAlias = (v: unknown) => {
@@ -655,14 +657,14 @@ export default function InventoryFacturacionPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
-      const token = normalizeLotToken(lote);
+      const token = normalizeLotCompareToken(lote);
       const productLots = canetLotsByProduct.get(producto) || [];
-      const productMatches = productLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      const productMatches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
       if (productMatches.length > 0) {
         const preferred = [...productMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
-      const globalMatches = allCanetLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      const globalMatches = allCanetLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
       if (globalMatches.length === 1) return globalMatches[0];
       return lote;
     };

@@ -75,6 +75,8 @@ const normalizeSearch = (v: any) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+// Compatibilidad histórica: algunos registros viejos llegaron con "O" en vez de "0" (ej: O30).
+const normalizeLotCompareToken = (v: any) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: any, lote: any) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
 const toNum = (v: any) => {
@@ -622,13 +624,13 @@ function InventoryPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
-      const lotToken = normalizeLotToken(lote);
+      const lotToken = normalizeLotCompareToken(lote);
       const allLots = lotes
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
       const suffixMatches = allLots.filter((candidate) => {
-        const cand = normalizeLotToken(candidate);
+        const cand = normalizeLotCompareToken(candidate);
         return cand.endsWith(lotToken);
       });
       if (suffixMatches.length > 0) {
@@ -636,7 +638,7 @@ function InventoryPage() {
         if (preferred) return preferred;
       }
       const globalLots = lotes.map((l) => clean(l.lote)).filter(Boolean);
-      const globalSuffix = globalLots.filter((candidate) => normalizeLotToken(candidate).endsWith(lotToken));
+      const globalSuffix = globalLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(lotToken));
       if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
     };
@@ -1050,14 +1052,14 @@ function InventoryPage() {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
-      const token = normalizeLotToken(lote);
+      const token = normalizeLotCompareToken(lote);
       const productLots = canetLotsByProduct.get(producto) || [];
-      const productMatches = productLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      const productMatches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
       if (productMatches.length > 0) {
         const preferred = [...productMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
-      const globalMatches = allCanetLots.filter((candidate) => normalizeLotToken(candidate).endsWith(token));
+      const globalMatches = allCanetLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
       if (globalMatches.length === 1) return globalMatches[0];
       return lote;
     };
@@ -2328,12 +2330,12 @@ function InventoryPage() {
             : l,
         ),
       );
-      const oldLotToken = normalizeLotToken(oldLote);
+      const oldLotToken = normalizeLotCompareToken(oldLote);
       const changedMovements = movimientos
         .filter((m) => {
           const mvLot = clean(m.lote);
           if (!mvLot) return false;
-          const mvToken = normalizeLotToken(mvLot);
+          const mvToken = normalizeLotCompareToken(mvLot);
           return mvLot === oldLote || mvToken === oldLotToken || mvToken.endsWith(oldLotToken) || oldLotToken.endsWith(mvToken);
         })
         .map((m) => ({
