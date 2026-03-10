@@ -237,12 +237,34 @@ const isHuarteAlias = (v: unknown) => {
   return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
 };
 const inferMovementSign = (typeRaw: string, qtyRaw: number) => {
-  const t = normalizeSearch(typeRaw);
+  const t = normalizeSearch(typeRaw).replace(/[−–—]/g, '-');
   if (t.includes('nota credito') || t.includes('nota_credito')) return 1;
   if (t.includes('venta') || t.includes('envio') || t.includes('traspaso')) return -1;
-  if (/ajuste[\s_-]*negativ/.test(t) || /ajuste\s*-/.test(t) || t.includes('ajuste-')) return -1;
-  if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
+  if (t.includes('ajuste')) {
+    if (/ajuste[\s_-]*negativ/.test(t) || /ajuste\s*-/.test(t) || t.includes('ajuste-')) return -1;
+    if (/ajuste[\s_-]*positiv/.test(t) || /ajuste\s*\+/.test(t) || t.includes('ajuste+')) return 1;
+    if (qtyRaw < 0) return -1;
+  }
   return qtyRaw < 0 ? -1 : 1;
+};
+const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
+  const producto = clean(productoRaw);
+  const lote = clean(loteRaw);
+  if (!producto || !lote || isInvalidLegacyLot(producto, lote)) return lote;
+  const token = normalizeLotCompareToken(lote);
+  const productLots = Array.from(
+    new Set(
+      loteRows
+        .filter((l) => clean(l.producto) === producto)
+        .map((l) => clean(l.lote))
+        .filter(Boolean),
+    ),
+  );
+  const exact = productLots.find((candidate) => normalizeLotCompareToken(candidate) === token);
+  if (exact) return exact;
+  const matches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
+  if (matches.length === 1) return matches[0];
+  return lote;
 };
 const inferSignedQuantity = (movement: Pick<Movement, 'cantidad' | 'cantidad_signed' | 'signo' | 'tipo_movimiento'>) => {
   const hasSigned =
@@ -713,8 +735,12 @@ export default function InventoryFacturacionPage() {
         const rawQty = toNum(m.cantidad);
         const sign = toNum(m.signo) || inferMovementSign(clean(m.tipo_movimiento), rawQty);
         const signed = inferSignedQuantity(m);
+        const producto = clean(m.producto);
+        const lote = canonicalLotForProduct(lotes, producto, clean(m.lote));
         return {
           ...m,
+          producto,
+          lote,
           cantidad: Math.abs(rawQty),
           signo: sign,
           cantidad_signed: signed,
@@ -818,7 +844,7 @@ export default function InventoryFacturacionPage() {
       (m) => clean(m.bodega).toUpperCase() !== 'CANET',
     );
     return [...withoutCanetWarehouse, ...canonicalCanetMirror];
-  }, [movimientos, canetMovimientos, canetLotes, canetTipos]);
+  }, [movimientos, canetMovimientos, canetLotes, canetTipos, lotes]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -1379,7 +1405,7 @@ export default function InventoryFacturacionPage() {
     const qty = Math.abs(rawQty);
     if (!form.tipo_movimiento || !form.producto || !form.lote || !form.bodega || !qty) return;
     const producto = clean(form.producto);
-    const lote = clean(form.lote);
+    const lote = canonicalLotForProduct(lotes, producto, clean(form.lote));
     const bodega = clean(form.bodega);
     const lotRow =
       lotes.find(
