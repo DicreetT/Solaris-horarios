@@ -79,6 +79,25 @@ const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/
 const normalizeLotCompareToken = (v: any) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: any, lote: any) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
+const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
+  const producto = clean(productoRaw);
+  const lote = clean(loteRaw);
+  if (!producto || !lote || isInvalidLegacyLot(producto, lote)) return lote;
+  const token = normalizeLotCompareToken(lote);
+  const productLots = Array.from(
+    new Set(
+      loteRows
+        .filter((l) => clean(l.producto) === producto)
+        .map((l) => clean(l.lote))
+        .filter(Boolean),
+    ),
+  );
+  const exact = productLots.find((candidate) => normalizeLotCompareToken(candidate) === token);
+  if (exact) return exact;
+  const matches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
+  if (matches.length === 1) return matches[0];
+  return lote;
+};
 const toNum = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -2133,9 +2152,12 @@ function InventoryPage() {
       return;
     }
     const producto = clean(movementForm.producto);
-    const lote = clean(movementForm.lote);
-    const bodega = clean(movementForm.bodega);
-    const loteValido = lotes.some((l) => clean(l.producto) === producto && clean(l.lote) === lote);
+    const lote = canonicalLotForProduct(lotes, producto, clean(movementForm.lote));
+    const bodega = normalizeWarehouseAlias(clean(movementForm.bodega));
+    const loteValido = lotes.some((l) => {
+      if (clean(l.producto) !== producto) return false;
+      return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(lote);
+    });
     if (!loteValido) {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
       return;
@@ -2153,13 +2175,15 @@ function InventoryPage() {
         return;
       }
     }
-    const sign = signByType.get(movementForm.tipo_movimiento) ?? 1;
+    const rawQty = toNum(movementForm.cantidad);
+    const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
+    const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
     const signedQty = qty * sign;
     const key = `${producto}|${lote}|${bodega}`;
     const baseStock = normalizedMovements
       .filter((m) => (editingId ? m.id !== editingId : true))
       .reduce((acc, m) => {
-        const mk = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
+        const mk = `${clean(m.producto)}|${canonicalLotForProduct(lotes, clean(m.producto), clean(m.lote))}|${normalizeWarehouseAlias(clean(m.bodega))}`;
         if (mk !== key) return acc;
         return acc + toNum(m.cantidad_signed);
       }, 0);
@@ -2174,10 +2198,10 @@ function InventoryPage() {
         const edited = {
           fecha: movementForm.fecha,
           tipo_movimiento: movementForm.tipo_movimiento,
-          producto: movementForm.producto,
-          lote: movementForm.lote,
+          producto,
+          lote,
           cantidad: qty,
-          bodega: movementForm.bodega,
+          bodega,
           cliente: movementForm.cliente,
           destino: movementForm.destino,
           notas: movementForm.notas,
@@ -2209,10 +2233,10 @@ function InventoryPage() {
         const nextPayload = {
           fecha: movementForm.fecha,
           tipo_movimiento: movementForm.tipo_movimiento,
-          producto: movementForm.producto,
-          lote: movementForm.lote,
+          producto,
+          lote,
           cantidad: qty,
-          bodega: movementForm.bodega,
+          bodega,
           cliente: movementForm.cliente,
           destino: movementForm.destino,
           notas: movementForm.notas,
