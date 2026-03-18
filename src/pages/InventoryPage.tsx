@@ -675,6 +675,7 @@ function InventoryPage() {
           ...m,
           producto,
           lote,
+          bodega: normalizeWarehouseAlias(m.bodega),
           cantidad: qty,
           signo: sign,
           cantidad_signed: hasSigned ? signedFromRow : qty * sign,
@@ -758,8 +759,9 @@ function InventoryPage() {
   const stockByPLB = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
     for (const m of stockBase) {
-      const key = `${clean(m.producto)}|${clean(m.lote)}|${clean(m.bodega)}`;
-      if (!map.has(key)) map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), stock: 0 });
+      const bodega = normalizeWarehouseAlias(clean(m.bodega));
+      const key = `${clean(m.producto)}|${clean(m.lote)}|${bodega}`;
+      if (!map.has(key)) map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega, stock: 0 });
       map.get(key)!.stock += toNum(m.cantidad_signed);
     }
     return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
@@ -1636,7 +1638,7 @@ function InventoryPage() {
     for (const m of allMovs) {
       const producto = clean(m?.producto);
       const lote = clean(m?.lote);
-      const bodega = clean(m?.bodega);
+      const bodega = normalizeWarehouseAlias(clean(m?.bodega));
       if (!producto || !lote || !bodega) continue;
       const key = `${producto}|${lote}|${bodega}`;
       stockByPLB.set(key, (stockByPLB.get(key) || 0) + signedFromMovement(m));
