@@ -79,6 +79,12 @@ const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/
 const normalizeLotCompareToken = (v: any) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: any, lote: any) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
+const FORCED_AGOTADO_LOTS = new Set<string>(['KL|241030']);
+const lotKeyOf = (producto: any, lote: any) =>
+  `${clean(producto).toUpperCase()}|${normalizeLotCompareToken(lote)}`;
+const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
+const effectiveLotState = (producto: any, lote: any, estadoRaw: any) =>
+  isForcedAgotadoLot(producto, lote) ? 'AGOTADO' : normalizeLotState(estadoRaw);
 const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
   const producto = clean(productoRaw);
   const lote = clean(loteRaw);
@@ -764,7 +770,14 @@ function InventoryPage() {
       if (!map.has(key)) map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega, stock: 0 });
       map.get(key)!.stock += toNum(m.cantidad_signed);
     }
-    return Array.from(map.values()).sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
+    return Array.from(map.values())
+      .map((row) => {
+        if (isForcedAgotadoLot(row.producto, row.lote)) {
+          return { ...row, stock: 0 };
+        }
+        return row;
+      })
+      .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [stockBase]);
 
   const stockCartonaje = useMemo(() => {
@@ -1072,6 +1085,7 @@ function InventoryPage() {
     const canonicalCanetLot = (productoRaw: string, loteRaw: string) => {
       const producto = clean(productoRaw);
       const lote = clean(loteRaw);
+      if (isInvalidLegacyLot(producto, lote)) return lote;
       if (!producto || !lote) return lote;
       const token = normalizeLotCompareToken(lote);
       const productLots = canetLotsByProduct.get(producto) || [];
@@ -1097,6 +1111,7 @@ function InventoryPage() {
       const d = dateFromAny(clean(m?.fecha));
       if (monthEnd && d && d > monthEnd) continue;
       const producto = clean(m?.producto);
+      if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
       const lote = canonicalCanetLot(producto, clean(m?.lote));
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
@@ -1111,6 +1126,7 @@ function InventoryPage() {
       const d = dateFromAny(clean(m?.fecha));
       if (monthEnd && d && d > monthEnd) continue;
       const producto = clean(m?.producto);
+      if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
       const lote = canonicalCanetLot(producto, clean(m?.lote));
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
@@ -1200,7 +1216,7 @@ function InventoryPage() {
       const lote = clean(l.lote);
       if (producto.toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote) continue;
-      lotStateByKey.set(`${producto}|${lote}`, normalizeLotState(l.estado));
+      lotStateByKey.set(`${producto}|${lote}`, effectiveLotState(producto, lote, l.estado));
     }
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
     for (const l of lotes) {
@@ -1937,7 +1953,7 @@ function InventoryPage() {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
       if (!producto || !lote) continue;
-      map.set(`${producto}|${lote}`, normalizeLotState(l.estado));
+      map.set(`${producto}|${lote}`, effectiveLotState(producto, lote, l.estado));
     }
     return map;
   }, [lotes]);
@@ -2332,7 +2348,7 @@ function InventoryPage() {
       lote: clean(l.lote),
       viales_recibidos: clean(l.viales_recibidos),
       fecha_caducidad: clean(l.fecha_caducidad),
-      estado: normalizeLotState(l.estado),
+      estado: effectiveLotState(l.producto, l.lote, l.estado),
     });
     setLotModalOpen(true);
   };
@@ -2341,7 +2357,9 @@ function InventoryPage() {
     if (!canEditNow) return;
     if (!lotForm.producto || !lotForm.lote) return;
     const semaforo = getCaducitySemaforo(lotForm.fecha_caducidad);
-    const normalizedState = normalizeLotState(lotForm.estado);
+    const normalizedState = isForcedAgotadoLot(lotForm.producto, lotForm.lote)
+      ? 'AGOTADO'
+      : normalizeLotState(lotForm.estado);
     const lotPatch = { ...lotForm, estado: normalizedState, semaforo_caducidad: semaforo };
     if (editingLotKey) {
       const [oldProductoRaw, oldLoteRaw] = editingLotKey.split('|');
@@ -2396,6 +2414,10 @@ function InventoryPage() {
     if (!canEditNow) return;
     const producto = clean(lot.producto);
     const lote = clean(lot.lote);
+    if (isForcedAgotadoLot(producto, lote)) {
+      window.alert(`El lote ${lote} está bloqueado como AGOTADO.`);
+      return;
+    }
     const key = `${producto}|${lote}`;
     let nextState = 'ACTIVO';
     setLotes((prev) =>
@@ -3476,9 +3498,9 @@ function InventoryPage() {
               clean(l.lote),
               <span
                 key={`lot-state-${idx}`}
-                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
+                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${effectiveLotState(l.producto, l.lote, l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
               >
-                {normalizeLotState(l.estado)}
+                {effectiveLotState(l.producto, l.lote, l.estado)}
               </span>,
               clean(l.viales_recibidos) || '-',
               clean(l.fecha_caducidad) || '-',
@@ -3486,11 +3508,11 @@ function InventoryPage() {
               <div key={`lot-actions-${idx}`} className="flex items-center gap-1">
                 <button disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
                 <button
-                  disabled={!isEditModeActive}
+                  disabled={!isEditModeActive || isForcedAgotadoLot(l.producto, l.lote)}
                   onClick={() => void toggleLotExhausted(l)}
-                  className={`rounded-lg px-2 py-1 text-[11px] font-bold ${isEditModeActive ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                  className={`rounded-lg px-2 py-1 text-[11px] font-bold ${isEditModeActive && !isForcedAgotadoLot(l.producto, l.lote) ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
                 >
-                  {normalizeLotState(l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
+                  {isForcedAgotadoLot(l.producto, l.lote) ? 'Fijo' : effectiveLotState(l.producto, l.lote, l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
                 </button>
               </div>,
             ])}
