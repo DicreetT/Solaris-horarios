@@ -1381,6 +1381,7 @@ function InventoryPage() {
         viales: number;
         salidas: number;
         potencialCajas: number;
+        stockCanetHuarte: number;
         stockOptimo: number;
         consumoMes: number;
         activeLotes: number;
@@ -1400,6 +1401,13 @@ function InventoryPage() {
         ? Math.max(0, toNum(huarteVisualCacheByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualTotalByLot.get(key) || 0));
       const lotState = lotStateByKey.get(key) || 'ACTIVO';
+      const stockCanetFromHuarte = hasCacheBreakdown
+        ? Math.max(0, toNum(huarteVisualCacheCanetByLot.get(key) || 0))
+        : Math.max(0, toNum(huarteVisualCanetByLot.get(key) || 0));
+      const stockHuarteOnly = hasCacheBreakdown
+        ? Math.max(0, toNum(huarteVisualCacheHuarteByLot.get(key) || 0))
+        : Math.max(0, toNum(huarteVisualHuarteOnlyByLot.get(key) || 0));
+      const stockCanetHuarte = stockCanetFromHuarte + stockHuarteOnly;
       const potencialBruto =
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
@@ -1411,16 +1419,17 @@ function InventoryPage() {
       const potencialCajas = lotState === 'AGOTADO' ? 0 : potencialCajasRaw;
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
-      const coberturaMesesLot = consumoMes > 0 ? potencialCajas / consumoMes : 0;
+      const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
+      const coberturaMesesLot = consumoMes > 0 ? stockDisponibleTotalLot / consumoMes : 0;
       let lotEstadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
       if (lotState === 'AGOTADO') {
         lotEstadoStock = 'AGOTADO';
       } else if (consumoMes > 0) {
-        lotEstadoStock = getCoverageSemaforo(coberturaMesesLot, potencialCajas);
+        lotEstadoStock = getCoverageSemaforo(coberturaMesesLot, stockDisponibleTotalLot);
       } else if (stockOptimo > 0) {
-        if (potencialCajas < stockOptimo * 0.5) lotEstadoStock = 'CRITICO';
-        else if (potencialCajas < stockOptimo) lotEstadoStock = 'ATENCION';
-      } else if (potencialCajas <= 0) {
+        if (stockDisponibleTotalLot < stockOptimo * 0.5) lotEstadoStock = 'CRITICO';
+        else if (stockDisponibleTotalLot < stockOptimo) lotEstadoStock = 'ATENCION';
+      } else if (stockDisponibleTotalLot <= 0) {
         lotEstadoStock = 'CRITICO';
       }
       potentialLotRows.push({
@@ -1441,6 +1450,7 @@ function InventoryPage() {
           viales: 0,
           salidas: 0,
           potencialCajas: 0,
+          stockCanetHuarte: 0,
           stockOptimo,
           consumoMes,
           activeLotes: 0,
@@ -1452,19 +1462,13 @@ function InventoryPage() {
         productAgg.viales += base.viales;
         productAgg.salidas += salidas;
         productAgg.potencialCajas += potencialCajas;
+        productAgg.stockCanetHuarte += stockCanetHuarte;
         productAgg.activeLotes += 1;
       }
       productAgg.stockOptimo = Math.max(productAgg.stockOptimo, stockOptimo);
       productAgg.consumoMes = Math.max(productAgg.consumoMes, consumoMes);
 
       // Table 2 must read both sides directly from Inventario Huarte visual stock.
-      const stockCanetFromHuarte = hasCacheBreakdown
-        ? Math.max(0, toNum(huarteVisualCacheCanetByLot.get(key) || 0))
-        : Math.max(0, toNum(huarteVisualCanetByLot.get(key) || 0));
-      const stockHuarteOnly = hasCacheBreakdown
-        ? Math.max(0, toNum(huarteVisualCacheHuarteByLot.get(key) || 0))
-        : Math.max(0, toNum(huarteVisualHuarteOnlyByLot.get(key) || 0));
-      const stockCanetHuarte = stockCanetFromHuarte + stockHuarteOnly;
       const stockMinCH = Math.max(0, toNum(MIN_STOCK_CANET_HUARTE[base.producto] || 0));
       const coberturaCH = consumoMes > 0 ? stockCanetHuarte / consumoMes : 0;
       const semaforoCH = getCoverageSemaforo(coberturaCH, stockCanetHuarte);
@@ -1500,17 +1504,19 @@ function InventoryPage() {
     for (const row of potentialByProduct.values()) {
       const stockOptimo = Math.max(0, row.stockOptimo);
       const potencial = Math.max(0, row.potencialCajas);
+      const stockCanetHuarte = Math.max(0, row.stockCanetHuarte);
+      const stockDisponibleTotal = Math.max(0, stockCanetHuarte + potencial);
       const consumoMes = Math.max(0, row.consumoMes);
-      const coberturaMeses = consumoMes > 0 ? potencial / consumoMes : 0;
+      const coberturaMeses = consumoMes > 0 ? stockDisponibleTotal / consumoMes : 0;
       let estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
       if (row.activeLotes === 0) {
         estadoStock = 'AGOTADO';
       } else if (consumoMes > 0) {
-        estadoStock = getCoverageSemaforo(coberturaMeses, potencial);
+        estadoStock = getCoverageSemaforo(coberturaMeses, stockDisponibleTotal);
       } else if (stockOptimo > 0) {
-        if (potencial < stockOptimo * 0.5) estadoStock = 'CRITICO';
-        else if (potencial < stockOptimo) estadoStock = 'ATENCION';
-      } else if (potencial <= 0) {
+        if (stockDisponibleTotal < stockOptimo * 0.5) estadoStock = 'CRITICO';
+        else if (stockDisponibleTotal < stockOptimo) estadoStock = 'ATENCION';
+      } else if (stockDisponibleTotal <= 0) {
         estadoStock = 'CRITICO';
       }
       if (potentialStatusFilter && potentialStatusFilter !== estadoStock) continue;
