@@ -1336,6 +1336,7 @@ function InventoryPage() {
       viales: number;
       salidas: number;
       potencialCajas: number;
+      stockCHP: number;
       stockOptimo: number;
       consumoMes: number;
       coberturaMeses: number;
@@ -1526,6 +1527,7 @@ function InventoryPage() {
         viales: row.viales,
         salidas: row.salidas,
         potencialCajas: potencial,
+        stockCHP: stockDisponibleTotal,
         stockOptimo: stockOptimo,
         consumoMes,
         coberturaMeses,
@@ -3296,13 +3298,14 @@ function InventoryPage() {
               openTablePdf(
                 'Inventario - Control stock potencial',
                 `control-stock-potencial-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
+                ['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
                 stockControlTables.potentialRows.map((r) => [
                   r.producto,
                   r.lotes,
                   Number(r.viales.toFixed(2)),
                   Number(r.salidas.toFixed(2)),
                   Number(r.potencialCajas.toFixed(2)),
+                  Number(r.stockCHP.toFixed(2)),
                   r.stockOptimo || '-',
                   r.consumoMes,
                   formatCoverage(r.coberturaMeses),
@@ -3322,13 +3325,14 @@ function InventoryPage() {
               </button>
             </div>
             <SimpleDataTable
-              headers={['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              headers={['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
               rows={stockControlTables.potentialRows.map((r) => [
                 <ProductPill key={`${r.producto}-pot`} code={r.producto} colorMap={productColorMap} />,
                 r.lotes,
                 Number(r.viales.toFixed(2)),
                 Number(r.salidas.toFixed(2)),
                 Number(r.potencialCajas.toFixed(2)),
+                Number(r.stockCHP.toFixed(2)),
                 r.stockOptimo || '-',
                 r.consumoMes,
                 formatCoverage(r.coberturaMeses),
