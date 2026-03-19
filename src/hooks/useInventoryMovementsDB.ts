@@ -153,6 +153,16 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         });
     }, []);
 
+    const unwrapMaybeData = useCallback(<T,>(result: unknown): T | null => {
+        if (result == null) return null;
+        if (typeof result === 'object' && result !== null && 'data' in (result as any)) {
+            const wrapped = result as { data?: T | null; error?: unknown };
+            if (wrapped.error) throw wrapped.error;
+            return (wrapped.data ?? null) as T | null;
+        }
+        return result as T;
+    }, []);
+
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
@@ -237,7 +247,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         for (let i = 0; i < 6; i++) {
             try {
-                return await withTimeout(
+                const result = await withTimeout(
                     () =>
                         supabase
                             .from('inventory_movements')
@@ -247,16 +257,19 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                             .throwOnError(),
                     WRITE_TIMEOUT_MS,
                     `addMovement(${inventoryId})`,
-                ).then((row) => {
-                    const created = row as InventoryMovementRow;
-                    lastMutationAtRef.current = Date.now();
-                    markPendingUpsert(created);
-                    setMovements((prev) => {
-                        const next = prev.filter((m) => Number(m.id) !== Number(created.id));
-                        return [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
-                    });
-                    return created;
+                );
+                const created = unwrapMaybeData<InventoryMovementRow>(result);
+                if (!created || !Number.isFinite(Number((created as any).id))) {
+                    throw new Error(`addMovement(${inventoryId}): no se recibió la fila insertada.`);
+                }
+                lastMutationAtRef.current = Date.now();
+                markPendingUpsert(created);
+                setMovements((prev) => {
+                    const next = prev.filter((m) => Number(m.id) !== Number(created.id));
+                    return [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
                 });
+                void loadMovements(true);
+                return created;
             } catch (error) {
                 lastError = error;
                 const missingColumn = getMissingColumn(error);
@@ -271,7 +284,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error adding movement:', lastError);
         throw lastError;
-    }, [inventoryId, markPendingUpsert, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingUpsert, unwrapMaybeData, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
         const payload: Record<string, unknown> = { ...(updates as any) };
@@ -285,7 +298,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             }
 
             try {
-                return await withTimeout(
+                const result = await withTimeout(
                     () =>
                         supabase
                             .from('inventory_movements')
@@ -297,15 +310,22 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                             .throwOnError(),
                     WRITE_TIMEOUT_MS,
                     `updateMovement(${inventoryId})`,
-                ).then((row) => {
-                    const updated = row as InventoryMovementRow;
-                    lastMutationAtRef.current = Date.now();
-                    markPendingUpsert(updated);
-                    setMovements((prev) =>
-                        prev.map((m) => (Number(m.id) === Number(updated.id) ? updated : m)),
-                    );
-                    return updated;
+                );
+                const updated = unwrapMaybeData<InventoryMovementRow>(result);
+                if (!updated || !Number.isFinite(Number((updated as any).id))) {
+                    throw new Error(`updateMovement(${inventoryId}): no se recibió la fila actualizada.`);
+                }
+                lastMutationAtRef.current = Date.now();
+                markPendingUpsert(updated);
+                setMovements((prev) => {
+                    const idx = prev.findIndex((m) => Number(m.id) === Number(updated.id));
+                    if (idx === -1) return [updated, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                    const next = [...prev];
+                    next[idx] = updated;
+                    return next;
                 });
+                void loadMovements(true);
+                return updated;
             } catch (error) {
                 lastError = error;
                 const missingColumn = getMissingColumn(error);
@@ -320,11 +340,11 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error updating movement:', lastError);
         throw lastError;
-    }, [inventoryId, markPendingUpsert, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingUpsert, unwrapMaybeData, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
         try {
-            const deleted = await withTimeout<{ id: number; inventory_id: 'canet' | 'huarte' } | null>(
+            const result = await withTimeout<{ id: number; inventory_id: 'canet' | 'huarte' } | { data?: { id: number; inventory_id: 'canet' | 'huarte' } | null; error?: unknown } | null>(
                 () =>
                     supabase
                         .from('inventory_movements')
@@ -335,17 +355,19 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 WRITE_TIMEOUT_MS,
                 `deleteMovement(${inventoryId})`,
             );
+            const deleted = unwrapMaybeData<{ id: number; inventory_id: 'canet' | 'huarte' }>(result);
             if (!deleted) {
                 throw new Error(`No se encontró el movimiento ${id} para eliminar.`);
             }
             lastMutationAtRef.current = Date.now();
             markPendingDelete(id);
             setMovements((prev) => prev.filter((m) => Number(m.id) !== Number(id)));
+            void loadMovements(true);
         } catch (error) {
             console.error('Error deleting movement:', error);
             throw error;
         }
-    }, [inventoryId, markPendingDelete, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingDelete, unwrapMaybeData, withTimeout]);
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;

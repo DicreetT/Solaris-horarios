@@ -277,18 +277,6 @@ const MIN_STOCK_CANET_HUARTE: Record<string, number> = {
   RG: 600,
   ISO: 1800,
 };
-// Lotes heredados: llegaron ya "consumidos" antes de Lunaris.
-// Para estos lotes, salidas se estima como (potencial bruto histórico - stock real actual).
-const LEGACY_INHERITED_LOTS = new Set<string>([
-  'ENT|2405A14',
-  'ENT|2504A18',
-  'ISO|230730',
-  'KL|241030',
-  'KL|260101',
-  'RG|2408A03',
-  'SV|2510A33',
-]);
-
 const formatCoverage = (months: number) => {
   if (!Number.isFinite(months) || months <= 0) return '0 días';
   const totalDays = Math.round(months * MONTH_DAYS);
@@ -1416,9 +1404,9 @@ function InventoryPage() {
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
           : base.viales;
-      const salidas = LEGACY_INHERITED_LOTS.has(key)
-        ? Math.max(0, potencialBruto - stockRealActual)
-        : stockRealActual;
+      // "- Salidas": historical consumed amount (viales/cajas equivalentes - stock actual).
+      const salidas = Math.max(0, potencialBruto - stockRealActual);
+      // "Potencial cajas": what remains without salir, computed from the previous result.
       const potencialCajasRaw = Math.max(0, potencialBruto - salidas);
       const potencialCajas = lotState === 'AGOTADO' ? 0 : potencialCajasRaw;
       const stockOptimo = Math.max(0, meta.stockOptimo);
