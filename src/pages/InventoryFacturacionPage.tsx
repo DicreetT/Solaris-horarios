@@ -340,6 +340,69 @@ const monthLabel = (key: string) => {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, (m || 1) - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 };
+const normalizeHeaderToken = (value: string) =>
+  clean(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+const toNumericCell = (value: string | number) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = clean(value);
+  if (!raw) return null;
+  if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(/\./g, '').replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (/^-?\d+([.,]\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+const appendTotalRow = (headers: string[], rows: Array<Array<string | number>>) => {
+  if (rows.length === 0 || headers.length === 0) return rows;
+  const includeKeys = ['cantidad', 'stock', 'total', 'salidas', 'potencial', 'viales', 'valor', 'movimientos', 'ajustes'];
+  const excludeKeys = ['año', 'anio', 'mes', 'fecha', 'lote', 'bodega', 'cliente', 'tipo', 'producto', 'estado', 'semaforo', 'responsable', 'factura', 'doc', 'nota', 'destino', 'fuente', 'id'];
+  const totalIdx = headers
+    .map((h, idx) => ({ h: normalizeHeaderToken(h), idx }))
+    .filter(({ h }) => includeKeys.some((k) => h.includes(k)) && !excludeKeys.some((k) => h.includes(k)))
+    .map(({ idx }) => idx);
+  const idxs = totalIdx.length > 0
+    ? totalIdx
+    : (() => {
+      let candidate = -1;
+      headers.forEach((h, idx) => {
+        const hk = normalizeHeaderToken(h);
+        if (excludeKeys.some((k) => hk.includes(k))) return;
+        let numericCount = 0;
+        for (const row of rows) {
+          if (toNumericCell(row[idx] as any) != null) numericCount += 1;
+        }
+        if (numericCount > 0 && numericCount / rows.length >= 0.7) candidate = idx;
+      });
+      return candidate >= 0 ? [candidate] : [];
+    })();
+  if (idxs.length === 0) return rows;
+  const sums = new Map<number, number>();
+  idxs.forEach((idx) => sums.set(idx, 0));
+  for (const row of rows) {
+    idxs.forEach((idx) => {
+      const n = toNumericCell(row[idx] as any);
+      if (n != null) sums.set(idx, (sums.get(idx) || 0) + n);
+    });
+  }
+  const totalRow: Array<string | number> = headers.map(() => '');
+  totalRow[0] = 'TOTAL';
+  idxs.forEach((idx) => {
+    const sum = sums.get(idx) || 0;
+    totalRow[idx] = Number.isInteger(sum) ? sum : Number(sum.toFixed(2));
+  });
+  return [...rows, totalRow];
+};
 const displayDate = (v: string) => {
   const d = parseDate(clean(v));
   return d ? d.toLocaleDateString('es-ES') : clean(v);
@@ -1601,7 +1664,7 @@ export default function InventoryFacturacionPage() {
     openPrintablePdfReport({
       title,
       headers,
-      rows,
+      rows: appendTotalRow(headers, rows),
       fileName: `${title.toLowerCase().replace(/\s+/g, '-')}.pdf`,
       subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
     });
@@ -1629,7 +1692,7 @@ export default function InventoryFacturacionPage() {
       subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
       fileName: `inventario-huarte-gerencial-${monthFilter || 'todos'}.pdf`,
       headers: ['Indicador', 'Valor'],
-      rows: summaryRows,
+      rows: appendTotalRow(['Indicador', 'Valor'], summaryRows),
       signatures: ['Responsable', 'Revisión'],
     });
     openPrintablePdfReport({
@@ -1637,7 +1700,7 @@ export default function InventoryFacturacionPage() {
       subtitle: `Top ${detailRows.length} movimientos filtrados`,
       fileName: `inventario-huarte-detalle-${monthFilter || 'todos'}.pdf`,
       headers: ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'],
-      rows: detailRows,
+      rows: appendTotalRow(['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'], detailRows),
     });
     emitSuccessFeedback('PDF gerencial y detalle generados.');
   };
@@ -2517,6 +2580,7 @@ function StockVisual({
   const bodegaColorMap = new Map<string, string>();
   bodegas.forEach((b, idx) => bodegaColorMap.set(b, bodegaColors[idx % bodegaColors.length]));
   const maxTotal = Math.max(1, ...rows.map((r) => r.total));
+  const totalVisualizado = rows.reduce((acc, r) => acc + Math.max(0, toNum(r.total)), 0);
 
   if (rows.length === 0) {
     return null;
@@ -2558,7 +2622,10 @@ function StockVisual({
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[10px] font-semibold text-violet-600 adaptive-text-muted">Haz clic en un color para ver la bodega y cantidad.</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold text-violet-700 adaptive-text-muted">Total visualizado: {Math.round(totalVisualizado).toLocaleString('es-ES')}</p>
+        <p className="text-[10px] font-semibold text-violet-600 adaptive-text-muted">Haz clic en un color para ver la bodega y cantidad.</p>
+      </div>
     </div>
   );
 }

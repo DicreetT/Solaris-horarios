@@ -170,12 +170,79 @@ const movementDateMs = (fecha: string) => {
   return d ? d.getTime() : 0;
 };
 
+const normalizeHeaderToken = (value: string) =>
+  clean(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+const toNumericCell = (value: string | number) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = clean(value);
+  if (!raw) return null;
+  // ES format: 1.234,56
+  if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(/\./g, '').replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // EN format: 1,234.56
+  if (/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Plain decimal
+  if (/^-?\d+([.,]\d+)?$/.test(raw)) {
+    const parsed = Number(raw.replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+const appendTotalRow = (headers: string[], rows: Array<Array<string | number>>) => {
+  if (rows.length === 0 || headers.length === 0) return rows;
+  const includeKeys = ['cantidad', 'stock', 'total', 'salidas', 'potencial', 'viales', 'valor', 'movimientos', 'ajustes'];
+  const excludeKeys = ['año', 'anio', 'mes', 'fecha', 'lote', 'bodega', 'cliente', 'tipo', 'producto', 'estado', 'semaforo', 'responsable', 'factura', 'doc', 'nota', 'destino', 'fuente', 'id'];
+  const totalIdx = headers
+    .map((h, idx) => ({ h: normalizeHeaderToken(h), idx }))
+    .filter(({ h }) => includeKeys.some((k) => h.includes(k)) && !excludeKeys.some((k) => h.includes(k)))
+    .map(({ idx }) => idx);
+  const idxs = totalIdx.length > 0
+    ? totalIdx
+    : (() => {
+      let candidate = -1;
+      headers.forEach((h, idx) => {
+        const hk = normalizeHeaderToken(h);
+        if (excludeKeys.some((k) => hk.includes(k))) return;
+        let numericCount = 0;
+        for (const row of rows) {
+          if (toNumericCell(row[idx] as any) != null) numericCount += 1;
+        }
+        if (numericCount > 0 && numericCount / rows.length >= 0.7) candidate = idx;
+      });
+      return candidate >= 0 ? [candidate] : [];
+    })();
+  if (idxs.length === 0) return rows;
+  const sums = new Map<number, number>();
+  idxs.forEach((idx) => sums.set(idx, 0));
+  for (const row of rows) {
+    idxs.forEach((idx) => {
+      const n = toNumericCell(row[idx] as any);
+      if (n != null) sums.set(idx, (sums.get(idx) || 0) + n);
+    });
+  }
+  const totalRow: Array<string | number> = headers.map(() => '');
+  totalRow[0] = 'TOTAL';
+  idxs.forEach((idx) => {
+    const sum = sums.get(idx) || 0;
+    totalRow[idx] = Number.isInteger(sum) ? sum : Number(sum.toFixed(2));
+  });
+  return [...rows, totalRow];
+};
+
 const openTablePdf = (title: string, fileName: string, headers: string[], rows: Array<Array<string | number>>) => {
   openPrintablePdfReport({
     title,
     fileName,
     headers,
-    rows,
+    rows: appendTotalRow(headers, rows),
     subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
   });
 };
@@ -242,7 +309,7 @@ const formatCoverage = (months: number) => {
 };
 const getCoverageSemaforo = (coverageMonths: number, stock: number) => {
   if (stock <= 0 || coverageMonths <= 0 || !Number.isFinite(coverageMonths)) return 'AGOTADO';
-  if (coverageMonths < 2) return 'CRITICO';
+  if (coverageMonths < 3) return 'CRITICO';
   if (coverageMonths < 4) return 'ATENCION';
   return 'OPTIMO';
 };
@@ -303,6 +370,7 @@ const EMPTY_PRODUCT_FORM = {
   tipo_producto: 'COMPLEMENTO ALIMENTICIO',
   stock_min: '',
   stock_optimo: '',
+  consumo_mensual_cajas: '',
   modo_stock: 'ENSAMBLAJE',
   activo_si_no: 'SI',
 };
@@ -772,13 +840,23 @@ function InventoryPage() {
     }
     return Array.from(map.values())
       .map((row) => {
+        const safeStock = Math.max(0, toNum(row.stock));
         if (isForcedAgotadoLot(row.producto, row.lote)) {
           return { ...row, stock: 0 };
         }
-        return row;
+        return { ...row, stock: safeStock };
       })
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
   }, [stockBase]);
+
+  const stockTotalCanet = useMemo(
+    () =>
+      stockByPLB.reduce(
+        (acc, row) => acc + (normalizeWarehouseAlias(clean(row.bodega)).toUpperCase() === 'CANET' ? Math.max(0, toNum(row.stock)) : 0),
+        0,
+      ),
+    [stockByPLB],
+  );
 
   const stockCartonaje = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; stock: number }>();
@@ -857,6 +935,26 @@ function InventoryPage() {
       const code = clean(p.producto);
       if (!code) continue;
       map.set(code, toNum(p.stock_min));
+    }
+    return map;
+  }, [productos]);
+
+  const productConsumoMesMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of productos) {
+      const code = clean(p.producto);
+      if (!code) continue;
+      map.set(code, Math.max(0, toNum(p.consumo_mensual_cajas)));
+    }
+    return map;
+  }, [productos]);
+
+  const productStockOptimoMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of productos) {
+      const code = clean(p.producto);
+      if (!code) continue;
+      map.set(code, Math.max(0, toNum(p.stock_opt || p.stock_optimo)));
     }
     return map;
   }, [productos]);
@@ -1032,7 +1130,7 @@ function InventoryPage() {
         const estadoLote = normalizeLotState(l.estado);
         let semaforo: 'AGOTADO' | 'ROJO' | 'AMARILLO' | 'VERDE' = 'VERDE';
         if (estadoLote === 'AGOTADO' || coberturaMeses <= 0) semaforo = 'AGOTADO';
-        else if (coberturaMeses < 2) semaforo = 'ROJO';
+        else if (coberturaMeses < 3) semaforo = 'ROJO';
         else if (coberturaMeses < 4) semaforo = 'AMARILLO';
 
         const minStock = MIN_STOCK_CANET_HUARTE[producto] || 0;
@@ -1329,6 +1427,8 @@ function InventoryPage() {
       let lotEstadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
       if (lotState === 'AGOTADO') {
         lotEstadoStock = 'AGOTADO';
+      } else if (consumoMes > 0) {
+        lotEstadoStock = getCoverageSemaforo(coberturaMesesLot, potencialCajas);
       } else if (stockOptimo > 0) {
         if (potencialCajas < stockOptimo * 0.5) lotEstadoStock = 'CRITICO';
         else if (potencialCajas < stockOptimo) lotEstadoStock = 'ATENCION';
@@ -1417,6 +1517,8 @@ function InventoryPage() {
       let estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
       if (row.activeLotes === 0) {
         estadoStock = 'AGOTADO';
+      } else if (consumoMes > 0) {
+        estadoStock = getCoverageSemaforo(coberturaMeses, potencial);
       } else if (stockOptimo > 0) {
         if (potencial < stockOptimo * 0.5) estadoStock = 'CRITICO';
         else if (potencial < stockOptimo) estadoStock = 'ATENCION';
@@ -1730,7 +1832,7 @@ function InventoryPage() {
         const coberturaMeses = consumo > 0 ? cajasPotenciales / consumo : 0;
         return { producto, cajasPotenciales, coberturaMeses };
       })
-      .filter((row) => row.cajasPotenciales >= 0 && row.coberturaMeses >= 0 && row.coberturaMeses < 2)
+      .filter((row) => row.cajasPotenciales >= 0 && row.coberturaMeses >= 0 && row.coberturaMeses < 3)
       .sort((a, b) => a.coberturaMeses - b.coberturaMeses);
 
     const mountedVisual = Array.from(allProducts)
@@ -2562,6 +2664,7 @@ function InventoryPage() {
       tipo_producto: clean(row.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
       stock_min: clean(row.stock_min),
       stock_optimo: clean((row as any).stock_optimo || (row as any).stock_opt),
+      consumo_mensual_cajas: clean((row as any).consumo_mensual_cajas),
       modo_stock: clean(row.modo_stock) || 'ENSAMBLAJE',
       activo_si_no: clean(row.activo_si_no) || 'SI',
     });
@@ -2582,6 +2685,7 @@ function InventoryPage() {
               producto: target,
               stock_optimo: clean(newProductForm.stock_optimo),
               stock_opt: clean(newProductForm.stock_optimo),
+              consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
             }
             : p,
         ),
@@ -2600,6 +2704,7 @@ function InventoryPage() {
         producto: code,
         stock_optimo: clean(newProductForm.stock_optimo),
         stock_opt: clean(newProductForm.stock_optimo),
+        consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
       },
     ]);
     closeProductModal();
@@ -2654,7 +2759,7 @@ function InventoryPage() {
       subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
       fileName: `inventario-canet-gerencial-${monthFilter || 'todos'}.pdf`,
       headers: ['Indicador', 'Valor'],
-      rows: summaryRows,
+      rows: appendTotalRow(['Indicador', 'Valor'], summaryRows),
       signatures: ['Responsable', 'Revisión'],
     });
     await notifyAnabela(`${actorName} descargó reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
@@ -2971,13 +3076,19 @@ function InventoryPage() {
           )}
 
           <section className="rounded-2xl border border-violet-200 bg-white p-2">
-            <section className="grid gap-2 md:grid-cols-3">
+            <section className="grid gap-2 md:grid-cols-4">
               <KpiCard
                 title="Productos en riesgo"
                 value={`${criticalProducts.length}`}
                 helper={criticalProducts.length > 0 ? `Críticos: ${criticalProducts.join(', ')}` : 'Sin riesgo crítico'}
                 tone={criticalProducts.length > 0 ? 'rose' : 'emerald'}
                 onClick={() => setRiskModalOpen(true)}
+              />
+              <KpiCard
+                title="Stock total (Canet)"
+                value={stockTotalCanet.toLocaleString('es-ES')}
+                helper="Suma total en bodega CANET"
+                tone="emerald"
               />
               <KpiCard
                 title="Salidas del mes"
@@ -3035,19 +3146,24 @@ function InventoryPage() {
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Stock', 'Estado']} rows={stockByPLB.map((r) => {
                 const stockVal = toNum(r.stock);
-                const status =
-                  stockVal <= 0
-                    ? 'Agotado'
-                    : stockVal < 1000
-                      ? 'Crítico'
-                      : stockVal <= 2000
-                        ? 'Stock bajo'
-                        : 'OK';
+                const consumoMes = Math.max(0, toNum(productConsumoMesMap.get(r.producto) || 0));
+                const stockOptimo = Math.max(0, toNum(productStockOptimoMap.get(r.producto) || 0));
+                const coberturaMeses = consumoMes > 0
+                  ? stockVal / consumoMes
+                  : (stockOptimo > 0 ? stockVal / (stockOptimo / 4) : 0);
+                const semaforo = getCoverageSemaforo(coberturaMeses, stockVal);
+                const status = semaforo === 'AGOTADO'
+                  ? 'Agotado'
+                  : semaforo === 'CRITICO'
+                    ? 'Crítico'
+                    : semaforo === 'ATENCION'
+                      ? 'Stock bajo'
+                      : 'OK';
                 return [
                   <ProductPill key={`${r.producto}-${r.lote}-${r.bodega}`} code={r.producto} colorMap={productColorMap} />,
                   r.lote,
                   r.bodega,
-                  r.stock,
+                  Math.max(0, stockVal),
                   <span
                     key={`${r.producto}-${r.lote}-status`}
                     className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${status === 'Agotado'
@@ -3461,13 +3577,14 @@ function InventoryPage() {
             </div>
           </div>
           <SimpleDataTable
-            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Modo', 'Activo', 'Acciones']}
+            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Consumo mes', 'Modo', 'Activo', 'Acciones']}
             rows={productos.map((p) => [
               <ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />,
               clean(p.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
               <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />,
               p.stock_min || '-',
               p.stock_opt || p.stock_optimo || '-',
+              p.consumo_mensual_cajas || '-',
               p.modo_stock || '-',
               p.activo_si_no || 'SI',
               <button
@@ -3695,9 +3812,10 @@ function InventoryPage() {
                 </select>
               </label>
             </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-4">
+            <div className="mt-2 grid gap-2 sm:grid-cols-5">
               <Input label="Stock Mínimo" value={newProductForm.stock_min} onChange={(v) => setNewProductForm({ ...newProductForm, stock_min: v })} />
               <Input label="Stock Óptimo" value={newProductForm.stock_optimo} onChange={(v) => setNewProductForm({ ...newProductForm, stock_optimo: v })} />
+              <Input label="Consumo mes" type="number" value={newProductForm.consumo_mensual_cajas} onChange={(v) => setNewProductForm({ ...newProductForm, consumo_mensual_cajas: v })} />
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
                 Modo
                 <select value={newProductForm.modo_stock} onChange={(e) => setNewProductForm({ ...newProductForm, modo_stock: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
@@ -4010,6 +4128,7 @@ function StockByProductVisual({
 }) {
   if (rows.length === 0) return null;
   const maxTotal = Math.max(1, ...rows.map((r) => r.total));
+  const totalVisualizado = rows.reduce((acc, r) => acc + Math.max(0, toNum(r.total)), 0);
   const lotPalette = ['#4f46e5', '#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#84cc16', '#f97316', '#06b6d4'];
   const allLots = Array.from(new Set(rows.flatMap((r) => Object.keys(r.byLote)).filter(Boolean))).sort();
   const lotColorMap = new Map<string, string>();
@@ -4045,7 +4164,10 @@ function StockByProductVisual({
           );
         })}
       </div>
-      <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un color para ver el lote y la cantidad.</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold text-violet-700">Total visualizado: {Math.round(totalVisualizado).toLocaleString('es-ES')}</p>
+        <p className="text-[10px] font-semibold text-violet-600">Haz clic en un color para ver el lote y la cantidad.</p>
+      </div>
     </div>
   );
 }
