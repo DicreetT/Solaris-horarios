@@ -1348,6 +1348,7 @@ function InventoryPage() {
       viales: number;
       salidas: number;
       potencialCajas: number;
+      stockCHP: number;
       stockOptimo: number;
       consumoMes: number;
       coberturaMeses: number;
@@ -1439,6 +1440,7 @@ function InventoryPage() {
         viales: base.viales,
         salidas,
         potencialCajas,
+        stockCHP: stockDisponibleTotalLot,
         stockOptimo,
         consumoMes,
         coberturaMeses: coberturaMesesLot,
@@ -1604,7 +1606,7 @@ function InventoryPage() {
       return stockControlTables.potentialLotRows.map((r) => ({
         producto: r.producto,
         lote: r.lote,
-        stockBase: Math.max(0, toNum(r.potencialCajas)),
+        stockBase: Math.max(0, toNum(r.stockCHP)),
         consumoMes: Math.max(0, toNum(r.consumoMes)),
         stockOptimo: Math.max(0, toNum(r.stockOptimo)),
       }));
