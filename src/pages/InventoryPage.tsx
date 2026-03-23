@@ -85,6 +85,23 @@ const lotKeyOf = (producto: any, lote: any) =>
 const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
 const effectiveLotState = (producto: any, lote: any, estadoRaw: any) =>
   isForcedAgotadoLot(producto, lote) ? 'AGOTADO' : normalizeLotState(estadoRaw);
+const mergeLotState = (current: 'ACTIVO' | 'AGOTADO' | undefined, incoming: 'ACTIVO' | 'AGOTADO') => {
+  // Si hay registros duplicados del mismo lote, prevalece ACTIVO para no bloquear stock/potencial por un duplicado AGOTADO.
+  if (current === 'ACTIVO' || incoming === 'ACTIVO') return 'ACTIVO';
+  return 'AGOTADO';
+};
+const buildLotStateMap = (rows: GenericRow[]) => {
+  const map = new Map<string, 'ACTIVO' | 'AGOTADO'>();
+  for (const row of rows) {
+    const producto = clean(row.producto);
+    const lote = clean(row.lote);
+    if (!producto || !lote) continue;
+    const key = lotKeyOf(producto, lote);
+    const incoming = effectiveLotState(producto, lote, row.estado);
+    map.set(key, mergeLotState(map.get(key), incoming));
+  }
+  return map;
+};
 const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
   const producto = clean(productoRaw);
   const lote = clean(loteRaw);
@@ -1206,6 +1223,25 @@ function InventoryPage() {
       canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + signedFromMovement(m));
     }
 
+    // "- Salidas": suma de ensamblajes por producto+lote (regla solicitada).
+    const ensamblajesByLot = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
+      const d = dateFromAny(clean(m?.fecha));
+      if (monthEnd && d && d > monthEnd) continue;
+      const tipo = clean(m?.tipo_movimiento).toLowerCase();
+      if (!tipo.startsWith('ensamblaje')) continue;
+      const producto = clean(m?.producto);
+      if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
+      const lote = canonicalCanetLot(producto, clean(m?.lote));
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      const signed = signedFromMovement(m);
+      const qty = Math.max(0, signed);
+      if (qty <= 0) continue;
+      const key = `${producto}|${lote}`;
+      ensamblajesByLot.set(key, (ensamblajesByLot.get(key) || 0) + qty);
+    }
+
     const huarteRawStockByPLB = new Map<string, number>();
     for (const m of huarteMovimientosShared) {
       if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
@@ -1296,14 +1332,7 @@ function InventoryPage() {
       });
     }
 
-    const lotStateByKey = new Map<string, 'ACTIVO' | 'AGOTADO'>();
-    for (const l of lotes) {
-      const producto = clean(l.producto);
-      const lote = clean(l.lote);
-      if (producto.toUpperCase() === 'PRODUCTO') continue;
-      if (!producto || !lote) continue;
-      lotStateByKey.set(`${producto}|${lote}`, effectiveLotState(producto, lote, l.estado));
-    }
+    const lotStateByKey = buildLotStateMap(lotes);
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
     for (const l of lotes) {
       const producto = clean(l.producto);
@@ -1402,7 +1431,7 @@ function InventoryPage() {
       const stockRealActual = huarteVisualCacheByLot.has(key)
         ? Math.max(0, toNum(huarteVisualCacheByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualTotalByLot.get(key) || 0));
-      const lotState = lotStateByKey.get(key) || 'ACTIVO';
+      const lotState = lotStateByKey.get(lotKeyOf(base.producto, base.lote)) || 'ACTIVO';
       const stockCanetFromHuarte = hasCacheBreakdown
         ? Math.max(0, toNum(huarteVisualCacheCanetByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualCanetByLot.get(key) || 0));
@@ -1410,14 +1439,15 @@ function InventoryPage() {
         ? Math.max(0, toNum(huarteVisualCacheHuarteByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualHuarteOnlyByLot.get(key) || 0));
       const stockCanetHuarte = stockCanetFromHuarte + stockHuarteOnly;
-      const potencialBruto =
+      // 1) Convertir ingreso a cajas (compuestos) o mantener directo.
+      const ingresoEnCajas =
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
           : base.viales;
-      // "- Salidas": historical consumed amount (viales/cajas equivalentes - stock actual).
-      const salidas = Math.max(0, potencialBruto - stockRealActual);
-      // "Potencial cajas": what remains without salir, computed from the previous result.
-      const potencialCajasRaw = Math.max(0, potencialBruto - salidas);
+      // 2) "- Salidas": suma de ensamblajes por producto+lote.
+      const salidas = Math.max(0, toNum(ensamblajesByLot.get(key) || 0));
+      // 3) "Potencial cajas": ingreso en cajas menos salidas.
+      const potencialCajasRaw = Math.max(0, ingresoEnCajas - salidas);
       const potencialCajas = lotState === 'AGOTADO' ? 0 : potencialCajasRaw;
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
@@ -2055,26 +2085,17 @@ function InventoryPage() {
     return map;
   }, [normalizedMovements]);
 
-  const lotStateByProductLot = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const l of lotes) {
-      const producto = clean(l.producto);
-      const lote = clean(l.lote);
-      if (!producto || !lote) continue;
-      map.set(`${producto}|${lote}`, effectiveLotState(producto, lote, l.estado));
-    }
-    return map;
-  }, [lotes]);
+  const lotStateByProductLot = useMemo(() => buildLotStateMap(lotes), [lotes]);
 
   const lotOptionsForForm = useMemo(() => {
     const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
-    const keepKey = editingMovement ? `${clean(editingMovement.producto)}|${clean(editingMovement.lote)}` : '';
+    const keepKey = editingMovement ? lotKeyOf(editingMovement.producto, editingMovement.lote) : '';
     const rows = lotes
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => (movementForm.producto ? l.producto === movementForm.producto : true))
       .filter((l) => {
-        const key = `${l.producto}|${l.lote}`;
+        const key = lotKeyOf(l.producto, l.lote);
         if (keepKey && key === keepKey) return true;
         return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
       });
@@ -2288,7 +2309,7 @@ function InventoryPage() {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
       return;
     }
-    const lotState = lotStateByProductLot.get(`${producto}|${lote}`) || 'ACTIVO';
+    const lotState = lotStateByProductLot.get(lotKeyOf(producto, lote)) || 'ACTIVO';
     if (lotState === 'AGOTADO') {
       const originalMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
       const isEditingSameLot = !!(
@@ -2526,11 +2547,11 @@ function InventoryPage() {
       window.alert(`El lote ${lote} está bloqueado como AGOTADO.`);
       return;
     }
-    const key = `${producto}|${lote}`;
+    const key = lotKeyOf(producto, lote);
     let nextState = 'ACTIVO';
     setLotes((prev) =>
       prev.map((row) => {
-        if (`${clean(row.producto)}|${clean(row.lote)}` !== key) return row;
+        if (lotKeyOf(row.producto, row.lote) !== key) return row;
         const currentState = normalizeLotState(row.estado);
         nextState = currentState === 'AGOTADO' ? 'ACTIVO' : 'AGOTADO';
         return { ...row, estado: nextState };
