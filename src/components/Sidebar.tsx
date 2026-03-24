@@ -159,6 +159,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             show: true,
         },
         {
+            path: '/facturacion',
+            label: 'Facturación',
+            icon: FileText,
+            show: !isRestrictedUser,
+        },
+        {
             path: '/exports',
             label: 'Exportaciones',
             icon: FileText,
