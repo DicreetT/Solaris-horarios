@@ -878,12 +878,6 @@ export default function InventoryFacturacionPage() {
         if (isHuarte && lot === '240931') return false;
       }
 
-      if (product === 'KL') {
-        const isHuarte = isHuarteAlias(m.bodega);
-        // Huarte: Purge residue lots to leave only the confirmed 50
-        if (isHuarte && (lot === '250932' || lot === '260101')) return false;
-      }
-
       if (product === 'RG') {
         const isHuarte = isHuarteAlias(m.bodega);
         const isMasBorras = normalizeSearch(m.bodega).includes('mas borras');
