@@ -310,6 +310,7 @@ export default function BillingPaymentsPage() {
   const [manualIban, setManualIban] = useState('');
   const [manualNotes, setManualNotes] = useState('');
   const [manualRequestFile, setManualRequestFile] = useState<File | null>(null);
+  const [searchText, setSearchText] = useState('');
 
   const email = clean(currentUser?.email).toLowerCase();
   const isAdmin = !!currentUser?.isAdmin;
@@ -332,8 +333,30 @@ export default function BillingPaymentsPage() {
     });
   }, [requests, canViewAll, currentUser?.id]);
 
-  const pendingCount = visibleRequests.filter((r) => r.status === 'PENDIENTE').length;
-  const paidCount = visibleRequests.filter((r) => r.status === 'PAGADO').length;
+  const filteredRequests = useMemo(() => {
+    const q = normalizeKey(searchText);
+    if (!q) return visibleRequests;
+    return visibleRequests.filter((item) => {
+      const amountEs = item.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const haystack = [
+        item.providerName,
+        item.invoiceRef,
+        item.iban,
+        item.notes,
+        item.createdByName,
+        item.sourceFileName,
+        item.requestFileName,
+        item.receiptFileName,
+        item.status,
+        amountEs,
+        item.amount.toFixed(2),
+      ];
+      return haystack.some((value) => normalizeKey(value || '').includes(q));
+    });
+  }, [visibleRequests, searchText]);
+
+  const pendingCount = filteredRequests.filter((r) => r.status === 'PENDIENTE').length;
+  const paidCount = filteredRequests.filter((r) => r.status === 'PAGADO').length;
 
   const resetManualForm = () => {
     setManualProvider('');
@@ -511,7 +534,7 @@ export default function BillingPaymentsPage() {
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
             <p className="text-xs font-black uppercase tracking-wide text-violet-700">Solicitudes visibles</p>
-            <p className="mt-1 text-2xl font-black text-violet-950">{visibleRequests.length}</p>
+            <p className="mt-1 text-2xl font-black text-violet-950">{filteredRequests.length}</p>
           </div>
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-xs font-black uppercase tracking-wide text-amber-700">Pendientes</p>
@@ -645,10 +668,36 @@ export default function BillingPaymentsPage() {
       </section>
 
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-black text-violet-950">Filtros</h2>
+        <p className="mt-1 text-xs font-semibold text-violet-600">
+          Busca por proveedor, factura, importe, IBAN, notas, estado o nombre de archivo.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-5">
+          <input
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Buscar..."
+            className="md:col-span-4 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+          />
+          <button
+            type="button"
+            onClick={() => setSearchText('')}
+            className="inline-flex items-center justify-center rounded-xl border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-black text-violet-800"
+          >
+            Limpiar
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-xl font-black text-violet-950">Cola de pagos</h2>
           <span className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700">
-            {requestsLoading ? 'Cargando...' : `${visibleRequests.length} registro(s)`}
+            {requestsLoading
+              ? 'Cargando...'
+              : searchText
+                ? `${filteredRequests.length} de ${visibleRequests.length} registro(s)`
+                : `${filteredRequests.length} registro(s)`}
           </span>
         </div>
 
@@ -658,9 +707,9 @@ export default function BillingPaymentsPage() {
           </p>
         )}
 
-        {visibleRequests.length === 0 ? (
+        {filteredRequests.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/40 p-6 text-center text-sm font-semibold text-violet-700">
-            No hay solicitudes de pago visibles.
+            {searchText ? 'No hay resultados para ese filtro.' : 'No hay solicitudes de pago visibles.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -679,7 +728,7 @@ export default function BillingPaymentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleRequests.map((item) => {
+                {filteredRequests.map((item) => {
                   const canDelete = isAdmin || clean(item.createdById) === clean(currentUser?.id);
                   const canUploadReceipt =
                     isAdmin || canViewAll || clean(item.createdById) === clean(currentUser?.id);

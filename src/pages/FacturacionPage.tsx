@@ -1236,9 +1236,17 @@ function formatDate(iso: string) {
   return d.toLocaleDateString('es-ES');
 }
 
+function normalizeSearchValue(value: unknown) {
+  return clean(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 export default function FacturacionPage() {
   const { currentUser } = useAuth();
   const [sourceWarehouse, setSourceWarehouse] = useState<BillingWarehouse>('CANET');
+  const [dispatchSearchText, setDispatchSearchText] = useState('');
   const [pendingInboxFiles, setPendingInboxFiles] = useState<File[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingLabelFiles, setPendingLabelFiles] = useState<File[]>([]);
@@ -1290,10 +1298,11 @@ export default function FacturacionPage() {
     const map = new Map<string, Array<{ lote: string; stock: number }>>();
 
     for (const [key, qty] of stockByWarehouseProductLot.entries()) {
-      const [inventory, wh, product, lote] = key.split('|');
+      const [, wh, product, lote] = key.split('|');
       const safeQty = Math.max(0, Math.round(qty));
       if (safeQty <= 0) continue;
-      const groupKey = `${inventory}|${wh}|${product}`;
+      // Lotes disponibles por bodega de ORIGEN (CANET/HUARTE), con stock > 0.
+      const groupKey = `${wh}|${product}`;
       const arr = map.get(groupKey) || [];
       arr.push({ lote, stock: safeQty });
       map.set(groupKey, arr);
@@ -2123,6 +2132,34 @@ export default function FacturacionPage() {
     () => ordersSorted.filter((order) => order.status !== 'DESPACHADO'),
     [ordersSorted],
   );
+  const filteredActiveOrders = useMemo(() => {
+    const query = normalizeSearchValue(dispatchSearchText);
+    if (!query) return activeOrders;
+    return activeOrders.filter((order) => {
+      const linesText = (order.lines || [])
+        .map((line) => `${line.productCode} ${line.productRaw} ${line.lote} ${line.quantity}`)
+        .join(' ');
+      const amountText = (order.lines || [])
+        .map((line) => `${Number(line.quantity || 0).toLocaleString('es-ES')} ${Number(line.quantity || 0).toString()}`)
+        .join(' ');
+      const haystack = [
+        order.invoiceNumber,
+        order.customerName,
+        order.movementType,
+        order.documentType,
+        order.sourceWarehouse,
+        order.transferDestination || '',
+        order.sourceFileName,
+        order.orderNote || '',
+        order.status,
+        linesText,
+        amountText,
+      ]
+        .map((v) => normalizeSearchValue(v))
+        .join(' ');
+      return haystack.includes(query);
+    });
+  }, [activeOrders, dispatchSearchText]);
 
   return (
     <div className="space-y-5">
@@ -2339,23 +2376,42 @@ export default function FacturacionPage() {
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-xl font-black text-violet-950">Cola de pedidos</h2>
           <span className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700">
-            {ordersLoading ? 'Cargando...' : `${activeOrders.length} activo(s)`}
+            {ordersLoading
+              ? 'Cargando...'
+              : dispatchSearchText
+                ? `${filteredActiveOrders.length} de ${activeOrders.length} activo(s)`
+                : `${filteredActiveOrders.length} activo(s)`}
           </span>
+        </div>
+        <div className="mb-3 grid gap-2 md:grid-cols-6">
+          <input
+            value={dispatchSearchText}
+            onChange={(e) => setDispatchSearchText(e.target.value)}
+            placeholder="Buscar por cliente, pedido, tipo, estado, producto, lote, cantidad..."
+            className="md:col-span-5 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+          />
+          <button
+            type="button"
+            onClick={() => setDispatchSearchText('')}
+            className="rounded-xl border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-black text-violet-800"
+          >
+            Limpiar
+          </button>
         </div>
         <p className="mb-3 text-xs font-semibold text-violet-600">
           Al despachar, el pedido se convierte en movimientos de <span className="font-black">tipo venta/traspaso</span>, se oculta de esta cola y pasa a la carpeta interna de despachos.
         </p>
 
-        {activeOrders.length === 0 ? (
+        {filteredActiveOrders.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/40 p-6 text-center text-sm font-semibold text-violet-700">
-            No hay pedidos todavía.
+            {dispatchSearchText ? 'No hay resultados para ese filtro.' : 'No hay pedidos todavía.'}
           </div>
         ) : (
           <div className="space-y-4">
-            {activeOrders.map((order) => {
+            {filteredActiveOrders.map((order) => {
               const lotOptionsForLine = (line: BillingOrderLine) =>
                 lotOptionsByWarehouseProduct.get(
-                  `${order.inventoryTarget}|${order.sourceWarehouse}|${clean(line.productCode).toUpperCase()}`,
+                  `${order.sourceWarehouse}|${clean(line.productCode).toUpperCase()}`,
                 ) || [];
               const requiredPackages = getOrderRequiredPackages(order);
               const attachedLabels = getOrderLabels(order);
