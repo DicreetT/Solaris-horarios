@@ -37,6 +37,43 @@ function formatDate(iso: string) {
     return d.toLocaleDateString('es-ES');
 }
 
+function clean(value: unknown) {
+    return String(value ?? '').trim();
+}
+
+function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
+    const raw = clean(source);
+    if (!raw) return { url: '' };
+    if (/^(https?:|blob:)/i.test(raw)) return { url: raw };
+    if (!raw.startsWith('data:')) return { url: raw };
+
+    const commaIdx = raw.indexOf(',');
+    if (commaIdx === -1) return { url: raw };
+    const header = raw.slice(0, commaIdx);
+    const payload = raw.slice(commaIdx + 1);
+
+    try {
+        let bytes: Uint8Array;
+        if (/;base64/i.test(header)) {
+            const bin = window.atob(payload);
+            bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        } else {
+            const decoded = decodeURIComponent(payload);
+            bytes = new TextEncoder().encode(decoded);
+        }
+        const mime = clean(header.match(/^data:([^;]+)/i)?.[1]) || 'application/pdf';
+        const blob = new Blob([new Uint8Array(bytes)], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        return {
+            url: blobUrl,
+            revoke: () => URL.revokeObjectURL(blobUrl),
+        };
+    } catch {
+        return { url: raw };
+    }
+}
+
 /**
  * Folders page
  * Shows shared Google Drive folders
@@ -60,9 +97,29 @@ function FoldersPage() {
             alert('Este pedido no tiene PDF adjunto.');
             return;
         }
-        const win = window.open(dataUrl, '_blank', 'noopener,noreferrer');
-        if (!win) {
-            alert('No se pudo abrir el PDF. Revisa el bloqueador de ventanas emergentes.');
+        const { url, revoke } = buildPdfOpenUrl(dataUrl);
+        if (!url) {
+            alert('No se pudo construir el enlace del PDF.');
+            return;
+        }
+        const win = window.open(url, '_blank');
+        if (revoke) window.setTimeout(revoke, 120000);
+        if (win) return;
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch {
+            try {
+                window.location.href = url;
+            } catch {
+                alert('No se pudo abrir el PDF. Revisa el bloqueador de ventanas emergentes.');
+            }
         }
     };
 
@@ -71,19 +128,60 @@ function FoldersPage() {
             alert('Este pedido no tiene PDF adjunto.');
             return;
         }
-        const win = window.open(dataUrl, '_blank');
-        if (!win) {
-            alert('No se pudo abrir el PDF para imprimir.');
+        const { url, revoke } = buildPdfOpenUrl(dataUrl);
+        if (!url) {
+            alert('No se pudo construir el enlace del PDF.');
             return;
         }
-        win.onload = () => win.print();
+        const win = window.open(url, '_blank');
+        if (revoke) window.setTimeout(revoke, 120000);
+        const doPrint = (target: Window | null) => {
+            if (!target) return false;
+            try {
+                target.focus();
+                target.print();
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        if (win) {
+            const printLater = () => {
+                void doPrint(win);
+            };
+            win.onload = printLater;
+            window.setTimeout(printLater, 1200);
+            return;
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '1px';
+        iframe.style.height = '1px';
+        iframe.style.border = '0';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        const printFromFrame = () => {
+            try {
+                const target = iframe.contentWindow;
+                if (!doPrint(target)) throw new Error('print-failed');
+            } catch {
+                alert('No se pudo abrir/imprimir el PDF. Revisa el bloqueador de ventanas emergentes.');
+            } finally {
+                window.setTimeout(() => iframe.remove(), 5000);
+            }
+        };
+        iframe.onload = printFromFrame;
+        window.setTimeout(printFromFrame, 1500);
     };
 
     const deleteArchivedInvoice = (dateKey: string, orderId: string) => {
         const safeDateKey = dateKey.trim();
         const safeOrderId = orderId.trim();
         if (!safeDateKey || !safeOrderId) return;
-        if (!window.confirm('¿Eliminar esta factura del historial interno de facturación?')) return;
+        if (!window.confirm('¿Eliminar este despacho del historial interno?')) return;
 
         setFacturacionArchive((prev) => {
             const current = Array.isArray(prev) ? prev : [];
@@ -167,16 +265,16 @@ function FoldersPage() {
                             <FileText size={20} />
                         </div>
                         <div>
-                            <h2 className="text-2xl font-black text-gray-900">Carpeta Facturación (interna)</h2>
+                            <h2 className="text-2xl font-black text-gray-900">Carpeta Despachos (interna)</h2>
                             <p className="text-sm font-medium text-gray-500">
-                                Pedidos archivados por fecha (cierre diario 21:00).
+                                Pedidos despachados archivados por fecha (cierre diario 21:00).
                             </p>
                         </div>
                     </div>
 
                     {(!facturacionArchive || facturacionArchive.length === 0) ? (
                         <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
-                            Aún no hay días archivados de facturación.
+                            Aún no hay días archivados de despachos.
                         </div>
                     ) : (
                         <div className="space-y-3">
@@ -193,7 +291,7 @@ function FoldersPage() {
                                                 </p>
                                             </div>
                                             <span className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-black text-gray-600">
-                                                Ver facturas
+                                                Ver despachos
                                             </span>
                                         </summary>
 

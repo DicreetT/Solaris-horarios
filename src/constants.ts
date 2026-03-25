@@ -82,22 +82,6 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", ESTEBAN_ID, "cb5d2e6e-9046-4b22-b509-469076999d78", "4ca49a9d-7ee5-4b54-8e93-bc4833de549a", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {
-        id: "facturacion",
-        label: "FACTURACION CANET",
-        description: "Documentos, facturas y registros contables.",
-        emoji: "📑",
-        url: "https://drive.google.com/drive/folders/1MffbVp8RIcQPM0PRBqllYPLtpv-ZV5Vd",
-        users: [ESTEBAN_ID, "cb5d2e6e-9046-4b22-b509-469076999d78", "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
-    },
-    {
-        id: "facturas_pagos",
-        label: "FACTURAS PAGOS PROVEEDORES",
-        description: "Gestión de facturas y pagos a proveedores.",
-        emoji: "🧾",
-        url: "https://drive.google.com/drive/folders/1NWhx6o-Kqbd6m9xMXgbzVBtm0ny8e6zY?usp=sharing",
-        users: ["b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", "1c42e44a-7e58-4c86-94ca-404061f8863d"],
-    },
-    {
         id: "protocolos",
         label: "PROTOCOLOS",
         description: "Protocolos y procedimientos operativos.",

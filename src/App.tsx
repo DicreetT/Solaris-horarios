@@ -26,6 +26,7 @@ const ChatPage = React.lazy(() => import('./pages/ChatPage'));
 const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
 const InventoryFacturacionPage = React.lazy(() => import('./pages/InventoryFacturacionPage'));
 const FacturacionPage = React.lazy(() => import('./pages/FacturacionPage'));
+const BillingPaymentsPage = React.lazy(() => import('./pages/BillingPaymentsPage'));
 
 /**
  * Protected Route wrapper
@@ -114,7 +115,8 @@ function App() {
             <Route path="/chat" element={withLazyPage(<ChatPage />)} />
             <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
             <Route path="/inventory-facturacion" element={withLazyPage(<InventoryFacturacionPage />)} />
-            <Route path="/facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FacturacionPage />)} />
+            <Route path="/despachos" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FacturacionPage />)} />
+            <Route path="/facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<BillingPaymentsPage />)} />
           </Route>
 
           {/* Catch all - redirect to calendar or login */}

@@ -159,6 +159,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             show: true,
         },
         {
+            path: '/despachos',
+            label: 'Despachos',
+            icon: FileText,
+            show: !isRestrictedUser,
+        },
+        {
             path: '/facturacion',
             label: 'Facturación',
             icon: FileText,
