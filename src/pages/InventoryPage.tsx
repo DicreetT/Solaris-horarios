@@ -85,10 +85,18 @@ const lotKeyOf = (producto: any, lote: any) =>
 const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
 const effectiveLotState = (producto: any, lote: any, estadoRaw: any) =>
   isForcedAgotadoLot(producto, lote) ? 'AGOTADO' : normalizeLotState(estadoRaw);
+const normalizeEnsamblajeFinalizado = (v: any) => {
+  const token = clean(v).toUpperCase();
+  return token === 'SI' || token === 'TRUE' || token === '1' || token === 'FINALIZADO' ? 'SI' : 'NO';
+};
 const mergeLotState = (current: 'ACTIVO' | 'AGOTADO' | undefined, incoming: 'ACTIVO' | 'AGOTADO') => {
   // Si hay registros duplicados del mismo lote, prevalece ACTIVO para no bloquear stock/potencial por un duplicado AGOTADO.
   if (current === 'ACTIVO' || incoming === 'ACTIVO') return 'ACTIVO';
   return 'AGOTADO';
+};
+const mergeLotAssemblyFinalized = (current: 'SI' | 'NO' | undefined, incoming: 'SI' | 'NO') => {
+  if (current === 'SI' || incoming === 'SI') return 'SI';
+  return 'NO';
 };
 const buildLotStateMap = (rows: GenericRow[]) => {
   const map = new Map<string, 'ACTIVO' | 'AGOTADO'>();
@@ -99,6 +107,18 @@ const buildLotStateMap = (rows: GenericRow[]) => {
     const key = lotKeyOf(producto, lote);
     const incoming = effectiveLotState(producto, lote, row.estado);
     map.set(key, mergeLotState(map.get(key), incoming));
+  }
+  return map;
+};
+const buildLotAssemblyFinalizedMap = (rows: GenericRow[]) => {
+  const map = new Map<string, 'SI' | 'NO'>();
+  for (const row of rows) {
+    const producto = clean(row.producto);
+    const lote = clean(row.lote);
+    if (!producto || !lote) continue;
+    const key = lotKeyOf(producto, lote);
+    const incoming = normalizeEnsamblajeFinalizado((row as any).ensamblaje_finalizado);
+    map.set(key, mergeLotAssemblyFinalized(map.get(key), incoming));
   }
   return map;
 };
@@ -123,6 +143,51 @@ const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, lot
 };
 const toNum = (v: any) => {
   const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const normalizeVialesDigits = (value: unknown) => {
+  const raw = clean(value);
+  if (!raw) return '';
+
+  if (/^\d+$/.test(raw)) {
+    return raw.replace(/^0+(?=\d)/, '');
+  }
+
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(raw)) {
+    return raw
+      .split(',')[0]
+      .replace(/\./g, '')
+      .replace(/[^\d]/g, '')
+      .replace(/^0+(?=\d)/, '');
+  }
+
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(raw)) {
+    return raw
+      .split('.')[0]
+      .replace(/,/g, '')
+      .replace(/[^\d]/g, '')
+      .replace(/^0+(?=\d)/, '');
+  }
+
+  if (/^-?\d+[.,]\d+$/.test(raw)) {
+    const numeric = Number(raw.replace(',', '.'));
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      return String(Math.round(numeric));
+    }
+  }
+
+  const onlyDigits = raw.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '');
+  return onlyDigits;
+};
+const formatVialesForInput = (value: unknown) => {
+  const digits = normalizeVialesDigits(value);
+  if (!digits) return '';
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+};
+const toVialesNum = (value: unknown) => {
+  const digits = normalizeVialesDigits(value);
+  if (!digits) return 0;
+  const n = Number(digits);
   return Number.isFinite(n) ? n : 0;
 };
 const INT32_MIN = -2147483648;
@@ -553,7 +618,14 @@ function InventoryPage() {
 
   const [lotModalOpen, setLotModalOpen] = useState(false);
   const [editingLotKey, setEditingLotKey] = useState<string | null>(null);
-  const [lotForm, setLotForm] = useState({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '', estado: 'ACTIVO' });
+  const [lotForm, setLotForm] = useState({
+    producto: '',
+    lote: '',
+    viales_recibidos: '',
+    fecha_caducidad: '',
+    estado: 'ACTIVO',
+    ensamblaje_finalizado: 'NO',
+  });
   const [bodegaModalOpen, setBodegaModalOpen] = useState(false);
   const [bodegaForm, setBodegaForm] = useState({ bodega: '', activo_si_no: 'SI' });
   const [tipoModalOpen, setTipoModalOpen] = useState(false);
@@ -1148,6 +1220,8 @@ function InventoryPage() {
       }
     }
 
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(lotes);
+
     return lotes
       .map((l) => {
         const producto = clean(l.producto);
@@ -1155,18 +1229,20 @@ function InventoryPage() {
         if (!producto || !lote) return null;
 
         const meta = productMeta.get(producto) || { vialesPorCaja: 0, consumoMensual: 0, modo: 'DIRECTO' };
-        const vialesRecibidos = toNum(l.viales_recibidos);
+        const vialesRecibidos = toVialesNum(l.viales_recibidos);
         const stockActualCajas = toNum(stockByProductLot.get(`${producto}|${lote}`) || 0);
-        const cajasPotenciales =
+        const cajasPotencialesRaw =
           meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
             ? vialesRecibidos / meta.vialesPorCaja
             : 0;
+        const lotFinalizado = lotAssemblyFinalizedByKey.get(lotKeyOf(producto, lote)) === 'SI';
+        const estadoLote = normalizeLotState(l.estado);
+        const cajasPotenciales = estadoLote === 'AGOTADO' || lotFinalizado ? 0 : cajasPotencialesRaw;
         const coberturaMeses =
           meta.consumoMensual > 0
             ? (stockActualCajas + cajasPotenciales) / meta.consumoMensual
             : 0;
 
-        const estadoLote = normalizeLotState(l.estado);
         let semaforo: 'AGOTADO' | 'ROJO' | 'AMARILLO' | 'VERDE' = 'VERDE';
         if (estadoLote === 'AGOTADO' || coberturaMeses <= 0) semaforo = 'AGOTADO';
         else if (coberturaMeses < 3) semaforo = 'ROJO';
@@ -1182,6 +1258,7 @@ function InventoryPage() {
           vialesRecibidos,
           vialesPorCaja: meta.vialesPorCaja,
           estadoLote,
+          ensamblajeFinalizado: lotFinalizado,
           stockActualCajas,
           cajasPotenciales,
           consumoMensual: meta.consumoMensual,
@@ -1364,6 +1441,7 @@ function InventoryPage() {
     }
 
     const lotStateByKey = buildLotStateMap(lotes);
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(lotes);
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
     for (const l of lotes) {
       const producto = clean(l.producto);
@@ -1371,7 +1449,7 @@ function InventoryPage() {
       if (producto.toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       const key = `${producto}|${lote}`;
-      const viales = toNum(l.viales_recibidos);
+      const viales = toVialesNum(l.viales_recibidos);
       if (!lotBase.has(key)) {
         lotBase.set(key, { producto, lote, viales });
       } else {
@@ -1460,6 +1538,7 @@ function InventoryPage() {
       };
       const stockCanet = Math.max(0, toNum(canetStockByLot.get(key) || 0));
       const lotState = lotStateByKey.get(lotKeyOf(base.producto, base.lote)) || 'ACTIVO';
+      const lotAssemblyFinalized = lotAssemblyFinalizedByKey.get(lotKeyOf(base.producto, base.lote)) === 'SI';
       const stockCanetFromHuarte = hasCacheBreakdown
         ? Math.max(0, toNum(huarteVisualCacheCanetByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualCanetByLot.get(key) || 0));
@@ -1479,7 +1558,7 @@ function InventoryPage() {
       const salidas = hasMovements ? Math.max(0, ingresoEnCajas - stockCanet) : 0;
       // 3) "Potencial cajas": ingreso en cajas - salidas.
       const potencialCajasRaw = Math.max(0, ingresoEnCajas - salidas);
-      const potencialCajas = lotState === 'AGOTADO' ? 0 : potencialCajasRaw;
+      const potencialCajas = lotState === 'AGOTADO' || lotAssemblyFinalized ? 0 : potencialCajasRaw;
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
       const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
@@ -1867,7 +1946,7 @@ function InventoryPage() {
       if (!producto) continue;
       const meta = productMeta.get(producto);
       if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) continue;
-      const potential = toNum(l.viales_recibidos) / meta.vialesPorCaja;
+      const potential = toVialesNum(l.viales_recibidos) / meta.vialesPorCaja;
       potentialByProduct.set(producto, (potentialByProduct.get(producto) || 0) + Math.max(0, potential));
       if (!potentialByProductLote.has(producto)) potentialByProductLote.set(producto, new Map<string, number>());
       const byLote = potentialByProductLote.get(producto)!;
@@ -2491,7 +2570,7 @@ function InventoryPage() {
   const openLotCreateModal = () => {
     if (!canEditNow) return;
     setEditingLotKey(null);
-    setLotForm({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '', estado: 'ACTIVO' });
+    setLotForm({ producto: '', lote: '', viales_recibidos: '', fecha_caducidad: '', estado: 'ACTIVO', ensamblaje_finalizado: 'NO' });
     setLotModalOpen(true);
   };
 
@@ -2501,9 +2580,10 @@ function InventoryPage() {
     setLotForm({
       producto: clean(l.producto),
       lote: clean(l.lote),
-      viales_recibidos: clean(l.viales_recibidos),
+      viales_recibidos: normalizeVialesDigits(clean(l.viales_recibidos)),
       fecha_caducidad: clean(l.fecha_caducidad),
       estado: effectiveLotState(l.producto, l.lote, l.estado),
+      ensamblaje_finalizado: normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
     });
     setLotModalOpen(true);
   };
@@ -2515,7 +2595,13 @@ function InventoryPage() {
     const normalizedState = isForcedAgotadoLot(lotForm.producto, lotForm.lote)
       ? 'AGOTADO'
       : normalizeLotState(lotForm.estado);
-    const lotPatch = { ...lotForm, estado: normalizedState, semaforo_caducidad: semaforo };
+    const lotPatch = {
+      ...lotForm,
+      viales_recibidos: normalizeVialesDigits(lotForm.viales_recibidos),
+      estado: normalizedState,
+      ensamblaje_finalizado: normalizeEnsamblajeFinalizado(lotForm.ensamblaje_finalizado),
+      semaforo_caducidad: semaforo,
+    };
     if (editingLotKey) {
       const [oldProductoRaw, oldLoteRaw] = editingLotKey.split('|');
       const oldProducto = clean(oldProductoRaw);
@@ -2586,6 +2672,29 @@ function InventoryPage() {
     await notifyAnabela(`${actorName} marcó lote ${producto} ${lote} como ${nextState}.`);
     appendAudit('Cambio estado lote', `${producto} ${lote} → ${nextState}`);
     emitSuccessFeedback(`Lote ${lote} marcado como ${nextState}.`);
+  };
+
+  const toggleLotAssemblyFinalized = async (lot: GenericRow) => {
+    if (!canEditNow) return;
+    const producto = clean(lot.producto);
+    const lote = clean(lot.lote);
+    const key = lotKeyOf(producto, lote);
+    const currentState = normalizeEnsamblajeFinalizado((lot as any).ensamblaje_finalizado);
+    const nextState: 'SI' | 'NO' = currentState === 'SI' ? 'NO' : 'SI';
+    setLotes((prev) =>
+      prev.map((row) => {
+        if (lotKeyOf(row.producto, row.lote) !== key) return row;
+        return { ...row, ensamblaje_finalizado: nextState };
+      }),
+    );
+    const nextLabel = nextState === 'SI' ? 'FINALIZADO' : 'REABIERTO';
+    await notifyAnabela(`${actorName} marcó ensamblaje ${nextLabel} para lote ${producto} ${lote}.`);
+    appendAudit('Cambio ensamblaje lote', `${producto} ${lote} → ${nextLabel}`);
+    emitSuccessFeedback(
+      nextState === 'SI'
+        ? `Lote ${lote}: ensamblaje finalizado (potenciales = 0).`
+        : `Lote ${lote}: ensamblaje reabierto.`,
+    );
   };
 
   const saveBodega = async () => {
@@ -3667,29 +3776,53 @@ function InventoryPage() {
           </div>
           <SimpleDataTable
             headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
-            rows={lotes.map((l, idx) => [
-              <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,
-              clean(l.lote),
-              <span
-                key={`lot-state-${idx}`}
-                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${effectiveLotState(l.producto, l.lote, l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
-              >
-                {effectiveLotState(l.producto, l.lote, l.estado)}
-              </span>,
-              clean(l.viales_recibidos) || '-',
-              clean(l.fecha_caducidad) || '-',
-              clean(l.semaforo_caducidad) || '-',
-              <div key={`lot-actions-${idx}`} className="flex items-center gap-1">
-                <button disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
-                <button
-                  disabled={!isEditModeActive || isForcedAgotadoLot(l.producto, l.lote)}
-                  onClick={() => void toggleLotExhausted(l)}
-                  className={`rounded-lg px-2 py-1 text-[11px] font-bold ${isEditModeActive && !isForcedAgotadoLot(l.producto, l.lote) ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
-                >
-                  {isForcedAgotadoLot(l.producto, l.lote) ? 'Fijo' : effectiveLotState(l.producto, l.lote, l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
-                </button>
-              </div>,
-            ])}
+            rows={lotes.map((l, idx) => {
+              const lotState = effectiveLotState(l.producto, l.lote, l.estado);
+              const lotFinalizado = normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
+              return [
+                <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,
+                clean(l.lote),
+                <div key={`lot-state-wrap-${idx}`} className="flex flex-wrap items-center gap-1">
+                  <span
+                    key={`lot-state-${idx}`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${lotState === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
+                  >
+                    {lotState}
+                  </span>
+                  {lotFinalizado && (
+                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                      ENS. FINALIZADO
+                    </span>
+                  )}
+                </div>,
+                clean(l.viales_recibidos) || '-',
+                clean(l.fecha_caducidad) || '-',
+                clean(l.semaforo_caducidad) || '-',
+                <div key={`lot-actions-${idx}`} className="flex flex-wrap items-center gap-1">
+                  <button disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
+                  <button
+                    disabled={!isEditModeActive || isForcedAgotadoLot(l.producto, l.lote)}
+                    onClick={() => void toggleLotExhausted(l)}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-bold ${isEditModeActive && !isForcedAgotadoLot(l.producto, l.lote) ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                  >
+                    {isForcedAgotadoLot(l.producto, l.lote) ? 'Fijo' : lotState === 'AGOTADO' ? 'Activar' : 'Agotar'}
+                  </button>
+                  <button
+                    disabled={!isEditModeActive || lotState === 'AGOTADO'}
+                    onClick={() => void toggleLotAssemblyFinalized(l)}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-bold ${
+                      isEditModeActive && lotState !== 'AGOTADO'
+                        ? lotFinalizado
+                          ? 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                          : 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {lotFinalizado ? 'Reabrir ensamblaje' : 'Finalizar ensamblaje'}
+                  </button>
+                </div>,
+              ];
+            })}
           />
         </div>
       )}
@@ -3801,7 +3934,14 @@ function InventoryPage() {
             <div className="grid gap-2 sm:grid-cols-2">
               <InputDatalist label="Producto" value={lotForm.producto} onChange={(v) => setLotForm({ ...lotForm, producto: v })} listId="inventory-products-lot" options={productOptions} placeholder="Código producto" />
               <Input label="Lote" value={lotForm.lote} onChange={(v) => setLotForm({ ...lotForm, lote: v })} />
-              <Input label="Cantidad viales" type="number" value={lotForm.viales_recibidos} onChange={(v) => setLotForm({ ...lotForm, viales_recibidos: v })} />
+              <Input
+                label="Cantidad viales"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9.]*"
+                value={formatVialesForInput(lotForm.viales_recibidos)}
+                onChange={(v) => setLotForm({ ...lotForm, viales_recibidos: normalizeVialesDigits(v) })}
+              />
               <Input label="Fecha caducidad" type="date" value={lotForm.fecha_caducidad} onChange={(v) => setLotForm({ ...lotForm, fecha_caducidad: v })} />
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
                 Estado
@@ -4301,11 +4441,35 @@ function SelectFilter({ label, value, onChange, options }: { label: string; valu
   );
 }
 
-function Input({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+function Input({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  inputMode,
+  pattern,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+  pattern?: string;
+}) {
   return (
     <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
       {label}
-      <input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none" />
+      <input
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        pattern={pattern}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+      />
     </label>
   );
 }

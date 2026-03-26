@@ -397,6 +397,10 @@ function scoreCustomerMatch(orderName: string, labelName: string, labelFileName:
     if (orderKey === fileNameKey) score += 160;
     if (orderKey.includes(fileNameKey) || fileNameKey.includes(orderKey)) score += 90;
   }
+  const labelSignalKey = normalizeCustomerKey(`${labelName} ${labelFileName}`);
+  if (/(ITZIAR|ELIZAR)/.test(labelSignalKey) && orderKey.includes('HUARTE')) {
+    score += 260;
+  }
 
   const orderTokens = normalizeCustomerTokens(orderName);
   const labelTokens = Array.from(new Set([...normalizeCustomerTokens(labelName), ...normalizeCustomerTokens(labelFileName)]));
@@ -456,6 +460,7 @@ function inferUploadDocType(text: string, fileName: string): BillingUploadDocTyp
 
   const labelSignals = [
     'DESTINATARIO',
+    'ABONADO DE DESTINATARIO',
     'REMITENTE',
     'CÓDIGO POSTAL',
     'CODIGO POSTAL',
@@ -593,25 +598,98 @@ function findShipmentToCustomer(lines: string[]) {
   return '';
 }
 
-function extractRecipientFromLabelText(text: string) {
-  const normalized = clean(text)
-    .replace(/\r/g, '\n')
-    .replace(/\s+/g, ' ');
-  if (!normalized) return '';
+function sanitizeRecipientCandidate(value: string) {
+  return normalizeCustomerName(
+    clean(value)
+      .replace(
+        /^(?:ABONADO\s+DE\s+DESTINATARIO|DESTINATARIO|SHIP(?:MENT)?\s+TO|SHIP\s+TO|DELIVER\s+TO|SEND\s+TO|CONSIGNEE|RECIPIENT)\b[:\-\s]*/i,
+        '',
+      )
+      .replace(/\s{2,}/g, ' ')
+      .replace(
+        /\b(?:C\/|CALLE|AV\.?|AVENIDA|PLAZA|PZA|POL[ÍI]GONO|CTO\.?|OFICINA|TEL:?|CP\b|C[ÓO]DIGO POSTAL|ZIP|CITY|STATE|ESPA[ÑN]A|SPAIN)\b.*$/i,
+        '',
+      ),
+  );
+}
 
+function isLikelyRecipient(value: string) {
+  const v = clean(value);
+  if (!v || v.length < 3) return false;
+  const upper = v.toUpperCase();
+  if ((v.match(/\d/g) || []).length >= 4) return false;
+  if (
+    /(REMITENTE|ORIGEN|BULTO|PAQUETE|SEGUIMIENTO|TRACKING|CODIGO|C[ÓO]DIGO|TEL|NIF|PESO|SERVICIO|EXPEDICION|ENV[IÍ]O)/i.test(
+      upper,
+    )
+  ) {
+    return false;
+  }
+  const letters = (v.match(/[A-ZÁÉÍÓÚÑÜ]/gi) || []).length;
+  return letters >= 3;
+}
+
+function extractRecipientFromLabelText(text: string) {
+  const normalized = clean(text).replace(/\r/g, '\n');
+  if (!normalized) return '';
+  const lines = normalizeTextLines(normalized);
+
+  const anchorRegexes = [
+    /ABONADO\s+DE\s+DESTINATARIO/i,
+    /DESTINATARIO/i,
+    /SHIP(?:MENT)?\s+TO/i,
+    /SHIP\s+TO/i,
+    /DELIVER\s+TO/i,
+    /SEND\s+TO/i,
+    /CONSIGNEE/i,
+    /RECIPIENT/i,
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = clean(lines[i]);
+    if (!line) continue;
+    if (!anchorRegexes.some((regex) => regex.test(line))) continue;
+
+    const inline = sanitizeRecipientCandidate(line);
+    if (isLikelyRecipient(inline)) return inline;
+
+    for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j++) {
+      const nextCandidate = sanitizeRecipientCandidate(lines[j]);
+      if (!isLikelyRecipient(nextCandidate)) continue;
+      return nextCandidate;
+    }
+
+    const merged = sanitizeRecipientCandidate(`${line} ${clean(lines[i + 1] || '')}`);
+    if (isLikelyRecipient(merged)) return merged;
+  }
+
+  const compactText = clean(normalized.replace(/\s+/g, ' '));
   const recipientRegexes = [
-    /(?:DESTINATARIO|SHIP(?:MENT)?\s+TO|SHIP\s+TO|DELIVER\s+TO|CONSIGNEE)\s*[:\-]\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,160}?)(?=\s+(?:C\/|CALLE|CARRER|AV\.?|AVENIDA|PLAZA|PZA|POL[ÍI]GONO|CTO\.?|OFICINA|TEL:?|REMITENTE|OBSERVACIONES|N[º°]\s*PEDIDO|CP\b|C[ÓO]DIGO POSTAL|ZIP|CITY|STATE|ESPA[ÑN]A|SPAIN)\b|$)/i,
-    /\bD:\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,120}?)(?=\s+(?:\d{4,}|ENT\.|Servicio|$))/i,
+    /(?:ABONADO\s+DE\s+DESTINATARIO|DESTINATARIO|SHIP(?:MENT)?\s+TO|SHIP\s+TO|DELIVER\s+TO|SEND\s+TO|CONSIGNEE|RECIPIENT)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,180}?)(?=\s+(?:C\/|CALLE|CARRER|AV\.?|AVENIDA|PLAZA|PZA|POL[ÍI]GONO|CTO\.?|OFICINA|TEL:?|REMITENTE|OBSERVACIONES|N[º°]\s*PEDIDO|CP\b|C[ÓO]DIGO POSTAL|ZIP|CITY|STATE|ESPA[ÑN]A|SPAIN)\b|$)/i,
+    /\bABONADO\s+DE\s+DESTINATARIO\s+([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,180}?)(?=\s+\d{4,}|\s+(?:CALLE|AVENIDA|PLAZA|C\/|CP\b|ZIP)\b|$)/i,
+    /\bD:\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,120}?)(?=\s+(?:\d{4,}|ENT\.|SERVICIO|$))/i,
   ];
 
   for (const regex of recipientRegexes) {
-    const match = normalized.match(regex);
-    const candidate = normalizeCustomerName(clean(match?.[1] || ''));
-    if (candidate.length >= 3 && !/\d/.test(candidate)) {
-      return candidate;
-    }
+    const match = compactText.match(regex);
+    const candidate = sanitizeRecipientCandidate(clean(match?.[1] || ''));
+    if (isLikelyRecipient(candidate)) return candidate;
   }
+
+  const heuristicLine = lines.find((line) => /(FARMACIA|ITZIAR|ELIZAR)/i.test(line));
+  if (heuristicLine) {
+    const candidate = sanitizeRecipientCandidate(heuristicLine);
+    if (isLikelyRecipient(candidate)) return candidate;
+  }
+
   return '';
+}
+
+function canonicalizeKnownLabelRecipient(value: string, context = '') {
+  const merged = normalizeCustomerKey(`${value} ${context}`);
+  if (/(ITZIAR|ELIZAR)/.test(merged)) return 'ITZIAR ELIZARI';
+  if (/FARMACIA.*MERCED/.test(merged) || /FARMACIALAMERCED/.test(merged)) return 'FARMACIA LA MERCED';
+  return normalizeCustomerName(value);
 }
 
 function isNoiseLine(line: string) {
@@ -1099,7 +1177,9 @@ function parseLabelsFromExtractedPages(
   sourcePdfDataUrl?: string,
 ) {
   const normalizedPages = pagesText.map((p) => clean(p)).filter(Boolean);
-  if (normalizedPages.length === 0) return [] as BillingLabelDoc[];
+  if (normalizedPages.length === 0) {
+    return [parseLabelFromText(fileName || 'ETIQUETA', fileName, sourcePdfDataUrl)];
+  }
 
   if (normalizedPages.length === 1) {
     return [parseLabelFromText(normalizedPages[0], fileName, sourcePdfDataUrl)];
@@ -1257,17 +1337,20 @@ function parseTransferFromText(
 function parseLabelFromText(text: string, fileName: string, sourcePdfDataUrl?: string): BillingLabelDoc {
   const normalized = text.replace(/\r/g, '\n').replace(/\n{2,}/g, '\n');
   const lines = normalizeTextLines(normalized);
-  const customerName =
-    normalizeCustomerName(
-      extractRecipientFromLabelText(normalized) ||
-      findShipmentToCustomer(lines) ||
-      findValueAfterLabel(lines, /^DESTINATARIO[:\-\s]*/i, 4) ||
-      findValueAfterLabel(lines, /^CLIENTE[:\-\s]*/i, 4) ||
-      findValueAfterLabel(lines, /^SHIP(?:MENT)?\s+TO[:\-\s]*/i, 4) ||
-      findValueAfterLabel(lines, /^DELIVER\s+TO[:\-\s]*/i, 4) ||
-      findCustomerFromLines(lines) ||
-      inferCustomerFromFileName(fileName),
-    ) || 'CLIENTE SIN DETECTAR';
+  const detectedCustomer =
+    extractRecipientFromLabelText(normalized) ||
+    findShipmentToCustomer(lines) ||
+    findValueAfterLabel(lines, /^ABONADO\s+DE\s+DESTINATARIO[:\-\s]*/i, 6) ||
+    findValueAfterLabel(lines, /^DESTINATARIO[:\-\s]*/i, 6) ||
+    findValueAfterLabel(lines, /^CLIENTE[:\-\s]*/i, 6) ||
+    findValueAfterLabel(lines, /^SHIP(?:MENT)?\s+TO[:\-\s]*/i, 6) ||
+    findValueAfterLabel(lines, /^DELIVER\s+TO[:\-\s]*/i, 6) ||
+    findCustomerFromLines(lines) ||
+    inferCustomerFromFileName(fileName);
+  const customerName = canonicalizeKnownLabelRecipient(
+    normalizeCustomerName(detectedCustomer) || 'CLIENTE SIN DETECTAR',
+    `${normalized}\n${fileName}`,
+  );
 
   return {
     id: uid('lbl'),
@@ -2015,10 +2098,9 @@ export default function FacturacionPage() {
     }
     if (revoke) window.setTimeout(revoke, 120000);
     try {
-      // Primero abrimos una ventana "user-gesture safe" y luego navegamos a PDF.
-      const win = window.open('', '_blank', 'noopener,noreferrer');
+      // Intento directo (más compatible con Safari/Chrome para evitar about:blank).
+      const win = window.open(url, '_blank');
       if (win) {
-        win.location.href = url;
         try {
           win.focus();
         } catch {
@@ -2033,7 +2115,7 @@ export default function FacturacionPage() {
       const a = document.createElement('a');
       a.href = url;
       a.target = '_blank';
-      a.rel = 'noopener noreferrer';
+      a.rel = 'noopener';
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
@@ -2461,13 +2543,17 @@ export default function FacturacionPage() {
           Si el PDF no trae lote, el pedido queda en <span className="font-black">pendiente manual</span> hasta que alguien complete el lote.
           Puedes cargar separado (facturas/etiquetas) o usar carga mixta automática. Para pedidos <span className="font-black">despachados desde Canet</span> define bultos requeridos y asocia etiquetas; en <span className="font-black">Huarte</span> las etiquetas son opcionales.
         </p>
-        {activeLabelQueue.length > 0 && (
-          <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-black uppercase tracking-wide text-cyan-900">
-                Etiquetas pendientes de asociar: {activeLabelQueue.length}
-              </p>
+        <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-black uppercase tracking-wide text-cyan-900">
+              Etiquetas pendientes de asociar: {activeLabelQueue.length}
+            </p>
+          </div>
+          {activeLabelQueue.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-cyan-200 bg-white px-3 py-2 text-xs font-semibold text-cyan-700">
+              No hay etiquetas pendientes ahora mismo.
             </div>
+          ) : (
             <div className="space-y-1">
               {activeLabelQueue.slice(0, 8).map((label) => (
                 <div key={label.id} className="flex items-center justify-between gap-2 rounded-lg border border-cyan-200 bg-white px-2 py-1">
@@ -2493,8 +2579,8 @@ export default function FacturacionPage() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </section>
 
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
@@ -2604,27 +2690,26 @@ export default function FacturacionPage() {
                         Huarte: etiquetas opcionales
                       </div>
                     )}
-                    {activeLabelQueue.length > 0 && (
-                      <>
-                        <select
-                          defaultValue=""
-                          onChange={(e) => {
-                            const value = clean(e.target.value);
-                            if (!value) return;
-                            attachQueuedLabelToOrder(order, value);
-                            e.currentTarget.value = '';
-                          }}
-                          className="min-w-52 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-semibold text-cyan-900"
-                        >
-                          <option value="">Asociar etiqueta pendiente...</option>
-                          {activeLabelQueue.map((label) => (
-                            <option key={label.id} value={label.id}>
-                              {label.customerName} · {label.sourceFileName}
-                            </option>
-                          ))}
-                        </select>
-                      </>
-                    )}
+                    <select
+                      defaultValue=""
+                      disabled={activeLabelQueue.length === 0}
+                      onChange={(e) => {
+                        const value = clean(e.target.value);
+                        if (!value) return;
+                        attachQueuedLabelToOrder(order, value);
+                        e.currentTarget.value = '';
+                      }}
+                      className="min-w-52 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-semibold text-cyan-900 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="">
+                        {activeLabelQueue.length === 0 ? 'Sin etiquetas pendientes' : 'Asociar etiqueta pendiente...'}
+                      </option>
+                      {activeLabelQueue.map((label) => (
+                        <option key={label.id} value={label.id}>
+                          {label.customerName} · {label.sourceFileName}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   {attachedLabels.length > 0 && (
