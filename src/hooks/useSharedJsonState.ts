@@ -90,6 +90,11 @@ export function useSharedJsonState<T>(
     };
 
     const intervalId = window.setInterval(refresh, pollIntervalMs);
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    window.addEventListener('focus', onVisibilityOrFocus);
     const channel = supabase
       .channel(`shared-json:${key}`)
       .on(
@@ -116,6 +121,8 @@ export function useSharedJsonState<T>(
     return () => {
       active = false;
       window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+      window.removeEventListener('focus', onVisibilityOrFocus);
       void supabase.removeChannel(channel);
     };
   }, [key, initializeIfMissing, persist, pollIntervalMs]);

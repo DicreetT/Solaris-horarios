@@ -1211,6 +1211,9 @@ function getOrderRequiredPackages(order: BillingOrder) {
 }
 
 function orderRequiresLabels(order: BillingOrder) {
+  const dispatchTarget = clean((order as any).inventoryTarget).toLowerCase();
+  if (dispatchTarget === 'canet') return true;
+  if (dispatchTarget === 'huarte') return false;
   return clean(order.sourceWarehouse).toUpperCase() === 'CANET';
 }
 
@@ -1255,22 +1258,22 @@ export default function FacturacionPage() {
   const [orders, setOrders, ordersLoading] = useSharedJsonState<BillingOrder[]>(
     FACTURACION_ORDERS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 15000 },
+    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 3000 },
   );
   const [archives, setArchives] = useSharedJsonState<BillingArchiveEntry[]>(
     FACTURACION_ARCHIVE_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 20000 },
+    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 8000 },
   );
   const [hiddenOrderIds, setHiddenOrderIds] = useSharedJsonState<string[]>(
     FACTURACION_HIDDEN_ORDERS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 20000 },
+    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 5000 },
   );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
     FACTURACION_LABELS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 15000 },
+    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 3000 },
   );
 
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
@@ -2334,7 +2337,7 @@ export default function FacturacionPage() {
 
         <p className="mt-3 text-xs font-semibold text-violet-600">
           Si el PDF no trae lote, el pedido queda en <span className="font-black">pendiente manual</span> hasta que alguien complete el lote.
-          Puedes cargar separado (facturas/etiquetas) o usar carga mixta automática. Para pedidos de <span className="font-black">Canet</span> define bultos requeridos y asocia etiquetas; en <span className="font-black">Huarte</span> las etiquetas son opcionales.
+          Puedes cargar separado (facturas/etiquetas) o usar carga mixta automática. Para pedidos <span className="font-black">despachados desde Canet</span> define bultos requeridos y asocia etiquetas; en <span className="font-black">Huarte</span> las etiquetas son opcionales.
         </p>
         {activeLabelQueue.length > 0 && (
           <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
@@ -2460,26 +2463,23 @@ export default function FacturacionPage() {
                   </div>
 
                   <div className="mt-2 flex flex-wrap items-end gap-2 rounded-xl border border-violet-100 bg-violet-50/40 px-2 py-2">
-                    {requiresLabels ? (
-                      <>
-                        <label className="text-[11px] font-black uppercase tracking-wide text-violet-700">
-                          Bultos requeridos
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={requiredPackages}
-                            onChange={(e) => setRequiredPackages(order.id, Number(e.target.value || 0))}
-                            className="mt-1 w-24 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
-                          />
-                        </label>
-                        <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-black text-cyan-800">
-                          Etiquetas: {attachedLabels.length}/{requiredPackages || 0}
-                        </div>
-                      </>
-                    ) : (
+                    <label className="text-[11px] font-black uppercase tracking-wide text-violet-700">
+                      Bultos requeridos
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={requiredPackages}
+                        onChange={(e) => setRequiredPackages(order.id, Number(e.target.value || 0))}
+                        className="mt-1 w-24 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                      />
+                    </label>
+                    <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-black text-cyan-800">
+                      Etiquetas: {attachedLabels.length}/{requiredPackages || 0}
+                    </div>
+                    {!requiresLabels && (
                       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-800">
-                        Huarte: despacho permitido sin etiqueta
+                        Huarte: etiquetas opcionales
                       </div>
                     )}
                     {activeLabelQueue.length > 0 && (
