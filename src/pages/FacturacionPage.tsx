@@ -504,6 +504,27 @@ function findShipmentToCustomer(lines: string[]) {
   return '';
 }
 
+function extractRecipientFromLabelText(text: string) {
+  const normalized = clean(text)
+    .replace(/\r/g, '\n')
+    .replace(/\s+/g, ' ');
+  if (!normalized) return '';
+
+  const recipientRegexes = [
+    /(?:DESTINATARIO|SHIP(?:MENT)?\s+TO|SHIP\s+TO|DELIVER\s+TO|CONSIGNEE)\s*[:\-]\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,160}?)(?=\s+(?:C\/|CALLE|CARRER|AV\.?|AVENIDA|PLAZA|PZA|POL[ÍI]GONO|CTO\.?|OFICINA|TEL:?|REMITENTE|OBSERVACIONES|N[º°]\s*PEDIDO|CP\b|C[ÓO]DIGO POSTAL|ZIP|CITY|STATE|ESPA[ÑN]A|SPAIN)\b|$)/i,
+    /\bD:\s*([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ'.,\- ]{2,120}?)(?=\s+(?:\d{4,}|ENT\.|Servicio|$))/i,
+  ];
+
+  for (const regex of recipientRegexes) {
+    const match = normalized.match(regex);
+    const candidate = normalizeCustomerName(clean(match?.[1] || ''));
+    if (candidate.length >= 3 && !/\d/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
+}
+
 function isNoiseLine(line: string) {
   const v = clean(line).toUpperCase();
   if (!v) return true;
@@ -997,8 +1018,7 @@ function parseLabelsFromExtractedPages(
         ...parsed,
         sourceFileName: `${fileName} · p${idx + 1}`,
       };
-    })
-    .filter((label) => clean(label.customerName) && clean(label.customerName) !== 'CLIENTE SIN DETECTAR');
+    });
 
   return labels.length > 0 ? labels : [parseLabelFromText(normalizedPages.join('\n'), fileName, sourcePdfDataUrl)];
 }
@@ -1145,12 +1165,13 @@ function parseLabelFromText(text: string, fileName: string, sourcePdfDataUrl?: s
   const lines = normalizeTextLines(normalized);
   const customerName =
     normalizeCustomerName(
+      extractRecipientFromLabelText(normalized) ||
       findShipmentToCustomer(lines) ||
-      findCustomerFromLines(lines) ||
       findValueAfterLabel(lines, /^DESTINATARIO[:\-\s]*/i, 4) ||
       findValueAfterLabel(lines, /^CLIENTE[:\-\s]*/i, 4) ||
       findValueAfterLabel(lines, /^SHIP(?:MENT)?\s+TO[:\-\s]*/i, 4) ||
       findValueAfterLabel(lines, /^DELIVER\s+TO[:\-\s]*/i, 4) ||
+      findCustomerFromLines(lines) ||
       inferCustomerFromFileName(fileName),
     ) || 'CLIENTE SIN DETECTAR';
 
@@ -1647,7 +1668,7 @@ export default function FacturacionPage() {
           if (docType === 'LABEL') {
             // Fallback: si el PDF no permitió extraer texto (escaneado/bloqueado),
             // intentamos crear etiqueta con el nombre del archivo para no perderla.
-            const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || ''];
+            const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || file.name || 'ETIQUETA'];
             parsedLabels.push(
               ...parseLabelsFromExtractedPages(
                 labelPages,
@@ -1726,7 +1747,7 @@ export default function FacturacionPage() {
             sourcePdfDataUrl = '';
           }
           // Fallback: cuando no hay texto legible en etiqueta, se genera desde filename.
-          const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || ''];
+          const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || file.name || 'ETIQUETA'];
           labels.push(
             ...parseLabelsFromExtractedPages(
               labelPages,
