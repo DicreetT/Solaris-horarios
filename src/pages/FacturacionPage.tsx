@@ -1645,9 +1645,12 @@ export default function FacturacionPage() {
           }
           const docType = inferUploadDocType(extracted, file.name);
           if (docType === 'LABEL') {
+            // Fallback: si el PDF no permitió extraer texto (escaneado/bloqueado),
+            // intentamos crear etiqueta con el nombre del archivo para no perderla.
+            const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || ''];
             parsedLabels.push(
               ...parseLabelsFromExtractedPages(
-                extractedPages.length > 0 ? extractedPages : [extracted],
+                labelPages,
                 file.name,
                 sourcePdfDataUrl,
               ),
@@ -1722,9 +1725,11 @@ export default function FacturacionPage() {
           } catch {
             sourcePdfDataUrl = '';
           }
+          // Fallback: cuando no hay texto legible en etiqueta, se genera desde filename.
+          const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || ''];
           labels.push(
             ...parseLabelsFromExtractedPages(
-              extractedPages.length > 0 ? extractedPages : [extracted],
+              labelPages,
               file.name,
               sourcePdfDataUrl,
             ),
@@ -1894,7 +1899,21 @@ export default function FacturacionPage() {
       return;
     }
     if (revoke) window.setTimeout(revoke, 120000);
-    let opened = false;
+    try {
+      // Primero abrimos una ventana "user-gesture safe" y luego navegamos a PDF.
+      const win = window.open('', '_blank', 'noopener,noreferrer');
+      if (win) {
+        win.location.href = url;
+        try {
+          win.focus();
+        } catch {
+          // noop
+        }
+        return;
+      }
+    } catch {
+      // noop
+    }
     try {
       const a = document.createElement('a');
       a.href = url;
@@ -1904,19 +1923,7 @@ export default function FacturacionPage() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      opened = true;
-    } catch {
-      opened = false;
-    }
-    if (opened) return;
-    try {
-      const win = window.open(url, '_blank', 'noopener,noreferrer');
-      if (win) return;
-    } catch {
-      // noop
-    }
-    try {
-      window.location.href = url;
+      return;
     } catch {
       alert('No se pudo abrir el PDF. Revisa el bloqueador de ventanas emergentes.');
     }
