@@ -90,7 +90,26 @@ type BillingArchiveEntry = {
   totalQuantity: number;
 };
 
+type TesseractLike = {
+  recognize: (
+    image: HTMLCanvasElement | string,
+    langs?: string,
+    options?: Record<string, unknown>,
+  ) => Promise<{ data?: { text?: string } }>;
+};
+
+declare global {
+  interface Window {
+    Tesseract?: TesseractLike;
+  }
+}
+
 const PRODUCT_OPTIONS: ProductCode[] = ['AV', 'ENT', 'ISO', 'KL', 'RG', 'SV'];
+const OCR_MIN_TEXT_LENGTH = 30;
+const OCR_MAX_PAGES = 8;
+const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+
+let tesseractLoaderPromise: Promise<TesseractLike | null> | null = null;
 
 const PRODUCT_HINTS: Array<{ code: ProductCode; hints: string[] }> = [
   { code: 'AV', hints: ['AVHIRO', 'AVIRO'] },
@@ -172,6 +191,76 @@ function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
   } catch {
     return { url: raw };
   }
+}
+
+async function loadTesseractRuntime(): Promise<TesseractLike | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  if (window.Tesseract) return window.Tesseract;
+  if (tesseractLoaderPromise) return tesseractLoaderPromise;
+
+  tesseractLoaderPromise = new Promise((resolve) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-tesseract-runtime="1"]');
+    if (existing) {
+      if (window.Tesseract) {
+        resolve(window.Tesseract);
+        return;
+      }
+      existing.addEventListener('load', () => resolve(window.Tesseract || null), { once: true });
+      existing.addEventListener('error', () => resolve(null), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = TESSERACT_CDN_URL;
+    script.async = true;
+    script.defer = true;
+    script.dataset.tesseractRuntime = '1';
+    script.onload = () => resolve(window.Tesseract || null);
+    script.onerror = () => resolve(null);
+    document.head.appendChild(script);
+  });
+
+  return tesseractLoaderPromise;
+}
+
+async function runOcrForPdfPage(page: any, tesseract: TesseractLike): Promise<string> {
+  if (typeof document === 'undefined') return '';
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const result = await tesseract.recognize(canvas, 'spa+eng', {
+    tessedit_pageseg_mode: '6',
+  });
+  const text = clean(result?.data?.text || '');
+  canvas.width = 1;
+  canvas.height = 1;
+  return text;
+}
+
+async function extractPdfPagesTextWithOcr(pdf: any, existingPages: string[]): Promise<string[]> {
+  const tesseract = await loadTesseractRuntime();
+  if (!tesseract) return [];
+
+  const mergedPages = [...existingPages];
+  const pagesToRead = Math.min(Number(pdf?.numPages || 0), OCR_MAX_PAGES);
+  for (let pageNum = 1; pageNum <= pagesToRead; pageNum++) {
+    const current = clean(mergedPages[pageNum - 1] || '');
+    if (current.length >= OCR_MIN_TEXT_LENGTH) continue;
+    try {
+      const page = await pdf.getPage(pageNum);
+      const ocrText = await runOcrForPdfPage(page, tesseract);
+      if (ocrText) mergedPages[pageNum - 1] = ocrText;
+    } catch (error) {
+      console.warn(`OCR failed on page ${pageNum}`, error);
+    }
+  }
+
+  return mergedPages.map((p) => clean(p)).filter(Boolean);
 }
 
 function signedFromMovement(m: Partial<InventoryMovementRow>) {
@@ -854,8 +943,13 @@ async function extractPdfPagesTextFromArrayBuffer(buffer: ArrayBuffer): Promise<
     }
 
     const normalizedPages = pagesText.map((p) => clean(p)).filter(Boolean);
-    if (normalizedPages.length > 0 && clean(normalizedPages.join('\n')).length > 30) {
+    if (normalizedPages.length > 0 && clean(normalizedPages.join('\n')).length > OCR_MIN_TEXT_LENGTH) {
       return normalizedPages;
+    }
+
+    const ocrPages = await extractPdfPagesTextWithOcr(pdf, pagesText);
+    if (ocrPages.length > 0 && clean(ocrPages.join('\n')).length > 6) {
+      return ocrPages;
     }
   } catch (error) {
     console.warn('pdfjs extraction failed, fallback raw parser', error);
