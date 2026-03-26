@@ -1334,12 +1334,14 @@ function InventoryPage() {
       canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + signedFromMovement(m));
     }
 
-    // Marcador de si el lote ya tuvo algún movimiento asociado.
-    const lotHasAnyMovement = new Map<string, boolean>();
+    // Ensamblajes acumulados por lote (CANET): suma de movimientos tipo ensamblaje.
+    const lotEnsamblajesByLot = new Map<string, number>();
     for (const m of normalizedMovements) {
       if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
       const d = dateFromAny(clean(m?.fecha));
       if (monthEnd && d && d > monthEnd) continue;
+      const tipo = normalizeSearch(clean(m?.tipo_movimiento));
+      if (!tipo.includes('ensambl')) continue;
       const producto = clean(m?.producto);
       if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
       const lote = canonicalCanetLot(producto, clean(m?.lote));
@@ -1347,7 +1349,9 @@ function InventoryPage() {
       const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
       if (bodega !== 'CANET') continue;
       const key = `${producto}|${lote}`;
-      lotHasAnyMovement.set(key, true);
+      const qty = Math.max(0, signedFromMovement(m));
+      if (qty <= 0) continue;
+      lotEnsamblajesByLot.set(key, (lotEnsamblajesByLot.get(key) || 0) + qty);
     }
 
     const huarteRawStockByPLB = new Map<string, number>();
@@ -1551,14 +1555,19 @@ function InventoryPage() {
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
           : base.viales;
-      // 2) "- Salidas":
-      // - Si el lote no tuvo movimientos, se queda en 0.
-      // - Si tuvo movimientos, salidas = ingreso en cajas - stock actual de CANET.
-      const hasMovements = !!lotHasAnyMovement.get(key);
-      const salidas = hasMovements ? Math.max(0, ingresoEnCajas - stockCanet) : 0;
-      // 3) "Potencial cajas": ingreso en cajas - salidas.
-      const potencialCajasRaw = Math.max(0, ingresoEnCajas - salidas);
-      const potencialCajas = lotState === 'AGOTADO' || lotAssemblyFinalized ? 0 : potencialCajasRaw;
+      // 2) Ensamblajes:
+      // - Si lote está finalizado/agotado, se asume 100% ensamblado.
+      // - Si no, toma la suma de movimientos de ensamblaje por lote.
+      const ensamblajesRaw = Math.max(0, toNum(lotEnsamblajesByLot.get(key) || 0));
+      const salidas =
+        lotState === 'AGOTADO' || lotAssemblyFinalized
+          ? ingresoEnCajas
+          : Math.min(ingresoEnCajas, ensamblajesRaw);
+      // 3) Potencial cajas: lo que queda por ensamblar.
+      const potencialCajas =
+        lotState === 'AGOTADO' || lotAssemblyFinalized
+          ? 0
+          : Math.max(0, ingresoEnCajas - salidas);
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
       const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
@@ -3464,7 +3473,7 @@ function InventoryPage() {
               openTablePdf(
                 'Inventario - Control stock potencial',
                 `control-stock-potencial-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
+                ['Producto', 'Lotes', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
                 stockControlTables.potentialRows.map((r) => [
                   r.producto,
                   r.lotes,
@@ -3491,7 +3500,7 @@ function InventoryPage() {
               </button>
             </div>
             <SimpleDataTable
-              headers={['Producto', 'Lotes', 'Viales', '- Salidas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              headers={['Producto', 'Lotes', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
               rows={stockControlTables.potentialRows.map((r) => [
                 <ProductPill key={`${r.producto}-pot`} code={r.producto} colorMap={productColorMap} />,
                 r.lotes,
@@ -4144,7 +4153,7 @@ function InventoryPage() {
               <button onClick={() => setPotentialDetailProduct(null)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
             </div>
             <SimpleDataTable
-              headers={['Lote', 'Viales', '- Salidas', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              headers={['Lote', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
               rows={potentialDetailRows.map((r) => [
                 r.lote,
                 Number(r.viales.toFixed(2)),
