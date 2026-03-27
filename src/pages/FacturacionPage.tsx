@@ -788,6 +788,16 @@ function extractLotFromSegment(lines: string[]) {
 }
 
 function extractQuantityFromSegment(lines: string[]) {
+  for (let i = 0; i < lines.length; i++) {
+    // Caso columna separada: línea con "1" y justo después importe "22,50€".
+    const standaloneQty = clean(lines[i]).match(/^(\d{1,4}(?:[.,]\d{1,2})?)$/);
+    if (!standaloneQty?.[1]) continue;
+    const next = clean(lines[i + 1] || '');
+    if (!/\d{1,4}(?:[.,]\d{2})\s*€/.test(next)) continue;
+    const qty = parseSpanishNumber(standaloneQty[1]);
+    if (qty > 0) return qty;
+  }
+
   for (const line of lines) {
     // Caso frecuente en albaranes/mi médico:
     // "... PRODUCTO ... 1 22,50€ 22,50€" -> cantidad = 1
@@ -827,6 +837,19 @@ function extractQuantityFromSegment(lines: string[]) {
   }
 
   return extractBestQuantity(lines);
+}
+
+function extractCustomerFromGreeting(text: string) {
+  const normalized = clean(text.replace(/\r/g, '\n'));
+  if (!normalized) return '';
+
+  const greetingMatch = normalized.match(/(?:^|\n)\s*HOLA\s+([^,\n]{3,120})(?:,|\n)/i);
+  if (greetingMatch?.[1]) {
+    const candidate = normalizeCustomerName(greetingMatch[1]);
+    if (candidate.length >= 3) return candidate;
+  }
+
+  return '';
 }
 
 function normalizeProductRaw(line: string) {
@@ -1256,6 +1279,7 @@ function parseInvoiceFromText(
 
   let customerName =
     findCustomerFromLines(lines) ||
+    extractCustomerFromGreeting(normalized) ||
     findValueAfterLabel(lines, /^FACTURAR\s+A[:\-\s]*/i, 8) ||
     findValueAfterLabel(lines, /^DATOS\s+CLIENTE[:\-\s]*/i, 3) ||
     findValueAfterLabel(lines, /^CLIENTE[:\-\s]*/i, 4) ||

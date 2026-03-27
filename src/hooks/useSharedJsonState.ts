@@ -62,8 +62,8 @@ export function useSharedJsonState<T>(
 
       if (error) {
         console.error(`[shared_json_state] load failed for key ${key}:`, error);
-        setValue(fallbackRef.current);
-        valueRef.current = fallbackRef.current;
+        // Mantener último estado válido para evitar "parpadeos" (vacío -> vuelve),
+        // especialmente cuando hay timeouts/transitorios de red.
         setLoading(false);
         return;
       }
@@ -73,9 +73,13 @@ export function useSharedJsonState<T>(
         setValue((data.payload as T) ?? fallbackRef.current);
         valueRef.current = ((data.payload as T) ?? fallbackRef.current);
       } else {
-        setValue(fallbackRef.current);
-        valueRef.current = fallbackRef.current;
-        if (initializeIfMissing) {
+        // En refrescos silenciosos, no pisar estado local con fallback para evitar
+        // vaciar temporalmente la UI si hay lecturas inconsistentes.
+        if (!silent) {
+          setValue(fallbackRef.current);
+          valueRef.current = fallbackRef.current;
+        }
+        if (initializeIfMissing && !silent) {
           await persist(fallbackRef.current);
         }
       }
