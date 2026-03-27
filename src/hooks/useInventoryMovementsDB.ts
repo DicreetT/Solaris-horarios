@@ -27,7 +27,20 @@ export type InventoryMovementRow = {
 };
 
 export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
-    const [movements, setMovements] = useState<InventoryMovementRow[]>([]);
+    const cacheKey = `inventory_movements_cache_${inventoryId}_v1`;
+    const readCachedMovements = (): InventoryMovementRow[] => {
+        if (typeof window === 'undefined') return [];
+        try {
+            const raw = window.localStorage.getItem(cacheKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return [];
+            return parsed as InventoryMovementRow[];
+        } catch {
+            return [];
+        }
+    };
+    const [movements, setMovements] = useState<InventoryMovementRow[]>(() => readCachedMovements());
     const [isLoading, setIsLoading] = useState(true);
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -164,6 +177,17 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         return result as T;
     }, []);
 
+    const persistMovementsCache = useCallback((rows: InventoryMovementRow[]) => {
+        if (typeof window === 'undefined') return;
+        try {
+            const safeRows = Array.isArray(rows) ? rows : [];
+            // Keep cache bounded to avoid very large localStorage payloads.
+            window.localStorage.setItem(cacheKey, JSON.stringify(safeRows.slice(0, 5000)));
+        } catch {
+            // noop
+        }
+    }, [cacheKey]);
+
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
@@ -190,21 +214,20 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
                     const rows = ((data || []) as InventoryMovementRow[]);
-                    const EMPTY_READ_ACCEPT_THRESHOLD = 8;
                     if (rows.length === 0 && movementsRef.current.length > 0) {
-                        // Guardar estabilidad visual ante lecturas vacías transitorias (RLS/red/realtime).
-                        // Solo aceptamos "vacío" si se repite varias veces seguidas.
+                        // Nunca pisar una vista no-vacía con una lectura vacía transitoria.
+                        // Esto evita "bailes" de dashboard por rebotes de red/realtime.
                         consecutiveEmptyReadsRef.current += 1;
-                        if (consecutiveEmptyReadsRef.current < EMPTY_READ_ACCEPT_THRESHOLD) {
-                            console.warn(
-                                `[inventory_movements:${inventoryId}] ignored transient empty read (${consecutiveEmptyReadsRef.current}/${EMPTY_READ_ACCEPT_THRESHOLD}), keeping ${movementsRef.current.length} rows`,
-                            );
-                            return;
-                        }
+                        console.warn(
+                            `[inventory_movements:${inventoryId}] ignored transient empty read (${consecutiveEmptyReadsRef.current}), keeping ${movementsRef.current.length} rows`,
+                        );
+                        return;
                     } else {
                         consecutiveEmptyReadsRef.current = 0;
                     }
-                    setMovements(mergeServerRowsWithPending(rows));
+                    const merged = mergeServerRowsWithPending(rows);
+                    setMovements(merged);
+                    if (merged.length > 0) persistMovementsCache(merged);
                 }
             } catch (error) {
                 // Never crash UI on background sync read failures.
@@ -219,7 +242,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         } finally {
             loadInFlightRef.current = null;
         }
-    }, [inventoryId, mergeServerRowsWithPending, withTimeout]);
+    }, [inventoryId, mergeServerRowsWithPending, persistMovementsCache, withTimeout]);
 
     useEffect(() => {
         void loadMovements();
@@ -282,7 +305,9 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 markPendingUpsert(created);
                 setMovements((prev) => {
                     const next = prev.filter((m) => Number(m.id) !== Number(created.id));
-                    return [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                    const merged = [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                    persistMovementsCache(merged);
+                    return merged;
                 });
                 void loadMovements(true);
                 return created;
@@ -300,7 +325,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error adding movement:', lastError);
         throw lastError;
-    }, [inventoryId, loadMovements, markPendingUpsert, unwrapMaybeData, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingUpsert, persistMovementsCache, unwrapMaybeData, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
         const payload: Record<string, unknown> = { ...(updates as any) };
@@ -335,9 +360,14 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 markPendingUpsert(updated);
                 setMovements((prev) => {
                     const idx = prev.findIndex((m) => Number(m.id) === Number(updated.id));
-                    if (idx === -1) return [updated, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                    if (idx === -1) {
+                        const merged = [updated, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                        persistMovementsCache(merged);
+                        return merged;
+                    }
                     const next = [...prev];
                     next[idx] = updated;
+                    persistMovementsCache(next);
                     return next;
                 });
                 void loadMovements(true);
@@ -356,7 +386,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error updating movement:', lastError);
         throw lastError;
-    }, [inventoryId, loadMovements, markPendingUpsert, unwrapMaybeData, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingUpsert, persistMovementsCache, unwrapMaybeData, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
         try {
@@ -377,13 +407,17 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             }
             lastMutationAtRef.current = Date.now();
             markPendingDelete(id);
-            setMovements((prev) => prev.filter((m) => Number(m.id) !== Number(id)));
+            setMovements((prev) => {
+                const next = prev.filter((m) => Number(m.id) !== Number(id));
+                persistMovementsCache(next);
+                return next;
+            });
             void loadMovements(true);
         } catch (error) {
             console.error('Error deleting movement:', error);
             throw error;
         }
-    }, [inventoryId, loadMovements, markPendingDelete, unwrapMaybeData, withTimeout]);
+    }, [inventoryId, loadMovements, markPendingDelete, persistMovementsCache, unwrapMaybeData, withTimeout]);
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;
