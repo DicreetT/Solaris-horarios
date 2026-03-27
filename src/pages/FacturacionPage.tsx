@@ -789,6 +789,18 @@ function extractLotFromSegment(lines: string[]) {
 
 function extractQuantityFromSegment(lines: string[]) {
   for (const line of lines) {
+    // Caso frecuente en albaranes/mi médico:
+    // "... PRODUCTO ... 1 22,50€ 22,50€" -> cantidad = 1
+    const qtyBeforePrice = clean(line).match(
+      /\b(\d{1,4}(?:[.,]\d{1,2})?)(?=\s+[-+]?\d{1,4}(?:[.,]\d{2})\s*€)/,
+    );
+    if (qtyBeforePrice?.[1]) {
+      const qty = parseSpanishNumber(qtyBeforePrice[1]);
+      if (qty > 0) return qty;
+    }
+  }
+
+  for (const line of lines) {
     const triple = clean(line).match(
       /(\d{1,3}(?:\.\d{3})*,\d{2})\s+(-?\d{1,3}(?:\.\d{3})*,\d{2})\s+(-?\d{1,3}(?:\.\d{3})*,\d{2})/,
     );
@@ -821,10 +833,29 @@ function normalizeProductRaw(line: string) {
   return clean(line).replace(/^\d+\s+/, '');
 }
 
+function splitInvoiceTokenByProductAnchors(token: string) {
+  const raw = clean(token);
+  if (!raw) return [] as string[];
+  const anchorRegex =
+    /\b(AVHIRO|AVIRO|ENTEROVITAL|ENTHEROVITAL|ENTHERO|ISOTONIC|ISOTONICO|ISOTÓNICO|SOLAR\s*VITAL|SOLARVITAL|REGENERIUM|REGENERYUM|KHALA|KALAH|CALA)\b/gi;
+  const matches = Array.from(raw.matchAll(anchorRegex));
+  if (matches.length <= 1) return [raw];
+
+  const chunks: string[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index ?? 0;
+    const end = i < matches.length - 1 ? (matches[i + 1].index ?? raw.length) : raw.length;
+    const segment = clean(raw.slice(start, end));
+    if (segment) chunks.push(segment);
+  }
+  return chunks.length > 0 ? chunks : [raw];
+}
+
 function extractInvoiceLines(text: string): BillingOrderLine[] {
   const parsed: BillingOrderLine[] = [];
   const dedupe = new Set<string>();
   const tokens = normalizeTextLines(text);
+  const expandedTokens = tokens.flatMap((token) => splitInvoiceTokenByProductAnchors(token));
 
   const pushLine = (productRaw: string, segment: string[]) => {
     const productCode = inferProductCode(productRaw);
@@ -850,22 +881,22 @@ function extractInvoiceLines(text: string): BillingOrderLine[] {
   };
 
   // 1) Barrido principal por anclas de producto.
-  const anchors = tokens
+  const anchors = expandedTokens
     .map((line, idx) => ({ idx, line }))
     .filter((e) => isProductAnchorLine(e.line));
 
   for (let i = 0; i < anchors.length; i++) {
     const start = anchors[i].idx;
-    const end = i < anchors.length - 1 ? anchors[i + 1].idx - 1 : Math.min(tokens.length - 1, start + 8);
-    const segment = tokens.slice(start, end + 1).filter((l) => !isNoiseLine(l));
+    const end = i < anchors.length - 1 ? anchors[i + 1].idx - 1 : Math.min(expandedTokens.length - 1, start + 8);
+    const segment = expandedTokens.slice(start, end + 1).filter((l) => !isNoiseLine(l));
     pushLine(anchors[i].line, segment);
   }
 
   // 2) Barrido de refuerzo: algunas facturas mezclan líneas y se escapan artículos.
-  for (let i = 0; i < tokens.length; i++) {
-    const line = tokens[i];
+  for (let i = 0; i < expandedTokens.length; i++) {
+    const line = expandedTokens[i];
     if (!isProductAnchorLine(line)) continue;
-    const segment = tokens.slice(i, Math.min(tokens.length, i + 6)).filter((l) => !isNoiseLine(l));
+    const segment = expandedTokens.slice(i, Math.min(expandedTokens.length, i + 6)).filter((l) => !isNoiseLine(l));
     pushLine(line, segment);
   }
 
@@ -1717,7 +1748,8 @@ export default function FacturacionPage() {
         const filtered = (prev || []).filter((entry) => !dueKeys.includes(entry.dateKey));
         return [...snapshots, ...filtered].sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
       });
-      setOrders((prev) => (prev || []).filter((order) => !dueKeys.includes(toLocalDateKey(order.createdAt))));
+      // No vaciar la cola automáticamente: solo generar snapshot en carpeta interna.
+      // Evita que desaparezcan pedidos activos por fallos de lectura o por corte horario.
     };
 
     archiveDueDays();
