@@ -8,7 +8,6 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 const FACTURACION_ORDERS_KEY = 'facturacion_orders_v1';
 const FACTURACION_ARCHIVE_KEY = 'facturacion_archive_v1';
-const FACTURACION_HIDDEN_ORDERS_KEY = 'facturacion_hidden_orders_v1';
 const FACTURACION_LABELS_KEY = 'facturacion_labels_v1';
 
 type BillingWarehouse = 'CANET' | 'HUARTE';
@@ -1518,16 +1517,16 @@ export default function FacturacionPage() {
     [],
     { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 8000 },
   );
-  const [hiddenOrderIds, setHiddenOrderIds] = useSharedJsonState<string[]>(
-    FACTURACION_HIDDEN_ORDERS_KEY,
-    [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 5000 },
-  );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
     FACTURACION_LABELS_KEY,
     [],
     { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 3000 },
   );
+  const hiddenStorageKey = useMemo(
+    () => `facturacion_hidden_orders_local_v1:${currentUser?.id || 'anon'}`,
+    [currentUser?.id],
+  );
+  const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>([]);
 
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
   const [huarteMovements, , , huarteMutations] = useInventoryMovementsDB('huarte');
@@ -1571,6 +1570,32 @@ export default function FacturacionPage() {
 
     return map;
   }, [stockByWarehouseProductLot]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(hiddenStorageKey);
+      if (!raw) {
+        setHiddenOrderIds([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setHiddenOrderIds(parsed.map((v) => clean(String(v))).filter(Boolean));
+      } else {
+        setHiddenOrderIds([]);
+      }
+    } catch {
+      setHiddenOrderIds([]);
+    }
+  }, [hiddenStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(hiddenStorageKey, JSON.stringify(hiddenOrderIds || []));
+    } catch {
+      // noop
+    }
+  }, [hiddenOrderIds, hiddenStorageKey]);
 
   const hiddenOrderSet = useMemo(() => new Set(hiddenOrderIds || []), [hiddenOrderIds]);
   const activeLabelQueue = useMemo(() => (labelQueue || []), [labelQueue]);
@@ -1711,12 +1736,6 @@ export default function FacturacionPage() {
     setOrders(ordersNext);
     setLabelQueue(labelsNext);
   }, [activeLabelQueue, orders, setLabelQueue, setOrders, tryAttachLabels]);
-
-  useEffect(() => {
-    if (!orders || orders.length === 0 || hiddenOrderSet.size === 0) return;
-    if (!orders.some((order) => hiddenOrderSet.has(order.id))) return;
-    setOrders((prev) => (prev || []).filter((order) => !hiddenOrderSet.has(order.id)));
-  }, [orders, hiddenOrderSet, setOrders]);
 
   useEffect(() => {
     const archiveDueDays = () => {
