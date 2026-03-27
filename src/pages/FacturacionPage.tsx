@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileUp, Send, ClipboardCheck, Truck, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
@@ -1527,6 +1527,8 @@ export default function FacturacionPage() {
     [currentUser?.id],
   );
   const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>([]);
+  const ordersRef = useRef<BillingOrder[]>([]);
+  const labelQueueRef = useRef<BillingLabelDoc[]>([]);
 
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
   const [huarteMovements, , , huarteMutations] = useInventoryMovementsDB('huarte');
@@ -1601,33 +1603,12 @@ export default function FacturacionPage() {
   const activeLabelQueue = useMemo(() => (labelQueue || []), [labelQueue]);
 
   useEffect(() => {
-    if (!orders || orders.length === 0) return;
-    let changed = false;
-    const next = orders.map((order) => {
-      const requiredPackages = getOrderRequiredPackages(order);
-      const labels = getOrderLabels(order);
-      const primaryLabel = labels[0];
-      const status = recomputeOrderStatus({ ...order, requiredPackages, labels } as BillingOrder);
-      const mustUpdate =
-        requiredPackages !== (order as any).requiredPackages ||
-        !Array.isArray((order as any).labels) ||
-        (order as any).labels.length !== labels.length ||
-        clean(order.labelFileName) !== clean(primaryLabel?.sourceFileName) ||
-        clean(order.labelPdfDataUrl) !== clean(primaryLabel?.sourcePdfDataUrl) ||
-        order.status !== status;
-      if (!mustUpdate) return order;
-      changed = true;
-      return {
-        ...order,
-        requiredPackages,
-        labels,
-        labelFileName: primaryLabel?.sourceFileName,
-        labelPdfDataUrl: primaryLabel?.sourcePdfDataUrl,
-        status,
-      };
-    });
-    if (changed) setOrders(next);
-  }, [orders, setOrders]);
+    ordersRef.current = Array.isArray(orders) ? orders : [];
+  }, [orders]);
+
+  useEffect(() => {
+    labelQueueRef.current = Array.isArray(labelQueue) ? labelQueue : [];
+  }, [labelQueue]);
 
   const hideOrderId = (orderId: string) => {
     const id = clean(orderId);
@@ -1868,7 +1849,7 @@ export default function FacturacionPage() {
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
         const merged = [...parsedOrders, ...next];
-        const attached = tryAttachLabels(merged, activeLabelQueue);
+        const attached = tryAttachLabels(merged, labelQueueRef.current || []);
         if (attached.attached > 0) {
           setLabelQueue(attached.labelsNext);
           return attached.ordersNext;
@@ -1944,7 +1925,7 @@ export default function FacturacionPage() {
         }
       }
 
-      const mergedLabels = [...parsedLabels, ...(activeLabelQueue || [])];
+      const mergedLabels = [...parsedLabels, ...(labelQueueRef.current || [])];
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
         const mergedOrders = [...parsedOrders, ...next];
@@ -2019,8 +2000,8 @@ export default function FacturacionPage() {
         return;
       }
 
-      const mergedLabels = [...labels, ...(activeLabelQueue || [])];
-      const attached = tryAttachLabels(orders || [], mergedLabels);
+      const mergedLabels = [...labels, ...(labelQueueRef.current || [])];
+      const attached = tryAttachLabels(ordersRef.current || [], mergedLabels);
       if (attached.attached > 0) {
         setOrders(attached.ordersNext);
       }
@@ -2403,7 +2384,23 @@ export default function FacturacionPage() {
   };
 
   const ordersVisible = useMemo(
-    () => (orders || []).filter((order) => !hiddenOrderSet.has(order.id)),
+    () =>
+      (orders || [])
+        .map((order) => {
+          const requiredPackages = getOrderRequiredPackages(order);
+          const labels = getOrderLabels(order);
+          const primaryLabel = labels[0];
+          const status = recomputeOrderStatus({ ...order, requiredPackages, labels } as BillingOrder);
+          return {
+            ...order,
+            requiredPackages,
+            labels,
+            labelFileName: primaryLabel?.sourceFileName,
+            labelPdfDataUrl: primaryLabel?.sourcePdfDataUrl,
+            status,
+          } as BillingOrder;
+        })
+        .filter((order) => !hiddenOrderSet.has(order.id)),
     [orders, hiddenOrderSet],
   );
   const ordersSorted = useMemo(

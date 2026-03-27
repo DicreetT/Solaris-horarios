@@ -35,6 +35,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const lastMutationAtRef = useRef<number>(0);
     const pendingUpsertsRef = useRef<Map<number, { row: InventoryMovementRow; at: number }>>(new Map());
     const pendingDeletesRef = useRef<Map<number, number>>(new Map());
+    const consecutiveEmptyReadsRef = useRef<number>(0);
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
     const PENDING_GUARD_WINDOW_MS = 120000;
@@ -188,7 +189,22 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 } else {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
-                    setMovements(mergeServerRowsWithPending(((data || []) as InventoryMovementRow[])));
+                    const rows = ((data || []) as InventoryMovementRow[]);
+                    const EMPTY_READ_ACCEPT_THRESHOLD = 8;
+                    if (rows.length === 0 && movementsRef.current.length > 0) {
+                        // Guardar estabilidad visual ante lecturas vacías transitorias (RLS/red/realtime).
+                        // Solo aceptamos "vacío" si se repite varias veces seguidas.
+                        consecutiveEmptyReadsRef.current += 1;
+                        if (consecutiveEmptyReadsRef.current < EMPTY_READ_ACCEPT_THRESHOLD) {
+                            console.warn(
+                                `[inventory_movements:${inventoryId}] ignored transient empty read (${consecutiveEmptyReadsRef.current}/${EMPTY_READ_ACCEPT_THRESHOLD}), keeping ${movementsRef.current.length} rows`,
+                            );
+                            return;
+                        }
+                    } else {
+                        consecutiveEmptyReadsRef.current = 0;
+                    }
+                    setMovements(mergeServerRowsWithPending(rows));
                 }
             } catch (error) {
                 // Never crash UI on background sync read failures.
