@@ -1510,17 +1510,32 @@ export default function FacturacionPage() {
   const [orders, setOrders, ordersLoading] = useSharedJsonState<BillingOrder[]>(
     FACTURACION_ORDERS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 3000 },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      pollIntervalMs: 3000,
+      protectFromEmptyOverwrite: true,
+    },
   );
   const [archives, setArchives] = useSharedJsonState<BillingArchiveEntry[]>(
     FACTURACION_ARCHIVE_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 8000 },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      pollIntervalMs: 8000,
+      protectFromEmptyOverwrite: true,
+    },
   );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
     FACTURACION_LABELS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 3000 },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      pollIntervalMs: 3000,
+      protectFromEmptyOverwrite: true,
+    },
   );
   const hiddenStorageKey = useMemo(
     () => `facturacion_hidden_orders_local_v1:${currentUser?.id || 'anon'}`,

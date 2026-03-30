@@ -84,7 +84,12 @@ function FoldersPage() {
     const [facturacionArchive, setFacturacionArchive] = useSharedJsonState<BillingArchiveEntry[]>(
         FACTURACION_ARCHIVE_KEY,
         [],
-        { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 20000 },
+        {
+            userId: currentUser?.id,
+            initializeIfMissing: true,
+            pollIntervalMs: 20000,
+            protectFromEmptyOverwrite: true,
+        },
     );
 
     // Filter folders for current user
