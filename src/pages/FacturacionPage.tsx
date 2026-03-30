@@ -1159,6 +1159,65 @@ function buildOrderSignature(order: BillingOrder) {
   return `${customerKey}|${linesSig}`;
 }
 
+function buildOrderIdentityKey(order: BillingOrder) {
+  const doc = clean(order.documentType).toUpperCase();
+  const movement = clean(order.movementType).toLowerCase();
+  const source = clean(order.sourceWarehouse).toUpperCase();
+  const destination = clean(order.transferDestination || '').toUpperCase();
+  const invoice = clean(order.invoiceNumber).toUpperCase();
+  const date = clean(order.invoiceDate);
+  const customer = normalizeCustomerKey(order.customerName || '');
+  const lines = order.lines
+    .map((line) => {
+      const code = clean(line.productCode).toUpperCase();
+      const lote = clean(line.lote).toUpperCase();
+      const qty = Number(line.quantity) || 0;
+      return `${code}|${lote}|${qty}`;
+    })
+    .sort()
+    .join(';');
+  return `${doc}|${movement}|${source}|${destination}|${invoice}|${date}|${customer}|${lines}`;
+}
+
+function scoreOrderForDedup(order: BillingOrder) {
+  let score = 0;
+  const labels = getOrderLabels(order);
+  score += labels.length * 25;
+  score += Math.max(0, getOrderRequiredPackages(order)) * 4;
+  score += order.lines.filter((line) => !line.lotePending && !!clean(line.lote)).length * 6;
+  score += order.lines.filter((line) => Number(line.quantity) > 0 && !!clean(line.productCode)).length * 5;
+  if (order.status === 'DESPACHADO') score += 60;
+  if (order.status === 'EN_PREPARACION') score += 20;
+  if (clean(order.sourcePdfDataUrl)) score += 4;
+  if (clean(order.labelPdfDataUrl)) score += 3;
+  return score;
+}
+
+function dedupeOrdersPreservingBest(orders: BillingOrder[]) {
+  if (!Array.isArray(orders) || orders.length <= 1) return Array.isArray(orders) ? orders : [];
+  const byKey = new Map<string, BillingOrder>();
+  const orderOfKeys: string[] = [];
+
+  for (const order of orders) {
+    const key = buildOrderIdentityKey(order);
+    if (!byKey.has(key)) {
+      byKey.set(key, order);
+      orderOfKeys.push(key);
+      continue;
+    }
+    const existing = byKey.get(key)!;
+    const existingScore = scoreOrderForDedup(existing);
+    const incomingScore = scoreOrderForDedup(order);
+    if (incomingScore > existingScore) {
+      byKey.set(key, order);
+    }
+  }
+
+  return orderOfKeys
+    .map((key) => byKey.get(key))
+    .filter((o): o is BillingOrder => !!o);
+}
+
 function parseOrdersFromExtractedPages(
   pagesText: string[],
   fileName: string,
@@ -1863,7 +1922,7 @@ export default function FacturacionPage() {
 
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const merged = [...parsedOrders, ...next];
+        const merged = dedupeOrdersPreservingBest([...parsedOrders, ...next]);
         const attached = tryAttachLabels(merged, labelQueueRef.current || []);
         if (attached.attached > 0) {
           setLabelQueue(attached.labelsNext);
@@ -1943,7 +2002,7 @@ export default function FacturacionPage() {
       const mergedLabels = [...parsedLabels, ...(labelQueueRef.current || [])];
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const mergedOrders = [...parsedOrders, ...next];
+        const mergedOrders = dedupeOrdersPreservingBest([...parsedOrders, ...next]);
         const attached = tryAttachLabels(mergedOrders, mergedLabels);
         setLabelQueue(attached.labelsNext);
         return attached.ordersNext;
@@ -2290,15 +2349,25 @@ export default function FacturacionPage() {
     const transferDestination = clean(order.transferDestination || '');
 
     try {
+      const lineOccurrence = new Map<string, number>();
       for (const line of order.lines) {
         const marker = `ORDER:${order.id}|LINE:${line.id}`;
+        const qty = Math.max(0, parseSpanishNumber(String(line.quantity)));
+        const lineKey = `${clean(line.productCode).toUpperCase()}|${clean(line.lote).toUpperCase()}|${qty}`;
+        const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
+        lineOccurrence.set(lineKey, occurrence);
+        const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
+
         const existing = movementSource.find((m) => clean(m.notas).includes(marker));
+        const existingStable = movementSource.find((m) => clean(m.notas).includes(stableMarker));
         if (existing) {
           updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
           continue;
         }
-
-        const qty = Math.max(0, parseSpanishNumber(String(line.quantity)));
+        if (existingStable) {
+          updateLine(order.id, line.id, { movementId: existingStable.id, lotePending: false });
+          continue;
+        }
         if (qty <= 0) continue;
 
         const created = await mutation({
@@ -2312,7 +2381,7 @@ export default function FacturacionPage() {
           bodega: order.sourceWarehouse,
           cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
           destino: isTransfer ? transferDestination : '',
-          notas: `${marker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+          notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
           factura_doc: order.invoiceNumber,
           responsable: currentUser?.name || 'Sistema',
           source: 'facturacion_pdf',
@@ -2326,8 +2395,11 @@ export default function FacturacionPage() {
           transferDestination === 'HUARTE'
         ) {
           const autoMarker = `${marker}|AUTO_IN`;
+          const autoStableMarker = `${stableMarker}|AUTO_IN`;
           const existingAutoIn = huarteMovements.find((m) => clean(m.notas).includes(autoMarker));
+          const existingAutoStable = huarteMovements.find((m) => clean(m.notas).includes(autoStableMarker));
           if (!existingAutoIn) {
+            if (existingAutoStable) continue;
             await huarteMutations.addMovement({
               fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
               tipo_movimiento: 'entrada_traspaso',
@@ -2339,7 +2411,7 @@ export default function FacturacionPage() {
               bodega: 'HUARTE',
               cliente: 'CANET',
               destino: 'HUARTE',
-              notas: `${autoMarker} | Auto entrada por traspaso desde Canet`,
+              notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
               factura_doc: order.invoiceNumber,
               responsable: currentUser?.name || 'Sistema',
               source: 'facturacion_pdf_auto_in',
