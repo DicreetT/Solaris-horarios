@@ -1565,6 +1565,12 @@ export default function FacturacionPage() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingLabelFiles, setPendingLabelFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingManualAttachOps, setPendingManualAttachOps] = useState<Array<{
+    id: string;
+    orderId: string;
+    labelId: string;
+    createdAtMs: number;
+  }>>([]);
 
   const [orders, setOrders, ordersLoading] = useSharedJsonState<BillingOrder[]>(
     FACTURACION_ORDERS_KEY,
@@ -1603,6 +1609,7 @@ export default function FacturacionPage() {
   const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>([]);
   const ordersRef = useRef<BillingOrder[]>([]);
   const labelQueueRef = useRef<BillingLabelDoc[]>([]);
+  const requiredPackagesLockRef = useRef<Record<string, { value: number; until: number }>>({});
 
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
   const [huarteMovements, , , huarteMutations] = useInventoryMovementsDB('huarte');
@@ -1683,6 +1690,82 @@ export default function FacturacionPage() {
   useEffect(() => {
     labelQueueRef.current = Array.isArray(labelQueue) ? labelQueue : [];
   }, [labelQueue]);
+
+  useEffect(() => {
+    if (!pendingManualAttachOps.length) return;
+
+    const now = Date.now();
+    const orderList = ordersRef.current || [];
+    const resolved = new Set<string>();
+    const timedOut = new Set<string>();
+    const labelsToRemove = new Set<string>();
+
+    for (const op of pendingManualAttachOps) {
+      const order = orderList.find((item) => item.id === op.orderId);
+      if (!order) {
+        if (now - op.createdAtMs > 15000) timedOut.add(op.id);
+        continue;
+      }
+      const attached = getOrderLabels(order).some((lbl) => clean(lbl.id) === clean(op.labelId));
+      if (attached) {
+        resolved.add(op.id);
+        labelsToRemove.add(op.labelId);
+      } else if (now - op.createdAtMs > 15000) {
+        timedOut.add(op.id);
+      }
+    }
+
+    if (labelsToRemove.size > 0) {
+      setLabelQueue((prev) => (prev || []).filter((item) => !labelsToRemove.has(item.id)));
+    }
+
+    if (resolved.size > 0 || timedOut.size > 0) {
+      setPendingManualAttachOps((prev) => prev.filter((op) => !resolved.has(op.id) && !timedOut.has(op.id)));
+    }
+  }, [orders, pendingManualAttachOps, setLabelQueue]);
+
+  useEffect(() => {
+    const locks = requiredPackagesLockRef.current;
+    const entries = Object.entries(locks);
+    if (entries.length === 0) return;
+
+    const now = Date.now();
+    const pendingByOrder = new Map<string, number>();
+
+    for (const [orderId, lock] of entries) {
+      if (now > lock.until) {
+        delete locks[orderId];
+        continue;
+      }
+      const order = (orders || []).find((item) => item.id === orderId);
+      if (!order) continue;
+      const current = getOrderRequiredPackages(order);
+      if (current === lock.value) {
+        delete locks[orderId];
+        continue;
+      }
+      pendingByOrder.set(orderId, lock.value);
+    }
+
+    if (pendingByOrder.size === 0) return;
+
+    setOrders((prev) =>
+      (prev || []).map((order) => {
+        const forced = pendingByOrder.get(order.id);
+        if (forced === undefined) return order;
+        const updated = { ...order, requiredPackages: forced };
+        const labels = getOrderLabels(updated);
+        return {
+          ...updated,
+          requiredPackages: getOrderRequiredPackages(updated),
+          labels,
+          labelPdfDataUrl: labels[0]?.sourcePdfDataUrl,
+          labelFileName: labels[0]?.sourceFileName,
+          status: recomputeOrderStatus({ ...updated, labels } as BillingOrder),
+        };
+      }),
+    );
+  }, [orders, setOrders]);
 
   const hideOrderId = (orderId: string) => {
     const id = clean(orderId);
@@ -2173,25 +2256,36 @@ export default function FacturacionPage() {
   };
 
   const setRequiredPackages = (orderId: string, value: number) => {
+    const normalized = Math.max(0, Math.floor(Number(value) || 0));
+    requiredPackagesLockRef.current[orderId] = { value: normalized, until: Date.now() + 15000 };
     updateOrder(orderId, (order) => ({
       ...order,
-      requiredPackages: Math.max(0, Math.floor(Number(value) || 0)),
+      requiredPackages: normalized,
     }));
   };
 
-  const attachQueuedLabelToOrder = (order: BillingOrder, labelId: string) => {
-    const label = activeLabelQueue.find((item) => item.id === labelId);
+  const attachQueuedLabelToOrder = (orderId: string, labelId: string) => {
+    const label = activeLabelQueue.find((item) => item.id === labelId) || (labelQueueRef.current || []).find((item) => item.id === labelId);
     if (!label) return;
 
-    const labels = getOrderLabels(order);
-    const requiredPackages = getOrderRequiredPackages(order);
+    const currentOrder = (ordersRef.current || []).find((order) => order.id === orderId);
+    if (!currentOrder) return;
+
+    const labels = getOrderLabels(currentOrder);
+    const requiredPackages = getOrderRequiredPackages(currentOrder);
     if (requiredPackages > 0 && labels.length >= requiredPackages) {
       alert('Este pedido ya tiene todas las etiquetas requeridas por bultos.');
       return;
     }
+    if (labels.some((item) => clean(item.id) === clean(label.id))) {
+      setLabelQueue((prev) => (prev || []).filter((item) => item.id !== labelId));
+      return;
+    }
 
-    updateOrder(order.id, (current) => {
+    updateOrder(orderId, (current) => {
       const currentLabels = getOrderLabels(current);
+      const duplicate = currentLabels.some((item) => clean(item.id) === clean(label.id));
+      if (duplicate) return current;
       return {
         ...current,
         labels: [
@@ -2206,7 +2300,18 @@ export default function FacturacionPage() {
         ],
       };
     });
-    setLabelQueue((prev) => (prev || []).filter((item) => item.id !== labelId));
+    setPendingManualAttachOps((prev) => {
+      if (prev.some((op) => op.orderId === orderId && op.labelId === labelId)) return prev;
+      return [
+        ...prev,
+        {
+          id: uid('attach'),
+          orderId,
+          labelId,
+          createdAtMs: Date.now(),
+        },
+      ];
+    });
   };
 
   const removeAttachedLabelFromOrder = (orderId: string, labelId: string) => {
@@ -2855,7 +2960,7 @@ export default function FacturacionPage() {
                       onChange={(e) => {
                         const value = clean(e.target.value);
                         if (!value) return;
-                        attachQueuedLabelToOrder(order, value);
+                        attachQueuedLabelToOrder(order.id, value);
                         e.currentTarget.value = '';
                       }}
                       className="min-w-52 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-semibold text-cyan-900 disabled:cursor-not-allowed disabled:opacity-60"
