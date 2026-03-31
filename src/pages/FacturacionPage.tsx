@@ -3,6 +3,7 @@ import { FileUp, Send, ClipboardCheck, Truck, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { InventoryMovementRow, useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
+import { supabase } from '../lib/supabase';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -38,6 +39,7 @@ type BillingOrderLine = {
 type BillingOrder = {
   id: string;
   createdAt: string;
+  lastChangedAt?: string;
   createdBy: string;
   documentType: BillingDocumentType;
   movementType: BillingMovementType;
@@ -71,6 +73,10 @@ type BillingLabelAttachment = {
 type BillingLabelDoc = {
   id: string;
   createdAt: string;
+  lastChangedAt?: string;
+  consumedAt?: string;
+  consumedByOrderId?: string;
+  cancelledAt?: string;
   sourceFileName: string;
   sourcePdfDataUrl?: string;
   customerName: string;
@@ -951,6 +957,7 @@ function extractTransferLines(text: string): BillingOrderLine[] {
   const extractTransferQuantityFromSegment = (segment: string[]) => {
     const rows = segment.map((line) => clean(line)).filter(Boolean);
     if (rows.length === 0) return 0;
+    const MAX_TRANSFER_QTY = 600;
 
     for (let i = 0; i < rows.length; i++) {
       const valueOnly = rows[i].match(/^(\d{1,4}(?:\.\d{3})?,\d{2})$/);
@@ -958,7 +965,7 @@ function extractTransferLines(text: string): BillingOrderLine[] {
       const next = clean(rows[i + 1] || '').toLowerCase();
       if (next.includes('box') || next.includes('caja') || next.includes('ud')) {
         const qty = parseSpanishNumber(valueOnly[1]);
-        if (qty > 0 && qty <= 5000) return qty;
+        if (qty > 0 && qty <= MAX_TRANSFER_QTY) return qty;
       }
     }
 
@@ -970,13 +977,13 @@ function extractTransferLines(text: string): BillingOrderLine[] {
       const withUnit = line.match(/(\d{1,4}(?:\.\d{3})?,\d{2}|\d{1,4})\s*(box|caja|cajas|ud|uds|unidad|unidades)\b/i);
       if (withUnit?.[1]) {
         const qty = parseSpanishNumber(withUnit[1]);
-        if (qty > 0 && qty <= 5000) scored.push({ value: qty, score: 120 });
+        if (qty > 0 && qty <= MAX_TRANSFER_QTY) scored.push({ value: qty, score: 120 });
       }
 
       const decimalOnly = line.match(/^(\d{1,4}(?:\.\d{3})?,\d{2})$/);
       if (decimalOnly?.[1]) {
         const qty = parseSpanishNumber(decimalOnly[1]);
-        if (qty > 0 && qty <= 5000) {
+        if (qty > 0 && qty <= MAX_TRANSFER_QTY) {
           let score = 70;
           const prev = clean(rows[i - 1] || '').toLowerCase();
           const next = clean(rows[i + 1] || '').toLowerCase();
@@ -1013,7 +1020,7 @@ function extractTransferLines(text: string): BillingOrderLine[] {
     const lote = extractLotFromSegment(segment);
     const anchorDecimals = [...anchorLine.matchAll(/\d{1,4}(?:\.\d{3})?,\d{2}/g)]
       .map((m) => parseSpanishNumber(m[0]))
-      .filter((v) => Number.isFinite(v) && v > 0 && v <= 5000);
+      .filter((v) => Number.isFinite(v) && v > 0 && v <= 600);
     const quantity = anchorDecimals.length >= 2 ? anchorDecimals[0] : extractTransferQuantityFromSegment(segment);
     const key = `${productCode}|${lote}|${Math.round(quantity * 100)}`;
     if (dedupe.has(key)) continue;
@@ -1368,10 +1375,12 @@ function parseInvoiceFromText(
   const invoiceLines = extractInvoiceLines(normalizedForLines);
   const hasPending = invoiceLines.some((line) => line.lotePending || !clean(line.lote));
   const orderNote = isSegLabFormat ? 'Pertenece a MIMEDICO' : '';
+  const createdAt = nowIso();
 
   return {
     id: uid('ord'),
-    createdAt: new Date().toISOString(),
+    createdAt,
+    lastChangedAt: createdAt,
     createdBy: actor || 'Sistema',
     documentType: 'FACTURA',
     movementType: 'venta',
@@ -1422,10 +1431,12 @@ function parseTransferFromText(
   const customerName = transferDestination;
   const transferLines = extractTransferLines(normalized);
   const hasPending = transferLines.some((line) => line.lotePending || !clean(line.lote));
+  const createdAt = nowIso();
 
   return {
     id: uid('ord'),
-    createdAt: new Date().toISOString(),
+    createdAt,
+    lastChangedAt: createdAt,
     createdBy: actor || 'Sistema',
     documentType: 'TRANSFERENCIA',
     movementType: 'traspaso',
@@ -1465,9 +1476,11 @@ function parseLabelFromText(text: string, fileName: string, sourcePdfDataUrl?: s
     `${normalized}\n${fileName}`,
   );
 
+  const createdAt = nowIso();
   return {
     id: uid('lbl'),
-    createdAt: new Date().toISOString(),
+    createdAt,
+    lastChangedAt: createdAt,
     sourceFileName: fileName,
     sourcePdfDataUrl,
     customerName,
@@ -1557,6 +1570,18 @@ function normalizeSearchValue(value: unknown) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function isLabelDocActive(label: BillingLabelDoc) {
+  return !clean(label.consumedAt) && !clean(label.cancelledAt);
+}
+
+function escapeForIlike(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 export default function FacturacionPage() {
   const { currentUser } = useAuth();
   const [sourceWarehouse, setSourceWarehouse] = useState<BillingWarehouse>('CANET');
@@ -1565,6 +1590,7 @@ export default function FacturacionPage() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingLabelFiles, setPendingLabelFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [dispatchingOrderIds, setDispatchingOrderIds] = useState<string[]>([]);
   const [pendingManualAttachOps, setPendingManualAttachOps] = useState<Array<{
     id: string;
     orderId: string;
@@ -1580,6 +1606,7 @@ export default function FacturacionPage() {
       initializeIfMissing: true,
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
     },
   );
   const [archives, setArchives] = useSharedJsonState<BillingArchiveEntry[]>(
@@ -1590,6 +1617,7 @@ export default function FacturacionPage() {
       initializeIfMissing: true,
       pollIntervalMs: 8000,
       protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
     },
   );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
@@ -1600,13 +1628,9 @@ export default function FacturacionPage() {
       initializeIfMissing: true,
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
     },
   );
-  const hiddenStorageKey = useMemo(
-    () => `facturacion_hidden_orders_local_v1:${currentUser?.id || 'anon'}`,
-    [currentUser?.id],
-  );
-  const [hiddenOrderIds, setHiddenOrderIds] = useState<string[]>([]);
   const ordersRef = useRef<BillingOrder[]>([]);
   const labelQueueRef = useRef<BillingLabelDoc[]>([]);
   const requiredPackagesLockRef = useRef<Record<string, { value: number; until: number }>>({});
@@ -1654,34 +1678,10 @@ export default function FacturacionPage() {
     return map;
   }, [stockByWarehouseProductLot]);
 
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(hiddenStorageKey);
-      if (!raw) {
-        setHiddenOrderIds([]);
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setHiddenOrderIds(parsed.map((v) => clean(String(v))).filter(Boolean));
-      } else {
-        setHiddenOrderIds([]);
-      }
-    } catch {
-      setHiddenOrderIds([]);
-    }
-  }, [hiddenStorageKey]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(hiddenStorageKey, JSON.stringify(hiddenOrderIds || []));
-    } catch {
-      // noop
-    }
-  }, [hiddenOrderIds, hiddenStorageKey]);
-
-  const hiddenOrderSet = useMemo(() => new Set(hiddenOrderIds || []), [hiddenOrderIds]);
-  const activeLabelQueue = useMemo(() => (labelQueue || []), [labelQueue]);
+  const activeLabelQueue = useMemo(
+    () => (labelQueue || []).filter((item) => isLabelDocActive(item)),
+    [labelQueue],
+  );
 
   useEffect(() => {
     ordersRef.current = Array.isArray(orders) ? orders : [];
@@ -1691,6 +1691,42 @@ export default function FacturacionPage() {
     labelQueueRef.current = Array.isArray(labelQueue) ? labelQueue : [];
   }, [labelQueue]);
 
+  const consumeLabelsInQueue = useCallback((labelToOrder: Map<string, string>) => {
+    if (labelToOrder.size === 0) return;
+    const changedAt = nowIso();
+    setLabelQueue((prev) =>
+      (prev || []).map((label) => {
+        const orderId = labelToOrder.get(clean(label.id));
+        if (!orderId) return label;
+        return {
+          ...label,
+          consumedAt: changedAt,
+          consumedByOrderId: orderId,
+          cancelledAt: undefined,
+          lastChangedAt: changedAt,
+        };
+      }),
+    );
+  }, [setLabelQueue]);
+
+  const reviveLabelsInQueue = useCallback((labelIds: Set<string>) => {
+    if (labelIds.size === 0) return;
+    const changedAt = nowIso();
+    setLabelQueue((prev) =>
+      (prev || []).map((label) =>
+        labelIds.has(clean(label.id))
+          ? {
+              ...label,
+              consumedAt: undefined,
+              consumedByOrderId: undefined,
+              cancelledAt: undefined,
+              lastChangedAt: changedAt,
+            }
+          : label,
+      ),
+    );
+  }, [setLabelQueue]);
+
   useEffect(() => {
     if (!pendingManualAttachOps.length) return;
 
@@ -1698,31 +1734,35 @@ export default function FacturacionPage() {
     const orderList = ordersRef.current || [];
     const resolved = new Set<string>();
     const timedOut = new Set<string>();
-    const labelsToRemove = new Set<string>();
+    const resolvedLabelToOrder = new Map<string, string>();
+    const timedOutLabels = new Set<string>();
 
     for (const op of pendingManualAttachOps) {
       const order = orderList.find((item) => item.id === op.orderId);
       if (!order) {
-        if (now - op.createdAtMs > 15000) timedOut.add(op.id);
+        if (now - op.createdAtMs > 15000) {
+          timedOut.add(op.id);
+          timedOutLabels.add(clean(op.labelId));
+        }
         continue;
       }
       const attached = getOrderLabels(order).some((lbl) => clean(lbl.id) === clean(op.labelId));
       if (attached) {
         resolved.add(op.id);
-        labelsToRemove.add(op.labelId);
+        resolvedLabelToOrder.set(clean(op.labelId), op.orderId);
       } else if (now - op.createdAtMs > 15000) {
         timedOut.add(op.id);
+        timedOutLabels.add(clean(op.labelId));
       }
     }
 
-    if (labelsToRemove.size > 0) {
-      setLabelQueue((prev) => (prev || []).filter((item) => !labelsToRemove.has(item.id)));
-    }
+    consumeLabelsInQueue(resolvedLabelToOrder);
+    reviveLabelsInQueue(timedOutLabels);
 
     if (resolved.size > 0 || timedOut.size > 0) {
       setPendingManualAttachOps((prev) => prev.filter((op) => !resolved.has(op.id) && !timedOut.has(op.id)));
     }
-  }, [orders, pendingManualAttachOps, setLabelQueue]);
+  }, [consumeLabelsInQueue, orders, pendingManualAttachOps, reviveLabelsInQueue]);
 
   useEffect(() => {
     const locks = requiredPackagesLockRef.current;
@@ -1753,7 +1793,8 @@ export default function FacturacionPage() {
       (prev || []).map((order) => {
         const forced = pendingByOrder.get(order.id);
         if (forced === undefined) return order;
-        const updated = { ...order, requiredPackages: forced };
+        const changedAt = nowIso();
+        const updated = { ...order, requiredPackages: forced, lastChangedAt: changedAt };
         const labels = getOrderLabels(updated);
         return {
           ...updated,
@@ -1767,16 +1808,6 @@ export default function FacturacionPage() {
     );
   }, [orders, setOrders]);
 
-  const hideOrderId = (orderId: string) => {
-    const id = clean(orderId);
-    if (!id) return;
-    setHiddenOrderIds((prev) => {
-      const current = Array.isArray(prev) ? prev : [];
-      if (current.includes(id)) return current;
-      return [id, ...current];
-    });
-  };
-
   const tryAttachLabels = useCallback(
     (ordersList: BillingOrder[], labelsList: BillingLabelDoc[]) => {
       if (!ordersList.length || !labelsList.length) {
@@ -1788,6 +1819,10 @@ export default function FacturacionPage() {
       const labelsNext: BillingLabelDoc[] = [];
 
       for (const label of labelsList) {
+        if (!isLabelDocActive(label)) {
+          labelsNext.push(label);
+          continue;
+        }
         const labelKey = normalizeCustomerKey(label.customerName || '');
         const fileNameKey = normalizeCustomerKey(inferCustomerFromFileName(label.sourceFileName || ''));
         if (!labelKey && !fileNameKey) {
@@ -1836,10 +1871,18 @@ export default function FacturacionPage() {
 
         const duplicate = currentLabels.some((existing) => clean(existing.id) === clean(label.id));
         if (duplicate) {
-          labelsNext.push(label);
+          const changedAt = nowIso();
+          labelsNext.push({
+            ...label,
+            consumedAt: label.consumedAt || changedAt,
+            consumedByOrderId: label.consumedByOrderId || nextOrders[orderIdx].id,
+            cancelledAt: undefined,
+            lastChangedAt: changedAt,
+          });
           continue;
         }
 
+        const changedAt = nowIso();
         const mergedLabels: BillingLabelAttachment[] = [
           ...currentLabels,
           {
@@ -1847,7 +1890,7 @@ export default function FacturacionPage() {
             sourceFileName: label.sourceFileName,
             sourcePdfDataUrl: label.sourcePdfDataUrl,
             customerName: label.customerName,
-            attachedAt: new Date().toISOString(),
+            attachedAt: changedAt,
           },
         ];
         nextOrders[orderIdx] = {
@@ -1855,7 +1898,15 @@ export default function FacturacionPage() {
           labels: mergedLabels,
           labelPdfDataUrl: mergedLabels[0]?.sourcePdfDataUrl,
           labelFileName: mergedLabels[0]?.sourceFileName,
+          lastChangedAt: changedAt,
         };
+        labelsNext.push({
+          ...label,
+          consumedAt: changedAt,
+          consumedByOrderId: nextOrders[orderIdx].id,
+          cancelledAt: undefined,
+          lastChangedAt: changedAt,
+        });
         attached += 1;
       }
 
@@ -1865,7 +1916,7 @@ export default function FacturacionPage() {
   );
 
   useEffect(() => {
-    const queue = activeLabelQueue;
+    const queue = labelQueue || [];
     const currentOrders = orders || [];
     if (queue.length === 0 || currentOrders.length === 0) return;
 
@@ -1873,11 +1924,15 @@ export default function FacturacionPage() {
     if (attached <= 0) return;
     setOrders(ordersNext);
     setLabelQueue(labelsNext);
-  }, [activeLabelQueue, orders, setLabelQueue, setOrders, tryAttachLabels]);
+  }, [labelQueue, orders, setLabelQueue, setOrders, tryAttachLabels]);
 
   useEffect(() => {
     const archiveDueDays = () => {
-      const queue = (orders || []).filter((order) => !hiddenOrderSet.has(order.id));
+      const queue = (orders || []).filter(
+        (order) =>
+          order.status !== 'DESPACHADO' &&
+          order.status !== 'CANCELADO',
+      );
       if (queue.length === 0) return;
 
       const now = new Date();
@@ -1936,7 +1991,7 @@ export default function FacturacionPage() {
     archiveDueDays();
     const id = window.setInterval(archiveDueDays, 60_000);
     return () => window.clearInterval(id);
-  }, [archives, orders, hiddenOrderSet, setArchives, setOrders]);
+  }, [archives, orders, setArchives]);
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
@@ -2181,7 +2236,11 @@ export default function FacturacionPage() {
     setOrders((prev) =>
       (prev || []).map((order) => {
         if (order.id !== orderId) return order;
-        const updated = updater(order);
+        const changedAt = nowIso();
+        const updated = {
+          ...updater(order),
+          lastChangedAt: changedAt,
+        };
         const labels = getOrderLabels(updated);
         return {
           ...updated,
@@ -2247,12 +2306,24 @@ export default function FacturacionPage() {
   };
 
   const deleteOrder = (orderId: string) => {
-    hideOrderId(orderId);
-    setOrders((prev) => (prev || []).filter((order) => order.id !== orderId));
+    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO' }));
   };
 
   const removeQueuedLabel = (labelId: string) => {
-    setLabelQueue((prev) => (prev || []).filter((label) => label.id !== labelId));
+    const changedAt = nowIso();
+    setLabelQueue((prev) =>
+      (prev || []).map((label) =>
+        clean(label.id) === clean(labelId)
+          ? {
+              ...label,
+              cancelledAt: changedAt,
+              consumedAt: undefined,
+              consumedByOrderId: undefined,
+              lastChangedAt: changedAt,
+            }
+          : label,
+      ),
+    );
   };
 
   const setRequiredPackages = (orderId: string, value: number) => {
@@ -2278,7 +2349,20 @@ export default function FacturacionPage() {
       return;
     }
     if (labels.some((item) => clean(item.id) === clean(label.id))) {
-      setLabelQueue((prev) => (prev || []).filter((item) => item.id !== labelId));
+      const changedAt = nowIso();
+      setLabelQueue((prev) =>
+        (prev || []).map((item) =>
+          clean(item.id) === clean(labelId)
+            ? {
+                ...item,
+                consumedAt: item.consumedAt || changedAt,
+                consumedByOrderId: item.consumedByOrderId || orderId,
+                cancelledAt: undefined,
+                lastChangedAt: changedAt,
+              }
+            : item,
+        ),
+      );
       return;
     }
 
@@ -2286,6 +2370,7 @@ export default function FacturacionPage() {
       const currentLabels = getOrderLabels(current);
       const duplicate = currentLabels.some((item) => clean(item.id) === clean(label.id));
       if (duplicate) return current;
+      const attachedAt = nowIso();
       return {
         ...current,
         labels: [
@@ -2295,11 +2380,12 @@ export default function FacturacionPage() {
             sourceFileName: label.sourceFileName,
             sourcePdfDataUrl: label.sourcePdfDataUrl,
             customerName: label.customerName,
-            attachedAt: new Date().toISOString(),
+            attachedAt,
           },
         ],
       };
     });
+    consumeLabelsInQueue(new Map([[clean(label.id), orderId]]));
     setPendingManualAttachOps((prev) => {
       if (prev.some((op) => op.orderId === orderId && op.labelId === labelId)) return prev;
       return [
@@ -2319,6 +2405,7 @@ export default function FacturacionPage() {
       ...order,
       labels: getOrderLabels(order).filter((item) => item.id !== labelId),
     }));
+    reviveLabelsInQueue(new Set([clean(labelId)]));
   };
 
   const openPdfDataUrl = (dataUrl?: string, emptyMessage = 'No hay PDF adjunto.') => {
@@ -2423,8 +2510,38 @@ export default function FacturacionPage() {
     printPdfDataUrl(order.sourcePdfDataUrl, 'No hay PDF adjunto en este pedido.');
   };
 
+  const findMovementByMarkerInDb = useCallback(
+    async (
+      inventoryId: 'canet' | 'huarte',
+      markerCandidates: string[],
+    ): Promise<InventoryMovementRow | null> => {
+      for (const rawMarker of markerCandidates) {
+        const marker = clean(rawMarker);
+        if (!marker) continue;
+        const pattern = `%${escapeForIlike(marker)}%`;
+        try {
+          const { data, error } = await supabase
+            .from('inventory_movements')
+            .select('*')
+            .eq('inventory_id', inventoryId)
+            .ilike('notas', pattern)
+            .order('id', { ascending: false })
+            .limit(1);
+          if (error) continue;
+          const found = Array.isArray(data) && data.length > 0 ? (data[0] as InventoryMovementRow) : null;
+          if (found) return found;
+        } catch {
+          // noop; fallback to local checks / normal creation path
+        }
+      }
+      return null;
+    },
+    [],
+  );
+
   const dispatchOrder = async (order: BillingOrder) => {
     if (order.status === 'DESPACHADO' || order.status === 'CANCELADO') return;
+    if (dispatchingOrderIds.includes(order.id)) return;
 
     const pending = order.lines.filter((line) => !clean(line.lote));
     if (pending.length > 0) {
@@ -2453,45 +2570,68 @@ export default function FacturacionPage() {
     const isTransfer = order.movementType === 'traspaso';
     const transferDestination = clean(order.transferDestination || '');
 
+    setDispatchingOrderIds((prev) => (prev.includes(order.id) ? prev : [...prev, order.id]));
     try {
       const lineOccurrence = new Map<string, number>();
+      const lineErrors: string[] = [];
+      const sourceInventory: 'canet' | 'huarte' = order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
+
       for (const line of order.lines) {
         const marker = `ORDER:${order.id}|LINE:${line.id}`;
         const qty = Math.max(0, parseSpanishNumber(String(line.quantity)));
-        const lineKey = `${clean(line.productCode).toUpperCase()}|${clean(line.lote).toUpperCase()}|${qty}`;
+        const productCode = clean(line.productCode).toUpperCase();
+        const lote = clean(line.lote).toUpperCase();
+        const lineKey = `${productCode}|${lote}|${qty}`;
         const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
         lineOccurrence.set(lineKey, occurrence);
         const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
 
-        const existing = movementSource.find((m) => clean(m.notas).includes(marker));
-        const existingStable = movementSource.find((m) => clean(m.notas).includes(stableMarker));
+        if (!productCode || !lote) {
+          lineErrors.push(`${line.productRaw || line.productCode}: faltan datos de producto/lote.`);
+          continue;
+        }
+        if (qty <= 0) {
+          lineErrors.push(`${productCode} ${lote}: cantidad inválida (${line.quantity}).`);
+          continue;
+        }
+
+        let existing =
+          movementSource.find((m) => clean(m.notas).includes(marker)) ||
+          movementSource.find((m) => clean(m.notas).includes(stableMarker)) ||
+          null;
+        if (!existing) {
+          existing = await findMovementByMarkerInDb(sourceInventory, [marker, stableMarker]);
+        }
         if (existing) {
           updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
-          continue;
+        } else {
+          try {
+            const created = await mutation({
+              fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+              tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
+              producto: clean(line.productCode),
+              lote: clean(line.lote),
+              cantidad: qty,
+              cantidad_signed: -qty,
+              signo: -1,
+              bodega: order.sourceWarehouse,
+              cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
+              destino: isTransfer ? transferDestination : '',
+              notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+              factura_doc: order.invoiceNumber,
+              responsable: currentUser?.name || 'Sistema',
+              source: 'facturacion_pdf',
+              afecta_stock: 'SI',
+            });
+            updateLine(order.id, line.id, {
+              movementId: created.id,
+              lotePending: false,
+            });
+          } catch (err: any) {
+            lineErrors.push(`${productCode} ${lote}: ${err?.message || 'falló creación de movimiento'}`);
+            continue;
+          }
         }
-        if (existingStable) {
-          updateLine(order.id, line.id, { movementId: existingStable.id, lotePending: false });
-          continue;
-        }
-        if (qty <= 0) continue;
-
-        const created = await mutation({
-          fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-          tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
-          producto: clean(line.productCode),
-          lote: clean(line.lote),
-          cantidad: qty,
-          cantidad_signed: -qty,
-          signo: -1,
-          bodega: order.sourceWarehouse,
-          cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
-          destino: isTransfer ? transferDestination : '',
-          notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
-          factura_doc: order.invoiceNumber,
-          responsable: currentUser?.name || 'Sistema',
-          source: 'facturacion_pdf',
-          afecta_stock: 'SI',
-        });
 
         if (
           isTransfer &&
@@ -2501,39 +2641,63 @@ export default function FacturacionPage() {
         ) {
           const autoMarker = `${marker}|AUTO_IN`;
           const autoStableMarker = `${stableMarker}|AUTO_IN`;
-          const existingAutoIn = huarteMovements.find((m) => clean(m.notas).includes(autoMarker));
-          const existingAutoStable = huarteMovements.find((m) => clean(m.notas).includes(autoStableMarker));
-          if (!existingAutoIn) {
-            if (existingAutoStable) continue;
-            await huarteMutations.addMovement({
-              fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-              tipo_movimiento: 'entrada_traspaso',
-              producto: clean(line.productCode),
-              lote: clean(line.lote),
-              cantidad: qty,
-              cantidad_signed: qty,
-              signo: 1,
-              bodega: 'HUARTE',
-              cliente: 'CANET',
-              destino: 'HUARTE',
-              notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
-              factura_doc: order.invoiceNumber,
-              responsable: currentUser?.name || 'Sistema',
-              source: 'facturacion_pdf_auto_in',
-              afecta_stock: 'SI',
-            });
+          let existingAuto =
+            huarteMovements.find((m) => clean(m.notas).includes(autoMarker)) ||
+            huarteMovements.find((m) => clean(m.notas).includes(autoStableMarker)) ||
+            null;
+          if (!existingAuto) {
+            existingAuto = await findMovementByMarkerInDb('huarte', [autoMarker, autoStableMarker]);
+          }
+          if (!existingAuto) {
+            try {
+              await huarteMutations.addMovement({
+                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                tipo_movimiento: 'entrada_traspaso',
+                producto: clean(line.productCode),
+                lote: clean(line.lote),
+                cantidad: qty,
+                cantidad_signed: qty,
+                signo: 1,
+                bodega: 'HUARTE',
+                cliente: 'CANET',
+                destino: 'HUARTE',
+                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
+                factura_doc: order.invoiceNumber,
+                responsable: currentUser?.name || 'Sistema',
+                source: 'facturacion_pdf_auto_in',
+                afecta_stock: 'SI',
+              });
+            } catch (err: any) {
+              lineErrors.push(`${productCode} ${lote}: autoentrada HUARTE falló (${err?.message || 'error desconocido'})`);
+            }
           }
         }
-
-        updateLine(order.id, line.id, {
-          movementId: created.id,
-          lotePending: false,
-        });
       }
+
+      if (lineErrors.length > 0) {
+        updateOrder(order.id, (current) => ({
+          ...current,
+          status: 'EN_PREPARACION',
+        }));
+        const sample = lineErrors.slice(0, 3).join(' | ');
+        const hiddenCount = Math.max(0, lineErrors.length - 3);
+        alert(
+          `Despacho parcial: se crearon algunas líneas, pero hubo ${lineErrors.length} error(es). ${
+            sample ? `Detalle: ${sample}` : ''
+          }${hiddenCount > 0 ? ` (+${hiddenCount} más)` : ''}`,
+        );
+        return;
+      }
+
+      const changedAt = nowIso();
+      const currentOrder = (ordersRef.current || []).find((item) => item.id === order.id) || order;
       const dispatchedSnapshot: BillingOrder = {
-        ...order,
+        ...currentOrder,
         status: 'DESPACHADO',
+        lastChangedAt: changedAt,
       };
+
+      updateOrder(order.id, () => dispatchedSnapshot);
       const dateKey = toLocalDateKey(new Date()) || toLocalDateKey(order.createdAt);
       if (dateKey) {
         setArchives((prev) => {
@@ -2566,12 +2730,12 @@ export default function FacturacionPage() {
           return [newEntry, ...current].sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
         });
       }
-      hideOrderId(order.id);
-      setOrders((prev) => (prev || []).filter((item) => item.id !== order.id));
       alert(`Pedido ${order.invoiceNumber} despachado y convertido en movimientos (${order.movementType}).`);
     } catch (error: any) {
       console.error('Dispatch order failed:', error);
       alert(`No se pudo despachar el pedido: ${error?.message || 'error desconocido'}`);
+    } finally {
+      setDispatchingOrderIds((prev) => prev.filter((id) => id !== order.id));
     }
   };
 
@@ -2591,16 +2755,15 @@ export default function FacturacionPage() {
             labelPdfDataUrl: primaryLabel?.sourcePdfDataUrl,
             status,
           } as BillingOrder;
-        })
-        .filter((order) => !hiddenOrderSet.has(order.id)),
-    [orders, hiddenOrderSet],
+        }),
+    [orders],
   );
   const ordersSorted = useMemo(
     () => [...ordersVisible].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
     [ordersVisible],
   );
   const activeOrders = useMemo(
-    () => ordersSorted.filter((order) => order.status !== 'DESPACHADO'),
+    () => ordersSorted.filter((order) => order.status !== 'DESPACHADO' && order.status !== 'CANCELADO'),
     [ordersSorted],
   );
   const filteredActiveOrders = useMemo(() => {
@@ -3109,10 +3272,14 @@ export default function FacturacionPage() {
 
                     <button
                       onClick={() => void dispatchOrder(order)}
-                      disabled={order.status === 'DESPACHADO' || order.status === 'CANCELADO'}
+                      disabled={
+                        order.status === 'DESPACHADO' ||
+                        order.status === 'CANCELADO' ||
+                        dispatchingOrderIds.includes(order.id)
+                      }
                       className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700 disabled:opacity-50"
                     >
-                      <Truck size={12} /> Despachar (crear movimientos)
+                      <Truck size={12} /> {dispatchingOrderIds.includes(order.id) ? 'Despachando...' : 'Despachar (crear movimientos)'}
                     </button>
 
                     <button

@@ -6,6 +6,8 @@ type Options = {
   initializeIfMissing?: boolean;
   pollIntervalMs?: number;
   protectFromEmptyOverwrite?: boolean;
+  mergeBeforePersist?: boolean;
+  mergeStrategy?: (remote: any, local: any) => any;
 };
 
 function isEffectivelyEmpty(value: unknown) {
@@ -34,6 +36,94 @@ function safeWriteLocal<T>(cacheKey: string, value: T) {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function entityVersionMs(value: Record<string, any>) {
+  const candidates = ['lastChangedAt', 'updatedAt', 'updated_at', 'attachedAt', 'archivedAt', 'createdAt', 'created_at'];
+  for (const field of candidates) {
+    const raw = value[field];
+    if (raw == null || raw === '') continue;
+    const ts = new Date(String(raw)).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+}
+
+function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<string, any>) {
+  const baseTs = entityVersionMs(base);
+  const incomingTs = entityVersionMs(incoming);
+  const preferIncoming = incomingTs >= baseTs;
+  const merged = preferIncoming ? { ...base, ...incoming } : { ...incoming, ...base };
+
+  // Preserve/merge nested label arrays (critical for despacho flow).
+  if (Array.isArray(base.labels) || Array.isArray(incoming.labels)) {
+    const b = Array.isArray(base.labels) ? base.labels : [];
+    const i = Array.isArray(incoming.labels) ? incoming.labels : [];
+    const byId = new Map<string, any>();
+    const upsert = (item: any) => {
+      const id = String(item?.id ?? '').trim();
+      if (!id) return;
+      const prev = byId.get(id);
+      if (!prev) {
+        byId.set(id, item);
+        return;
+      }
+      const prevTs = entityVersionMs(prev);
+      const nextTs = entityVersionMs(item);
+      byId.set(id, nextTs >= prevTs ? { ...prev, ...item } : { ...item, ...prev });
+    };
+    b.forEach(upsert);
+    i.forEach(upsert);
+    merged.labels = Array.from(byId.values());
+  }
+
+  return merged;
+}
+
+function defaultMergeRemoteLocal(remote: any, local: any) {
+  if (Array.isArray(remote) && Array.isArray(local)) {
+    const remoteIdObjects = remote.every((item) => isPlainObject(item) && String((item as any).id ?? '').trim().length > 0);
+    const localIdObjects = local.every((item) => isPlainObject(item) && String((item as any).id ?? '').trim().length > 0);
+    if (remoteIdObjects && localIdObjects) {
+      const byId = new Map<string, any>();
+      const order: string[] = [];
+
+      for (const item of remote) {
+        const id = String((item as any).id).trim();
+        if (!id) continue;
+        byId.set(id, item);
+        order.push(id);
+      }
+      for (const item of local) {
+        const id = String((item as any).id).trim();
+        if (!id) continue;
+        const prev = byId.get(id);
+        if (!prev) {
+          byId.set(id, item);
+          if (!order.includes(id)) order.push(id);
+          continue;
+        }
+        byId.set(id, mergeEntitiesByHeuristic(prev, item));
+      }
+
+      // Keep local-first ordering (what user just edited), then remaining remote.
+      const localOrder = local
+        .map((item) => String((item as any).id).trim())
+        .filter((id) => id.length > 0);
+      const finalOrder = Array.from(new Set([...localOrder, ...order]));
+      return finalOrder.map((id) => byId.get(id)).filter(Boolean);
+    }
+  }
+
+  if (isPlainObject(remote) && isPlainObject(local)) {
+    return mergeEntitiesByHeuristic(remote, local);
+  }
+
+  return local;
+}
+
 export function useSharedJsonState<T>(
   key: string,
   fallbackValue: T,
@@ -44,6 +134,8 @@ export function useSharedJsonState<T>(
     initializeIfMissing = true,
     pollIntervalMs = 120000,
     protectFromEmptyOverwrite = false,
+    mergeBeforePersist = false,
+    mergeStrategy,
   } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
@@ -62,29 +154,50 @@ export function useSharedJsonState<T>(
   }, [fallbackValue]);
 
   const persist = useCallback(
-    async (next: T) => {
+    async (next: T): Promise<T> => {
+      let payloadToStore = next;
+      if (mergeBeforePersist) {
+        try {
+          const { data, error } = await supabase
+            .from('shared_json_state')
+            .select('payload')
+            .eq('key', key)
+            .maybeSingle();
+          if (!error && data && Object.prototype.hasOwnProperty.call(data, 'payload')) {
+            const remotePayload = data.payload as T;
+            payloadToStore = (mergeStrategy
+              ? mergeStrategy(remotePayload, next)
+              : defaultMergeRemoteLocal(remotePayload, next)) as T;
+          }
+        } catch {
+          // fallback to local payload
+          payloadToStore = next;
+        }
+      }
+
       const { error } = await supabase
         .from('shared_json_state')
         .upsert(
           {
             key,
-            payload: next as any,
+            payload: payloadToStore as any,
             updated_by: userId || null,
           },
           { onConflict: 'key' },
         );
       if (error) {
         console.error(`[shared_json_state] upsert failed for key ${key}:`, error);
+        throw error;
       }
 
-      if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
+      if (protectFromEmptyOverwrite && !isEffectivelyEmpty(payloadToStore)) {
         const backupKey = backupKeyRef.current;
         const { error: backupError } = await supabase
           .from('shared_json_state')
           .upsert(
             {
               key: backupKey,
-              payload: next as any,
+              payload: payloadToStore as any,
               updated_by: userId || null,
             },
             { onConflict: 'key' },
@@ -92,11 +205,12 @@ export function useSharedJsonState<T>(
         if (backupError) {
           console.error(`[shared_json_state] backup upsert failed for key ${backupKey}:`, backupError);
         } else {
-          safeWriteLocal(localCacheKeyRef.current, next);
+          safeWriteLocal(localCacheKeyRef.current, payloadToStore);
         }
       }
+      return payloadToStore;
     },
-    [key, userId, protectFromEmptyOverwrite],
+    [key, mergeBeforePersist, mergeStrategy, protectFromEmptyOverwrite, userId],
   );
 
   useEffect(() => {
@@ -257,6 +371,7 @@ export function useSharedJsonState<T>(
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {
       setValue((prev) => {
+        const previous = prev;
         const next =
           typeof updater === 'function'
             ? (updater as (prevState: T) => T)(prev)
@@ -265,11 +380,30 @@ export function useSharedJsonState<T>(
         if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
           safeWriteLocal(localCacheKeyRef.current, next);
         }
-        void persist(next);
+        void persist(next)
+          .then((stored) => {
+            if (stored === next) return;
+            valueRef.current = stored;
+            setValue(stored);
+            if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
+              safeWriteLocal(localCacheKeyRef.current, stored);
+            }
+          })
+          .catch((error) => {
+            console.error(`[shared_json_state] persist failed for key ${key}:`, error);
+            setValue((current) => {
+              if (current !== next) return current;
+              valueRef.current = previous;
+              if (protectFromEmptyOverwrite && !isEffectivelyEmpty(previous)) {
+                safeWriteLocal(localCacheKeyRef.current, previous);
+              }
+              return previous;
+            });
+          });
         return next;
       });
     },
-    [persist, protectFromEmptyOverwrite],
+    [key, persist, protectFromEmptyOverwrite],
   );
 
   return [value, setSharedValue, loading];
