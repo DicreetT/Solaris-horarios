@@ -40,6 +40,7 @@ type BillingOrder = {
   id: string;
   createdAt: string;
   lastChangedAt?: string;
+  requiredPackagesUpdatedAt?: string;
   createdBy: string;
   documentType: BillingDocumentType;
   movementType: BillingMovementType;
@@ -1381,6 +1382,7 @@ function parseInvoiceFromText(
     id: uid('ord'),
     createdAt,
     lastChangedAt: createdAt,
+    requiredPackagesUpdatedAt: createdAt,
     createdBy: actor || 'Sistema',
     documentType: 'FACTURA',
     movementType: 'venta',
@@ -1437,6 +1439,7 @@ function parseTransferFromText(
     id: uid('ord'),
     createdAt,
     lastChangedAt: createdAt,
+    requiredPackagesUpdatedAt: createdAt,
     createdBy: actor || 'Sistema',
     documentType: 'TRANSFERENCIA',
     movementType: 'traspaso',
@@ -1542,6 +1545,7 @@ function orderRequiresLabels(order: BillingOrder) {
 }
 
 function recomputeOrderStatus(order: BillingOrder): BillingOrderStatus {
+  if (clean((order as any).cancelledAt)) return 'CANCELADO';
   if (order.status === 'CANCELADO' || order.status === 'DESPACHADO') return order.status;
   const hasPendingLot = order.lines.some((line) => line.lotePending || !clean(line.lote));
   if (hasPendingLot) return 'PENDIENTE_MANUAL';
@@ -1764,6 +1768,40 @@ export default function FacturacionPage() {
     }
   }, [consumeLabelsInQueue, orders, pendingManualAttachOps, reviveLabelsInQueue]);
 
+  // Safety net: if a label was marked "consumed" but did not remain attached
+  // in any order after sync races/timeouts, revive it back to pending queue.
+  useEffect(() => {
+    const orderList = orders || [];
+    const labels = labelQueue || [];
+    if (!orderList.length || !labels.length) return;
+
+    const attachedLabelIds = new Set<string>();
+    for (const order of orderList) {
+      for (const lbl of getOrderLabels(order)) {
+        const id = clean(lbl.id);
+        if (id) attachedLabelIds.add(id);
+      }
+    }
+
+    const now = Date.now();
+    const toRevive = new Set<string>();
+    for (const label of labels) {
+      const id = clean(label.id);
+      if (!id) continue;
+      if (clean(label.cancelledAt)) continue;
+      if (!clean(label.consumedAt)) continue;
+      if (attachedLabelIds.has(id)) continue;
+      const consumedMs = new Date(String(label.consumedAt)).getTime();
+      if (!Number.isFinite(consumedMs) || now - consumedMs > 10000) {
+        toRevive.add(id);
+      }
+    }
+
+    if (toRevive.size > 0) {
+      reviveLabelsInQueue(toRevive);
+    }
+  }, [labelQueue, orders, reviveLabelsInQueue]);
+
   useEffect(() => {
     const locks = requiredPackagesLockRef.current;
     const entries = Object.entries(locks);
@@ -1794,7 +1832,12 @@ export default function FacturacionPage() {
         const forced = pendingByOrder.get(order.id);
         if (forced === undefined) return order;
         const changedAt = nowIso();
-        const updated = { ...order, requiredPackages: forced, lastChangedAt: changedAt };
+        const updated = {
+          ...order,
+          requiredPackages: forced,
+          requiredPackagesUpdatedAt: changedAt,
+          lastChangedAt: changedAt,
+        };
         const labels = getOrderLabels(updated);
         return {
           ...updated,
@@ -2302,11 +2345,13 @@ export default function FacturacionPage() {
   };
 
   const cancelOrder = (orderId: string) => {
-    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO' }));
+    const changedAt = nowIso();
+    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO', cancelledAt: changedAt }));
   };
 
   const deleteOrder = (orderId: string) => {
-    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO' }));
+    const changedAt = nowIso();
+    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO', cancelledAt: changedAt }));
   };
 
   const removeQueuedLabel = (labelId: string) => {
@@ -2328,10 +2373,11 @@ export default function FacturacionPage() {
 
   const setRequiredPackages = (orderId: string, value: number) => {
     const normalized = Math.max(0, Math.floor(Number(value) || 0));
-    requiredPackagesLockRef.current[orderId] = { value: normalized, until: Date.now() + 15000 };
+    requiredPackagesLockRef.current[orderId] = { value: normalized, until: Date.now() + 60000 };
     updateOrder(orderId, (order) => ({
       ...order,
       requiredPackages: normalized,
+      requiredPackagesUpdatedAt: nowIso(),
     }));
   };
 

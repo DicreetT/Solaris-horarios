@@ -51,6 +51,12 @@ function entityVersionMs(value: Record<string, any>) {
   return 0;
 }
 
+function parseTimestampMs(raw: unknown) {
+  if (raw == null || raw === '') return 0;
+  const ts = new Date(String(raw)).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<string, any>) {
   const baseTs = entityVersionMs(base);
   const incomingTs = entityVersionMs(incoming);
@@ -77,6 +83,54 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
     b.forEach(upsert);
     i.forEach(upsert);
     merged.labels = Array.from(byId.values());
+  }
+
+  // Preserve requiredPackages by its own field-level timestamp to avoid
+  // stale cross-client overwrites (e.g. bultos bouncing back to 0).
+  const baseRequiredTs = parseTimestampMs(base.requiredPackagesUpdatedAt);
+  const incomingRequiredTs = parseTimestampMs(incoming.requiredPackagesUpdatedAt);
+  if (baseRequiredTs > 0 || incomingRequiredTs > 0) {
+    const keepIncomingRequired = incomingRequiredTs >= baseRequiredTs;
+    if (keepIncomingRequired) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'requiredPackages')) {
+        merged.requiredPackages = incoming.requiredPackages;
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'requiredPackagesUpdatedAt')) {
+        merged.requiredPackagesUpdatedAt = incoming.requiredPackagesUpdatedAt;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'requiredPackages')) {
+        merged.requiredPackages = base.requiredPackages;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'requiredPackagesUpdatedAt')) {
+        merged.requiredPackagesUpdatedAt = base.requiredPackagesUpdatedAt;
+      }
+    }
+  }
+
+  // Tombstone-like behavior for cancelled entities:
+  // once cancelledAt exists on any side, keep it and force CANCELADO status
+  // so stale clients cannot resurrect deleted/cancelled records.
+  const baseCancelledTs = parseTimestampMs(base.cancelledAt);
+  const incomingCancelledTs = parseTimestampMs(incoming.cancelledAt);
+  if (baseCancelledTs > 0 || incomingCancelledTs > 0) {
+    const keepIncomingCancelled = incomingCancelledTs >= baseCancelledTs;
+    if (keepIncomingCancelled) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'cancelledAt')) {
+        merged.cancelledAt = incoming.cancelledAt;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'cancelledAt')) {
+        merged.cancelledAt = base.cancelledAt;
+      }
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(base, 'status') ||
+      Object.prototype.hasOwnProperty.call(incoming, 'status') ||
+      Object.prototype.hasOwnProperty.call(merged, 'status')
+    ) {
+      merged.status = 'CANCELADO';
+    }
   }
 
   return merged;
@@ -247,8 +301,8 @@ export function useSharedJsonState<T>(
 
       const hasPayload = data && Object.prototype.hasOwnProperty.call(data, 'payload');
       if (hasPayload && data?.payload !== undefined) {
-        const incoming = ((data.payload as T) ?? fallbackRef.current);
-        if (protectFromEmptyOverwrite && isEffectivelyEmpty(incoming)) {
+        const incomingRaw = ((data.payload as T) ?? fallbackRef.current);
+        if (protectFromEmptyOverwrite && isEffectivelyEmpty(incomingRaw)) {
           // Evitar vaciar estado útil por lecturas inconsistentes/transitorias.
           if (!isEffectivelyEmpty(valueRef.current)) {
             if (active && !silent) setLoading(false);
@@ -283,6 +337,11 @@ export function useSharedJsonState<T>(
             }
           }
         }
+        const incoming = mergeBeforePersist
+          ? ((mergeStrategy
+              ? mergeStrategy(incomingRaw, valueRef.current)
+              : defaultMergeRemoteLocal(incomingRaw, valueRef.current)) as T)
+          : incomingRaw;
 
         setValue(incoming);
         valueRef.current = incoming;
@@ -341,11 +400,16 @@ export function useSharedJsonState<T>(
           filter: `key=eq.${key}`,
         },
         (payload: any) => {
-          const next = payload?.new?.payload;
-          if (next === undefined) return;
-          if (protectFromEmptyOverwrite && isEffectivelyEmpty(next) && !isEffectivelyEmpty(valueRef.current)) {
+          const nextRaw = payload?.new?.payload;
+          if (nextRaw === undefined) return;
+          if (protectFromEmptyOverwrite && isEffectivelyEmpty(nextRaw) && !isEffectivelyEmpty(valueRef.current)) {
             return;
           }
+          const next = mergeBeforePersist
+            ? ((mergeStrategy
+                ? mergeStrategy(nextRaw, valueRef.current)
+                : defaultMergeRemoteLocal(nextRaw, valueRef.current)) as T)
+            : (nextRaw as T);
           setValue(next as T);
           valueRef.current = next as T;
           if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
@@ -366,7 +430,7 @@ export function useSharedJsonState<T>(
       window.removeEventListener('focus', onVisibilityOrFocus);
       void supabase.removeChannel(channel);
     };
-  }, [key, initializeIfMissing, persist, pollIntervalMs, protectFromEmptyOverwrite]);
+  }, [key, initializeIfMissing, mergeBeforePersist, mergeStrategy, persist, pollIntervalMs, protectFromEmptyOverwrite]);
 
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {
