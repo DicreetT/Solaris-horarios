@@ -62,6 +62,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
     const userMenuRef = useRef(null);
 
     const isAdmin = !!currentUser?.isAdmin;
@@ -193,9 +194,16 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         }
     };
 
-    const handleLogout = () => {
-        logout();
-        navigate('/');
+    const handleLogout = async () => {
+        if (isLoggingOut) return;
+        setIsLoggingOut(true);
+        setShowUserMenu(false);
+        try {
+            await logout();
+            navigate('/login', { replace: true });
+        } finally {
+            setIsLoggingOut(false);
+        }
     };
 
     return (
@@ -397,10 +405,11 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                         <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                                                         <button
                                                             onClick={handleLogout}
-                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
+                                                            disabled={isLoggingOut}
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                                         >
                                                             <LogOut size={16} />
-                                                            Cerrar sesión
+                                                            {isLoggingOut ? 'Cerrando...' : 'Cerrar sesión'}
                                                         </button>
                                                     </div>
                                                 </motion.div>

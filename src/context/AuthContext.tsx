@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { USERS } from '../constants';
 import type { User } from '../types';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 interface AuthContextType {
     currentUser: User | null;
@@ -21,30 +22,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
+    const mapAuthUser = (authUser: SupabaseUser): User | null => {
+        const email = authUser.email?.toLowerCase();
+        const localUser = USERS.find((u) => u.email.toLowerCase() === email);
+        if (!localUser) return null;
+        return {
+            ...localUser,
+            id: authUser.id,
+            email: authUser.email || localUser.email,
+        };
+    };
+
     useEffect(() => {
         const loadingFallback = window.setTimeout(() => {
             setLoading(false);
-        }, 5000);
+        }, 3000);
 
-        // Check active session
+        let isMounted = true;
+
+        // Check active session from local auth storage first (faster than getUser network call).
         async function loadAuthUser() {
             try {
-                const { data } = await supabase.auth.getUser();
-                if (data?.user) {
-                    const email = data.user.email?.toLowerCase();
-                    const localUser = USERS.find((u) => u.email.toLowerCase() === email);
-                    if (localUser) {
-                        setCurrentUser({
-                            ...localUser,
-                            // Use auth uid to avoid RLS mismatches on inserts/updates.
-                            id: data.user.id,
-                            email: data.user.email || localUser.email,
-                        });
-                    }
-                }
+                const { data } = await supabase.auth.getSession();
+                if (!isMounted) return;
+                const nextUser = data?.session?.user ? mapAuthUser(data.session.user) : null;
+                setCurrentUser(nextUser);
             } catch (error) {
                 console.error('Error loading auth user:', error);
             } finally {
+                if (!isMounted) return;
                 setLoading(false);
             }
         }
@@ -52,26 +58,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
         loadAuthUser();
 
         // Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (session?.user) {
-                const email = session.user.email?.toLowerCase();
-                const localUser = USERS.find((u) => u.email.toLowerCase() === email);
-                if (localUser) {
-                    setCurrentUser({
-                        ...localUser,
-                        id: session.user.id,
-                        email: session.user.email || localUser.email,
-                    });
-                } else {
-                    setCurrentUser(null);
-                }
-            } else {
-                setCurrentUser(null);
-            }
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (!isMounted) return;
+            const nextUser = session?.user ? mapAuthUser(session.user) : null;
+            setCurrentUser(nextUser);
             setLoading(false);
         });
 
         return () => {
+            isMounted = false;
             window.clearTimeout(loadingFallback);
             subscription.unsubscribe();
         };
@@ -83,8 +78,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const logout = async () => {
         try {
-            await supabase.auth.signOut();
+            // Optimistic local logout for immediate UI/navigation response.
             setCurrentUser(null);
+            const { error } = await supabase.auth.signOut({ scope: 'local' });
+            if (error) {
+                console.warn('Local signOut failed, retrying default signOut:', error);
+                await supabase.auth.signOut();
+            }
         } catch (error) {
             console.error('Error signing out:', error);
         }

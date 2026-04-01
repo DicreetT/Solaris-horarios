@@ -86,16 +86,39 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const LOGIN_TIMEOUT_MS = 12000;
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
         setError("");
         setLoading(true);
-
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
+        let timeoutId: number | null = null;
+        let data: any = null;
+        let error: any = null;
+        try {
+            const signInPromise = supabase.auth.signInWithPassword({
+                email,
+                password,
+            });
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutId = window.setTimeout(() => reject(new Error('LOGIN_TIMEOUT')), LOGIN_TIMEOUT_MS);
+            });
+            const result = await Promise.race([signInPromise, timeoutPromise]);
+            data = result.data;
+            error = result.error;
+        } catch (err: any) {
+            if (err?.message === 'LOGIN_TIMEOUT') {
+                setError('La conexión está lenta. Inténtalo de nuevo.');
+                setLoading(false);
+                return;
+            }
+            console.error(err);
+            setError('No se pudo iniciar sesión. Revisa tu conexión e inténtalo de nuevo.');
+            setLoading(false);
+            return;
+        } finally {
+            if (timeoutId) window.clearTimeout(timeoutId);
+        }
 
         setLoading(false);
 
