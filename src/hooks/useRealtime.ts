@@ -22,7 +22,7 @@ export function useRealtime(currentUser: User | null) {
                 { event: '*', schema: 'public', table: 'todos' },
                 () => {
                     console.log('Realtime update: todos');
-                    queryClient.invalidateQueries({ queryKey: ['todos'] });
+                    queryClient.invalidateQueries({ queryKey: ['todos', currentUser.id] });
                 }
             )
             .on(

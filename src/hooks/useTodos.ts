@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
@@ -6,10 +6,48 @@ import { User, Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 const EMPTY_ARRAY: Todo[] = [];
+const EMPTY_GRACE_MS = 120000;
+
+function readTodosCache(userId?: string) {
+    if (!userId || typeof window === 'undefined') return EMPTY_ARRAY;
+    try {
+        const raw = window.localStorage.getItem(`todos_cache_${userId}`);
+        if (!raw) return EMPTY_ARRAY;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? (parsed as Todo[]) : EMPTY_ARRAY;
+    } catch {
+        return EMPTY_ARRAY;
+    }
+}
+
+function writeTodosCache(userId: string, todos: Todo[]) {
+    if (!userId || typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem(`todos_cache_${userId}`, JSON.stringify(todos));
+    } catch {
+        // noop
+    }
+}
 
 export function useTodos(currentUser: User | null) {
     const queryClient = useQueryClient();
     const { addNotification } = useNotifications(currentUser);
+    const lastNonEmptyTodosRef = useRef<Todo[]>([]);
+    const lastNonEmptyAtRef = useRef(0);
+
+    useEffect(() => {
+        if (!currentUser?.id) {
+            lastNonEmptyTodosRef.current = EMPTY_ARRAY;
+            lastNonEmptyAtRef.current = 0;
+            return;
+        }
+        const cached = readTodosCache(currentUser.id);
+        if (cached.length > 0) {
+            lastNonEmptyTodosRef.current = cached;
+            lastNonEmptyAtRef.current = Date.now();
+            queryClient.setQueryData(['todos', currentUser.id], cached);
+        }
+    }, [currentUser?.id, queryClient]);
 
     const { data: todos = EMPTY_ARRAY, isLoading, error } = useQuery({
         queryKey: ['todos', currentUser?.id],
@@ -38,15 +76,32 @@ export function useTodos(currentUser: User | null) {
                 created_at: row.created_at,
             }));
 
-            if (currentUser.isAdmin) {
-                return mapped;
-            }
-
-            return mapped.filter(
+            const visible = currentUser.isAdmin
+                ? mapped
+                : mapped.filter(
                 (t) =>
                     t.created_by === currentUser.id ||
                     (t.assigned_to || []).includes(currentUser.id)
             );
+
+            if (visible.length > 0) {
+                lastNonEmptyTodosRef.current = visible;
+                lastNonEmptyAtRef.current = Date.now();
+                writeTodosCache(currentUser.id, visible);
+                return visible;
+            }
+
+            const hasRecentNonEmpty =
+                lastNonEmptyTodosRef.current.length > 0 &&
+                Date.now() - lastNonEmptyAtRef.current < EMPTY_GRACE_MS;
+            if (hasRecentNonEmpty) {
+                window.setTimeout(() => {
+                    queryClient.invalidateQueries({ queryKey: ['todos', currentUser.id] });
+                }, 1200);
+                return lastNonEmptyTodosRef.current;
+            }
+
+            return visible;
         },
         enabled: !!currentUser,
     });
@@ -57,12 +112,12 @@ export function useTodos(currentUser: User | null) {
         if (!currentUser) return;
 
         const channel = supabase
-            .channel('todos_realtime')
+            .channel(`todos_realtime_${currentUser.id}`)
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'todos' },
                 () => {
-                    queryClient.invalidateQueries({ queryKey: ['todos'] });
+                    queryClient.invalidateQueries({ queryKey: ['todos', currentUser.id] });
                 }
             )
             .subscribe();
@@ -103,7 +158,7 @@ export function useTodos(currentUser: User | null) {
             return data;
         },
         onSuccess: async (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['todos'] });
+            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
             emitSuccessFeedback('Tarea creada con éxito.');
 
             // Notify assigned users
@@ -144,7 +199,7 @@ export function useTodos(currentUser: User | null) {
             return { nextCompleted, nextShocked, isNowCompleted: !isDone };
         },
         onSuccess: (result) => {
-            queryClient.invalidateQueries({ queryKey: ['todos'] });
+            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
             emitSuccessFeedback(result?.isNowCompleted ? 'Tarea finalizada con éxito.' : 'Tarea reabierta con éxito.');
         },
     });
@@ -155,7 +210,7 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos'] });
+            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
             emitSuccessFeedback('Tarea eliminada con éxito.');
         },
     });
@@ -202,7 +257,7 @@ export function useTodos(currentUser: User | null) {
             return nextComments;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos'] });
+            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
             emitSuccessFeedback('Comentario guardado con éxito.');
         },
     });
@@ -229,7 +284,7 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos'] });
+            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
             emitSuccessFeedback('Tarea actualizada con éxito.');
         },
     });

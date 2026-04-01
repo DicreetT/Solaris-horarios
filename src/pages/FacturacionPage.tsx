@@ -1194,6 +1194,7 @@ function scoreOrderForDedup(order: BillingOrder) {
   score += Math.max(0, getOrderRequiredPackages(order)) * 4;
   score += order.lines.filter((line) => !line.lotePending && !!clean(line.lote)).length * 6;
   score += order.lines.filter((line) => Number(line.quantity) > 0 && !!clean(line.productCode)).length * 5;
+  if (order.status === 'CANCELADO') score += 1000;
   if (order.status === 'DESPACHADO') score += 60;
   if (order.status === 'EN_PREPARACION') score += 20;
   if (clean(order.sourcePdfDataUrl)) score += 4;
@@ -1586,6 +1587,32 @@ function escapeForIlike(value: string) {
   return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+async function withUiTimeout<T>(
+  operation: () => Promise<T>,
+  label: string,
+  timeoutMs = 20000,
+): Promise<T> {
+  let settled = false;
+  return await new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      settled = true;
+      reject(new Error(`${label}: Tiempo de espera agotado al conectar con base de datos.`));
+    }, timeoutMs);
+
+    operation()
+      .then((result) => {
+        if (settled) return;
+        window.clearTimeout(timer);
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) return;
+        window.clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 export default function FacturacionPage() {
   const { currentUser } = useAuth();
   const [sourceWarehouse, setSourceWarehouse] = useState<BillingWarehouse>('CANET');
@@ -1968,6 +1995,15 @@ export default function FacturacionPage() {
     setOrders(ordersNext);
     setLabelQueue(labelsNext);
   }, [labelQueue, orders, setLabelQueue, setOrders, tryAttachLabels]);
+
+  useEffect(() => {
+    const current = orders || [];
+    if (current.length <= 1) return;
+    const deduped = dedupeOrdersPreservingBest(current);
+    if (deduped.length !== current.length) {
+      setOrders(deduped);
+    }
+  }, [orders, setOrders]);
 
   useEffect(() => {
     const archiveDueDays = () => {
@@ -2566,13 +2602,18 @@ export default function FacturacionPage() {
         if (!marker) continue;
         const pattern = `%${escapeForIlike(marker)}%`;
         try {
-          const { data, error } = await supabase
-            .from('inventory_movements')
-            .select('*')
-            .eq('inventory_id', inventoryId)
-            .ilike('notas', pattern)
-            .order('id', { ascending: false })
-            .limit(1);
+          const { data, error } = await withUiTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
+            async () =>
+              supabase
+                .from('inventory_movements')
+                .select('*')
+                .eq('inventory_id', inventoryId)
+                .ilike('notas', pattern)
+                .order('id', { ascending: false })
+                .limit(1),
+            `findMovementByMarkerInDb(${inventoryId})`,
+            12000,
+          );
           if (error) continue;
           const found = Array.isArray(data) && data.length > 0 ? (data[0] as InventoryMovementRow) : null;
           if (found) return found;
@@ -2652,23 +2693,28 @@ export default function FacturacionPage() {
           updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
         } else {
           try {
-            const created = await mutation({
-              fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-              tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
-              producto: clean(line.productCode),
-              lote: clean(line.lote),
-              cantidad: qty,
-              cantidad_signed: -qty,
-              signo: -1,
-              bodega: order.sourceWarehouse,
-              cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
-              destino: isTransfer ? transferDestination : '',
-              notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
-              factura_doc: order.invoiceNumber,
-              responsable: currentUser?.name || 'Sistema',
-              source: 'facturacion_pdf',
-              afecta_stock: 'SI',
-            });
+            const created = await withUiTimeout(
+              () =>
+                mutation({
+                  fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                  tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
+                  producto: clean(line.productCode),
+                  lote: clean(line.lote),
+                  cantidad: qty,
+                  cantidad_signed: -qty,
+                  signo: -1,
+                  bodega: order.sourceWarehouse,
+                  cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
+                  destino: isTransfer ? transferDestination : '',
+                  notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+                  factura_doc: order.invoiceNumber,
+                  responsable: currentUser?.name || 'Sistema',
+                  source: 'facturacion_pdf',
+                  afecta_stock: 'SI',
+                }),
+              `dispatchCreateMovement(${sourceInventory})`,
+              45000,
+            );
             updateLine(order.id, line.id, {
               movementId: created.id,
               lotePending: false,
@@ -2696,23 +2742,28 @@ export default function FacturacionPage() {
           }
           if (!existingAuto) {
             try {
-              await huarteMutations.addMovement({
-                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-                tipo_movimiento: 'entrada_traspaso',
-                producto: clean(line.productCode),
-                lote: clean(line.lote),
-                cantidad: qty,
-                cantidad_signed: qty,
-                signo: 1,
-                bodega: 'HUARTE',
-                cliente: 'CANET',
-                destino: 'HUARTE',
-                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
-                factura_doc: order.invoiceNumber,
-                responsable: currentUser?.name || 'Sistema',
-                source: 'facturacion_pdf_auto_in',
-                afecta_stock: 'SI',
-              });
+              await withUiTimeout(
+                () =>
+                  huarteMutations.addMovement({
+                    fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                    tipo_movimiento: 'entrada_traspaso',
+                    producto: clean(line.productCode),
+                    lote: clean(line.lote),
+                    cantidad: qty,
+                    cantidad_signed: qty,
+                    signo: 1,
+                    bodega: 'HUARTE',
+                    cliente: 'CANET',
+                    destino: 'HUARTE',
+                    notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
+                    factura_doc: order.invoiceNumber,
+                    responsable: currentUser?.name || 'Sistema',
+                    source: 'facturacion_pdf_auto_in',
+                    afecta_stock: 'SI',
+                  }),
+                'dispatchCreateAutoEntrada(huarte)',
+                45000,
+              );
             } catch (err: any) {
               lineErrors.push(`${productCode} ${lote}: autoentrada HUARTE falló (${err?.message || 'error desconocido'})`);
             }
