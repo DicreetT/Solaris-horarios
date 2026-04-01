@@ -1621,6 +1621,23 @@ async function withUiTimeout<T>(
   });
 }
 
+function isTimeoutLike(error: unknown) {
+  const text = String((error as any)?.message ?? error ?? '')
+    .toLowerCase()
+    .trim();
+  return (
+    text.includes('tiempo de espera agotado') ||
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('deadline exceeded')
+  );
+}
+
+const waitMs = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
 export default function FacturacionPage() {
   const { currentUser } = useAuth();
   const [sourceWarehouse, setSourceWarehouse] = useState<BillingWarehouse>('CANET');
@@ -2653,6 +2670,23 @@ export default function FacturacionPage() {
     [],
   );
 
+  const recoverMovementByMarkerWithRetry = useCallback(
+    async (
+      inventoryId: 'canet' | 'huarte',
+      markerCandidates: string[],
+      attempts = 5,
+      delayMs = 1200,
+    ): Promise<InventoryMovementRow | null> => {
+      for (let i = 0; i < attempts; i++) {
+        const found = await findMovementByMarkerInDb(inventoryId, markerCandidates);
+        if (found) return found;
+        if (i < attempts - 1) await waitMs(delayMs);
+      }
+      return null;
+    },
+    [findMovementByMarkerInDb],
+  );
+
   const dispatchOrder = async (order: BillingOrder) => {
     if (order.status === 'DESPACHADO' || order.status === 'CANCELADO') return;
     if (dispatchingOrderIds.includes(order.id)) return;
@@ -2719,28 +2753,50 @@ export default function FacturacionPage() {
           updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
         } else {
           try {
-            const created = await withUiTimeout(
-              () =>
-                mutation({
-                  fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-                  tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
-                  producto: clean(line.productCode),
-                  lote: clean(line.lote),
-                  cantidad: qty,
-                  cantidad_signed: -qty,
-                  signo: -1,
-                  bodega: order.sourceWarehouse,
-                  cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
-                  destino: isTransfer ? transferDestination : '',
-                  notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
-                  factura_doc: order.invoiceNumber,
-                  responsable: currentUser?.name || 'Sistema',
-                  source: 'facturacion_pdf',
-                  afecta_stock: 'SI',
-                }),
-              `dispatchCreateMovement(${sourceInventory})`,
-              45000,
-            );
+            const payload = {
+              fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+              tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
+              producto: clean(line.productCode),
+              lote: clean(line.lote),
+              cantidad: qty,
+              cantidad_signed: -qty,
+              signo: -1,
+              bodega: order.sourceWarehouse,
+              cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
+              destino: isTransfer ? transferDestination : '',
+              notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+              factura_doc: order.invoiceNumber,
+              responsable: currentUser?.name || 'Sistema',
+              source: 'facturacion_pdf',
+              afecta_stock: 'SI',
+            };
+
+            let created: InventoryMovementRow | null = null;
+            try {
+              created = await mutation(payload);
+            } catch (firstErr: any) {
+              if (!isTimeoutLike(firstErr)) throw firstErr;
+              const recovered = await recoverMovementByMarkerWithRetry(sourceInventory, [marker, stableMarker], 6, 1300);
+              if (recovered) {
+                created = recovered;
+              } else {
+                // One explicit retry before failing as partial dispatch.
+                try {
+                  created = await mutation(payload);
+                } catch (retryErr: any) {
+                  const recoveredRetry = await recoverMovementByMarkerWithRetry(sourceInventory, [marker, stableMarker], 4, 1200);
+                  if (recoveredRetry) {
+                    created = recoveredRetry;
+                  } else {
+                    throw retryErr;
+                  }
+                }
+              }
+            }
+
+            if (!created) {
+              throw new Error('No se pudo crear/recuperar el movimiento.');
+            }
             updateLine(order.id, line.id, {
               movementId: created.id,
               lotePending: false,
@@ -2768,28 +2824,32 @@ export default function FacturacionPage() {
           }
           if (!existingAuto) {
             try {
-              await withUiTimeout(
-                () =>
-                  huarteMutations.addMovement({
-                    fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
-                    tipo_movimiento: 'entrada_traspaso',
-                    producto: clean(line.productCode),
-                    lote: clean(line.lote),
-                    cantidad: qty,
-                    cantidad_signed: qty,
-                    signo: 1,
-                    bodega: 'HUARTE',
-                    cliente: 'CANET',
-                    destino: 'HUARTE',
-                    notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
-                    factura_doc: order.invoiceNumber,
-                    responsable: currentUser?.name || 'Sistema',
-                    source: 'facturacion_pdf_auto_in',
-                    afecta_stock: 'SI',
-                  }),
-                'dispatchCreateAutoEntrada(huarte)',
-                45000,
-              );
+              const autoPayload = {
+                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                tipo_movimiento: 'entrada_traspaso',
+                producto: clean(line.productCode),
+                lote: clean(line.lote),
+                cantidad: qty,
+                cantidad_signed: qty,
+                signo: 1,
+                bodega: 'HUARTE',
+                cliente: 'CANET',
+                destino: 'HUARTE',
+                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
+                factura_doc: order.invoiceNumber,
+                responsable: currentUser?.name || 'Sistema',
+                source: 'facturacion_pdf_auto_in',
+                afecta_stock: 'SI',
+              };
+              try {
+                await huarteMutations.addMovement(autoPayload);
+              } catch (autoErr: any) {
+                if (!isTimeoutLike(autoErr)) throw autoErr;
+                const recoveredAuto = await recoverMovementByMarkerWithRetry('huarte', [autoMarker, autoStableMarker], 6, 1300);
+                if (!recoveredAuto) {
+                  await huarteMutations.addMovement(autoPayload);
+                }
+              }
             } catch (err: any) {
               lineErrors.push(`${productCode} ${lote}: autoentrada HUARTE falló (${err?.message || 'error desconocido'})`);
             }
