@@ -86,41 +86,36 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
-    const LOGIN_TIMEOUT_MS = 12000;
+    const [slowConnection, setSlowConnection] = useState(false);
+    const LOGIN_SLOW_NOTICE_MS = 12000;
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
         setError("");
+        setSlowConnection(false);
         setLoading(true);
-        let timeoutId: number | null = null;
+        const slowNoticeId = window.setTimeout(() => {
+            setSlowConnection(true);
+        }, LOGIN_SLOW_NOTICE_MS);
+
         let data: any = null;
         let error: any = null;
         try {
-            const signInPromise = supabase.auth.signInWithPassword({
+            const result = await supabase.auth.signInWithPassword({
                 email,
                 password,
             });
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                timeoutId = window.setTimeout(() => reject(new Error('LOGIN_TIMEOUT')), LOGIN_TIMEOUT_MS);
-            });
-            const result = await Promise.race([signInPromise, timeoutPromise]);
             data = result.data;
             error = result.error;
         } catch (err: any) {
-            if (err?.message === 'LOGIN_TIMEOUT') {
-                setError('La conexión está lenta. Inténtalo de nuevo.');
-                setLoading(false);
-                return;
-            }
             console.error(err);
             setError('No se pudo iniciar sesión. Revisa tu conexión e inténtalo de nuevo.');
-            setLoading(false);
             return;
         } finally {
-            if (timeoutId) window.clearTimeout(timeoutId);
+            window.clearTimeout(slowNoticeId);
+            setSlowConnection(false);
+            setLoading(false);
         }
-
-        setLoading(false);
 
         if (error || !data?.user) {
             console.error(error);
@@ -209,6 +204,12 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
                         <div className="bg-red-50 text-red-600 text-xs font-bold px-4 py-3 rounded-xl border border-red-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                             <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
                             {error}
+                        </div>
+                    )}
+                    {loading && slowConnection && (
+                        <div className="bg-amber-50 text-amber-700 text-xs font-bold px-4 py-3 rounded-xl border border-amber-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                            La conexión está lenta, seguimos intentando...
                         </div>
                     )}
 
