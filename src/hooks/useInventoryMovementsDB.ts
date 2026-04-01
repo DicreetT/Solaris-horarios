@@ -52,6 +52,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
     const PENDING_GUARD_WINDOW_MS = 120000;
+    const RECOVERY_ATTEMPTS = 4;
+    const RECOVERY_WAIT_MS = 900;
 
     useEffect(() => {
         movementsRef.current = movements;
@@ -79,6 +81,22 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
         return null;
     };
+
+    const isTimeoutLikeError = (error: unknown) => {
+        const text = getErrorText(error).toLowerCase();
+        if (!text) return false;
+        return (
+            text.includes('tiempo de espera agotado') ||
+            text.includes('timeout') ||
+            text.includes('timed out') ||
+            text.includes('deadline exceeded')
+        );
+    };
+
+    const wait = (ms: number) =>
+        new Promise<void>((resolve) => {
+            window.setTimeout(resolve, ms);
+        });
 
     const sweepPendingGuards = useCallback(() => {
         const now = Date.now();
@@ -187,6 +205,118 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             // noop
         }
     }, [cacheKey]);
+
+    const extractStableMarker = useCallback((notesRaw: unknown) => {
+        const notes = String(notesRaw ?? '');
+        if (!notes) return '';
+        const m = notes.match(/DOC:[^|]+(?:\|TYPE:[^|]+)?(?:\|SRC:[^|]+)?(?:\|DST:[^|]+)?(?:\|CUST:[^|]+)?\|LINE:[^|]+(?:\|N:\d+)?(?:\|AUTO_IN)?/i);
+        return m?.[0] ? m[0].trim() : '';
+    }, []);
+
+    const rowsLikelyEqual = useCallback((row: InventoryMovementRow, payload: Record<string, unknown>) => {
+        const keys = Object.keys(payload);
+        for (const key of keys) {
+            const incoming = (payload as any)[key];
+            if (incoming === undefined) continue;
+            const current = (row as any)[key];
+
+            if (incoming == null && current == null) continue;
+            if (typeof incoming === 'number' || typeof current === 'number') {
+                const a = Number(incoming);
+                const b = Number(current);
+                if (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) < 0.0001) continue;
+            }
+
+            if (String(incoming ?? '') !== String(current ?? '')) return false;
+        }
+        return true;
+    }, []);
+
+    const recoverInsertedAfterTimeout = useCallback(async (payload: Record<string, unknown>) => {
+        const stableMarker = extractStableMarker(payload.notas);
+        for (let attempt = 0; attempt < RECOVERY_ATTEMPTS; attempt++) {
+            try {
+                const { data, error } = await withTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .select('*')
+                            .eq('inventory_id', inventoryId)
+                            .eq('tipo_movimiento', String(payload.tipo_movimiento ?? ''))
+                            .eq('producto', String(payload.producto ?? ''))
+                            .eq('lote', String(payload.lote ?? ''))
+                            .eq('bodega', String(payload.bodega ?? ''))
+                            .order('id', { ascending: false })
+                            .limit(40),
+                    READ_TIMEOUT_MS,
+                    `recoverAddMovement(${inventoryId})`,
+                );
+                if (error) throw error;
+                const rows = (data || []) as InventoryMovementRow[];
+                const found = rows.find((row) => {
+                    if (stableMarker) {
+                        return String((row as any).notas ?? '').includes(stableMarker);
+                    }
+                    return rowsLikelyEqual(row, payload);
+                });
+                if (found) return found;
+            } catch {
+                // keep retrying
+            }
+            await wait(RECOVERY_WAIT_MS);
+        }
+        return null;
+    }, [extractStableMarker, inventoryId, rowsLikelyEqual, withTimeout]);
+
+    const recoverUpdatedAfterTimeout = useCallback(async (id: number, payload: Record<string, unknown>) => {
+        for (let attempt = 0; attempt < RECOVERY_ATTEMPTS; attempt++) {
+            try {
+                const { data, error } = await withTimeout<{ data: InventoryMovementRow | null; error: any }>(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .select('*')
+                            .eq('id', id)
+                            .eq('inventory_id', inventoryId)
+                            .maybeSingle(),
+                    READ_TIMEOUT_MS,
+                    `recoverUpdateMovement(${inventoryId})`,
+                );
+                if (error) throw error;
+                if (data && rowsLikelyEqual(data as InventoryMovementRow, payload)) {
+                    return data as InventoryMovementRow;
+                }
+            } catch {
+                // keep retrying
+            }
+            await wait(RECOVERY_WAIT_MS);
+        }
+        return null;
+    }, [inventoryId, rowsLikelyEqual, withTimeout]);
+
+    const recoverDeletedAfterTimeout = useCallback(async (id: number) => {
+        for (let attempt = 0; attempt < RECOVERY_ATTEMPTS; attempt++) {
+            try {
+                const { data, error } = await withTimeout<{ data: { id: number } | null; error: any }>(
+                    () =>
+                        supabase
+                            .from('inventory_movements')
+                            .select('id')
+                            .eq('id', id)
+                            .eq('inventory_id', inventoryId)
+                            .maybeSingle(),
+                    READ_TIMEOUT_MS,
+                    `recoverDeleteMovement(${inventoryId})`,
+                );
+                if (error) throw error;
+                if (!data) return true;
+            } catch {
+                // keep retrying
+            }
+            await wait(RECOVERY_WAIT_MS);
+        }
+        return false;
+    }, [inventoryId, withTimeout]);
 
     const loadMovements = useCallback(async (silent = false) => {
         if (loadInFlightRef.current) {
@@ -313,6 +443,21 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 return created;
             } catch (error) {
                 lastError = error;
+                if (isTimeoutLikeError(error)) {
+                    const recovered = await recoverInsertedAfterTimeout(payload);
+                    if (recovered) {
+                        lastMutationAtRef.current = Date.now();
+                        markPendingUpsert(recovered);
+                        setMovements((prev) => {
+                            const next = prev.filter((m) => Number(m.id) !== Number(recovered.id));
+                            const merged = [recovered, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                            persistMovementsCache(merged);
+                            return merged;
+                        });
+                        void loadMovements(true);
+                        return recovered;
+                    }
+                }
                 const missingColumn = getMissingColumn(error);
                 if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
                     delete (payload as any)[missingColumn];
@@ -325,7 +470,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error adding movement:', lastError);
         throw lastError;
-    }, [inventoryId, loadMovements, markPendingUpsert, persistMovementsCache, unwrapMaybeData, withTimeout]);
+    }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverInsertedAfterTimeout, unwrapMaybeData, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
         const payload: Record<string, unknown> = { ...(updates as any) };
@@ -374,6 +519,27 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 return updated;
             } catch (error) {
                 lastError = error;
+                if (isTimeoutLikeError(error)) {
+                    const recovered = await recoverUpdatedAfterTimeout(id, payload);
+                    if (recovered) {
+                        lastMutationAtRef.current = Date.now();
+                        markPendingUpsert(recovered);
+                        setMovements((prev) => {
+                            const idx = prev.findIndex((m) => Number(m.id) === Number(recovered.id));
+                            if (idx === -1) {
+                                const merged = [recovered, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                                persistMovementsCache(merged);
+                                return merged;
+                            }
+                            const next = [...prev];
+                            next[idx] = recovered;
+                            persistMovementsCache(next);
+                            return next;
+                        });
+                        void loadMovements(true);
+                        return recovered;
+                    }
+                }
                 const missingColumn = getMissingColumn(error);
                 if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
                     delete (payload as any)[missingColumn];
@@ -386,9 +552,20 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
         console.error('Error updating movement:', lastError);
         throw lastError;
-    }, [inventoryId, loadMovements, markPendingUpsert, persistMovementsCache, unwrapMaybeData, withTimeout]);
+    }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverUpdatedAfterTimeout, unwrapMaybeData, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
+        const commitLocalDelete = () => {
+            lastMutationAtRef.current = Date.now();
+            markPendingDelete(id);
+            setMovements((prev) => {
+                const next = prev.filter((m) => Number(m.id) !== Number(id));
+                persistMovementsCache(next);
+                return next;
+            });
+            void loadMovements(true);
+        };
+
         try {
             const result = await withTimeout<{ id: number; inventory_id: 'canet' | 'huarte' } | { data?: { id: number; inventory_id: 'canet' | 'huarte' } | null; error?: unknown } | null>(
                 () =>
@@ -403,21 +580,28 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             );
             const deleted = unwrapMaybeData<{ id: number; inventory_id: 'canet' | 'huarte' }>(result);
             if (!deleted) {
-                throw new Error(`No se encontró el movimiento ${id} para eliminar.`);
+                // Si la fila ya no existe (doble click, desincronización puntual o eliminación previa),
+                // tratarlo como éxito para no bloquear la UI con falsos errores.
+                const alreadyDeleted = await recoverDeletedAfterTimeout(id);
+                if (!alreadyDeleted) {
+                    throw new Error(`No se pudo confirmar la eliminación del movimiento ${id}.`);
+                }
+                commitLocalDelete();
+                return;
             }
-            lastMutationAtRef.current = Date.now();
-            markPendingDelete(id);
-            setMovements((prev) => {
-                const next = prev.filter((m) => Number(m.id) !== Number(id));
-                persistMovementsCache(next);
-                return next;
-            });
-            void loadMovements(true);
+            commitLocalDelete();
         } catch (error) {
+            if (isTimeoutLikeError(error)) {
+                const recoveredDeleted = await recoverDeletedAfterTimeout(id);
+                if (recoveredDeleted) {
+                    commitLocalDelete();
+                    return;
+                }
+            }
             console.error('Error deleting movement:', error);
             throw error;
         }
-    }, [inventoryId, loadMovements, markPendingDelete, persistMovementsCache, unwrapMaybeData, withTimeout]);
+    }, [inventoryId, isTimeoutLikeError, loadMovements, markPendingDelete, persistMovementsCache, recoverDeletedAfterTimeout, unwrapMaybeData, withTimeout]);
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;
