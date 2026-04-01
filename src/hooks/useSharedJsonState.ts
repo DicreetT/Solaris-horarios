@@ -8,6 +8,7 @@ type Options = {
   protectFromEmptyOverwrite?: boolean;
   mergeBeforePersist?: boolean;
   mergeStrategy?: (remote: any, local: any) => any;
+  mergeIncomingWithLocal?: boolean;
 };
 
 function isEffectivelyEmpty(value: unknown) {
@@ -190,6 +191,7 @@ export function useSharedJsonState<T>(
     protectFromEmptyOverwrite = false,
     mergeBeforePersist = false,
     mergeStrategy,
+    mergeIncomingWithLocal = true,
   } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
@@ -198,6 +200,8 @@ export function useSharedJsonState<T>(
   const keyRef = useRef(key);
   const localCacheKeyRef = useRef(`shared_json_state_cache:${key}`);
   const backupKeyRef = useRef(`shared_json_state_backup_non_empty:${key}`);
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const writeVersionRef = useRef(0);
 
   useEffect(() => {
     valueRef.current = value;
@@ -337,7 +341,7 @@ export function useSharedJsonState<T>(
             }
           }
         }
-        const incoming = mergeBeforePersist
+        const incoming = mergeIncomingWithLocal
           ? ((mergeStrategy
               ? mergeStrategy(incomingRaw, valueRef.current)
               : defaultMergeRemoteLocal(incomingRaw, valueRef.current)) as T)
@@ -405,7 +409,7 @@ export function useSharedJsonState<T>(
           if (protectFromEmptyOverwrite && isEffectivelyEmpty(nextRaw) && !isEffectivelyEmpty(valueRef.current)) {
             return;
           }
-          const next = mergeBeforePersist
+          const next = mergeIncomingWithLocal
             ? ((mergeStrategy
                 ? mergeStrategy(nextRaw, valueRef.current)
                 : defaultMergeRemoteLocal(nextRaw, valueRef.current)) as T)
@@ -430,7 +434,7 @@ export function useSharedJsonState<T>(
       window.removeEventListener('focus', onVisibilityOrFocus);
       void supabase.removeChannel(channel);
     };
-  }, [key, initializeIfMissing, mergeBeforePersist, mergeStrategy, persist, pollIntervalMs, protectFromEmptyOverwrite]);
+  }, [key, initializeIfMissing, mergeIncomingWithLocal, mergeStrategy, persist, pollIntervalMs, protectFromEmptyOverwrite]);
 
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {
@@ -444,8 +448,14 @@ export function useSharedJsonState<T>(
         if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
           safeWriteLocal(localCacheKeyRef.current, next);
         }
-        void persist(next)
-          .then((stored) => {
+        const writeVersion = ++writeVersionRef.current;
+        persistQueueRef.current = persistQueueRef.current
+          .catch(() => {
+            // keep queue alive after prior failures
+          })
+          .then(async () => {
+            const stored = await persist(next);
+            if (writeVersionRef.current !== writeVersion) return;
             if (stored === next) return;
             valueRef.current = stored;
             setValue(stored);
@@ -455,6 +465,7 @@ export function useSharedJsonState<T>(
           })
           .catch((error) => {
             console.error(`[shared_json_state] persist failed for key ${key}:`, error);
+            if (writeVersionRef.current !== writeVersion) return;
             setValue((current) => {
               if (current !== next) return current;
               valueRef.current = previous;

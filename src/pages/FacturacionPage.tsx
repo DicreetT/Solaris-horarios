@@ -1663,6 +1663,7 @@ export default function FacturacionPage() {
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeIncomingWithLocal: false,
     },
   );
   const [archives, setArchives] = useSharedJsonState<BillingArchiveEntry[]>(
@@ -1674,6 +1675,7 @@ export default function FacturacionPage() {
       pollIntervalMs: 8000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeIncomingWithLocal: false,
     },
   );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
@@ -1685,6 +1687,7 @@ export default function FacturacionPage() {
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeIncomingWithLocal: false,
     },
   );
   const ordersRef = useRef<BillingOrder[]>([]);
