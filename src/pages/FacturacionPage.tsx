@@ -1194,7 +1194,9 @@ function scoreOrderForDedup(order: BillingOrder) {
   score += Math.max(0, getOrderRequiredPackages(order)) * 4;
   score += order.lines.filter((line) => !line.lotePending && !!clean(line.lote)).length * 6;
   score += order.lines.filter((line) => Number(line.quantity) > 0 && !!clean(line.productCode)).length * 5;
-  if (order.status === 'CANCELADO') score += 1000;
+  // Nunca priorizar CANCELADO frente a un pedido activo equivalente:
+  // evita que "desaparezcan" pedidos vigentes por dedupe entre clientes.
+  if (order.status === 'CANCELADO') score -= 200;
   if (order.status === 'DESPACHADO') score += 60;
   if (order.status === 'EN_PREPARACION') score += 20;
   if (clean(order.sourcePdfDataUrl)) score += 4;
@@ -1215,6 +1217,12 @@ function dedupeOrdersPreservingBest(orders: BillingOrder[]) {
       continue;
     }
     const existing = byKey.get(key)!;
+    const existingCancelled = existing.status === 'CANCELADO' || !!clean((existing as any).cancelledAt);
+    const incomingCancelled = order.status === 'CANCELADO' || !!clean((order as any).cancelledAt);
+    if (existingCancelled !== incomingCancelled) {
+      byKey.set(key, existingCancelled ? order : existing);
+      continue;
+    }
     const existingScore = scoreOrderForDedup(existing);
     const incomingScore = scoreOrderForDedup(order);
     if (incomingScore > existingScore) {
@@ -1997,15 +2005,6 @@ export default function FacturacionPage() {
   }, [labelQueue, orders, setLabelQueue, setOrders, tryAttachLabels]);
 
   useEffect(() => {
-    const current = orders || [];
-    if (current.length <= 1) return;
-    const deduped = dedupeOrdersPreservingBest(current);
-    if (deduped.length !== current.length) {
-      setOrders(deduped);
-    }
-  }, [orders, setOrders]);
-
-  useEffect(() => {
     const archiveDueDays = () => {
       const queue = (orders || []).filter(
         (order) =>
@@ -2381,13 +2380,41 @@ export default function FacturacionPage() {
   };
 
   const cancelOrder = (orderId: string) => {
+    const snapshot = (ordersRef.current || []).find((order) => order.id === orderId);
+    if (!snapshot) return;
+    const identityKey = buildOrderIdentityKey(snapshot);
     const changedAt = nowIso();
-    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO', cancelledAt: changedAt }));
+    setOrders((prev) =>
+      (prev || []).map((order) =>
+        buildOrderIdentityKey(order) === identityKey
+          ? {
+              ...order,
+              status: 'CANCELADO',
+              cancelledAt: changedAt,
+              lastChangedAt: changedAt,
+            }
+          : order,
+      ),
+    );
   };
 
   const deleteOrder = (orderId: string) => {
+    const snapshot = (ordersRef.current || []).find((order) => order.id === orderId);
+    if (!snapshot) return;
+    const identityKey = buildOrderIdentityKey(snapshot);
     const changedAt = nowIso();
-    updateOrder(orderId, (order) => ({ ...order, status: 'CANCELADO', cancelledAt: changedAt }));
+    setOrders((prev) =>
+      (prev || []).map((order) =>
+        buildOrderIdentityKey(order) === identityKey
+          ? {
+              ...order,
+              status: 'CANCELADO',
+              cancelledAt: changedAt,
+              lastChangedAt: changedAt,
+            }
+          : order,
+      ),
+    );
   };
 
   const removeQueuedLabel = (labelId: string) => {
@@ -2639,17 +2666,16 @@ export default function FacturacionPage() {
     const requiresLabels = orderRequiresLabels(order);
     const requiredPackages = getOrderRequiredPackages(order);
     const attachedLabels = getOrderLabels(order);
-    if (requiresLabels) {
-      if (requiredPackages <= 0) {
-        alert('Antes de despachar, define cuántos bultos/etiquetas requiere este pedido.');
-        return;
-      }
-      if (attachedLabels.length < requiredPackages) {
-        alert(
-          `Faltan etiquetas para despachar: ${attachedLabels.length}/${requiredPackages}.`,
-        );
-        return;
-      }
+    if (requiresLabels && requiredPackages > 0 && attachedLabels.length < requiredPackages) {
+      const continueWithoutLabels = window.confirm(
+        `Faltan etiquetas para despachar (${attachedLabels.length}/${requiredPackages}). ¿Quieres despachar igualmente sin completar etiquetas?`,
+      );
+      if (!continueWithoutLabels) return;
+    } else if (requiresLabels && requiredPackages <= 0) {
+      const continueWithoutLabels = window.confirm(
+        'Este pedido no tiene bultos/etiquetas definidos. ¿Quieres despachar igualmente sin etiquetas?',
+      );
+      if (!continueWithoutLabels) return;
     }
 
     const movementSource = order.inventoryTarget === 'canet' ? canetMovements : huarteMovements;
