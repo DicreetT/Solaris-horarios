@@ -1632,18 +1632,6 @@ async function withUiTimeout<T>(
   });
 }
 
-function isTimeoutLike(error: unknown) {
-  const text = String((error as any)?.message ?? error ?? '')
-    .toLowerCase()
-    .trim();
-  return (
-    text.includes('tiempo de espera agotado') ||
-    text.includes('timeout') ||
-    text.includes('timed out') ||
-    text.includes('deadline exceeded')
-  );
-}
-
 const waitMs = (ms: number) =>
   new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
@@ -2769,6 +2757,7 @@ export default function FacturacionPage() {
     async (
       inventoryId: 'canet' | 'huarte',
       markerCandidates: string[],
+      timeoutMs = 12000,
     ): Promise<InventoryMovementRow | null> => {
       for (const rawMarker of markerCandidates) {
         const marker = clean(rawMarker);
@@ -2785,7 +2774,7 @@ export default function FacturacionPage() {
                 .order('id', { ascending: false })
                 .limit(1),
             `findMovementByMarkerInDb(${inventoryId})`,
-            12000,
+            timeoutMs,
           );
           if (error) continue;
           const found = Array.isArray(data) && data.length > 0 ? (data[0] as InventoryMovementRow) : null;
@@ -2805,15 +2794,62 @@ export default function FacturacionPage() {
       markerCandidates: string[],
       attempts = 5,
       delayMs = 1200,
+      lookupTimeoutMs = 12000,
     ): Promise<InventoryMovementRow | null> => {
       for (let i = 0; i < attempts; i++) {
-        const found = await findMovementByMarkerInDb(inventoryId, markerCandidates);
+        const found = await findMovementByMarkerInDb(inventoryId, markerCandidates, lookupTimeoutMs);
         if (found) return found;
         if (i < attempts - 1) await waitMs(delayMs);
       }
       return null;
     },
     [findMovementByMarkerInDb],
+  );
+
+  const createMovementWithBoundedRecovery = useCallback(
+    async (
+      inventoryId: 'canet' | 'huarte',
+      markerCandidates: string[],
+      createFn: () => Promise<InventoryMovementRow | null | void>,
+      label: string,
+      opts?: {
+        createTimeoutMs?: number;
+        recoverAttempts?: number;
+        recoverDelayMs?: number;
+        recoverLookupTimeoutMs?: number;
+      },
+    ): Promise<InventoryMovementRow | null> => {
+      const createTimeoutMs = Math.max(5000, Number(opts?.createTimeoutMs || 15000));
+      const recoverAttempts = Math.max(1, Number(opts?.recoverAttempts || 4));
+      const recoverDelayMs = Math.max(200, Number(opts?.recoverDelayMs || 700));
+      const recoverLookupTimeoutMs = Math.max(1200, Number(opts?.recoverLookupTimeoutMs || 2500));
+
+      let createError: unknown = null;
+      try {
+        const created = await withUiTimeout(
+          async () => await createFn(),
+          `${label}:create`,
+          createTimeoutMs,
+        );
+        if (created && Number.isFinite(Number((created as any).id))) {
+          return created as InventoryMovementRow;
+        }
+      } catch (error) {
+        createError = error;
+      }
+
+      const recovered = await recoverMovementByMarkerWithRetry(
+        inventoryId,
+        markerCandidates,
+        recoverAttempts,
+        recoverDelayMs,
+        recoverLookupTimeoutMs,
+      );
+      if (recovered) return recovered;
+      if (createError) throw createError;
+      return null;
+    },
+    [recoverMovementByMarkerWithRetry],
   );
 
   const dispatchOrder = async (order: BillingOrder) => {
@@ -2900,28 +2936,18 @@ export default function FacturacionPage() {
               afecta_stock: 'SI',
             };
 
-            let created: InventoryMovementRow | null = null;
-            try {
-              created = await mutation(payload);
-            } catch (firstErr: any) {
-              if (!isTimeoutLike(firstErr)) throw firstErr;
-              const recovered = await recoverMovementByMarkerWithRetry(sourceInventory, [marker, stableMarker], 6, 1300);
-              if (recovered) {
-                created = recovered;
-              } else {
-                // One explicit retry before failing as partial dispatch.
-                try {
-                  created = await mutation(payload);
-                } catch (retryErr: any) {
-                  const recoveredRetry = await recoverMovementByMarkerWithRetry(sourceInventory, [marker, stableMarker], 4, 1200);
-                  if (recoveredRetry) {
-                    created = recoveredRetry;
-                  } else {
-                    throw retryErr;
-                  }
-                }
-              }
-            }
+            const created = await createMovementWithBoundedRecovery(
+              sourceInventory,
+              [marker, stableMarker],
+              async () => await mutation(payload),
+              `dispatchMovement(${sourceInventory})`,
+              {
+                createTimeoutMs: 15000,
+                recoverAttempts: 4,
+                recoverDelayMs: 700,
+                recoverLookupTimeoutMs: 2500,
+              },
+            );
 
             if (!created) {
               throw new Error('No se pudo crear/recuperar el movimiento.');
@@ -2970,15 +2996,18 @@ export default function FacturacionPage() {
                 source: 'facturacion_pdf_auto_in',
                 afecta_stock: 'SI',
               };
-              try {
-                await huarteMutations.addMovement(autoPayload);
-              } catch (autoErr: any) {
-                if (!isTimeoutLike(autoErr)) throw autoErr;
-                const recoveredAuto = await recoverMovementByMarkerWithRetry('huarte', [autoMarker, autoStableMarker], 6, 1300);
-                if (!recoveredAuto) {
-                  await huarteMutations.addMovement(autoPayload);
-                }
-              }
+              await createMovementWithBoundedRecovery(
+                'huarte',
+                [autoMarker, autoStableMarker],
+                async () => await huarteMutations.addMovement(autoPayload),
+                'dispatchAutoEntrada(huarte)',
+                {
+                  createTimeoutMs: 12000,
+                  recoverAttempts: 4,
+                  recoverDelayMs: 700,
+                  recoverLookupTimeoutMs: 2500,
+                },
+              );
             } catch (err: any) {
               lineErrors.push(`${productCode} ${lote}: autoentrada HUARTE falló (${err?.message || 'error desconocido'})`);
             }
