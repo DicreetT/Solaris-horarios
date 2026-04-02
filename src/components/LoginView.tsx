@@ -81,6 +81,23 @@ const Snowflakes = () => {
  */
 import { User } from '../types';
 
+function isInvalidCredentialsError(error: unknown) {
+    const text = String((error as any)?.message ?? error ?? '').toLowerCase();
+    return text.includes('invalid login credentials') || text.includes('correo o contraseña');
+}
+
+function isConnectionLikeError(error: unknown) {
+    const text = String((error as any)?.message ?? error ?? '').toLowerCase();
+    return (
+        text.includes('network') ||
+        text.includes('failed to fetch') ||
+        text.includes('fetch') ||
+        text.includes('timeout') ||
+        text.includes('timed out') ||
+        text.includes('tiempo de espera')
+    );
+}
+
 export default function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -101,10 +118,15 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
         let data: any = null;
         let error: any = null;
         try {
-            const result = await supabase.auth.signInWithPassword({
-                email,
-                password,
-            });
+            const result = await Promise.race([
+                supabase.auth.signInWithPassword({
+                    email,
+                    password,
+                }),
+                new Promise<never>((_, reject) =>
+                    window.setTimeout(() => reject(new Error('login timeout')), 20000)
+                ),
+            ]);
             data = result.data;
             error = result.error;
         } catch (err: any) {
@@ -119,7 +141,13 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
 
         if (error || !data?.user) {
             console.error(error);
-            setError("Correo o contraseña incorrectos");
+            if (isInvalidCredentialsError(error)) {
+                setError("Correo o contraseña incorrectos");
+            } else if (isConnectionLikeError(error)) {
+                setError("No se pudo iniciar sesión. Revisa tu conexión e inténtalo de nuevo.");
+            } else {
+                setError("No se pudo iniciar sesión. Inténtalo de nuevo en unos segundos.");
+            }
             return;
         }
 
@@ -153,7 +181,7 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
             {/* Seasonal Background Animation */}
             <Snowflakes />
 
-            <div className="bg-white rounded-3xl border border-gray-200 shadow-xl p-8 md:p-12 max-w-[420px] w-full mx-auto relative overflow-hidden z-10">
+            <div className="login-panel bg-white rounded-3xl border border-gray-200 shadow-xl p-8 md:p-12 max-w-[420px] w-full mx-auto relative overflow-hidden z-10">
                 {/* Decorative background element */}
                 <div className="absolute -top-24 -right-24 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />

@@ -204,6 +204,26 @@ html[data-mood='Eléctrico'] {
     transition: background-color 9999s ease-out 0s;
   }
 
+  /* Login readability (autofill/extensions can force white text). */
+  .login-panel input,
+  .login-panel input::placeholder {
+    color: #1f2937 !important;
+    -webkit-text-fill-color: #1f2937 !important;
+    caret-color: #1f2937;
+  }
+
+  .login-panel input::placeholder {
+    opacity: 0.8;
+  }
+
+  .login-panel input:-webkit-autofill,
+  .login-panel input:-webkit-autofill:hover,
+  .login-panel input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #1f2937 !important;
+    box-shadow: 0 0 0 1000px #f9fafb inset !important;
+    transition: background-color 9999s ease-out 0s;
+  }
+
   @media (max-width: 767px) {
     .app-modal-panel {
       width: 100%;

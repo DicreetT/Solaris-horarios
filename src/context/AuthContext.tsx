@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { USERS } from '../constants';
 import type { User } from '../types';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
+import { flushSharedJsonStateWrites } from '../hooks/useSharedJsonState';
 
 interface AuthContextType {
     currentUser: User | null;
@@ -78,6 +79,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const logout = async () => {
         try {
+            // Best effort: persistir cambios pendientes de estado compartido antes de cerrar sesión.
+            await flushSharedJsonStateWrites(7000);
             // Optimistic local logout for immediate UI/navigation response.
             setCurrentUser(null);
             const { error } = await supabase.auth.signOut({ scope: 'local' });

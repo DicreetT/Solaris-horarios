@@ -10,6 +10,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 const FACTURACION_ORDERS_KEY = 'facturacion_orders_v1';
 const FACTURACION_ARCHIVE_KEY = 'facturacion_archive_v1';
 const FACTURACION_LABELS_KEY = 'facturacion_labels_v1';
+const FACTURACION_FILE_BLOB_PREFIX = 'facturacion_file_blob_v1:';
 
 type BillingWarehouse = 'CANET' | 'HUARTE';
 type BillingOrderStatus =
@@ -52,6 +53,7 @@ type BillingOrder = {
   customerName: string;
   customerNif: string;
   sourceFileName: string;
+  sourcePdfRef?: string;
   sourcePdfDataUrl?: string;
   orderNote?: string;
   requiredPackages: number;
@@ -66,6 +68,7 @@ type BillingOrder = {
 type BillingLabelAttachment = {
   id: string;
   sourceFileName: string;
+  sourcePdfRef?: string;
   sourcePdfDataUrl?: string;
   customerName: string;
   attachedAt: string;
@@ -79,6 +82,7 @@ type BillingLabelDoc = {
   consumedByOrderId?: string;
   cancelledAt?: string;
   sourceFileName: string;
+  sourcePdfRef?: string;
   sourcePdfDataUrl?: string;
   customerName: string;
   customerKey: string;
@@ -197,6 +201,10 @@ function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
   } catch {
     return { url: raw };
   }
+}
+
+function buildFileBlobKey(ref: string) {
+  return `${FACTURACION_FILE_BLOB_PREFIX}${clean(ref)}`;
 }
 
 async function loadTesseractRuntime(): Promise<TesseractLike | null> {
@@ -1199,8 +1207,7 @@ function scoreOrderForDedup(order: BillingOrder) {
   if (order.status === 'CANCELADO') score -= 200;
   if (order.status === 'DESPACHADO') score += 60;
   if (order.status === 'EN_PREPARACION') score += 20;
-  if (clean(order.sourcePdfDataUrl)) score += 4;
-  if (clean(order.labelPdfDataUrl)) score += 3;
+  if (clean(order.sourcePdfRef)) score += 4;
   return score;
 }
 
@@ -1240,24 +1247,24 @@ function parseOrdersFromExtractedPages(
   fileName: string,
   warehouse: BillingWarehouse,
   actor: string,
-  sourcePdfDataUrl?: string,
+  sourcePdfRef?: string,
 ): BillingOrder[] {
   const normalizedPages = pagesText.map((p) => clean(p)).filter(Boolean);
   const fullText = clean(normalizedPages.join('\n'));
   if (!fullText) return [];
 
   if (isTransferDocText(fullText)) {
-    return [parseTransferFromText(fullText, fileName, warehouse, actor, sourcePdfDataUrl)];
+    return [parseTransferFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
   }
 
   const perPageCandidates = normalizedPages.map((pageText) => ({
     pageText,
-    order: parseInvoiceFromText(pageText, fileName, warehouse, actor, sourcePdfDataUrl),
+    order: parseInvoiceFromText(pageText, fileName, warehouse, actor, sourcePdfRef),
   }));
 
   const validPerPage = perPageCandidates.filter(({ order }) => hasMeaningfulOrderLines(order));
   if (validPerPage.length === 0) {
-    return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfDataUrl)];
+    return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
   }
 
   const unique = new Map<string, { order: BillingOrder; pageText: string; score: number }>();
@@ -1277,7 +1284,7 @@ function parseOrdersFromExtractedPages(
     .sort((a, b) => b.score - a.score);
 
   if (deduped.length === 0) {
-    return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfDataUrl)];
+    return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
   }
 
   if (isMimedicoDocText(fullText)) {
@@ -1297,33 +1304,33 @@ function parseOrdersFromExtractedPages(
   const dedupedOrders = deduped.map((d) => d.order);
   if (dedupedOrders.length >= 2) return dedupedOrders;
 
-  return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfDataUrl)];
+  return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
 }
 
 function parseLabelsFromExtractedPages(
   pagesText: string[],
   fileName: string,
-  sourcePdfDataUrl?: string,
+  sourcePdfRef?: string,
 ) {
   const normalizedPages = pagesText.map((p) => clean(p)).filter(Boolean);
   if (normalizedPages.length === 0) {
-    return [parseLabelFromText(fileName || 'ETIQUETA', fileName, sourcePdfDataUrl)];
+    return [parseLabelFromText(fileName || 'ETIQUETA', fileName, sourcePdfRef)];
   }
 
   if (normalizedPages.length === 1) {
-    return [parseLabelFromText(normalizedPages[0], fileName, sourcePdfDataUrl)];
+    return [parseLabelFromText(normalizedPages[0], fileName, sourcePdfRef)];
   }
 
   const labels = normalizedPages
     .map((pageText, idx) => {
-      const parsed = parseLabelFromText(pageText, fileName, sourcePdfDataUrl);
+      const parsed = parseLabelFromText(pageText, fileName, sourcePdfRef);
       return {
         ...parsed,
         sourceFileName: `${fileName} · p${idx + 1}`,
       };
     });
 
-  return labels.length > 0 ? labels : [parseLabelFromText(normalizedPages.join('\n'), fileName, sourcePdfDataUrl)];
+  return labels.length > 0 ? labels : [parseLabelFromText(normalizedPages.join('\n'), fileName, sourcePdfRef)];
 }
 
 function parseInvoiceFromText(
@@ -1331,7 +1338,7 @@ function parseInvoiceFromText(
   fileName: string,
   warehouse: BillingWarehouse,
   actor: string,
-  sourcePdfDataUrl?: string,
+  sourcePdfRef?: string,
 ): BillingOrder {
   const normalized = text.replace(/\r/g, '\n').replace(/\n{2,}/g, '\n');
   const lines = normalizeTextLines(normalized);
@@ -1387,8 +1394,9 @@ function parseInvoiceFromText(
   const orderNote = isSegLabFormat ? 'Pertenece a MIMEDICO' : '';
   const createdAt = nowIso();
 
+  const id = uid('ord');
   return {
-    id: uid('ord'),
+    id,
     createdAt,
     lastChangedAt: createdAt,
     requiredPackagesUpdatedAt: createdAt,
@@ -1402,7 +1410,7 @@ function parseInvoiceFromText(
     customerName: customerName || 'CLIENTE SIN DETECTAR',
     customerNif,
     sourceFileName: fileName,
-    sourcePdfDataUrl,
+    sourcePdfRef: clean(sourcePdfRef) || `order_${id}`,
     orderNote,
     requiredPackages: 0,
     labels: [],
@@ -1417,7 +1425,7 @@ function parseTransferFromText(
   fileName: string,
   fallbackWarehouse: BillingWarehouse,
   actor: string,
-  sourcePdfDataUrl?: string,
+  sourcePdfRef?: string,
 ): BillingOrder {
   const normalized = text.replace(/\r/g, '\n').replace(/\n{2,}/g, '\n');
   const lines = normalizeTextLines(normalized);
@@ -1444,8 +1452,9 @@ function parseTransferFromText(
   const hasPending = transferLines.some((line) => line.lotePending || !clean(line.lote));
   const createdAt = nowIso();
 
+  const id = uid('ord');
   return {
-    id: uid('ord'),
+    id,
     createdAt,
     lastChangedAt: createdAt,
     requiredPackagesUpdatedAt: createdAt,
@@ -1460,7 +1469,7 @@ function parseTransferFromText(
     customerName,
     customerNif: '',
     sourceFileName: fileName,
-    sourcePdfDataUrl,
+    sourcePdfRef: clean(sourcePdfRef) || `order_${id}`,
     orderNote: motive ? `Motivo: ${motive}` : 'Solicitud de transferencia',
     requiredPackages: 0,
     labels: [],
@@ -1470,7 +1479,7 @@ function parseTransferFromText(
   };
 }
 
-function parseLabelFromText(text: string, fileName: string, sourcePdfDataUrl?: string): BillingLabelDoc {
+function parseLabelFromText(text: string, fileName: string, sourcePdfRef?: string): BillingLabelDoc {
   const normalized = text.replace(/\r/g, '\n').replace(/\n{2,}/g, '\n');
   const lines = normalizeTextLines(normalized);
   const detectedCustomer =
@@ -1489,12 +1498,13 @@ function parseLabelFromText(text: string, fileName: string, sourcePdfDataUrl?: s
   );
 
   const createdAt = nowIso();
+  const id = uid('lbl');
   return {
-    id: uid('lbl'),
+    id,
     createdAt,
     lastChangedAt: createdAt,
     sourceFileName: fileName,
-    sourcePdfDataUrl,
+    sourcePdfRef: clean(sourcePdfRef) || `label_${id}`,
     customerName,
     customerKey: normalizeCustomerKey(customerName),
     extractedTextSnippet: normalized.slice(0, 600),
@@ -1506,12 +1516,12 @@ function parseOrderFromText(
   fileName: string,
   warehouse: BillingWarehouse,
   actor: string,
-  sourcePdfDataUrl?: string,
+  sourcePdfRef?: string,
 ): BillingOrder {
   if (isTransferDocText(text)) {
-    return parseTransferFromText(text, fileName, warehouse, actor, sourcePdfDataUrl);
+    return parseTransferFromText(text, fileName, warehouse, actor, sourcePdfRef);
   }
-  return parseInvoiceFromText(text, fileName, warehouse, actor, sourcePdfDataUrl);
+  return parseInvoiceFromText(text, fileName, warehouse, actor, sourcePdfRef);
 }
 
 function statusClass(status: BillingOrderStatus) {
@@ -1531,6 +1541,7 @@ function getOrderLabels(order: BillingOrder): BillingLabelAttachment[] {
       {
         id: `legacy-${order.id}`,
         sourceFileName: order.labelFileName || 'Etiqueta',
+        sourcePdfRef: `legacy_label_${order.id}`,
         sourcePdfDataUrl: order.labelPdfDataUrl,
         customerName: order.customerName,
         attachedAt: order.createdAt || new Date().toISOString(),
@@ -1663,7 +1674,7 @@ export default function FacturacionPage() {
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeIncomingWithLocal: false,
+      mergeIncomingWithLocal: true,
     },
   );
   const [archives, setArchives] = useSharedJsonState<BillingArchiveEntry[]>(
@@ -1675,7 +1686,7 @@ export default function FacturacionPage() {
       pollIntervalMs: 8000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeIncomingWithLocal: false,
+      mergeIncomingWithLocal: true,
     },
   );
   const [labelQueue, setLabelQueue] = useSharedJsonState<BillingLabelDoc[]>(
@@ -1687,12 +1698,13 @@ export default function FacturacionPage() {
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeIncomingWithLocal: false,
+      mergeIncomingWithLocal: true,
     },
   );
   const ordersRef = useRef<BillingOrder[]>([]);
   const labelQueueRef = useRef<BillingLabelDoc[]>([]);
-  const requiredPackagesLockRef = useRef<Record<string, { value: number; until: number }>>({});
+  const pdfBlobCacheRef = useRef<Map<string, string>>(new Map());
+  const migratingPdfRefsRef = useRef(false);
 
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
   const [huarteMovements, , , huarteMutations] = useInventoryMovementsDB('huarte');
@@ -1742,6 +1754,71 @@ export default function FacturacionPage() {
     [labelQueue],
   );
 
+  const persistPdfBlob = useCallback(
+    async (ref: string, dataUrl: string, fileName: string) => {
+      const safeRef = clean(ref);
+      const safeUrl = clean(dataUrl);
+      if (!safeRef || !safeUrl) return;
+      pdfBlobCacheRef.current.set(safeRef, safeUrl);
+      try {
+        await withUiTimeout(
+          async () =>
+            await supabase
+              .from('shared_json_state')
+              .upsert(
+                {
+                  key: buildFileBlobKey(safeRef),
+                  payload: {
+                    dataUrl: safeUrl,
+                    fileName: clean(fileName) || safeRef,
+                    updatedAt: nowIso(),
+                  },
+                  updated_by: currentUser?.id || null,
+                },
+                { onConflict: 'key' },
+              ),
+          `persistPdfBlob(${safeRef})`,
+          15000,
+        );
+      } catch (error) {
+        console.warn(`No se pudo persistir blob PDF ${safeRef}`, error);
+      }
+    },
+    [currentUser?.id],
+  );
+
+  const resolvePdfDataUrl = useCallback(
+    async (sourcePdfRef?: string, fallbackDataUrl?: string) => {
+      const fallback = clean(fallbackDataUrl);
+      if (fallback) return fallback;
+      const ref = clean(sourcePdfRef);
+      if (!ref) return '';
+      const cached = pdfBlobCacheRef.current.get(ref);
+      if (cached) return cached;
+      try {
+        const { data, error } = await withUiTimeout<{ data: { payload?: any } | null; error: any }>(
+          async () =>
+            supabase
+              .from('shared_json_state')
+              .select('payload')
+              .eq('key', buildFileBlobKey(ref))
+              .maybeSingle(),
+          `resolvePdfDataUrl(${ref})`,
+          12000,
+        );
+        if (error) return '';
+        const url = clean((data as any)?.payload?.dataUrl);
+        if (url) {
+          pdfBlobCacheRef.current.set(ref, url);
+        }
+        return url;
+      } catch {
+        return '';
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     ordersRef.current = Array.isArray(orders) ? orders : [];
   }, [orders]);
@@ -1749,6 +1826,73 @@ export default function FacturacionPage() {
   useEffect(() => {
     labelQueueRef.current = Array.isArray(labelQueue) ? labelQueue : [];
   }, [labelQueue]);
+
+  useEffect(() => {
+    if (migratingPdfRefsRef.current) return;
+    const ordersList = orders || [];
+    const labelsList = labelQueue || [];
+    const needsOrderMigration = ordersList.some((order) => clean(order.sourcePdfDataUrl) && !clean(order.sourcePdfRef));
+    const needsLabelMigration = labelsList.some((label) => clean(label.sourcePdfDataUrl) && !clean(label.sourcePdfRef));
+    const needsAttachmentCleanup = ordersList.some((order) => getOrderLabels(order).some((label) => clean(label.sourcePdfDataUrl)));
+    if (!needsOrderMigration && !needsLabelMigration && !needsAttachmentCleanup) return;
+
+    migratingPdfRefsRef.current = true;
+    void (async () => {
+      try {
+        let orderChanged = false;
+        const nextOrders: BillingOrder[] = [];
+        for (const order of ordersList) {
+          const nextOrder: BillingOrder = { ...order };
+          const orderRef = clean(nextOrder.sourcePdfRef) || `order_${nextOrder.id}`;
+          if (clean(nextOrder.sourcePdfDataUrl)) {
+            await persistPdfBlob(orderRef, nextOrder.sourcePdfDataUrl || '', nextOrder.sourceFileName);
+            nextOrder.sourcePdfRef = orderRef;
+            delete (nextOrder as any).sourcePdfDataUrl;
+            orderChanged = true;
+          }
+          const labels = getOrderLabels(nextOrder);
+          const cleanedLabels: BillingLabelAttachment[] = [];
+          for (const label of labels) {
+            const labelRef = clean(label.sourcePdfRef) || `label_${label.id}`;
+            const cleanedLabel: BillingLabelAttachment = {
+              ...label,
+              sourcePdfRef: labelRef,
+            };
+            if (clean((label as any).sourcePdfDataUrl)) {
+              await persistPdfBlob(labelRef, (label as any).sourcePdfDataUrl || '', label.sourceFileName);
+              delete (cleanedLabel as any).sourcePdfDataUrl;
+              orderChanged = true;
+            }
+            cleanedLabels.push(cleanedLabel);
+          }
+          if (cleanedLabels.length > 0) {
+            nextOrder.labels = cleanedLabels;
+          }
+          delete (nextOrder as any).labelPdfDataUrl;
+          nextOrders.push(nextOrder);
+        }
+
+        let labelChanged = false;
+        const nextLabelQueue: BillingLabelDoc[] = [];
+        for (const label of labelsList) {
+          const nextLabel: BillingLabelDoc = { ...label };
+          const labelRef = clean(nextLabel.sourcePdfRef) || `label_${nextLabel.id}`;
+          if (clean(nextLabel.sourcePdfDataUrl)) {
+            await persistPdfBlob(labelRef, nextLabel.sourcePdfDataUrl || '', nextLabel.sourceFileName);
+            nextLabel.sourcePdfRef = labelRef;
+            delete (nextLabel as any).sourcePdfDataUrl;
+            labelChanged = true;
+          }
+          nextLabelQueue.push(nextLabel);
+        }
+
+        if (orderChanged) setOrders(nextOrders);
+        if (labelChanged) setLabelQueue(nextLabelQueue);
+      } finally {
+        migratingPdfRefsRef.current = false;
+      }
+    })();
+  }, [labelQueue, orders, persistPdfBlob, setLabelQueue, setOrders]);
 
   const consumeLabelsInQueue = useCallback((labelToOrder: Map<string, string>) => {
     if (labelToOrder.size === 0) return;
@@ -1857,55 +2001,6 @@ export default function FacturacionPage() {
     }
   }, [labelQueue, orders, reviveLabelsInQueue]);
 
-  useEffect(() => {
-    const locks = requiredPackagesLockRef.current;
-    const entries = Object.entries(locks);
-    if (entries.length === 0) return;
-
-    const now = Date.now();
-    const pendingByOrder = new Map<string, number>();
-
-    for (const [orderId, lock] of entries) {
-      if (now > lock.until) {
-        delete locks[orderId];
-        continue;
-      }
-      const order = (orders || []).find((item) => item.id === orderId);
-      if (!order) continue;
-      const current = getOrderRequiredPackages(order);
-      if (current === lock.value) {
-        delete locks[orderId];
-        continue;
-      }
-      pendingByOrder.set(orderId, lock.value);
-    }
-
-    if (pendingByOrder.size === 0) return;
-
-    setOrders((prev) =>
-      (prev || []).map((order) => {
-        const forced = pendingByOrder.get(order.id);
-        if (forced === undefined) return order;
-        const changedAt = nowIso();
-        const updated = {
-          ...order,
-          requiredPackages: forced,
-          requiredPackagesUpdatedAt: changedAt,
-          lastChangedAt: changedAt,
-        };
-        const labels = getOrderLabels(updated);
-        return {
-          ...updated,
-          requiredPackages: getOrderRequiredPackages(updated),
-          labels,
-          labelPdfDataUrl: labels[0]?.sourcePdfDataUrl,
-          labelFileName: labels[0]?.sourceFileName,
-          status: recomputeOrderStatus({ ...updated, labels } as BillingOrder),
-        };
-      }),
-    );
-  }, [orders, setOrders]);
-
   const tryAttachLabels = useCallback(
     (ordersList: BillingOrder[], labelsList: BillingLabelDoc[]) => {
       if (!ordersList.length || !labelsList.length) {
@@ -1986,7 +2081,7 @@ export default function FacturacionPage() {
           {
             id: label.id,
             sourceFileName: label.sourceFileName,
-            sourcePdfDataUrl: label.sourcePdfDataUrl,
+            sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
             customerName: label.customerName,
             attachedAt: changedAt,
           },
@@ -1994,7 +2089,6 @@ export default function FacturacionPage() {
         nextOrders[orderIdx] = {
           ...nextOrders[orderIdx],
           labels: mergedLabels,
-          labelPdfDataUrl: mergedLabels[0]?.sourcePdfDataUrl,
           labelFileName: mergedLabels[0]?.sourceFileName,
           lastChangedAt: changedAt,
         };
@@ -2145,13 +2239,15 @@ export default function FacturacionPage() {
         const buffer = await file.arrayBuffer();
         const extractedPages = await extractPdfPagesTextFromArrayBuffer(buffer);
         const sourcePdfDataUrl = await readFileAsDataUrl(file);
+        const sourcePdfRef = `order_${uid('pdf')}`;
+        await persistPdfBlob(sourcePdfRef, sourcePdfDataUrl, file.name);
         parsedOrders.push(
           ...parseOrdersFromExtractedPages(
             extractedPages,
             file.name,
             sourceWarehouse,
             currentUser?.name || 'Sistema',
-            sourcePdfDataUrl,
+            sourcePdfRef,
           ),
         );
       }
@@ -2207,6 +2303,10 @@ export default function FacturacionPage() {
           } catch {
             sourcePdfDataUrl = '';
           }
+          const sourcePdfRef = `doc_${uid('pdf')}`;
+          if (sourcePdfDataUrl) {
+            await persistPdfBlob(sourcePdfRef, sourcePdfDataUrl, file.name);
+          }
           const docType = inferUploadDocType(extracted, file.name);
           if (docType === 'LABEL') {
             // Fallback: si el PDF no permitió extraer texto (escaneado/bloqueado),
@@ -2216,7 +2316,7 @@ export default function FacturacionPage() {
               ...parseLabelsFromExtractedPages(
                 labelPages,
                 file.name,
-                sourcePdfDataUrl,
+                sourcePdfRef,
               ),
             );
           } else {
@@ -2226,7 +2326,7 @@ export default function FacturacionPage() {
                 file.name,
                 sourceWarehouse,
                 currentUser?.name || 'Sistema',
-                sourcePdfDataUrl,
+                sourcePdfRef,
               ),
             );
           }
@@ -2289,13 +2389,17 @@ export default function FacturacionPage() {
           } catch {
             sourcePdfDataUrl = '';
           }
+          const sourcePdfRef = `label_${uid('pdf')}`;
+          if (sourcePdfDataUrl) {
+            await persistPdfBlob(sourcePdfRef, sourcePdfDataUrl, file.name);
+          }
           // Fallback: cuando no hay texto legible en etiqueta, se genera desde filename.
           const labelPages = extractedPages.length > 0 ? extractedPages : [extracted || file.name || 'ETIQUETA'];
           labels.push(
             ...parseLabelsFromExtractedPages(
               labelPages,
               file.name,
-              sourcePdfDataUrl,
+              sourcePdfRef,
             ),
           );
         } catch {
@@ -2344,7 +2448,6 @@ export default function FacturacionPage() {
           ...updated,
           requiredPackages: getOrderRequiredPackages(updated),
           labels,
-          labelPdfDataUrl: labels[0]?.sourcePdfDataUrl,
           labelFileName: labels[0]?.sourceFileName,
           status: recomputeOrderStatus({ ...updated, labels } as BillingOrder),
         };
@@ -2456,7 +2559,6 @@ export default function FacturacionPage() {
 
   const setRequiredPackages = (orderId: string, value: number) => {
     const normalized = Math.max(0, Math.floor(Number(value) || 0));
-    requiredPackagesLockRef.current[orderId] = { value: normalized, until: Date.now() + 60000 };
     updateOrder(orderId, (order) => ({
       ...order,
       requiredPackages: normalized,
@@ -2507,7 +2609,7 @@ export default function FacturacionPage() {
           {
             id: label.id,
             sourceFileName: label.sourceFileName,
-            sourcePdfDataUrl: label.sourcePdfDataUrl,
+            sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
             customerName: label.customerName,
             attachedAt,
           },
@@ -2631,13 +2733,37 @@ export default function FacturacionPage() {
     window.setTimeout(printFromFrame, 1500);
   };
 
-  const openOrderPdf = (order: BillingOrder) => {
-    openPdfDataUrl(order.sourcePdfDataUrl, 'No hay PDF adjunto en este pedido.');
-  };
+  const openOrderPdf = useCallback(
+    async (order: BillingOrder) => {
+      const dataUrl = await resolvePdfDataUrl(order.sourcePdfRef, order.sourcePdfDataUrl);
+      openPdfDataUrl(dataUrl, 'No hay PDF adjunto en este pedido.');
+    },
+    [resolvePdfDataUrl],
+  );
 
-  const printOrderPdf = (order: BillingOrder) => {
-    printPdfDataUrl(order.sourcePdfDataUrl, 'No hay PDF adjunto en este pedido.');
-  };
+  const printOrderPdf = useCallback(
+    async (order: BillingOrder) => {
+      const dataUrl = await resolvePdfDataUrl(order.sourcePdfRef, order.sourcePdfDataUrl);
+      printPdfDataUrl(dataUrl, 'No hay PDF adjunto en este pedido.');
+    },
+    [resolvePdfDataUrl],
+  );
+
+  const openLabelPdf = useCallback(
+    async (label: { sourcePdfRef?: string; sourcePdfDataUrl?: string }, emptyMessage = 'Etiqueta sin PDF adjunto.') => {
+      const dataUrl = await resolvePdfDataUrl(label.sourcePdfRef, label.sourcePdfDataUrl);
+      openPdfDataUrl(dataUrl, emptyMessage);
+    },
+    [resolvePdfDataUrl],
+  );
+
+  const printLabelPdf = useCallback(
+    async (label: { sourcePdfRef?: string; sourcePdfDataUrl?: string }, emptyMessage = 'Etiqueta sin PDF adjunto.') => {
+      const dataUrl = await resolvePdfDataUrl(label.sourcePdfRef, label.sourcePdfDataUrl);
+      printPdfDataUrl(dataUrl, emptyMessage);
+    },
+    [resolvePdfDataUrl],
+  );
 
   const findMovementByMarkerInDb = useCallback(
     async (
@@ -2938,7 +3064,6 @@ export default function FacturacionPage() {
             requiredPackages,
             labels,
             labelFileName: primaryLabel?.sourceFileName,
-            labelPdfDataUrl: primaryLabel?.sourcePdfDataUrl,
             status,
           } as BillingOrder;
         }),
@@ -3176,7 +3301,7 @@ export default function FacturacionPage() {
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => openPdfDataUrl(label.sourcePdfDataUrl, 'Etiqueta sin PDF adjunto.')}
+                      onClick={() => void openLabelPdf(label, 'Etiqueta sin PDF adjunto.')}
                       className="rounded-md border border-cyan-300 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-900 hover:bg-cyan-50"
                     >
                       Abrir
@@ -3200,7 +3325,7 @@ export default function FacturacionPage() {
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-xl font-black text-violet-950">Cola de pedidos</h2>
           <span className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700">
-            {ordersLoading
+            {ordersLoading && activeOrders.length === 0
               ? 'Cargando...'
               : dispatchSearchText
                 ? `${filteredActiveOrders.length} de ${activeOrders.length} activo(s)`
@@ -3270,13 +3395,13 @@ export default function FacturacionPage() {
                       </span>
                     )}
                     <button
-                      onClick={() => openOrderPdf(order)}
+                      onClick={() => void openOrderPdf(order)}
                       className="rounded-lg border border-violet-200 bg-white px-2 py-0.5 text-[11px] font-black text-violet-700 hover:bg-violet-50"
                     >
                       Abrir PDF
                     </button>
                     <button
-                      onClick={() => printOrderPdf(order)}
+                      onClick={() => void printOrderPdf(order)}
                       className="rounded-lg border border-violet-200 bg-white px-2 py-0.5 text-[11px] font-black text-violet-700 hover:bg-violet-50"
                     >
                       Imprimir
@@ -3333,13 +3458,13 @@ export default function FacturacionPage() {
                             Etiqueta {idx + 1}: {label.sourceFileName}
                           </span>
                           <button
-                            onClick={() => openPdfDataUrl(label.sourcePdfDataUrl, 'No hay etiqueta asociada.')}
+                            onClick={() => void openLabelPdf(label, 'No hay etiqueta asociada.')}
                             className="rounded-lg border border-cyan-200 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-800 hover:bg-cyan-50"
                           >
                             Abrir
                           </button>
                           <button
-                            onClick={() => printPdfDataUrl(label.sourcePdfDataUrl, 'No hay etiqueta asociada.')}
+                            onClick={() => void printLabelPdf(label, 'No hay etiqueta asociada.')}
                             className="rounded-lg border border-cyan-200 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-800 hover:bg-cyan-50"
                           >
                             Imprimir

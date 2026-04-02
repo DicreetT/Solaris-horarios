@@ -11,6 +11,58 @@ type Options = {
   mergeIncomingWithLocal?: boolean;
 };
 
+const pendingSharedJsonWrites = new Set<Promise<unknown>>();
+
+function trackSharedJsonWrite<T>(promise: Promise<T>): Promise<T> {
+  pendingSharedJsonWrites.add(promise);
+  void promise.finally(() => {
+    pendingSharedJsonWrites.delete(promise);
+  });
+  return promise;
+}
+
+export async function flushSharedJsonStateWrites(timeoutMs = 6000): Promise<void> {
+  const pending = Array.from(pendingSharedJsonWrites);
+  if (pending.length === 0) return;
+  await Promise.race([
+    Promise.allSettled(pending).then((): void => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      settled = true;
+      reject(new Error(`${label}: timeout`));
+    }, ms);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function isTransientPersistError(error: unknown) {
+  const text = String((error as any)?.message ?? error ?? '').toLowerCase();
+  return (
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('tiempo de espera') ||
+    text.includes('failed to fetch') ||
+    text.includes('network')
+  );
+}
+
 function isEffectivelyEmpty(value: unknown) {
   if (value == null) return true;
   if (Array.isArray(value)) return value.length === 0;
@@ -202,6 +254,10 @@ export function useSharedJsonState<T>(
   const backupKeyRef = useRef(`shared_json_state_backup_non_empty:${key}`);
   const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
   const writeVersionRef = useRef(0);
+  const lastPersistedVersionRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const retryAttemptRef = useRef(0);
+  const retryVersionRef = useRef(0);
 
   useEffect(() => {
     valueRef.current = value;
@@ -216,11 +272,15 @@ export function useSharedJsonState<T>(
       let payloadToStore = next;
       if (mergeBeforePersist) {
         try {
-          const { data, error } = await supabase
-            .from('shared_json_state')
-            .select('payload')
-            .eq('key', key)
-            .maybeSingle();
+          const { data, error } = await withTimeout<{ data: any; error: any }>(
+            supabase
+              .from('shared_json_state')
+              .select('payload')
+              .eq('key', key)
+              .maybeSingle(),
+            12000,
+            `shared_json_state merge-read ${key}`,
+          );
           if (!error && data && Object.prototype.hasOwnProperty.call(data, 'payload')) {
             const remotePayload = data.payload as T;
             payloadToStore = (mergeStrategy
@@ -233,16 +293,20 @@ export function useSharedJsonState<T>(
         }
       }
 
-      const { error } = await supabase
-        .from('shared_json_state')
-        .upsert(
-          {
-            key,
-            payload: payloadToStore as any,
-            updated_by: userId || null,
-          },
-          { onConflict: 'key' },
-        );
+      const { error } = await withTimeout<{ error: any }>(
+        supabase
+          .from('shared_json_state')
+          .upsert(
+            {
+              key,
+              payload: payloadToStore as any,
+              updated_by: userId || null,
+            },
+            { onConflict: 'key' },
+          ),
+        15000,
+        `shared_json_state upsert ${key}`,
+      );
       if (error) {
         console.error(`[shared_json_state] upsert failed for key ${key}:`, error);
         throw error;
@@ -250,16 +314,20 @@ export function useSharedJsonState<T>(
 
       if (protectFromEmptyOverwrite && !isEffectivelyEmpty(payloadToStore)) {
         const backupKey = backupKeyRef.current;
-        const { error: backupError } = await supabase
-          .from('shared_json_state')
-          .upsert(
-            {
-              key: backupKey,
-              payload: payloadToStore as any,
-              updated_by: userId || null,
-            },
-            { onConflict: 'key' },
-          );
+        const { error: backupError } = await withTimeout<{ error: any }>(
+          supabase
+            .from('shared_json_state')
+            .upsert(
+              {
+                key: backupKey,
+                payload: payloadToStore as any,
+                updated_by: userId || null,
+              },
+              { onConflict: 'key' },
+            ),
+          15000,
+          `shared_json_state backup upsert ${backupKey}`,
+        );
         if (backupError) {
           console.error(`[shared_json_state] backup upsert failed for key ${backupKey}:`, backupError);
         } else {
@@ -273,6 +341,7 @@ export function useSharedJsonState<T>(
 
   useEffect(() => {
     let active = true;
+    let hasWarmCache = false;
     keyRef.current = key;
     localCacheKeyRef.current = `shared_json_state_cache:${key}`;
     backupKeyRef.current = `shared_json_state_backup_non_empty:${key}`;
@@ -282,16 +351,35 @@ export function useSharedJsonState<T>(
       if (cached !== undefined && !isEffectivelyEmpty(cached)) {
         setValue(cached);
         valueRef.current = cached;
+        hasWarmCache = true;
+        setLoading(false);
       }
     }
 
-    const load = async (silent = false) => {
-      if (!silent) setLoading(true);
-      const { data, error } = await supabase
-        .from('shared_json_state')
-        .select('payload,updated_by')
-        .eq('key', key)
-        .maybeSingle();
+    let loadInFlight = false;
+    let queuedSilentRefresh = false;
+
+    const runLoad = async (silent = false) => {
+      if (!silent && !hasWarmCache) setLoading(true);
+      let data: any;
+      let error: any;
+      try {
+        const result = await withTimeout<{ data: any; error: any }>(
+          supabase
+            .from('shared_json_state')
+            .select('payload,updated_by')
+            .eq('key', key)
+            .maybeSingle(),
+          20000,
+          `shared_json_state load ${key}`,
+        );
+        data = result.data;
+        error = result.error;
+      } catch (err) {
+        console.error(`[shared_json_state] load timeout/failure for key ${key}:`, err);
+        if (active && !silent) setLoading(false);
+        return;
+      }
 
       if (!active) return;
 
@@ -341,7 +429,9 @@ export function useSharedJsonState<T>(
             }
           }
         }
-        const incoming = mergeIncomingWithLocal
+        const hasPendingLocalWrites = writeVersionRef.current > lastPersistedVersionRef.current;
+        const shouldMergeIncoming = mergeIncomingWithLocal || hasPendingLocalWrites;
+        const incoming = shouldMergeIncoming
           ? ((mergeStrategy
               ? mergeStrategy(incomingRaw, valueRef.current)
               : defaultMergeRemoteLocal(incomingRaw, valueRef.current)) as T)
@@ -381,6 +471,25 @@ export function useSharedJsonState<T>(
       if (active && !silent) setLoading(false);
     };
 
+    const load = async (silent = false) => {
+      if (loadInFlight) {
+        // Evita lecturas concurrentes que acaban pisando estado nuevo con respuesta vieja.
+        queuedSilentRefresh = true;
+        return;
+      }
+      loadInFlight = true;
+      try {
+        await runLoad(silent);
+      } finally {
+        loadInFlight = false;
+        if (!active) return;
+        if (queuedSilentRefresh) {
+          queuedSilentRefresh = false;
+          void load(true);
+        }
+      }
+    };
+
     void load();
 
     const refresh = () => {
@@ -409,7 +518,9 @@ export function useSharedJsonState<T>(
           if (protectFromEmptyOverwrite && isEffectivelyEmpty(nextRaw) && !isEffectivelyEmpty(valueRef.current)) {
             return;
           }
-          const next = mergeIncomingWithLocal
+          const hasPendingLocalWrites = writeVersionRef.current > lastPersistedVersionRef.current;
+          const shouldMergeIncoming = mergeIncomingWithLocal || hasPendingLocalWrites;
+          const next = shouldMergeIncoming
             ? ((mergeStrategy
                 ? mergeStrategy(nextRaw, valueRef.current)
                 : defaultMergeRemoteLocal(nextRaw, valueRef.current)) as T)
@@ -432,6 +543,10 @@ export function useSharedJsonState<T>(
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityOrFocus);
       window.removeEventListener('focus', onVisibilityOrFocus);
+      if (retryTimerRef.current != null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       void supabase.removeChannel(channel);
     };
   }, [key, initializeIfMissing, mergeIncomingWithLocal, mergeStrategy, persist, pollIntervalMs, protectFromEmptyOverwrite]);
@@ -449,32 +564,97 @@ export function useSharedJsonState<T>(
           safeWriteLocal(localCacheKeyRef.current, next);
         }
         const writeVersion = ++writeVersionRef.current;
-        persistQueueRef.current = persistQueueRef.current
-          .catch(() => {
-            // keep queue alive after prior failures
-          })
-          .then(async () => {
-            const stored = await persist(next);
-            if (writeVersionRef.current !== writeVersion) return;
-            if (stored === next) return;
-            valueRef.current = stored;
-            setValue(stored);
-            if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
-              safeWriteLocal(localCacheKeyRef.current, stored);
-            }
-          })
-          .catch((error) => {
-            console.error(`[shared_json_state] persist failed for key ${key}:`, error);
-            if (writeVersionRef.current !== writeVersion) return;
-            setValue((current) => {
-              if (current !== next) return current;
-              valueRef.current = previous;
-              if (protectFromEmptyOverwrite && !isEffectivelyEmpty(previous)) {
-                safeWriteLocal(localCacheKeyRef.current, previous);
+        retryVersionRef.current = writeVersion;
+        retryAttemptRef.current = 0;
+        if (retryTimerRef.current != null) {
+          window.clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        persistQueueRef.current = trackSharedJsonWrite(
+          persistQueueRef.current
+            .catch(() => {
+              // keep queue alive after prior failures
+            })
+            .then(async () => {
+              const stored = await persist(next);
+              retryAttemptRef.current = 0;
+              lastPersistedVersionRef.current = Math.max(lastPersistedVersionRef.current, writeVersion);
+              if (writeVersionRef.current !== writeVersion) return;
+              if (stored === next) return;
+              valueRef.current = stored;
+              setValue(stored);
+              if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
+                safeWriteLocal(localCacheKeyRef.current, stored);
               }
-              return previous;
-            });
-          });
+            })
+            .catch((error) => {
+              console.error(`[shared_json_state] persist failed for key ${key}:`, error);
+              if (isTransientPersistError(error)) {
+                // Keep optimistic state to avoid "bouncing/disappearing" UI during temporary DB/network issues.
+                retryVersionRef.current = writeVersionRef.current;
+                const runRetry = () => {
+                  const retryVersion = retryVersionRef.current;
+                  const snapshot = valueRef.current;
+                  retryAttemptRef.current += 1;
+                  const attempt = retryAttemptRef.current;
+                  persistQueueRef.current = trackSharedJsonWrite(
+                    persistQueueRef.current
+                      .catch(() => {
+                        // keep queue alive after prior failures
+                      })
+                      .then(async () => {
+                        if (writeVersionRef.current !== retryVersion) {
+                          retryAttemptRef.current = 0;
+                          return;
+                        }
+                        const stored = await persist(snapshot);
+                        retryAttemptRef.current = 0;
+                        lastPersistedVersionRef.current = Math.max(lastPersistedVersionRef.current, retryVersion);
+                        if (writeVersionRef.current !== retryVersion) return;
+                        if (stored === snapshot) return;
+                        valueRef.current = stored;
+                        setValue(stored);
+                        if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
+                          safeWriteLocal(localCacheKeyRef.current, stored);
+                        }
+                      })
+                      .catch((retryError) => {
+                        console.error(`[shared_json_state] retry persist failed for key ${key}:`, retryError);
+                        if (writeVersionRef.current !== retryVersion) {
+                          retryAttemptRef.current = 0;
+                          return;
+                        }
+                        if (attempt >= 5) {
+                          retryAttemptRef.current = 0;
+                          return;
+                        }
+                        const backoffMs = Math.min(9000, 1200 * 2 ** (attempt - 1));
+                        retryTimerRef.current = window.setTimeout(() => {
+                          retryTimerRef.current = null;
+                          runRetry();
+                        }, backoffMs);
+                      }),
+                  );
+                };
+                if (retryTimerRef.current == null) {
+                  retryTimerRef.current = window.setTimeout(() => {
+                    retryTimerRef.current = null;
+                    runRetry();
+                  }, 1200);
+                }
+                return;
+              }
+              if (writeVersionRef.current !== writeVersion) return;
+              setValue((current) => {
+                if (current !== next) return current;
+                valueRef.current = previous;
+                if (protectFromEmptyOverwrite && !isEffectivelyEmpty(previous)) {
+                  safeWriteLocal(localCacheKeyRef.current, previous);
+                }
+                return previous;
+              });
+            }),
+        );
         return next;
       });
     },
