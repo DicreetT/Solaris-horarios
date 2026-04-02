@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
 import { Folder, ExternalLink, FileText, Printer, Trash2 } from 'lucide-react';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { supabase } from '../lib/supabase';
 
 const FACTURACION_ARCHIVE_KEY = 'facturacion_archive_v1';
+const FACTURACION_FILE_BLOB_PREFIX = 'facturacion_file_blob_v1:';
+const FACTURACION_ARCHIVE_BACKUP_KEY = `shared_json_state_backup_non_empty:${FACTURACION_ARCHIVE_KEY}`;
 
 type ArchiveOrderLine = {
     quantity: number;
@@ -18,6 +21,7 @@ type ArchiveOrder = {
     invoiceDate: string;
     customerName: string;
     sourceFileName: string;
+    sourcePdfRef?: string;
     sourcePdfDataUrl?: string;
     lines: ArchiveOrderLine[];
 };
@@ -31,6 +35,87 @@ type BillingArchiveEntry = {
     totalQuantity: number;
 };
 
+function calcArchiveTotals(orders: ArchiveOrder[]) {
+    const safeOrders = Array.isArray(orders) ? orders : [];
+    const totalLines = safeOrders.reduce((acc, order) => acc + ((order.lines || []).length || 0), 0);
+    const totalQuantity = safeOrders.reduce(
+        (acc, order) =>
+            acc +
+            (order.lines || []).reduce((lineAcc, line) => lineAcc + (Number(line?.quantity) || 0), 0),
+        0,
+    );
+    return {
+        totalOrders: safeOrders.length,
+        totalLines,
+        totalQuantity,
+    };
+}
+
+function pickBestOrder(prev: ArchiveOrder, next: ArchiveOrder) {
+    const prevScore =
+        (clean(prev.sourcePdfRef) ? 4 : 0) +
+        (clean(prev.sourcePdfDataUrl) ? 2 : 0) +
+        ((prev.lines || []).length > 0 ? 1 : 0);
+    const nextScore =
+        (clean(next.sourcePdfRef) ? 4 : 0) +
+        (clean(next.sourcePdfDataUrl) ? 2 : 0) +
+        ((next.lines || []).length > 0 ? 1 : 0);
+    return nextScore >= prevScore ? { ...prev, ...next } : { ...next, ...prev };
+}
+
+function mergeArchiveEntries(base: BillingArchiveEntry[], incoming: BillingArchiveEntry[]) {
+    const byDay = new Map<string, BillingArchiveEntry>();
+
+    const upsertDay = (day: BillingArchiveEntry) => {
+        const key = clean(day?.dateKey);
+        if (!key) return;
+        const current = byDay.get(key);
+        if (!current) {
+            const safeOrders = Array.isArray(day.orders) ? day.orders : [];
+            const totals = calcArchiveTotals(safeOrders);
+            byDay.set(key, {
+                ...day,
+                dateKey: key,
+                orders: safeOrders,
+                ...totals,
+            });
+            return;
+        }
+        const orderMap = new Map<string, ArchiveOrder>();
+        for (const order of current.orders || []) {
+            const id = clean(order?.id);
+            if (!id) continue;
+            orderMap.set(id, order);
+        }
+        for (const order of day.orders || []) {
+            const id = clean(order?.id);
+            if (!id) continue;
+            const prev = orderMap.get(id);
+            orderMap.set(id, prev ? pickBestOrder(prev, order) : order);
+        }
+        const mergedOrders = Array.from(orderMap.values()).sort((a, b) => {
+            const aDate = new Date(String(a.invoiceDate || '')).getTime();
+            const bDate = new Date(String(b.invoiceDate || '')).getTime();
+            if (Number.isFinite(aDate) && Number.isFinite(bDate) && aDate !== bDate) return bDate - aDate;
+            return clean(a.invoiceNumber).localeCompare(clean(b.invoiceNumber));
+        });
+        const totals = calcArchiveTotals(mergedOrders);
+        byDay.set(key, {
+            ...current,
+            ...day,
+            dateKey: key,
+            archivedAt: clean(day.archivedAt) || clean(current.archivedAt) || new Date().toISOString(),
+            orders: mergedOrders,
+            ...totals,
+        });
+    };
+
+    (Array.isArray(base) ? base : []).forEach(upsertDay);
+    (Array.isArray(incoming) ? incoming : []).forEach(upsertDay);
+
+    return Array.from(byDay.values()).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+}
+
 function formatDate(iso: string) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -39,6 +124,10 @@ function formatDate(iso: string) {
 
 function clean(value: unknown) {
     return String(value ?? '').trim();
+}
+
+function buildFileBlobKey(ref: string) {
+    return `${FACTURACION_FILE_BLOB_PREFIX}${clean(ref)}`;
 }
 
 function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
@@ -81,23 +170,77 @@ function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
 function FoldersPage() {
     const { currentUser } = useAuth();
     const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
-    const [facturacionArchive, setFacturacionArchive] = useSharedJsonState<BillingArchiveEntry[]>(
+    const [facturacionArchive, setFacturacionArchive, archiveLoading] = useSharedJsonState<BillingArchiveEntry[]>(
         FACTURACION_ARCHIVE_KEY,
         [],
         {
             userId: currentUser?.id,
             initializeIfMissing: true,
-            pollIntervalMs: 20000,
+            pollIntervalMs: 8000,
             protectFromEmptyOverwrite: true,
         },
     );
+    const pdfBlobCacheRef = useRef<Map<string, string>>(new Map());
+    const archiveRecoveryTriedRef = useRef(false);
+
+    const resolvePdfDataUrl = useCallback(async (sourcePdfRef?: string, fallbackDataUrl?: string) => {
+        const fallback = clean(fallbackDataUrl);
+        if (fallback) return fallback;
+        const ref = clean(sourcePdfRef);
+        if (!ref) return '';
+        const cached = pdfBlobCacheRef.current.get(ref);
+        if (cached) return cached;
+        try {
+            const { data, error } = await supabase
+                .from('shared_json_state')
+                .select('payload')
+                .eq('key', buildFileBlobKey(ref))
+                .maybeSingle();
+            if (error) return '';
+            const url = clean((data as any)?.payload?.dataUrl);
+            if (url) {
+                pdfBlobCacheRef.current.set(ref, url);
+            }
+            return url;
+        } catch {
+            return '';
+        }
+    }, []);
+
+    useEffect(() => {
+        if (archiveRecoveryTriedRef.current) return;
+        archiveRecoveryTriedRef.current = true;
+        void (async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('shared_json_state')
+                    .select('payload')
+                    .eq('key', FACTURACION_ARCHIVE_BACKUP_KEY)
+                    .maybeSingle();
+                if (error) return;
+                const backup = (data?.payload || []) as BillingArchiveEntry[];
+                if (!Array.isArray(backup) || backup.length === 0) return;
+                const current = Array.isArray(facturacionArchive) ? facturacionArchive : [];
+                const merged = mergeArchiveEntries(current, backup);
+                const hasMoreDays = merged.length > current.length;
+                const currentOrders = current.reduce((acc, day) => acc + ((day.orders || []).length || 0), 0);
+                const mergedOrders = merged.reduce((acc, day) => acc + ((day.orders || []).length || 0), 0);
+                if (hasMoreDays || mergedOrders > currentOrders) {
+                    setFacturacionArchive(merged);
+                }
+            } catch {
+                // noop
+            }
+        })();
+    }, [facturacionArchive, setFacturacionArchive]);
 
     // Filter folders for current user
     const foldersForUser = isRestrictedUser
         ? DRIVE_FOLDERS.filter((f) => f.id === 'protocolos')
         : DRIVE_FOLDERS.filter((f) => f.users.includes(currentUser?.id));
 
-    const openPdf = (dataUrl?: string) => {
+    const openPdf = async (sourcePdfRef?: string, sourcePdfDataUrl?: string) => {
+        const dataUrl = await resolvePdfDataUrl(sourcePdfRef, sourcePdfDataUrl);
         if (!dataUrl) {
             alert('Este pedido no tiene PDF adjunto.');
             return;
@@ -128,7 +271,8 @@ function FoldersPage() {
         }
     };
 
-    const printPdf = (dataUrl?: string) => {
+    const printPdf = async (sourcePdfRef?: string, sourcePdfDataUrl?: string) => {
+        const dataUrl = await resolvePdfDataUrl(sourcePdfRef, sourcePdfDataUrl);
         if (!dataUrl) {
             alert('Este pedido no tiene PDF adjunto.');
             return;
@@ -277,7 +421,11 @@ function FoldersPage() {
                         </div>
                     </div>
 
-                    {(!facturacionArchive || facturacionArchive.length === 0) ? (
+                    {archiveLoading ? (
+                        <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                            Cargando historial de despachos...
+                        </div>
+                    ) : (!facturacionArchive || facturacionArchive.length === 0) ? (
                         <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
                             Aún no hay días archivados de despachos.
                         </div>
@@ -316,14 +464,14 @@ function FoldersPage() {
                                                             <div className="flex gap-2">
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => openPdf(order.sourcePdfDataUrl)}
+                                                                    onClick={() => void openPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
                                                                     className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
                                                                 >
                                                                     <FileText size={12} /> Abrir
                                                                 </button>
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => printPdf(order.sourcePdfDataUrl)}
+                                                                    onClick={() => void printPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
                                                                     className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
                                                                 >
                                                                     <Printer size={12} /> Imprimir
