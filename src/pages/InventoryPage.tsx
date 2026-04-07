@@ -289,6 +289,21 @@ const recordTimestampMs = (row: GenericRow) => {
   return 0;
 };
 
+const lotDeletedAtMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).deletedAt),
+    clean((row as any).deleted_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+
+const isLotDeleted = (row: GenericRow) => lotDeletedAtMs(row) > 0;
+
 const lotMergeKey = (row: GenericRow) => lotKeyOf(clean(row.producto), clean(row.lote));
 
 const hasMeaningfulValue = (value: unknown) => {
@@ -371,6 +386,34 @@ const mergeLotRows = (prev: GenericRow, normalizedIncoming: GenericRow) => {
     merged.ensamblaje_finalizado = incomingAsm;
   } else {
     merged.ensamblaje_finalizado = prevAsm;
+  }
+
+  // Borrado persistente ("tombstone"): evita que clientes stale resuciten lotes eliminados.
+  const prevDeletedTs = lotDeletedAtMs(prev);
+  const incomingDeletedTs = lotDeletedAtMs(normalizedIncoming);
+  const latestDeletionTs = Math.max(prevDeletedTs, incomingDeletedTs);
+  const latestLiveTs = Math.max(prevDeletedTs > 0 ? 0 : prevTs, incomingDeletedTs > 0 ? 0 : nextTs);
+  if (latestDeletionTs > 0 && latestDeletionTs >= latestLiveTs) {
+    const keepIncomingDeletion = incomingDeletedTs >= prevDeletedTs;
+    const deletedAt = keepIncomingDeletion
+      ? clean((normalizedIncoming as any).deletedAt || (normalizedIncoming as any).deleted_at)
+      : clean((prev as any).deletedAt || (prev as any).deleted_at);
+    if (deletedAt) {
+      (merged as any).deletedAt = deletedAt;
+      (merged as any).deleted_at = deletedAt;
+    }
+    const deletedBy = keepIncomingDeletion
+      ? clean((normalizedIncoming as any).deletedBy || (normalizedIncoming as any).deleted_by)
+      : clean((prev as any).deletedBy || (prev as any).deleted_by);
+    if (deletedBy) {
+      (merged as any).deletedBy = deletedBy;
+      (merged as any).deleted_by = deletedBy;
+    }
+  } else {
+    delete (merged as any).deletedAt;
+    delete (merged as any).deleted_at;
+    delete (merged as any).deletedBy;
+    delete (merged as any).deleted_by;
   }
 
   return merged;
@@ -478,6 +521,25 @@ const mergeCanetLotesPayload = (remotePayload: any, localPayload: any) => {
 const nowIso = () => new Date().toISOString();
 
 const stampLotRow = (row: GenericRow) => ({ ...row, lastChangedAt: nowIso() });
+const stampDeletedLotRow = (row: GenericRow, actorName?: string) => {
+  const ts = nowIso();
+  return {
+    ...row,
+    deletedAt: ts,
+    deleted_at: ts,
+    deletedBy: actorName || clean((row as any).deletedBy),
+    deleted_by: actorName || clean((row as any).deleted_by),
+    lastChangedAt: ts,
+  };
+};
+const clearDeletedLotFields = (row: GenericRow): GenericRow => {
+  const next = { ...row };
+  delete (next as any).deletedAt;
+  delete (next as any).deleted_at;
+  delete (next as any).deletedBy;
+  delete (next as any).deleted_by;
+  return next;
+};
 
 const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const monthLabel = (key: string) => {
@@ -892,7 +954,7 @@ function InventoryPage() {
   const visibleLotes = useMemo(
     () =>
       dedupeCanonicalCanetLots(lotes).filter(
-        (row) => !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+        (row) => !isLotDeleted(row) && !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
       ),
     [deletedLotKeySet, lotes],
   );
@@ -2580,6 +2642,13 @@ function InventoryPage() {
       if (!producto || !lote) continue;
       existingKeys.add(lotKeyOf(producto, lote));
     }
+    for (const row of lotes) {
+      if (!isLotDeleted(row)) continue;
+      const producto = clean(row.producto);
+      const lote = canonicalLotForProduct(knownLotRows, producto, clean(row.lote));
+      if (!producto || !lote) continue;
+      existingKeys.add(lotKeyOf(producto, lote));
+    }
     for (const key of deletedLotKeySet) existingKeys.add(key);
 
     const latestByKey = new Map<string, { producto: string; lote: string; fecha: string }>();
@@ -2619,6 +2688,7 @@ function InventoryPage() {
     canonicalKnownCanetLotRows,
     deletedLotKeySet,
     inferredLotVialesByKey,
+    lotes,
     visibleLotes,
     normalizedMovements,
     stockByProductLotToken,
@@ -2640,6 +2710,7 @@ function InventoryPage() {
             clean((row as any).viales_recibidos),
             clean((row as any).fecha_caducidad),
             clean((row as any).semaforo_caducidad),
+            clean((row as any).deletedAt || (row as any).deleted_at),
           ].join('|');
         })
         .join('||');
@@ -2669,6 +2740,7 @@ function InventoryPage() {
 
     let changed = false;
     const repaired = lotes.map((row) => {
+      if (isLotDeleted(row)) return row;
       const producto = clean(row.producto);
       const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(row.lote));
       if (!producto || !lote) return row;
@@ -2954,9 +3026,9 @@ function InventoryPage() {
       return;
     }
     const producto = clean(movementForm.producto);
-    const lote = canonicalLotForProduct(lotes, producto, clean(movementForm.lote));
+    const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
     const bodega = normalizeWarehouseAlias(clean(movementForm.bodega));
-    const loteValido = lotes.some((l) => {
+    const loteValido = visibleLotes.some((l) => {
       if (clean(l.producto) !== producto) return false;
       return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(lote);
     });
@@ -2985,7 +3057,7 @@ function InventoryPage() {
     const baseStock = normalizedMovements
       .filter((m) => (editingId ? m.id !== editingId : true))
       .reduce((acc, m) => {
-        const mk = `${clean(m.producto)}|${canonicalLotForProduct(lotes, clean(m.producto), clean(m.lote))}|${normalizeWarehouseAlias(clean(m.bodega))}`;
+        const mk = `${clean(m.producto)}|${canonicalLotForProduct(canonicalKnownCanetLotRows, clean(m.producto), clean(m.lote))}|${normalizeWarehouseAlias(clean(m.bodega))}`;
         if (mk !== key) return acc;
         return acc + toNum(m.cantidad_signed);
       }, 0);
@@ -3162,7 +3234,7 @@ function InventoryPage() {
       setLotes((prev) =>
         prev.map((l) =>
           `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey
-            ? stampLotRow({ ...l, ...lotPatch })
+            ? stampLotRow(clearDeletedLotFields({ ...l, ...lotPatch }))
             : l,
         ),
       );
@@ -3194,7 +3266,7 @@ function InventoryPage() {
       );
       emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
-      setLotes((prev) => [stampLotRow({ ...lotPatch }), ...prev]);
+      setLotes((prev) => [stampLotRow(clearDeletedLotFields({ ...lotPatch })), ...prev]);
       const createdKey = lotKeyOf(lotForm.producto, lotForm.lote);
       setDeletedLotKeys((prev) => prev.filter((storedKey) => clean(storedKey) !== createdKey));
       await notifyAnabela(`${actorName} creó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
@@ -3279,7 +3351,16 @@ function InventoryPage() {
     setDeletingLotKey(key);
     try {
       setDeletedLotKeys((prev) => (prev.some((storedKey) => clean(storedKey) === key) ? prev : [key, ...prev]));
-      setLotes((prev) => prev.filter((row) => lotKeyOf(row.producto, row.lote) !== key));
+      setLotes((prev) => {
+        let matched = false;
+        const next = prev.map((row) => {
+          if (lotKeyOf(row.producto, row.lote) !== key) return row;
+          matched = true;
+          return stampDeletedLotRow(row, actorName);
+        });
+        if (matched) return next;
+        return [stampDeletedLotRow({ producto, lote, bodega: 'CANET' }, actorName), ...prev];
+      });
       await notifyAnabela(`${actorName} eliminó un lote en Inventario: ${producto} ${lote}.`);
       appendAudit('Eliminación de lote', `${producto} ${lote}`);
       emitSuccessFeedback('Lote eliminado con éxito.');
