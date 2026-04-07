@@ -67,6 +67,12 @@ type Movement = {
 
 type GenericRow = Record<string, any>;
 
+const CANET_LOT_REFERENCE_ROWS: GenericRow[] = [
+  ...((((huarteSeed as any) || {}).lotes || []) as GenericRow[]),
+  ...((((huarteSeed as any) || {}).movimientos || []) as GenericRow[]),
+  ...((((seed as any) || {}).lotes || []) as GenericRow[]),
+];
+
 const clean = (v: any) => (v == null ? '' : String(v).trim());
 const normalizeLotState = (v: any) => (clean(v).toUpperCase() === 'AGOTADO' ? 'AGOTADO' : 'ACTIVO');
 const normalizeSearch = (v: any) =>
@@ -100,7 +106,8 @@ const mergeLotAssemblyFinalized = (current: 'SI' | 'NO' | undefined, incoming: '
 };
 const buildLotStateMap = (rows: GenericRow[]) => {
   const map = new Map<string, 'ACTIVO' | 'AGOTADO'>();
-  for (const row of rows) {
+  const canonicalRows = dedupeCanonicalCanetLots(rows);
+  for (const row of canonicalRows) {
     const producto = clean(row.producto);
     const lote = clean(row.lote);
     if (!producto || !lote) continue;
@@ -112,33 +119,42 @@ const buildLotStateMap = (rows: GenericRow[]) => {
 };
 const buildLotAssemblyFinalizedMap = (rows: GenericRow[]) => {
   const map = new Map<string, 'SI' | 'NO'>();
-  for (const row of rows) {
+  // Usar lotes canónicos deduplicados evita arrastrar "SI" stale de aliases viejos
+  // (ej: A35 vs 2601A35) que terminaban forzando potencial=0 sin corresponder.
+  const canonicalRows = dedupeCanonicalCanetLots(rows);
+  for (const row of canonicalRows) {
     const producto = clean(row.producto);
     const lote = clean(row.lote);
     if (!producto || !lote) continue;
     const key = lotKeyOf(producto, lote);
     const incoming = normalizeEnsamblajeFinalizado((row as any).ensamblaje_finalizado);
-    map.set(key, mergeLotAssemblyFinalized(map.get(key), incoming));
+    map.set(key, incoming);
   }
   return map;
 };
 const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
   const producto = clean(productoRaw);
   const lote = clean(loteRaw);
-  if (!producto || !lote || isInvalidLegacyLot(producto, lote)) return lote;
+  if (!producto || !lote) return lote;
   const token = normalizeLotCompareToken(lote);
+  if (!token) return lote;
   const productLots = Array.from(
     new Set(
-      loteRows
+      [...loteRows, ...CANET_LOT_REFERENCE_ROWS]
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean),
     ),
   );
-  const exact = productLots.find((candidate) => normalizeLotCompareToken(candidate) === token);
+  const pickBest = (candidates: string[]) =>
+    [...candidates]
+      .sort((a, b) => normalizeLotCompareToken(b).length - normalizeLotCompareToken(a).length || clean(b).length - clean(a).length)[0];
+  const exact = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate) === token));
   if (exact) return exact;
-  const matches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
-  if (matches.length === 1) return matches[0];
+  const matches = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token)));
+  if (matches) return matches;
+  const inverseMatches = pickBest(productLots.filter((candidate) => token.endsWith(normalizeLotCompareToken(candidate))));
+  if (inverseMatches) return inverseMatches;
   return lote;
 };
 const toNum = (v: any) => {
@@ -242,6 +258,227 @@ const dateFromAny = (v: string | number): Date | null => {
   }
   return null;
 };
+const formatDateForDisplay = (v: string | number) => {
+  const d = dateFromAny(v);
+  if (!d) return clean(v) || '-';
+  return d.toLocaleDateString('es-ES');
+};
+const normalizeDateForInput = (v: string | number) => {
+  const d = dateFromAny(v);
+  if (!d) return clean(v);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const recordTimestampMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).updated_at),
+    clean((row as any).updatedAt),
+    clean((row as any).lastChangedAt),
+    clean((row as any).created_at),
+    clean((row as any).createdAt),
+    clean((row as any).fecha_alta),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+
+const lotMergeKey = (row: GenericRow) => lotKeyOf(clean(row.producto), clean(row.lote));
+
+const hasMeaningfulValue = (value: unknown) => {
+  if (value == null) return false;
+  if (typeof value === 'string') return clean(value).length > 0;
+  return true;
+};
+
+const lotSpecificityScore = (loteRaw: string) => {
+  const lote = clean(loteRaw);
+  const token = normalizeLotCompareToken(lote);
+  if (!token) return -1;
+  let score = token.length * 10;
+  if (/^\d+[A-Z]/.test(token)) score += 1000;
+  if (/^\d{6,}$/.test(token)) score += 900;
+  if (/[A-Z]/.test(token)) score += 100;
+  if (/^\d{1,4}$/.test(token)) score -= 200;
+  if (/^[A-Z]/.test(token)) score -= 200;
+  if (/^[.\-]/.test(lote)) score -= 300;
+  return score;
+};
+
+const mergeLotRows = (prev: GenericRow, normalizedIncoming: GenericRow) => {
+  const producto = clean(normalizedIncoming.producto || prev.producto);
+  const lote = clean(normalizedIncoming.lote || prev.lote);
+  const prevTs = recordTimestampMs(prev);
+  const nextTs = recordTimestampMs(normalizedIncoming);
+  const preferIncoming = nextTs > prevTs;
+  const merged = preferIncoming
+    ? { ...prev, ...normalizedIncoming }
+    : { ...normalizedIncoming, ...prev };
+  const prevLotLabel = clean((prev as any).lote);
+  const incomingLotLabel = clean((normalizedIncoming as any).lote);
+  const prevSpecificity = lotSpecificityScore(prevLotLabel);
+  const incomingSpecificity = lotSpecificityScore(incomingLotLabel);
+  const incomingMoreSpecific = incomingSpecificity > prevSpecificity;
+  const incomingNotLessSpecific = incomingSpecificity >= prevSpecificity;
+  merged.lote = incomingMoreSpecific ? incomingLotLabel : prevLotLabel || incomingLotLabel;
+
+  // Nunca degradar viales por una variante corta/ruidosa: conserva el mayor valor disponible.
+  const prevViales = toVialesNum((prev as any).viales_recibidos);
+  const incomingViales = toVialesNum((normalizedIncoming as any).viales_recibidos);
+  if (incomingViales > prevViales) {
+    merged.viales_recibidos = (normalizedIncoming as any).viales_recibidos;
+  } else if (prevViales > incomingViales) {
+    merged.viales_recibidos = (prev as any).viales_recibidos;
+  }
+
+  // Conserva campos no vacíos para evitar "resets" por payloads incompletos.
+  const keepRichField = (field: string) => {
+    if (!hasMeaningfulValue((merged as any)[field]) && hasMeaningfulValue((prev as any)[field])) {
+      (merged as any)[field] = (prev as any)[field];
+    }
+  };
+  keepRichField('viales_recibidos');
+  keepRichField('fecha_caducidad');
+  keepRichField('semaforo_caducidad');
+  keepRichField('fecha_alta');
+  keepRichField('bodega');
+
+  // Estado de lote: si el cambio viene más nuevo y explícito, respétalo; si no, conserva previo.
+  const prevState = effectiveLotState(producto, lote, prev.estado);
+  const incomingHasState = clean((normalizedIncoming as any).estado).length > 0;
+  const incomingState = effectiveLotState(producto, lote, (normalizedIncoming as any).estado);
+  if (((nextTs > prevTs && incomingNotLessSpecific) || incomingMoreSpecific) && incomingHasState) {
+    merged.estado = incomingState;
+  } else if (!clean((prev as any).estado) && incomingHasState) {
+    merged.estado = incomingState;
+  } else {
+    merged.estado = prevState;
+  }
+
+  // Ensamblaje finalizado: mismo criterio (no revertir por escrituras viejas/incompletas).
+  const prevAsm = normalizeEnsamblajeFinalizado((prev as any).ensamblaje_finalizado);
+  const incomingAsmRaw = clean((normalizedIncoming as any).ensamblaje_finalizado);
+  const incomingAsm = normalizeEnsamblajeFinalizado((normalizedIncoming as any).ensamblaje_finalizado);
+  if (((nextTs > prevTs && incomingNotLessSpecific) || incomingMoreSpecific) && incomingAsmRaw) {
+    merged.ensamblaje_finalizado = incomingAsm;
+  } else if (!clean((prev as any).ensamblaje_finalizado) && incomingAsmRaw) {
+    merged.ensamblaje_finalizado = incomingAsm;
+  } else {
+    merged.ensamblaje_finalizado = prevAsm;
+  }
+
+  return merged;
+};
+
+const dedupeCanonicalCanetLots = (rows: GenericRow[]) => {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+
+  type LotEntry = { row: GenericRow; producto: string; lote: string; token: string };
+  const entriesByProduct = new Map<string, LotEntry[]>();
+  const referenceRows = [...rows, ...CANET_LOT_REFERENCE_ROWS];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const producto = clean(row.producto);
+    const lote = canonicalLotForProduct(referenceRows, producto, clean(row.lote));
+    if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+    const token = normalizeLotCompareToken(lote);
+    if (!token) continue;
+    const list = entriesByProduct.get(producto) || [];
+    list.push({ row: { ...row, producto, lote }, producto, lote, token });
+    entriesByProduct.set(producto, list);
+  }
+
+  const byCanonicalKey = new Map<string, GenericRow>();
+  const orderedKeys: string[] = [];
+
+  for (const [producto, pool] of entriesByProduct.entries()) {
+    for (const entry of pool) {
+      const canonicalKey = `${producto}|${entry.token}`;
+      const normalizedIncoming: GenericRow = {
+        ...entry.row,
+        producto,
+        lote: entry.lote,
+      };
+
+      if (!orderedKeys.includes(canonicalKey)) orderedKeys.push(canonicalKey);
+
+      const prev = byCanonicalKey.get(canonicalKey);
+      if (!prev) {
+        byCanonicalKey.set(canonicalKey, normalizedIncoming);
+        continue;
+      }
+
+      const preferredLabel =
+        lotSpecificityScore(clean((prev as any).lote)) >= lotSpecificityScore(entry.lote)
+          ? clean((prev as any).lote)
+          : entry.lote;
+      const merged = mergeLotRows(prev, normalizedIncoming);
+      merged.lote = preferredLabel || entry.lote;
+      byCanonicalKey.set(canonicalKey, merged);
+    }
+  }
+
+  return orderedKeys
+    .map((key) => byCanonicalKey.get(key))
+    .filter((row): row is GenericRow => !!row);
+};
+
+const mergeCanetLotesPayload = (remotePayload: any, localPayload: any) => {
+  if (!Array.isArray(localPayload)) return localPayload;
+  if (!Array.isArray(remotePayload)) return localPayload;
+
+  const byKey = new Map<string, GenericRow>();
+  const remoteOrder: string[] = [];
+
+  const upsert = (row: GenericRow, fromRemote: boolean) => {
+    if (!row || typeof row !== 'object') return;
+    const producto = clean(row.producto);
+    const lote = clean(row.lote);
+    if (!producto || !lote) return;
+    if (isInvalidLegacyLot(producto, lote)) return;
+
+    const key = lotMergeKey(row);
+    const normalizedIncoming: GenericRow = {
+      ...row,
+      producto,
+      lote,
+    };
+
+    if (fromRemote && !remoteOrder.includes(key)) remoteOrder.push(key);
+
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, normalizedIncoming);
+      return;
+    }
+    byKey.set(key, mergeLotRows(prev, normalizedIncoming));
+  };
+
+  remotePayload.forEach((row: GenericRow) => upsert(row, true));
+  localPayload.forEach((row: GenericRow) => upsert(row, false));
+
+  const localOrder = localPayload
+    .filter((row: GenericRow) => row && typeof row === 'object')
+    .map((row: GenericRow) => lotMergeKey(row));
+  const finalOrder = Array.from(new Set([...localOrder, ...remoteOrder]));
+
+  const mergedRows = finalOrder
+    .map((key) => byKey.get(key))
+    .filter((row): row is GenericRow => !!row);
+
+  return dedupeCanonicalCanetLots(mergedRows);
+};
+
+const nowIso = () => new Date().toISOString();
+
+const stampLotRow = (row: GenericRow) => ({ ...row, lastChangedAt: nowIso() });
+
 const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const monthLabel = (key: string) => {
   const [year, month] = key.split('-').map(Number);
@@ -505,7 +742,17 @@ function InventoryPage() {
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
     seed.lotes as GenericRow[],
-    { userId: actorId },
+    {
+      userId: actorId,
+      mergeBeforePersist: true,
+      protectFromEmptyOverwrite: true,
+      mergeStrategy: mergeCanetLotesPayload,
+    },
+  );
+  const [deletedLotKeys, setDeletedLotKeys] = useSharedJsonState<string[]>(
+    'inventory_canet_deleted_lot_keys_v1',
+    [],
+    { userId: actorId, mergeBeforePersist: true },
   );
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_bodegas_v1',
@@ -618,6 +865,7 @@ function InventoryPage() {
 
   const [lotModalOpen, setLotModalOpen] = useState(false);
   const [editingLotKey, setEditingLotKey] = useState<string | null>(null);
+  const [deletingLotKey, setDeletingLotKey] = useState<string | null>(null);
   const [lotForm, setLotForm] = useState({
     producto: '',
     lote: '',
@@ -637,6 +885,17 @@ function InventoryPage() {
   );
   const isLocalRuntime = typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname);
   const canWriteHuarteMirrorFromCanet = !isLocalRuntime || import.meta.env.VITE_ALLOW_LOCAL_MIRROR_SYNC === 'true';
+  const deletedLotKeySet = useMemo(
+    () => new Set((deletedLotKeys || []).map((key) => clean(key)).filter(Boolean)),
+    [deletedLotKeys],
+  );
+  const visibleLotes = useMemo(
+    () =>
+      dedupeCanonicalCanetLots(lotes).filter(
+        (row) => !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+      ),
+    [deletedLotKeySet, lotes],
+  );
 
   const isCanetMirroredMovement = (m: Movement) => clean((m as any).source).toLowerCase() === 'canet';
   const isHuarteAlias = (v: string) => {
@@ -829,7 +1088,7 @@ function InventoryPage() {
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
       const lotToken = normalizeLotCompareToken(lote);
-      const allLots = lotes
+      const allLots = visibleLotes
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
@@ -841,7 +1100,7 @@ function InventoryPage() {
         const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
-      const globalLots = lotes.map((l) => clean(l.lote)).filter(Boolean);
+      const globalLots = visibleLotes.map((l) => clean(l.lote)).filter(Boolean);
       const globalSuffix = globalLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(lotToken));
       if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
@@ -868,7 +1127,7 @@ function InventoryPage() {
         };
       })
       .filter((m) => !isInvalidLegacyLot(m.producto, m.lote));
-  }, [movimientos, signByType, lotes]);
+  }, [movimientos, signByType, visibleLotes]);
 
   // IMPORTANT: Never run full-array replacement of Huarte movements from Canet.
   // We only sync by per-movement upsert/delete (syncMirrorUpsert/syncMirrorDelete),
@@ -1098,7 +1357,7 @@ function InventoryPage() {
   const productOptions = useMemo(() => Array.from(new Set(productos.map((p) => clean(p.producto)).filter(Boolean))).sort(), [productos]);
   const productByLotMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    for (const l of lotes) {
+    for (const l of visibleLotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
       if (!producto || !lote) continue;
@@ -1115,28 +1374,28 @@ function InventoryPage() {
       map.set(lote, set);
     }
     return map;
-  }, [lotes, normalizedMovements]);
+  }, [visibleLotes, normalizedMovements]);
 
   const lotOptions = useMemo(() => {
-    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    const all = Array.from(new Set(visibleLotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
     if (productFilters.length === 0) return all;
     return all.filter((lot) => {
       const set = productByLotMap.get(lot) || new Set<string>();
       return productFilters.some((p) => set.has(p));
     });
-  }, [lotes, productFilters, productByLotMap]);
+  }, [visibleLotes, productFilters, productByLotMap]);
 
   const dashMoveLotOptions = useMemo(() => {
-    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    const all = Array.from(new Set(visibleLotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
     if (!dashMoveProduct) return all;
     return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(dashMoveProduct));
-  }, [lotes, dashMoveProduct, productByLotMap]);
+  }, [visibleLotes, dashMoveProduct, productByLotMap]);
 
   const dashOutLotOptions = useMemo(() => {
-    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    const all = Array.from(new Set(visibleLotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
     if (!dashOutProduct) return all;
     return all.filter((lot) => (productByLotMap.get(lot) || new Set<string>()).has(dashOutProduct));
-  }, [lotes, dashOutProduct, productByLotMap]);
+  }, [visibleLotes, dashOutProduct, productByLotMap]);
 
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
@@ -1199,6 +1458,136 @@ function InventoryPage() {
     setDashOutLot('');
   }, [dashOutProduct, dashOutLot, dashOutLotOptions]);
 
+  const canonicalKnownCanetLotRows = useMemo(
+    () => [...visibleLotes, ...(seed.lotes as GenericRow[])],
+    [visibleLotes],
+  );
+
+  const inventoryProductMetaByCode = useMemo(() => {
+    const map = new Map<string, { modo: string; vialesPorCaja: number }>();
+    for (const row of productos) {
+      const producto = clean(row.producto);
+      if (!producto) continue;
+      map.set(producto, {
+        modo: clean(row.modo_stock).toUpperCase(),
+        vialesPorCaja: Math.max(0, toNum(row.viales_por_caja)),
+      });
+    }
+    return map;
+  }, [productos]);
+
+  const stockByProductLotToken = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
+      const producto = clean(m.producto);
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(m.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      map.set(key, (map.get(key) || 0) + toNum(m.cantidad_signed));
+    }
+    return map;
+  }, [canonicalKnownCanetLotRows, normalizedMovements]);
+
+  const canetAssemblyBoxesByProductLotToken = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
+      const bodega = normalizeWarehouseAlias(clean(m.bodega)).toUpperCase();
+      if (bodega !== 'CANET') continue;
+      const tipo = normalizeSearch(clean(m.tipo_movimiento));
+      if (!tipo.includes('ensambl')) continue;
+      const qty = Math.max(0, toNum(m.cantidad_signed));
+      if (qty <= 0) continue;
+      const producto = clean(m.producto);
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(m.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      map.set(key, (map.get(key) || 0) + qty);
+    }
+    return map;
+  }, [canonicalKnownCanetLotRows, normalizedMovements]);
+
+  const inferredLotVialesByKey = useMemo(() => {
+    const assemblyBoxes = new Map<string, number>();
+    const inboundBoxes = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
+      const bodega = normalizeWarehouseAlias(clean(m.bodega)).toUpperCase();
+      if (bodega !== 'CANET') continue;
+      const producto = clean(m.producto);
+      const meta = inventoryProductMetaByCode.get(producto);
+      if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) continue;
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(m.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      const tipo = normalizeSearch(clean(m.tipo_movimiento));
+      const qty = Math.max(0, toNum(m.cantidad_signed));
+      if (qty <= 0) continue;
+      if (tipo.includes('ensambl')) {
+        assemblyBoxes.set(key, (assemblyBoxes.get(key) || 0) + qty);
+        continue;
+      }
+      if (tipo.includes('entrada') || tipo.includes('devol')) {
+        inboundBoxes.set(key, (inboundBoxes.get(key) || 0) + qty);
+      }
+    }
+
+    const map = new Map<string, number>();
+    for (const lotKey of new Set<string>([
+      ...Array.from(assemblyBoxes.keys()),
+      ...Array.from(inboundBoxes.keys()),
+    ])) {
+      const [producto] = lotKey.split('|');
+      const meta = inventoryProductMetaByCode.get(producto);
+      if (!meta || meta.vialesPorCaja <= 0) continue;
+      const boxes = Math.max(assemblyBoxes.get(lotKey) || 0, inboundBoxes.get(lotKey) || 0);
+      if (boxes <= 0) continue;
+      map.set(lotKey, Math.round(boxes * meta.vialesPorCaja));
+    }
+    return map;
+  }, [canonicalKnownCanetLotRows, inventoryProductMetaByCode, normalizedMovements]);
+
+  const seedLotByKey = useMemo(() => {
+    const map = new Map<string, GenericRow>();
+    for (const row of (seed.lotes as GenericRow[])) {
+      const producto = clean(row.producto);
+      const lote = canonicalLotForProduct(seed.lotes as GenericRow[], producto, clean(row.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      map.set(lotKeyOf(producto, lote), { ...row, lote });
+    }
+    return map;
+  }, []);
+
+  const effectiveLotVialesByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of visibleLotes) {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      if (!producto || !lote) continue;
+      const key = lotKeyOf(producto, lote);
+      const currentViales = toVialesNum((row as any).viales_recibidos);
+      const seedViales = toVialesNum((seedLotByKey.get(key) as any)?.viales_recibidos);
+      const inferredViales = inferredLotVialesByKey.get(key) || 0;
+      map.set(key, Math.max(currentViales, seedViales, inferredViales));
+    }
+    return map;
+  }, [inferredLotVialesByKey, seedLotByKey, visibleLotes]);
+
+  const effectiveLotCaducityByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of visibleLotes) {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      if (!producto || !lote) continue;
+      const key = lotKeyOf(producto, lote);
+      const currentCaducity = clean((row as any).fecha_caducidad);
+      const seedCaducity = clean((seedLotByKey.get(key) as any)?.fecha_caducidad);
+      map.set(key, currentCaducity || seedCaducity || '');
+    }
+    return map;
+  }, [seedLotByKey, visibleLotes]);
+
   const controlStockRows = useMemo(() => {
     const productMeta = new Map<string, { vialesPorCaja: number; consumoMensual: number; modo: string }>();
     for (const p of productos) {
@@ -1220,16 +1609,16 @@ function InventoryPage() {
       }
     }
 
-    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(lotes);
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
 
-    return lotes
+    return visibleLotes
       .map((l) => {
         const producto = clean(l.producto);
         const lote = clean(l.lote);
         if (!producto || !lote) return null;
 
         const meta = productMeta.get(producto) || { vialesPorCaja: 0, consumoMensual: 0, modo: 'DIRECTO' };
-        const vialesRecibidos = toVialesNum(l.viales_recibidos);
+        const vialesRecibidos = effectiveLotVialesByKey.get(lotKeyOf(producto, lote)) || 0;
         const stockActualCajas = toNum(stockByProductLot.get(`${producto}|${lote}`) || 0);
         const cajasPotencialesRaw =
           meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
@@ -1272,7 +1661,7 @@ function InventoryPage() {
       .filter((r: any) => (productFilters.length > 0 ? productFilters.includes(r.producto) : true))
       .filter((r: any) => (controlSemaforoFilter ? r.semaforo === controlSemaforoFilter : true))
       .sort((a: any, b: any) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
-  }, [lotes, productos, stockByPLB, productFilters, controlSemaforoFilter]);
+  }, [effectiveLotVialesByKey, visibleLotes, productos, stockByPLB, productFilters, controlSemaforoFilter]);
 
   const stockControlTables = useMemo(() => {
     const matchesScope = (producto: string, lote: string) => {
@@ -1287,7 +1676,7 @@ function InventoryPage() {
     };
     const canetLotsByProduct = new Map<string, string[]>();
     const allCanetLots: string[] = [];
-    for (const l of lotes) {
+    for (const l of visibleLotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
       if (!producto || !lote) continue;
@@ -1332,26 +1721,6 @@ function InventoryPage() {
       if (bodega !== 'CANET') continue;
       const key = `${producto}|${lote}`;
       canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + signedFromMovement(m));
-    }
-
-    // Ensamblajes acumulados por lote (CANET): suma de movimientos tipo ensamblaje.
-    const lotEnsamblajesByLot = new Map<string, number>();
-    for (const m of normalizedMovements) {
-      if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
-      const d = dateFromAny(clean(m?.fecha));
-      if (monthEnd && d && d > monthEnd) continue;
-      const tipo = normalizeSearch(clean(m?.tipo_movimiento));
-      if (!tipo.includes('ensambl')) continue;
-      const producto = clean(m?.producto);
-      if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
-      const lote = canonicalCanetLot(producto, clean(m?.lote));
-      if (!producto || !lote || !matchesScope(producto, lote)) continue;
-      const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
-      if (bodega !== 'CANET') continue;
-      const key = `${producto}|${lote}`;
-      const qty = Math.max(0, signedFromMovement(m));
-      if (qty <= 0) continue;
-      lotEnsamblajesByLot.set(key, (lotEnsamblajesByLot.get(key) || 0) + qty);
     }
 
     const huarteRawStockByPLB = new Map<string, number>();
@@ -1437,23 +1806,23 @@ function InventoryPage() {
       if (!producto || producto.toUpperCase() === 'PRODUCTO') continue;
       productMeta.set(producto, {
         stockMin: toNum(p.stock_min),
-        stockOptimo: toNum(p.stock_optimo),
+        stockOptimo: toNum(p.stock_opt || p.stock_optimo),
         consumoMensual: toNum(p.consumo_mensual_cajas),
         modo: clean(p.modo_stock).toUpperCase(),
         vialesPorCaja: toNum(p.viales_por_caja),
       });
     }
 
-    const lotStateByKey = buildLotStateMap(lotes);
-    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(lotes);
+    const lotStateByKey = buildLotStateMap(visibleLotes);
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
-    for (const l of lotes) {
+    for (const l of visibleLotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
       if (producto.toUpperCase() === 'PRODUCTO') continue;
       if (!producto || !lote || !matchesScope(producto, lote)) continue;
       const key = `${producto}|${lote}`;
-      const viales = toVialesNum(l.viales_recibidos);
+      const viales = effectiveLotVialesByKey.get(lotKeyOf(producto, lote)) || 0;
       if (!lotBase.has(key)) {
         lotBase.set(key, { producto, lote, viales });
       } else {
@@ -1555,19 +1924,18 @@ function InventoryPage() {
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
           : base.viales;
-      // 2) Ensamblajes:
-      // - Si lote está finalizado/agotado, se asume 100% ensamblado.
-      // - Si no, toma la suma de movimientos de ensamblaje por lote.
-      const ensamblajesRaw = Math.max(0, toNum(lotEnsamblajesByLot.get(key) || 0));
+      // En control de stock potencial mandan los lotes:
+      // si el lote está finalizado o agotado, ya no aporta potencial;
+      // si sigue activo y sin finalizar, todo su ingreso cuenta como potencial.
       const salidas =
         lotState === 'AGOTADO' || lotAssemblyFinalized
           ? ingresoEnCajas
-          : Math.min(ingresoEnCajas, ensamblajesRaw);
+          : 0;
       // 3) Potencial cajas: lo que queda por ensamblar.
       const potencialCajas =
         lotState === 'AGOTADO' || lotAssemblyFinalized
           ? 0
-          : Math.max(0, ingresoEnCajas - salidas);
+          : Math.max(0, ingresoEnCajas);
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
       const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
@@ -1710,7 +2078,8 @@ function InventoryPage() {
     huarteVisualStockByLotCache,
     monthFilter,
     monthEnd,
-    lotes,
+    effectiveLotVialesByKey,
+    visibleLotes,
     productos,
     productFilters,
     lotFilter,
@@ -1857,11 +2226,11 @@ function InventoryPage() {
   };
 
   const caducityAlerts = useMemo(() => {
-    const list = lotes
+    const list = visibleLotes
       .map((l) => {
         const producto = clean(l.producto);
         const lote = clean(l.lote);
-        const fecha = clean(l.fecha_caducidad);
+        const fecha = effectiveLotCaducityByKey.get(lotKeyOf(producto, lote)) || '';
         const d = dateFromAny(fecha);
         if (!d) return null;
         const now = new Date();
@@ -1873,7 +2242,7 @@ function InventoryPage() {
       .filter((r: any) => r.days <= 90)
       .sort((a: any, b: any) => a.days - b.days);
     return list as Array<{ producto: string; lote: string; fecha: string; days: number }>;
-  }, [lotes]);
+  }, [effectiveLotCaducityByKey, visibleLotes]);
 
   const mountedAndPotentialAlerts = useMemo(() => {
     const signedFromMovement = (m: any) => {
@@ -1947,15 +2316,23 @@ function InventoryPage() {
       });
     }
 
+    const lotStateByKey = buildLotStateMap(visibleLotes);
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
     const potentialByProduct = new Map<string, number>();
     const potentialByProductLote = new Map<string, Map<string, number>>();
-    for (const l of lotes) {
+    for (const l of visibleLotes) {
       const producto = clean(l.producto);
       const lote = clean(l.lote);
       if (!producto) continue;
       const meta = productMeta.get(producto);
       if (!meta || meta.modo !== 'ENSAMBLAJE' || meta.vialesPorCaja <= 0) continue;
-      const potential = toVialesNum(l.viales_recibidos) / meta.vialesPorCaja;
+      const lotKey = lotKeyOf(producto, lote);
+      const lotState = lotStateByKey.get(lotKey) || 'ACTIVO';
+      const lotAssemblyFinalized = lotAssemblyFinalizedByKey.get(lotKey) === 'SI';
+      const potential =
+        lotState === 'AGOTADO' || lotAssemblyFinalized
+          ? 0
+          : (effectiveLotVialesByKey.get(lotKey) || 0) / meta.vialesPorCaja;
       potentialByProduct.set(producto, (potentialByProduct.get(producto) || 0) + Math.max(0, potential));
       if (!potentialByProductLote.has(producto)) potentialByProductLote.set(producto, new Map<string, number>());
       const byLote = potentialByProductLote.get(producto)!;
@@ -2074,7 +2451,7 @@ function InventoryPage() {
       globalStockByProductLot,
       globalStockByProductLotBodega,
     };
-  }, [productos, lotes]);
+  }, [effectiveLotVialesByKey, productos, visibleLotes]);
 
   useEffect(() => {
     // Prevent write saturation: only admins publish shared dashboard snapshots.
@@ -2194,22 +2571,181 @@ function InventoryPage() {
     actorIsAdmin,
   ]);
 
-  const stockByProductLot = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const m of normalizedMovements) {
-      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
-      const key = `${clean(m.producto)}|${clean(m.lote)}`;
-      map.set(key, (map.get(key) || 0) + toNum(m.cantidad_signed));
+  const inferredMissingCanetLots = useMemo(() => {
+    const knownLotRows = [...canonicalKnownCanetLotRows, ...(seed.lotes as GenericRow[])];
+    const existingKeys = new Set<string>();
+    for (const row of visibleLotes) {
+      const producto = clean(row.producto);
+      const lote = canonicalLotForProduct(knownLotRows, producto, clean(row.lote));
+      if (!producto || !lote) continue;
+      existingKeys.add(lotKeyOf(producto, lote));
     }
-    return map;
-  }, [normalizedMovements]);
+    for (const key of deletedLotKeySet) existingKeys.add(key);
 
-  const lotStateByProductLot = useMemo(() => buildLotStateMap(lotes), [lotes]);
+    const latestByKey = new Map<string, { producto: string; lote: string; fecha: string }>();
+    for (const m of normalizedMovements) {
+      const producto = clean(m.producto);
+      const loteRaw = clean(m.lote);
+      const lote = canonicalLotForProduct(knownLotRows, producto, loteRaw);
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      if (existingKeys.has(key)) continue;
+      const fecha = clean(m.fecha);
+      const prev = latestByKey.get(key);
+      if (!prev || movementDateMs(fecha) >= movementDateMs(prev.fecha)) {
+        latestByKey.set(key, { producto, lote, fecha });
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    return Array.from(latestByKey.values()).map((base) => {
+      const key = lotKeyOf(base.producto, base.lote);
+      const stock = stockByProductLotToken.get(key) || 0;
+      const ensamblajes = canetAssemblyBoxesByProductLotToken.get(key) || 0;
+      const inferredViales = inferredLotVialesByKey.get(key) || 0;
+      const forcedAgotado = isForcedAgotadoLot(base.producto, base.lote);
+      return {
+        producto: base.producto,
+        lote: base.lote,
+        bodega: 'CANET',
+        estado: forcedAgotado ? 'AGOTADO' : stock > 0 ? 'ACTIVO' : 'AGOTADO',
+        ensamblaje_finalizado: ensamblajes > 0 && stock <= 0 ? 'SI' : 'NO',
+        viales_recibidos: inferredViales > 0 ? String(inferredViales) : '',
+        fecha_alta: base.fecha || today,
+      } satisfies GenericRow;
+    });
+  }, [
+    canetAssemblyBoxesByProductLotToken,
+    canonicalKnownCanetLotRows,
+    deletedLotKeySet,
+    inferredLotVialesByKey,
+    visibleLotes,
+    normalizedMovements,
+    stockByProductLotToken,
+  ]);
+
+  useEffect(() => {
+    if (!Array.isArray(lotes) || lotes.length === 0) return;
+    const cleaned = dedupeCanonicalCanetLots(lotes);
+    const fingerprint = (rows: GenericRow[]) =>
+      rows
+        .map((row) => {
+          const producto = clean(row.producto);
+          const lote = clean(row.lote);
+          return [
+            producto,
+            normalizeLotCompareToken(lote),
+            clean((row as any).estado),
+            clean((row as any).ensamblaje_finalizado),
+            clean((row as any).viales_recibidos),
+            clean((row as any).fecha_caducidad),
+            clean((row as any).semaforo_caducidad),
+          ].join('|');
+        })
+        .join('||');
+    if (fingerprint(cleaned) === fingerprint(lotes)) return;
+    setLotes(cleaned);
+  }, [lotes, setLotes]);
+
+  useEffect(() => {
+    if (inferredMissingCanetLots.length === 0) return;
+    setLotes((prev) => {
+      const existing = new Set<string>();
+      for (const row of prev) {
+        const producto = clean(row.producto);
+        const lote = clean(row.lote);
+        if (!producto || !lote) continue;
+        existing.add(lotKeyOf(producto, lote));
+      }
+
+      const toAppend = inferredMissingCanetLots.filter((row) => !existing.has(lotKeyOf(row.producto, row.lote)));
+      if (toAppend.length === 0) return prev;
+      return [...toAppend, ...prev];
+    });
+  }, [inferredMissingCanetLots, setLotes]);
+
+  useEffect(() => {
+    if (!lotes || lotes.length === 0) return;
+
+    let changed = false;
+    const repaired = lotes.map((row) => {
+      const producto = clean(row.producto);
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(row.lote));
+      if (!producto || !lote) return row;
+
+      const key = lotKeyOf(producto, lote);
+      const fromSeed = seedLotByKey.get(key);
+      const currentViales = toVialesNum((row as any).viales_recibidos);
+      const seedViales = toVialesNum((fromSeed as any)?.viales_recibidos);
+      const inferredViales = inferredLotVialesByKey.get(key) || 0;
+      const currentStateRaw = clean((row as any).estado);
+      const currentAsmRaw = clean((row as any).ensamblaje_finalizado);
+      const stock = stockByProductLotToken.get(key) || 0;
+      const inferredAsm = canetAssemblyBoxesByProductLotToken.get(key) || 0;
+
+      let next = lote !== clean(row.lote) ? { ...row, lote } : row;
+      let rowChanged = false;
+
+      // Recupera viales/caducidad/semaforo cuando se vaciaron por un payload incompleto.
+      if ((currentViales <= 0 || !clean((row as any).viales_recibidos)) && seedViales > 0) {
+        next = { ...next, viales_recibidos: (fromSeed as any).viales_recibidos };
+        rowChanged = true;
+      } else if ((currentViales <= 0 || !clean((row as any).viales_recibidos)) && inferredViales > 0) {
+        next = { ...next, viales_recibidos: String(inferredViales) };
+        rowChanged = true;
+      }
+      if (fromSeed && !clean((row as any).fecha_caducidad) && clean((fromSeed as any).fecha_caducidad)) {
+        next = { ...next, fecha_caducidad: (fromSeed as any).fecha_caducidad };
+        rowChanged = true;
+      }
+      if (fromSeed && !clean((row as any).semaforo_caducidad) && clean((fromSeed as any).semaforo_caducidad)) {
+        next = { ...next, semaforo_caducidad: (fromSeed as any).semaforo_caducidad };
+        rowChanged = true;
+      }
+
+      // Estado/ensamblaje: solo completar si viene vacío; nunca forzar override desde seed.
+      if (fromSeed && !currentStateRaw && clean((fromSeed as any).estado)) {
+        next = { ...next, estado: effectiveLotState(producto, lote, (fromSeed as any).estado) };
+        rowChanged = true;
+      }
+      if (fromSeed && !currentAsmRaw && clean((fromSeed as any).ensamblaje_finalizado)) {
+        next = { ...next, ensamblaje_finalizado: normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) };
+        rowChanged = true;
+      } else if (!currentAsmRaw && inferredAsm > 0 && stock <= 0) {
+        next = { ...next, ensamblaje_finalizado: 'SI' };
+        rowChanged = true;
+      }
+
+      if (lote !== clean(row.lote)) {
+        rowChanged = true;
+      }
+
+      if (rowChanged) {
+        changed = true;
+        return stampLotRow(next);
+      }
+      return row;
+    });
+
+    if (changed) {
+      setLotes(repaired);
+    }
+  }, [
+    canetAssemblyBoxesByProductLotToken,
+    canonicalKnownCanetLotRows,
+    inferredLotVialesByKey,
+    lotes,
+    seedLotByKey,
+    setLotes,
+    stockByProductLotToken,
+  ]);
+
+  const lotStateByProductLot = useMemo(() => buildLotStateMap(visibleLotes), [visibleLotes]);
 
   const lotOptionsForForm = useMemo(() => {
     const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
     const keepKey = editingMovement ? lotKeyOf(editingMovement.producto, editingMovement.lote) : '';
-    const rows = lotes
+    const rows = visibleLotes
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => (movementForm.producto ? l.producto === movementForm.producto : true))
@@ -2220,7 +2756,7 @@ function InventoryPage() {
       });
     return Array.from(new Set(rows.map((r) => r.lote))).sort();
   }, [
-    lotes,
+    visibleLotes,
     movementForm.producto,
     lotStateByProductLot,
     editingId,
@@ -2589,8 +3125,12 @@ function InventoryPage() {
     setLotForm({
       producto: clean(l.producto),
       lote: clean(l.lote),
-      viales_recibidos: normalizeVialesDigits(clean(l.viales_recibidos)),
-      fecha_caducidad: clean(l.fecha_caducidad),
+      viales_recibidos: normalizeVialesDigits(
+        String(effectiveLotVialesByKey.get(lotKeyOf(l.producto, l.lote)) || clean(l.viales_recibidos)),
+      ),
+      fecha_caducidad: normalizeDateForInput(
+        effectiveLotCaducityByKey.get(lotKeyOf(l.producto, l.lote)) || clean(l.fecha_caducidad),
+      ),
       estado: effectiveLotState(l.producto, l.lote, l.estado),
       ensamblaje_finalizado: normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
     });
@@ -2617,13 +3157,16 @@ function InventoryPage() {
       const oldLote = clean(oldLoteRaw);
       const newProducto = clean(lotForm.producto);
       const newLote = clean(lotForm.lote);
+      const oldKey = lotKeyOf(oldProducto, oldLote);
+      const newKey = lotKeyOf(newProducto, newLote);
       setLotes((prev) =>
         prev.map((l) =>
           `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey
-            ? { ...l, ...lotPatch }
+            ? stampLotRow({ ...l, ...lotPatch })
             : l,
         ),
       );
+      setDeletedLotKeys((prev) => prev.filter((storedKey) => clean(storedKey) !== oldKey && clean(storedKey) !== newKey));
       const oldLotToken = normalizeLotCompareToken(oldLote);
       const changedMovements = movimientos
         .filter((m) => {
@@ -2651,7 +3194,9 @@ function InventoryPage() {
       );
       emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
-      setLotes((prev) => [{ ...lotPatch }, ...prev]);
+      setLotes((prev) => [stampLotRow({ ...lotPatch }), ...prev]);
+      const createdKey = lotKeyOf(lotForm.producto, lotForm.lote);
+      setDeletedLotKeys((prev) => prev.filter((storedKey) => clean(storedKey) !== createdKey));
       await notifyAnabela(`${actorName} creó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
       appendAudit('Creación de lote', `${lotForm.producto} ${lotForm.lote}`);
       emitSuccessFeedback('Lote creado con éxito.');
@@ -2675,7 +3220,7 @@ function InventoryPage() {
         if (lotKeyOf(row.producto, row.lote) !== key) return row;
         const currentState = normalizeLotState(row.estado);
         nextState = currentState === 'AGOTADO' ? 'ACTIVO' : 'AGOTADO';
-        return { ...row, estado: nextState };
+        return stampLotRow({ ...row, estado: nextState });
       }),
     );
     await notifyAnabela(`${actorName} marcó lote ${producto} ${lote} como ${nextState}.`);
@@ -2693,7 +3238,7 @@ function InventoryPage() {
     setLotes((prev) =>
       prev.map((row) => {
         if (lotKeyOf(row.producto, row.lote) !== key) return row;
-        return { ...row, ensamblaje_finalizado: nextState };
+        return stampLotRow({ ...row, ensamblaje_finalizado: nextState });
       }),
     );
     const nextLabel = nextState === 'SI' ? 'FINALIZADO' : 'REABIERTO';
@@ -2704,6 +3249,43 @@ function InventoryPage() {
         ? `Lote ${lote}: ensamblaje finalizado (potenciales = 0).`
         : `Lote ${lote}: ensamblaje reabierto.`,
     );
+  };
+
+  const deleteLot = async (lot: GenericRow) => {
+    if (!canEditNow) return;
+    const producto = clean(lot.producto);
+    const lote = clean(lot.lote);
+    const key = lotKeyOf(producto, lote);
+    if (!producto || !lote || deletingLotKey === key) return;
+    if (isForcedAgotadoLot(producto, lote)) {
+      window.alert(`El lote ${lote} está protegido y no se puede eliminar.`);
+      return;
+    }
+
+    const associatedMovements = normalizedMovements.filter(
+      (m) => clean(m.producto) === producto && lotKeyOf(m.producto, m.lote) === key,
+    );
+    if (associatedMovements.length > 0) {
+      window.alert(
+        `No se puede eliminar el lote ${producto} ${lote} porque tiene ${associatedMovements.length} movimiento(s) asociado(s).\n\n` +
+        'Si este lote está mal escrito, edítalo para renombrarlo; si no, elimina primero sus movimientos.',
+      );
+      return;
+    }
+
+    const ok = window.confirm(`¿Quieres eliminar el lote ${producto} ${lote}?`);
+    if (!ok) return;
+
+    setDeletingLotKey(key);
+    try {
+      setDeletedLotKeys((prev) => (prev.some((storedKey) => clean(storedKey) === key) ? prev : [key, ...prev]));
+      setLotes((prev) => prev.filter((row) => lotKeyOf(row.producto, row.lote) !== key));
+      await notifyAnabela(`${actorName} eliminó un lote en Inventario: ${producto} ${lote}.`);
+      appendAudit('Eliminación de lote', `${producto} ${lote}`);
+      emitSuccessFeedback('Lote eliminado con éxito.');
+    } finally {
+      setDeletingLotKey(null);
+    }
   };
 
   const saveBodega = async () => {
@@ -3785,9 +4367,12 @@ function InventoryPage() {
           </div>
           <SimpleDataTable
             headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
-            rows={lotes.map((l, idx) => {
+            rows={visibleLotes.map((l, idx) => {
               const lotState = effectiveLotState(l.producto, l.lote, l.estado);
               const lotFinalizado = normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
+              const lotKey = lotKeyOf(l.producto, l.lote);
+              const vialesDisplay = effectiveLotVialesByKey.get(lotKey) || toVialesNum(l.viales_recibidos);
+              const caducityDisplay = effectiveLotCaducityByKey.get(lotKey) || clean(l.fecha_caducidad);
               return [
                 <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,
                 clean(l.lote),
@@ -3804,8 +4389,8 @@ function InventoryPage() {
                     </span>
                   )}
                 </div>,
-                clean(l.viales_recibidos) || '-',
-                clean(l.fecha_caducidad) || '-',
+                vialesDisplay > 0 ? formatVialesForInput(String(vialesDisplay)) : '-',
+                formatDateForDisplay(caducityDisplay),
                 clean(l.semaforo_caducidad) || '-',
                 <div key={`lot-actions-${idx}`} className="flex flex-wrap items-center gap-1">
                   <button disabled={!isEditModeActive} onClick={() => openLotEditModal(l)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
@@ -3828,6 +4413,18 @@ function InventoryPage() {
                     }`}
                   >
                     {lotFinalizado ? 'Reabrir ensamblaje' : 'Finalizar ensamblaje'}
+                  </button>
+                  <button
+                    disabled={!isEditModeActive || deletingLotKey === lotKeyOf(l.producto, l.lote) || isForcedAgotadoLot(l.producto, l.lote)}
+                    onClick={() => void deleteLot(l)}
+                    className={`rounded-lg p-1.5 ${
+                      isEditModeActive && deletingLotKey !== lotKeyOf(l.producto, l.lote) && !isForcedAgotadoLot(l.producto, l.lote)
+                        ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                    title="Eliminar lote"
+                  >
+                    <Trash2 size={13} />
                   </button>
                 </div>,
               ];
@@ -4074,7 +4671,7 @@ function InventoryPage() {
                 Lote
                 <select value={cartonajeForm.lote} onChange={(e) => setCartonajeForm({ ...cartonajeForm, lote: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
                   <option value="">Selecciona un lote</option>
-                  {Array.from(new Set(lotes.filter(l => clean(l.producto) === cartonajeForm.producto).map(l => clean(l.lote)))).sort().map(l => <option key={l} value={l}>{l}</option>)}
+                  {Array.from(new Set(visibleLotes.filter(l => clean(l.producto) === cartonajeForm.producto).map(l => clean(l.lote)))).sort().map(l => <option key={l} value={l}>{l}</option>)}
                 </select>
               </label>
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
