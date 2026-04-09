@@ -116,7 +116,7 @@ declare global {
 
 const PRODUCT_OPTIONS: ProductCode[] = ['AV', 'ENT', 'ISO', 'KL', 'RG', 'SV'];
 const OCR_MIN_TEXT_LENGTH = 30;
-const OCR_MAX_PAGES = 8;
+const OCR_MAX_PAGES = 12;
 const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 
 let tesseractLoaderPromise: Promise<TesseractLike | null> | null = null;
@@ -466,8 +466,16 @@ function inferUploadDocType(text: string, fileName: string): BillingUploadDocTyp
     'ALMACÉN DE ORIGEN',
     'N.º DE FACTURA',
     'N. DE FACTURA',
+    'HOJA DE SEGUIMIENTO',
+    'ALBARÁN DE ENTREGA',
+    'ALBARAN DE ENTREGA',
+    'NO PEDIDO',
+    'PAGADO EN PRESCRIPCIÓN',
+    'PAGADO EN PRESCRIPCION',
     'ARTÍCULO',
     'ARTICULO',
+    'PRODUCTO',
+    'CANTIDAD',
     'MOTIVO',
   ];
   if (orderSignals.some((sig) => upperText.includes(sig))) return 'ORDER';
@@ -749,6 +757,14 @@ function isProductAnchorLine(line: string) {
   return true;
 }
 
+function isPackagingQuantityContext(value: string) {
+  const context = clean(value).toLowerCase();
+  if (!context) return false;
+  return /\b(?:amp|ampolla|ampollas|monodosis|caps|cápsulas|capsulas|comprimidos|sobres|sticks|ml|mg|mcg|g|kg|vial|viales|dosis)\b/.test(
+    context,
+  );
+}
+
 function extractBestQuantity(lines: string[]) {
   const numericCandidates: Array<{ value: number; score: number }> = [];
   const qtyWithUnitRegex = /(\d{1,4}(?:[.,]\d{1,3})?)\s*(box|caja|cajas|ud|uds|unidad|unidades)\b/gi;
@@ -767,7 +783,7 @@ function extractBestQuantity(lines: string[]) {
       }
     }
 
-    const hasCurrency = /€|EUR|PVP|TARIFA|SUBTOTAL|IVA|TOTAL/i.test(rawLine);
+    const hasCurrency = /€|¤|EUR|PVP|TARIFA|SUBTOTAL|IVA|TOTAL/i.test(rawLine);
     const matches = [...rawLine.matchAll(numberRegex)];
     for (const m of matches) {
       const token = clean(m[1]);
@@ -779,6 +795,7 @@ function extractBestQuantity(lines: string[]) {
       const contextEnd = Math.min(rawLine.length, (m.index || 0) + token.length + 8);
       const context = rawLine.slice(contextStart, contextEnd).toLowerCase();
       if (/ml|vial|viales/.test(context)) continue;
+      if (isPackagingQuantityContext(context)) continue;
       if (/^0\d+$/.test(token)) continue;
 
       let score = 50 - idx * 3;
@@ -807,7 +824,7 @@ function extractQuantityFromSegment(lines: string[]) {
     const standaloneQty = clean(lines[i]).match(/^(\d{1,4}(?:[.,]\d{1,2})?)$/);
     if (!standaloneQty?.[1]) continue;
     const next = clean(lines[i + 1] || '');
-    if (!/\d{1,4}(?:[.,]\d{2})\s*€/.test(next)) continue;
+    if (!/\d{1,4}(?:[.,]\d{2})\s*[€¤]/.test(next)) continue;
     const qty = parseSpanishNumber(standaloneQty[1]);
     if (qty > 0) return qty;
   }
@@ -816,7 +833,7 @@ function extractQuantityFromSegment(lines: string[]) {
     // Caso frecuente en albaranes/mi médico:
     // "... PRODUCTO ... 1 22,50€ 22,50€" -> cantidad = 1
     const qtyBeforePrice = clean(line).match(
-      /\b(\d{1,4}(?:[.,]\d{1,2})?)(?=\s+[-+]?\d{1,4}(?:[.,]\d{2})\s*€)/,
+      /\b(\d{1,4}(?:[.,]\d{1,2})?)(?=\s+[-+]?\d{1,4}(?:[.,]\d{2})\s*[€¤])/,
     );
     if (qtyBeforePrice?.[1]) {
       const qty = parseSpanishNumber(qtyBeforePrice[1]);
@@ -835,7 +852,7 @@ function extractQuantityFromSegment(lines: string[]) {
   }
 
   for (const line of lines) {
-    const m = clean(line).match(/\b\d{3,}\s+(\d{1,3})\s+\d{1,3},\d{2}\s*€/);
+    const m = clean(line).match(/\b\d{3,}\s+(\d{1,3})\s+\d{1,3},\d{2}\s*[€¤]/);
     if (m?.[1]) {
       const qty = parseSpanishNumber(m[1]);
       if (qty > 0) return qty;
@@ -873,6 +890,9 @@ function normalizeProductRaw(line: string) {
 function splitInvoiceTokenByProductAnchors(token: string) {
   const raw = clean(token);
   if (!raw) return [] as string[];
+  if (/\bSOLAR\s*VITAL\s+ISOTONIC\b|\bSOLARVITAL\s+ISOTONIC\b|\bSOLARVITAL\s+ISOT[ÓO]NICO\b/i.test(raw)) {
+    return [raw];
+  }
   const anchorRegex =
     /\b(AVHIRO|AVIRO|ENTEROVITAL|ENTHEROVITAL|ENTHERO|ISOTONIC|ISOTONICO|ISOTÓNICO|SOLAR\s*VITAL|SOLARVITAL|REGENERIUM|REGENERYUM|KHALA|KALAH|CALA)\b/gi;
   const matches = Array.from(raw.matchAll(anchorRegex));
@@ -1089,15 +1109,22 @@ async function extractPdfPagesTextFromArrayBuffer(buffer: ArrayBuffer): Promise<
       pagesText.push(pageLines.join('\n'));
     }
 
-    const normalizedPages = pagesText.map((p) => clean(p)).filter(Boolean);
-    if (normalizedPages.length > 0 && clean(normalizedPages.join('\n')).length > OCR_MIN_TEXT_LENGTH) {
-      return normalizedPages;
+    const normalizedPages = pagesText.map((p) => clean(p));
+    const needsOcr = normalizedPages.some((pageText) => pageText.length < OCR_MIN_TEXT_LENGTH);
+    if (!needsOcr) {
+      const cleanedPages = normalizedPages.filter(Boolean);
+      if (cleanedPages.length > 0 && clean(cleanedPages.join('\n')).length > OCR_MIN_TEXT_LENGTH) {
+        return cleanedPages;
+      }
     }
 
-    const ocrPages = await extractPdfPagesTextWithOcr(pdf, pagesText);
+    const ocrPages = await extractPdfPagesTextWithOcr(pdf, normalizedPages);
     if (ocrPages.length > 0 && clean(ocrPages.join('\n')).length > 6) {
       return ocrPages;
     }
+
+    const cleanedPages = normalizedPages.filter(Boolean);
+    if (cleanedPages.length > 0) return cleanedPages;
   } catch (error) {
     console.warn('pdfjs extraction failed, fallback raw parser', error);
   }
@@ -1125,7 +1152,14 @@ function hasMeaningfulOrderLines(order: BillingOrder) {
 
 function isMimedicoDocText(text: string) {
   const upper = clean(text).toUpperCase();
-  return upper.includes('PACIENTES.MIMEDICO.COM') || upper.includes('HOJA DE SEGUIMIENTO');
+  return (
+    upper.includes('PACIENTES.MIMEDICO.COM') ||
+    upper.includes('HOJA DE SEGUIMIENTO') ||
+    upper.includes('ALBARÁN DE ENTREGA') ||
+    upper.includes('ALBARAN DE ENTREGA') ||
+    upper.includes('PAGADO EN PRESCRIPCIÓN') ||
+    upper.includes('PAGADO EN PRESCRIPCION')
+  );
 }
 
 function countLikelyProductAnchors(text: string) {
@@ -1173,6 +1207,57 @@ function buildOrderSignature(order: BillingOrder) {
     .sort()
     .join(';');
   return `${customerKey}|${linesSig}`;
+}
+
+function extractDocumentBlocksFromText(text: string) {
+  const normalized = clean(text.replace(/\r/g, '\n'));
+  if (!normalized) return [] as string[];
+
+  const markers = Array.from(
+    normalized.matchAll(
+      /(?=^\s*(?:N\.?\s*[º°o]?\s*de\s*factura\b|HOJA\s+DE\s+SEGUIMIENTO\s*N[º°o]?\b|ALBAR[ÁA]N\s+DE\s+ENTREGA\s*N[º°o]?\b|ORDEN\s+DE\s+TRANSFERENCIA\b))/gim,
+    ),
+  );
+
+  if (markers.length <= 1) return [normalized];
+
+  const blocks: string[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i].index ?? 0;
+    const end = i < markers.length - 1 ? (markers[i + 1].index ?? normalized.length) : normalized.length;
+    const segment = clean(normalized.slice(start, end));
+    if (segment) blocks.push(segment);
+  }
+  return blocks.length > 0 ? blocks : [normalized];
+}
+
+function extractOrderReferenceFromText(text: string) {
+  const normalized = clean(text);
+  if (!normalized) return '';
+  return clean(
+    normalized.match(/HOJA\s+DE\s+SEGUIMIENTO\s*N[º°o]?\s*[:\-]?\s*([A-Z0-9_/-]+)/i)?.[1] ||
+    normalized.match(/ALBAR[ÁA]N\s+DE\s+ENTREGA\s*N[º°o]?\s*[:\-]?\s*([A-Z0-9_/-]+)/i)?.[1] ||
+    normalized.match(/N[º°o]?\s*PEDIDO[:\-\s]*([A-Z0-9_/-]+)/i)?.[1] ||
+    normalized.match(/N\.?\s*[º°o]?\s*DE\s*FACTURA[:\-\s]*([A-Z0-9_/-]+)/i)?.[1] ||
+    normalized.match(/\b(T\d{2}-\d{4,8}|TR?26-\d{4,8}|\d{4}-\d{4,8})\b/i)?.[1],
+  ).toUpperCase();
+}
+
+function mergeOrderBlocksByReference(blocks: string[]) {
+  if (blocks.length <= 1) return blocks;
+  const grouped: Array<{ key: string; parts: string[] }> = [];
+
+  for (const block of blocks) {
+    const key = extractOrderReferenceFromText(block) || `BLOCK_${grouped.length + 1}`;
+    const existing = grouped.find((item) => item.key === key);
+    if (existing) {
+      existing.parts.push(block);
+      continue;
+    }
+    grouped.push({ key, parts: [block] });
+  }
+
+  return grouped.map((item) => clean(item.parts.join('\n'))).filter(Boolean);
 }
 
 function buildOrderIdentityKey(order: BillingOrder) {
@@ -1257,19 +1342,26 @@ function parseOrdersFromExtractedPages(
     return [parseTransferFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
   }
 
-  const perPageCandidates = normalizedPages.map((pageText) => ({
-    pageText,
-    order: parseInvoiceFromText(pageText, fileName, warehouse, actor, sourcePdfRef),
+  const rawBlocks = normalizedPages.flatMap((pageText) => extractDocumentBlocksFromText(pageText));
+  const parsingBlocks = isMimedicoDocText(fullText) ? mergeOrderBlocksByReference(rawBlocks) : rawBlocks;
+  const perBlockCandidates = parsingBlocks.map((blockText) => ({
+    pageText: blockText,
+    order: parseOrderFromText(blockText, fileName, warehouse, actor, sourcePdfRef),
   }));
 
-  const validPerPage = perPageCandidates.filter(({ order }) => hasMeaningfulOrderLines(order));
-  if (validPerPage.length === 0) {
+  const validPerBlock = perBlockCandidates.filter(({ order }) => hasMeaningfulOrderLines(order));
+  if (validPerBlock.length === 0) {
     return [parseInvoiceFromText(fullText, fileName, warehouse, actor, sourcePdfRef)];
   }
 
+  if (isMimedicoDocText(fullText)) {
+    const directOrders = dedupeOrdersPreservingBest(validPerBlock.map((item) => item.order));
+    if (directOrders.length > 0) return directOrders;
+  }
+
   const unique = new Map<string, { order: BillingOrder; pageText: string; score: number }>();
-  for (const candidate of validPerPage) {
-    const sig = buildOrderSignature(candidate.order);
+  for (const candidate of validPerBlock) {
+    const sig = buildOrderIdentityKey(candidate.order) || buildOrderSignature(candidate.order);
     if (!sig || sig.endsWith('|')) continue;
     const score = scoreOrderCandidate(candidate.order, candidate.pageText);
     const existing = unique.get(sig);
@@ -1344,13 +1436,13 @@ function parseInvoiceFromText(
   const lines = normalizeTextLines(normalized);
   const textUpper = normalized.toUpperCase();
   const isSegLabFormat = /HOJA\s+DE\s+SEGUIMIENTO|PACIENTES\.MIMEDICO\.COM/i.test(textUpper);
-  const normalizedForLines = isSegLabFormat
-    ? normalized.split(/INCIDENCIA\s+PEDIDO|ALBARÁN\s+DE\s+ENTREGA/i)[0] || normalized
-    : normalized;
+  const normalizedForLines = isSegLabFormat ? normalized.split(/INCIDENCIA\s+PEDIDO/i)[0] || normalized : normalized;
 
   const invoiceNumber =
     findValueAfterLabel(lines, /^N\.?\s*[º°o]?\s*de\s*factura[:\-\s]*/i) ||
     findValueAfterLabel(lines, /^HOJA\s+DE\s+SEGUIMIENTO\s*N[º°o]?[:\-\s]*/i) ||
+    findValueAfterLabel(lines, /^ALBAR[ÁA]N\s+DE\s+ENTREGA\s*N[º°o]?[:\-\s]*/i) ||
+    findValueAfterLabel(lines, /^N[º°o]?\s*PEDIDO[:\-\s]*/i) ||
     clean(textUpper.match(/\b(\d{4}[-/]\d{4,8})\b/)?.[1]) ||
     `SIN-NUM-${uid('fac')}`;
 
