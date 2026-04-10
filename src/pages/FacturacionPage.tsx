@@ -46,7 +46,7 @@ type BillingOrder = {
   documentType: BillingDocumentType;
   movementType: BillingMovementType;
   sourceWarehouse: BillingWarehouse;
-  transferDestination?: BillingWarehouse;
+  transferDestination?: string;
   inventoryTarget: 'canet' | 'huarte';
   invoiceNumber: string;
   invoiceDate: string;
@@ -168,6 +168,22 @@ function normalizeWarehouseAlias(input: string): BillingWarehouse | '' {
   if (v.startsWith('CAN')) return 'CANET';
   if (v.includes('HUARTE')) return 'HUARTE';
   return '';
+}
+
+function normalizeTransferDestination(input: string): string {
+  const v = clean(input)
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (!v) return '';
+  if (v.includes('CANET')) return 'CANET';
+  if (v.includes('HUARTE') || v.includes('GUARTE') || v.includes('WARTE') || v.includes('WUARTE')) return 'HUARTE';
+  if (v.includes('BILBAO')) return 'BILBAO';
+  if (v.includes('PAMPLONA')) return 'PAMPLONA';
+  if (v.includes('LOGRONO')) return 'LOGROÑO';
+  if (v.includes('VALENCIA')) return 'VALENCIA';
+  if (v.includes('MAS BORR')) return 'MAS BORRAS';
+  return clean(input).toUpperCase();
 }
 
 function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
@@ -1536,7 +1552,7 @@ function parseTransferFromText(
   const originRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+ORIGEN[:\-\s]*/i, 4);
   const destinationRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+DESTINO[:\-\s]*/i, 4);
   const sourceWarehouse = normalizeWarehouseAlias(originRaw) || fallbackWarehouse;
-  const transferDestination = normalizeWarehouseAlias(destinationRaw) || (sourceWarehouse === 'CANET' ? 'HUARTE' : 'CANET');
+  const transferDestination = normalizeTransferDestination(destinationRaw) || (sourceWarehouse === 'CANET' ? 'HUARTE' : 'CANET');
 
   const motive = findValueAfterLabel(lines, /^MOTIVO[:\-\s]*/i, 3);
   const customerName = transferDestination;
@@ -2972,7 +2988,10 @@ export default function FacturacionPage() {
     const movementSource = order.inventoryTarget === 'canet' ? canetMovements : huarteMovements;
     const mutation = order.inventoryTarget === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
     const isTransfer = order.movementType === 'traspaso';
-    const transferDestination = clean(order.transferDestination || '');
+    const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    const destinationInventory: 'canet' | 'huarte' = clean(transferDestination).toUpperCase() === 'CANET' ? 'canet' : 'huarte';
+    const destinationMovements = destinationInventory === 'canet' ? canetMovements : huarteMovements;
+    const destinationMutation = destinationInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
 
     setDispatchingOrderIds((prev) => (prev.includes(order.id) ? prev : [...prev, order.id]));
     try {
@@ -3054,20 +3073,15 @@ export default function FacturacionPage() {
           }
         }
 
-        if (
-          isTransfer &&
-          order.inventoryTarget === 'canet' &&
-          order.sourceWarehouse === 'CANET' &&
-          transferDestination === 'HUARTE'
-        ) {
+        if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(order.sourceWarehouse).toUpperCase()) {
           const autoMarker = `${marker}|AUTO_IN`;
           const autoStableMarker = `${stableMarker}|AUTO_IN`;
           let existingAuto =
-            huarteMovements.find((m) => clean(m.notas).includes(autoMarker)) ||
-            huarteMovements.find((m) => clean(m.notas).includes(autoStableMarker)) ||
+            destinationMovements.find((m) => clean(m.notas).includes(autoMarker)) ||
+            destinationMovements.find((m) => clean(m.notas).includes(autoStableMarker)) ||
             null;
           if (!existingAuto) {
-            existingAuto = await findMovementByMarkerInDb('huarte', [autoMarker, autoStableMarker]);
+            existingAuto = await findMovementByMarkerInDb(destinationInventory, [autoMarker, autoStableMarker]);
           }
           if (!existingAuto) {
             try {
@@ -3079,20 +3093,20 @@ export default function FacturacionPage() {
                 cantidad: qty,
                 cantidad_signed: qty,
                 signo: 1,
-                bodega: 'HUARTE',
-                cliente: 'CANET',
-                destino: 'HUARTE',
-                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde Canet`,
+                bodega: transferDestination,
+                cliente: clean(order.sourceWarehouse),
+                destino: transferDestination,
+                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde ${clean(order.sourceWarehouse)}`,
                 factura_doc: order.invoiceNumber,
                 responsable: currentUser?.name || 'Sistema',
                 source: 'facturacion_pdf_auto_in',
                 afecta_stock: 'SI',
               };
               await createMovementWithBoundedRecovery(
-                'huarte',
+                destinationInventory,
                 [autoMarker, autoStableMarker],
-                async () => await huarteMutations.addMovement(autoPayload),
-                'dispatchAutoEntrada(huarte)',
+                async () => await destinationMutation(autoPayload),
+                `dispatchAutoEntrada(${destinationInventory})`,
                 {
                   createTimeoutMs: 12000,
                   recoverAttempts: 4,
@@ -3101,7 +3115,7 @@ export default function FacturacionPage() {
                 },
               );
             } catch (err: any) {
-              lineErrors.push(`${productCode} ${lote}: autoentrada HUARTE falló (${err?.message || 'error desconocido'})`);
+              lineErrors.push(`${productCode} ${lote}: autoentrada ${transferDestination || destinationInventory.toUpperCase()} falló (${err?.message || 'error desconocido'})`);
             }
           }
         }

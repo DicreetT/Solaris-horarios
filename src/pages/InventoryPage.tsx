@@ -980,9 +980,23 @@ function InventoryPage() {
   );
 
   const isCanetMirroredMovement = (m: Movement) => clean((m as any).source).toLowerCase() === 'canet';
-  const isHuarteAlias = (v: string) => {
+  const isHuarteInternalDestination = (v: string) => {
     const x = normalizeSearch(v);
-    return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
+    return (
+      x.includes('huarte') ||
+      x.includes('guarte') ||
+      x.includes('warte') ||
+      x.includes('wuarte') ||
+      x.includes('bilbao') ||
+      x.includes('pamplona') ||
+      x.includes('logrono') ||
+      x.includes('valencia') ||
+      x.includes('mas borr') ||
+      x.includes('masborr')
+    );
+  };
+  const isHuarteAlias = (v: string) => {
+    return isHuarteInternalDestination(v);
   };
   const toHuarteMirrorMovement = (m: Movement): Movement => ({
     ...m,
@@ -991,41 +1005,40 @@ function InventoryPage() {
     source: 'canet',
     origin_canet_id: toNum(m.id),
   });
-  const isCanetTransferToHuarte = (m: Movement) => {
+  const isCanetTransferToHuarte = (m: Movement, destination: string) => {
     const tipo = normalizeSearch(m.tipo_movimiento);
-    const dest = clean(m.destino);
-    const client = clean(m.cliente);
     const bodega = clean(m.bodega).toUpperCase();
     const d = dateFromAny(clean(m.fecha));
     return (
       !!d &&
       d >= canetMovementSyncStartDate &&
       tipo.includes('traspaso') &&
-      (isHuarteAlias(dest) || isHuarteAlias(client)) &&
-      bodega !== 'HUARTE'
+      bodega === 'CANET' &&
+      isHuarteInternalDestination(destination)
     );
   };
-  const toHuarteAutoInMovement = (m: Movement): Movement => ({
+  const toHuarteAutoInMovement = (m: Movement, destination: string): Movement => ({
     ...m,
     id: 1900000000 + toNum(m.id),
     source: 'canet_auto_in',
     origin_canet_id: toNum(m.id),
     tipo_movimiento: 'entrada_traspaso',
-    bodega: 'HUARTE',
+    bodega: destination,
     cliente: normalizeWarehouseAlias(clean(m.bodega) || 'CANET'),
-    destino: 'HUARTE',
+    destino: destination,
     cantidad: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
     cantidad_signed: Math.abs(toNum(m.cantidad_signed || m.cantidad)),
     signo: 1,
     notas: clean(m.notas)
-      ? `${clean(m.notas)} · Auto entrada por traspaso Canet→Huarte`
-      : 'Auto entrada por traspaso Canet→Huarte',
+      ? `${clean(m.notas)} · Auto entrada por traspaso Canet→${destination}`
+      : `Auto entrada por traspaso Canet→${destination}`,
   });
   const syncMirrorUpsert = async (m: Movement) => {
     if (!canWriteHuarteMirrorFromCanet) return;
     const mirror = toHuarteMirrorMovement(m);
-    const shouldAutoIn = isCanetTransferToHuarte(m);
-    const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m) : null;
+    const destination = normalizeWarehouseAlias(clean(m.destino) || clean(m.cliente));
+    const shouldAutoIn = isCanetTransferToHuarte(m, destination);
+    const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m, destination) : null;
 
     const mirrorIdx = huarteMovimientosShared.findIndex(
       (row: any) => clean(row.source).toLowerCase() === 'canet' && toNum(row.origin_canet_id) === toNum(m.id),
