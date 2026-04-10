@@ -21,6 +21,7 @@ type PaymentRequest = {
   amount: number;
   iban: string;
   notes: string;
+  comments?: string;
   requestFileName?: string;
   requestFileDataUrl?: string;
   status: PaymentStatus;
@@ -309,8 +310,10 @@ export default function BillingPaymentsPage() {
   const [manualAmount, setManualAmount] = useState('');
   const [manualIban, setManualIban] = useState('');
   const [manualNotes, setManualNotes] = useState('');
+  const [manualComments, setManualComments] = useState('');
   const [manualRequestFile, setManualRequestFile] = useState<File | null>(null);
   const [searchText, setSearchText] = useState('');
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
 
   const email = clean(currentUser?.email).toLowerCase();
   const isAdmin = !!currentUser?.isAdmin;
@@ -343,6 +346,7 @@ export default function BillingPaymentsPage() {
         item.invoiceRef,
         item.iban,
         item.notes,
+        item.comments,
         item.createdByName,
         item.sourceFileName,
         item.requestFileName,
@@ -364,6 +368,7 @@ export default function BillingPaymentsPage() {
     setManualAmount('');
     setManualIban('');
     setManualNotes('');
+    setManualComments('');
     setManualRequestFile(null);
   };
 
@@ -393,6 +398,7 @@ export default function BillingPaymentsPage() {
       amount: amount > 0 ? amount : 0,
       iban,
       notes: clean(manualNotes),
+      comments: clean(manualComments),
       requestFileName: manualRequestFile?.name,
       requestFileDataUrl,
       status: 'PENDIENTE',
@@ -519,6 +525,20 @@ export default function BillingPaymentsPage() {
 
   const deleteRequest = (requestId: string) => {
     setRequests((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== requestId));
+    setCommentDrafts((prev) => {
+      const next = { ...prev };
+      delete next[requestId];
+      return next;
+    });
+  };
+
+  const setCommentDraft = (requestId: string, value: string) => {
+    setCommentDrafts((prev) => ({ ...prev, [requestId]: value }));
+  };
+
+  const saveComment = (requestId: string) => {
+    const value = clean(commentDrafts[requestId] ?? '');
+    updateRequest(requestId, (item) => ({ ...item, comments: value }));
   };
 
   return (
@@ -665,6 +685,13 @@ export default function BillingPaymentsPage() {
           className="mt-3 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
           rows={2}
         />
+        <textarea
+          value={manualComments}
+          onChange={(e) => setManualComments(e.target.value)}
+          placeholder="Comentarios (opcional)"
+          className="mt-3 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+          rows={2}
+        />
       </section>
 
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
@@ -724,6 +751,7 @@ export default function BillingPaymentsPage() {
                   <th className="px-2 py-2">Solicita</th>
                   <th className="px-2 py-2">Documento</th>
                   <th className="px-2 py-2">Comprobante</th>
+                  <th className="px-2 py-2">Comentarios</th>
                   <th className="px-2 py-2">Acciones</th>
                 </tr>
               </thead>
@@ -764,6 +792,22 @@ export default function BillingPaymentsPage() {
                         <div className="text-[11px] text-violet-500">
                           {new Date(item.createdAt).toLocaleDateString('es-ES')}
                         </div>
+                      </td>
+                      <td className="px-2 py-2 min-w-[220px]">
+                        <textarea
+                          value={commentDrafts[item.id] ?? clean(item.comments)}
+                          onChange={(e) => setCommentDraft(item.id, e.target.value)}
+                          placeholder="Añadir comentario..."
+                          className="w-full rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-semibold text-violet-900"
+                          rows={2}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveComment(item.id)}
+                          className="mt-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-black text-violet-700 hover:bg-violet-100"
+                        >
+                          Guardar comentario
+                        </button>
                       </td>
                       <td className="px-2 py-2">
                         <div className="flex flex-wrap items-center gap-1">
