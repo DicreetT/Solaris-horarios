@@ -205,7 +205,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
             <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
                 {/* Header */}
                 <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-primary/5 to-transparent">

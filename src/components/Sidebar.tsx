@@ -3,18 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard,
-    Calendar,
     CheckSquare,
-    MessageCircle,
     FileText,
-    Folder,
     LogOut,
     Lock,
     Bell,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
-    ShoppingBag,
     Search,
     Boxes
 } from 'lucide-react';
@@ -25,9 +21,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
-import { useShoppingList } from '../hooks/useShoppingList';
 import { useTodos } from '../hooks/useTodos';
-import { CARLOS_EMAIL, DRIVE_FOLDERS, ESTEBAN_ID } from '../constants';
+import { CARLOS_EMAIL } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 
 /**
@@ -52,8 +47,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     } = useNotificationsContext();
     const { theme, toggleTheme } = useTheme();
 
-    // Data hooks for badges
-    const { shoppingItems } = useShoppingList(currentUser);
     const { todos } = useTodos(currentUser);
     const { dailyStatuses } = useDailyStatus(currentUser);
     const todayKey = toDateKey(new Date());
@@ -65,7 +58,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const userMenuRef = useRef(null);
 
-    const isAdmin = !!currentUser?.isAdmin;
     const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -77,11 +69,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         !t.completed_by?.includes(currentUser?.id || '')
     ).length;
 
-    // 5. Shopping: Esteban sees unpurchased items
-    const pendingShoppingCount = (currentUser?.id === ESTEBAN_ID)
-        ? shoppingItems.filter(item => !item.is_purchased).length
-        : 0;
-
     // Close user menu when clicking outside
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -92,9 +79,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
-
-    // Check if user has any shared folders
-    const hasSharedFolders = DRIVE_FOLDERS.some(f => f.users.includes(currentUser?.id));
 
     interface NavigationItem {
         label: string;
@@ -122,30 +106,11 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             show: true
         },
         {
-            path: '/calendar',
-            label: 'Calendario',
-            icon: Calendar,
-            show: !isRestrictedUser
-        },
-        {
             path: '/tasks',
             label: 'Tareas',
             icon: CheckSquare,
             show: true,
             badge: pendingTasksCount
-        },
-        {
-            path: '/chat',
-            label: 'Chat',
-            icon: MessageCircle,
-            show: true,
-        },
-        {
-            path: '/shopping',
-            label: 'Lista de Compras',
-            icon: ShoppingBag,
-            show: !isRestrictedUser,
-            badge: pendingShoppingCount
         },
         {
             path: '/inventory',
@@ -165,25 +130,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             icon: FileText,
             show: !isRestrictedUser,
         },
-        {
-            path: '/facturacion',
-            label: 'Facturación',
-            icon: FileText,
-            show: !isRestrictedUser,
-        },
-        {
-            path: '/exports',
-            label: 'Exportaciones',
-            icon: FileText,
-            show: isAdmin && !isRestrictedUser,
-            isAdminItem: true
-        },
-        {
-            path: '/folders',
-            label: 'Carpetas',
-            icon: Folder,
-            show: isRestrictedUser || hasSharedFolders
-        }
     ];
 
     const handleNavigation = (path: string) => {
@@ -295,7 +241,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                 className={`
                                                     w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
                                                     ${isActive
-                                                        ? 'bg-gradient-to-r from-primary to-purple-600 text-white shadow-md'
+                                                        ? 'bg-gradient-to-r from-[#4C1D95] via-[#6D28D9] to-[#7C3AED] text-white shadow-md'
                                                         : `${textColor} ${hoverBg} hover:shadow-sm`
                                                     }
                                                 `}
@@ -425,7 +371,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                 {/* Desktop collapse toggle */}
                 <button
                     onClick={onToggleCollapse}
-                    className="hidden md:flex absolute -right-3 top-24 w-6 h-6 bg-white border border-gray-200 rounded-full items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-all duration-200 shadow-sm z-[261]"
+                    className="hidden md:flex absolute -right-3 top-24 w-6 h-6 bg-white border border-violet-200 rounded-full items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-all duration-200 shadow-sm z-[261]"
                 >
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </button>

@@ -19,14 +19,14 @@
 
 /* Base Themes */
 :root {
-  --primary: #9333EA;
-  --primary-dark: #7E22CE;
-  --primary-light: #A855F7;
-  --bg: #F8F7FF;
+  --primary: #0F766E;
+  --primary-dark: #115E59;
+  --primary-light: #14B8A6;
+  --bg: #F7FAFC;
   --card: #FFFFFF;
-  --border: #E9E4FF;
+  --border: #D9E6EE;
   --text: #1A1625;
-  --sidebar-bg: rgba(255, 255, 255, 0.8);
+  --sidebar-bg: rgba(247, 250, 252, 0.92);
 }
 
 /* Dynamic Themes (Phase 6) */
@@ -105,9 +105,9 @@ html[data-mood='Eléctrico'] {
 }
 
 .dark {
-  --primary: #A855F7;
-  --primary-dark: #9333EA;
-  --primary-light: #C084FC;
+  --primary: #38BDF8;
+  --primary-dark: #0EA5E9;
+  --primary-light: #7DD3FC;
   --bg: #0F0D15;
   --card: #1C1926;
   --border: #2D293D;
@@ -252,11 +252,11 @@ html[data-mood='Eléctrico'] {
   }
 
   .app-filter-chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700;
   }
 
   .app-filter-chip-x {
-    @apply inline-flex h-4 w-4 items-center justify-center rounded-full border border-violet-300 text-[10px] leading-none text-violet-700 hover:bg-violet-100;
+    @apply inline-flex h-4 w-4 items-center justify-center rounded-full border border-teal-300 text-[10px] leading-none text-teal-700 hover:bg-teal-100;
   }
 
   .app-empty-card {
@@ -264,7 +264,7 @@ html[data-mood='Eléctrico'] {
   }
 
   .app-table-wrap {
-    @apply overflow-auto rounded-2xl border border-violet-100 bg-white shadow-sm;
+    @apply overflow-auto rounded-2xl border border-teal-100 bg-white shadow-sm;
     max-height: min(58vh, 620px);
   }
 
@@ -277,11 +277,11 @@ html[data-mood='Eléctrico'] {
   }
 
   .app-table thead th {
-    @apply bg-violet-50 text-violet-700;
+    @apply bg-teal-50 text-teal-700;
   }
 
   .density-toggle {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-violet-700 shadow-sm hover:bg-violet-50;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-teal-700 shadow-sm hover:bg-teal-50;
   }
 
   html[data-density='compact'] main {

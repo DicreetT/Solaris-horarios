@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import seed from '../data/inventory_seed.json';
 import { AlertTriangle, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -86,6 +87,12 @@ const normalizeLotCompareToken = (v: any) => normalizeLotToken(v).replace(/O/g, 
 const isInvalidLegacyLot = (producto: any, lote: any) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
 const FORCED_AGOTADO_LOTS = new Set<string>(['KL|241030']);
+// Correcciones puntuales validadas con inventario real para evitar que una caché vieja
+// siga mostrando cantidades desactualizadas en el potencial.
+const LOT_VIALES_CORRECTIONS = new Map<string, number>([
+  ['ENT|2507A19', 95075],
+  ['ENT|2511A20', 100730],
+]);
 const lotKeyOf = (producto: any, lote: any) =>
   `${clean(producto).toUpperCase()}|${normalizeLotCompareToken(lote)}`;
 const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
@@ -773,6 +780,7 @@ function InventoryPage() {
   );
 
   const [tab, setTab] = useState<InventoryTab>('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [accessMode, setAccessMode] = useState<InventoryAccessMode>('unset');
   const [editRequests, setEditRequests] = useSharedJsonState<InventoryEditRequest[]>(
     INVENTORY_EDIT_REQUESTS_KEY,
@@ -836,6 +844,18 @@ function InventoryPage() {
     null,
     { userId: actorId },
   );
+
+  useEffect(() => {
+    const requestedTab = clean(searchParams.get('tab')).toLowerCase() as InventoryTab;
+    if (!requestedTab) return;
+    if (requestedTab === 'dashboard' || requestedTab === 'control_stock') {
+      setTab(requestedTab);
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const [, setInventoryStockControlSnapshotShared] = useSharedJsonState<any | null>(
     INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY,
     null,
@@ -1551,12 +1571,10 @@ function InventoryPage() {
     return map;
   }, [canonicalKnownCanetLotRows, normalizedMovements]);
 
-  const canetAssemblyBoxesByProductLotToken = useMemo(() => {
+  const assemblyBoxesByProductLotToken = useMemo(() => {
     const map = new Map<string, number>();
     for (const m of normalizedMovements) {
       if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
-      const bodega = normalizeWarehouseAlias(clean(m.bodega)).toUpperCase();
-      if (bodega !== 'CANET') continue;
       const tipo = normalizeSearch(clean(m.tipo_movimiento));
       if (!tipo.includes('ensambl')) continue;
       const qty = Math.max(0, toNum(m.cantidad_signed));
@@ -1570,8 +1588,41 @@ function InventoryPage() {
     return map;
   }, [canonicalKnownCanetLotRows, normalizedMovements]);
 
+  const assemblyBoxesSpainByProductLotToken = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
+      const tipo = normalizeSearch(clean(m.tipo_movimiento));
+      if (!tipo.includes('ensamblaje_esp')) continue;
+      const qty = Math.max(0, toNum(m.cantidad_signed));
+      if (qty <= 0) continue;
+      const producto = clean(m.producto);
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(m.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      map.set(key, (map.get(key) || 0) + qty);
+    }
+    return map;
+  }, [canonicalKnownCanetLotRows, normalizedMovements]);
+
+  const assemblyBoxesColombiaByProductLotToken = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of normalizedMovements) {
+      if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
+      const tipo = normalizeSearch(clean(m.tipo_movimiento));
+      if (!tipo.includes('ensamblaje_col')) continue;
+      const qty = Math.max(0, toNum(m.cantidad_signed));
+      if (qty <= 0) continue;
+      const producto = clean(m.producto);
+      const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(m.lote));
+      if (!producto || !lote || isInvalidLegacyLot(producto, lote)) continue;
+      const key = lotKeyOf(producto, lote);
+      map.set(key, (map.get(key) || 0) + qty);
+    }
+    return map;
+  }, [canonicalKnownCanetLotRows, normalizedMovements]);
+
   const inferredLotVialesByKey = useMemo(() => {
-    const assemblyBoxes = new Map<string, number>();
     const inboundBoxes = new Map<string, number>();
     for (const m of normalizedMovements) {
       if (clean(m.afecta_stock).toUpperCase() !== 'SI') continue;
@@ -1586,10 +1637,6 @@ function InventoryPage() {
       const tipo = normalizeSearch(clean(m.tipo_movimiento));
       const qty = Math.max(0, toNum(m.cantidad_signed));
       if (qty <= 0) continue;
-      if (tipo.includes('ensambl')) {
-        assemblyBoxes.set(key, (assemblyBoxes.get(key) || 0) + qty);
-        continue;
-      }
       if (tipo.includes('entrada') || tipo.includes('devol')) {
         inboundBoxes.set(key, (inboundBoxes.get(key) || 0) + qty);
       }
@@ -1597,13 +1644,12 @@ function InventoryPage() {
 
     const map = new Map<string, number>();
     for (const lotKey of new Set<string>([
-      ...Array.from(assemblyBoxes.keys()),
       ...Array.from(inboundBoxes.keys()),
     ])) {
       const [producto] = lotKey.split('|');
       const meta = inventoryProductMetaByCode.get(producto);
       if (!meta || meta.vialesPorCaja <= 0) continue;
-      const boxes = Math.max(assemblyBoxes.get(lotKey) || 0, inboundBoxes.get(lotKey) || 0);
+      const boxes = inboundBoxes.get(lotKey) || 0;
       if (boxes <= 0) continue;
       map.set(lotKey, Math.round(boxes * meta.vialesPorCaja));
     }
@@ -1631,7 +1677,8 @@ function InventoryPage() {
       const currentViales = toVialesNum((row as any).viales_recibidos);
       const seedViales = toVialesNum((seedLotByKey.get(key) as any)?.viales_recibidos);
       const inferredViales = inferredLotVialesByKey.get(key) || 0;
-      map.set(key, Math.max(currentViales, seedViales, inferredViales));
+      const correctedViales = LOT_VIALES_CORRECTIONS.get(key) || 0;
+      map.set(key, Math.max(currentViales, seedViales, inferredViales, correctedViales));
     }
     return map;
   }, [inferredLotVialesByKey, seedLotByKey, visibleLotes]);
@@ -1671,7 +1718,13 @@ function InventoryPage() {
       }
     }
 
-    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
+    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
+    for (const l of visibleLotes) {
+      lotAssemblyFinalizedByKey.set(
+        lotKeyOf(l.producto, l.lote),
+        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
+      );
+    }
 
     return visibleLotes
       .map((l) => {
@@ -1688,7 +1741,11 @@ function InventoryPage() {
             : 0;
         const lotFinalizado = lotAssemblyFinalizedByKey.get(lotKeyOf(producto, lote)) === 'SI';
         const estadoLote = normalizeLotState(l.estado);
-        const cajasPotenciales = estadoLote === 'AGOTADO' || lotFinalizado ? 0 : cajasPotencialesRaw;
+        const cajasEnsambladas = Math.min(
+          Math.max(0, cajasPotencialesRaw),
+          Math.max(0, toNum(assemblyBoxesByProductLotToken.get(lotKeyOf(producto, lote)) || 0)),
+        );
+        const cajasPotenciales = estadoLote === 'AGOTADO' || lotFinalizado ? 0 : Math.max(0, cajasPotencialesRaw - cajasEnsambladas);
         const coberturaMeses =
           meta.consumoMensual > 0
             ? (stockActualCajas + cajasPotenciales) / meta.consumoMensual
@@ -1876,7 +1933,13 @@ function InventoryPage() {
     }
 
     const lotStateByKey = buildLotStateMap(visibleLotes);
-    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
+    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
+    for (const l of visibleLotes) {
+      lotAssemblyFinalizedByKey.set(
+        lotKeyOf(l.producto, l.lote),
+        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
+      );
+    }
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
     for (const l of visibleLotes) {
       const producto = clean(l.producto);
@@ -1919,6 +1982,8 @@ function InventoryPage() {
       producto: string;
       lote: string;
       viales: number;
+      ensambladasEsp: number;
+      ensambladasCol: number;
       salidas: number;
       potencialCajas: number;
       stockCHP: number;
@@ -1986,18 +2051,23 @@ function InventoryPage() {
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
           ? base.viales / meta.vialesPorCaja
           : base.viales;
-      // En control de stock potencial mandan los lotes:
-      // si el lote está finalizado o agotado, ya no aporta potencial;
-      // si sigue activo y sin finalizar, todo su ingreso cuenta como potencial.
+      const ensambladasEsp = Math.max(0, toNum(assemblyBoxesSpainByProductLotToken.get(key) || 0));
+      const ensambladasCol = Math.max(0, toNum(assemblyBoxesColombiaByProductLotToken.get(key) || 0));
+      const cajasEnsambladasMovidas = Math.min(
+        Math.max(0, ingresoEnCajas),
+        Math.max(0, ensambladasEsp + ensambladasCol),
+      );
+      // Regla principal:
+      // - si el lote está finalizado o agotado, la marca del lote manda y el potencial queda en 0
+      // - si sigue abierto, el potencial se calcula con lo ya ensamblado en movimientos
       const salidas =
         lotState === 'AGOTADO' || lotAssemblyFinalized
           ? ingresoEnCajas
-          : 0;
-      // 3) Potencial cajas: lo que queda por ensamblar.
+          : cajasEnsambladasMovidas;
       const potencialCajas =
         lotState === 'AGOTADO' || lotAssemblyFinalized
           ? 0
-          : Math.max(0, ingresoEnCajas);
+          : Math.max(0, ingresoEnCajas - cajasEnsambladasMovidas);
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
       const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
@@ -2017,6 +2087,8 @@ function InventoryPage() {
         producto: base.producto,
         lote: base.lote,
         viales: base.viales,
+        ensambladasEsp,
+        ensambladasCol,
         salidas,
         potencialCajas,
         stockCHP: stockDisponibleTotalLot,
@@ -2149,6 +2221,8 @@ function InventoryPage() {
     potentialStatusFilter,
     controlSemaforoFilter,
     isHuarteAlias,
+    assemblyBoxesSpainByProductLotToken,
+    assemblyBoxesColombiaByProductLotToken,
   ]);
 
   const riskyProductsSummary = useMemo(() => {
@@ -2379,7 +2453,13 @@ function InventoryPage() {
     }
 
     const lotStateByKey = buildLotStateMap(visibleLotes);
-    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMap(visibleLotes);
+    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
+    for (const l of visibleLotes) {
+      lotAssemblyFinalizedByKey.set(
+        lotKeyOf(l.producto, l.lote),
+        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
+      );
+    }
     const potentialByProduct = new Map<string, number>();
     const potentialByProductLote = new Map<string, Map<string, number>>();
     for (const l of visibleLotes) {
@@ -2670,7 +2750,7 @@ function InventoryPage() {
     return Array.from(latestByKey.values()).map((base) => {
       const key = lotKeyOf(base.producto, base.lote);
       const stock = stockByProductLotToken.get(key) || 0;
-      const ensamblajes = canetAssemblyBoxesByProductLotToken.get(key) || 0;
+      const ensamblajes = assemblyBoxesByProductLotToken.get(key) || 0;
       const inferredViales = inferredLotVialesByKey.get(key) || 0;
       const forcedAgotado = isForcedAgotadoLot(base.producto, base.lote);
       return {
@@ -2684,7 +2764,7 @@ function InventoryPage() {
       } satisfies GenericRow;
     });
   }, [
-    canetAssemblyBoxesByProductLotToken,
+    assemblyBoxesByProductLotToken,
     canonicalKnownCanetLotRows,
     deletedLotKeySet,
     inferredLotVialesByKey,
@@ -2750,19 +2830,24 @@ function InventoryPage() {
       const currentViales = toVialesNum((row as any).viales_recibidos);
       const seedViales = toVialesNum((fromSeed as any)?.viales_recibidos);
       const inferredViales = inferredLotVialesByKey.get(key) || 0;
+      const correctedViales = LOT_VIALES_CORRECTIONS.get(key) || 0;
       const currentStateRaw = clean((row as any).estado);
       const currentAsmRaw = clean((row as any).ensamblaje_finalizado);
       const stock = stockByProductLotToken.get(key) || 0;
-      const inferredAsm = canetAssemblyBoxesByProductLotToken.get(key) || 0;
+      const inferredAsm = assemblyBoxesByProductLotToken.get(key) || 0;
 
       let next = lote !== clean(row.lote) ? { ...row, lote } : row;
       let rowChanged = false;
 
+      if (correctedViales > 0 && currentViales !== correctedViales) {
+        next = { ...next, viales_recibidos: String(correctedViales) };
+        rowChanged = true;
+      }
       // Recupera viales/caducidad/semaforo cuando se vaciaron por un payload incompleto.
-      if ((currentViales <= 0 || !clean((row as any).viales_recibidos)) && seedViales > 0) {
+      if (!rowChanged && (currentViales <= 0 || !clean((row as any).viales_recibidos)) && seedViales > 0) {
         next = { ...next, viales_recibidos: (fromSeed as any).viales_recibidos };
         rowChanged = true;
-      } else if ((currentViales <= 0 || !clean((row as any).viales_recibidos)) && inferredViales > 0) {
+      } else if (!rowChanged && (currentViales <= 0 || !clean((row as any).viales_recibidos)) && inferredViales > 0) {
         next = { ...next, viales_recibidos: String(inferredViales) };
         rowChanged = true;
       }
@@ -2783,9 +2868,6 @@ function InventoryPage() {
       if (fromSeed && !currentAsmRaw && clean((fromSeed as any).ensamblaje_finalizado)) {
         next = { ...next, ensamblaje_finalizado: normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) };
         rowChanged = true;
-      } else if (!currentAsmRaw && inferredAsm > 0 && stock <= 0) {
-        next = { ...next, ensamblaje_finalizado: 'SI' };
-        rowChanged = true;
       }
 
       if (lote !== clean(row.lote)) {
@@ -2803,7 +2885,7 @@ function InventoryPage() {
       setLotes(repaired);
     }
   }, [
-    canetAssemblyBoxesByProductLotToken,
+    assemblyBoxesByProductLotToken,
     canonicalKnownCanetLotRows,
     inferredLotVialesByKey,
     lotes,
@@ -3645,6 +3727,12 @@ function InventoryPage() {
     clientFilter ? { key: 'cliente', label: `Cliente: ${clientFilter}`, onClear: () => setClientFilter('') } : null,
     quickSearch ? { key: 'quick', label: `Buscar: ${quickSearch}`, onClear: () => setQuickSearch('') } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; onClear: () => void }>;
+  const inventorySummaryChips = [
+    { label: 'Potencial en riesgo', value: stockControlTables.potentialRows.filter((r) => r.estadoStock !== 'OPTIMO').length, tone: 'rose' as const },
+    { label: 'Canet + Huarte en riesgo', value: stockControlTables.canetHuarteRows.filter((r) => r.semaforo !== 'VERDE').length, tone: 'amber' as const },
+    { label: 'Canet en riesgo', value: stockControlTables.canetRows.filter((r) => r.semaforo !== 'VERDE').length, tone: 'violet' as const },
+    { label: 'Caducidades', value: caducityAlerts.length, tone: 'indigo' as const },
+  ];
 
   useEffect(() => {
     if (accessMode === 'edit' && !canEditNow) {
@@ -3677,7 +3765,7 @@ function InventoryPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">Inventario</p>
             <h1 className="text-2xl font-black text-violet-950">Control de stock Canet</h1>
-            <p className="text-sm text-violet-700/80">Vista integrada con filtros y tablas operativas.</p>
+            <p className="text-sm text-violet-700/80">Lo importante primero: stock, lotes y trazabilidad.</p>
           </div>
           <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
             Mes de análisis
@@ -3691,6 +3779,24 @@ function InventoryPage() {
               {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
             </select>
           </label>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {inventorySummaryChips.map((chip) => (
+            <div
+              key={chip.label}
+              className={`rounded-2xl border px-3 py-2 shadow-sm ${chip.tone === 'rose'
+                ? 'border-rose-100 bg-rose-50 text-rose-900'
+                : chip.tone === 'amber'
+                  ? 'border-amber-100 bg-amber-50 text-amber-900'
+                  : chip.tone === 'indigo'
+                    ? 'border-indigo-100 bg-indigo-50 text-indigo-900'
+                    : 'border-violet-100 bg-violet-50 text-violet-900'
+                }`}
+            >
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-75">{chip.label}</p>
+              <p className="mt-1 text-xl font-black">{chip.value.toLocaleString('es-ES')}</p>
+            </div>
+          ))}
         </div>
         {accessReady && (
           <div className="mt-3 flex justify-end">
@@ -4130,13 +4236,13 @@ function InventoryPage() {
           </div>
           <DataSection
             title="Control de stock potencial"
-            subtitle="Potencial consolidado por producto (suma de todos los lotes)."
+    subtitle="Potencial consolidado por producto (ingreso menos cajas ensambladas registradas en Canet para ese lote)."
             tone="indigo"
             onDownload={async () => {
               openTablePdf(
                 'Inventario - Control stock potencial',
                 `control-stock-potencial-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lotes', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
+                ['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
                 stockControlTables.potentialRows.map((r) => [
                   r.producto,
                   r.lotes,
@@ -4154,6 +4260,15 @@ function InventoryPage() {
               appendAudit('Descarga PDF', `Control stock potencial (${monthFilter || 'todos'})`);
             }}
           >
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <p>
+                  <span className="font-bold">Cajas ensambladas</span> suma las cajas ya registradas en movimientos de ensamblaje de Canet para ese lote.
+                  <span className="font-bold">Potencial cajas</span> es lo que queda por ensamblar de ese lote.
+                </p>
+              </div>
+            </div>
             <div className="mb-2 flex justify-end">
               <button
                 onClick={() => openHypotheticalModal('potential')}
@@ -4163,7 +4278,7 @@ function InventoryPage() {
               </button>
             </div>
             <SimpleDataTable
-              headers={['Producto', 'Lotes', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              headers={['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
               rows={stockControlTables.potentialRows.map((r) => [
                 <ProductPill key={`${r.producto}-pot`} code={r.producto} colorMap={productColorMap} />,
                 r.lotes,
@@ -4625,8 +4740,8 @@ function InventoryPage() {
                 label="Cantidad viales"
                 type="text"
                 inputMode="numeric"
-                pattern="[0-9.]*"
-                value={formatVialesForInput(lotForm.viales_recibidos)}
+                pattern="[0-9]*"
+                value={lotForm.viales_recibidos}
                 onChange={(v) => setLotForm({ ...lotForm, viales_recibidos: normalizeVialesDigits(v) })}
               />
               <Input label="Fecha caducidad" type="date" value={lotForm.fecha_caducidad} onChange={(v) => setLotForm({ ...lotForm, fecha_caducidad: v })} />
@@ -4830,11 +4945,22 @@ function InventoryPage() {
               </h3>
               <button onClick={() => setPotentialDetailProduct(null)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200"><X size={14} /></button>
             </div>
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <p>
+                  <span className="font-bold">España</span> y <span className="font-bold">Colombia</span> se muestran por separado.
+                  <span className="font-bold">Total ensamblado</span> es la suma de ambas y <span className="font-bold">Potencial cajas</span> muestra lo que aún queda por ensamblar.
+                </p>
+              </div>
+            </div>
             <SimpleDataTable
-              headers={['Lote', 'Viales', 'Ensamblajes', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
+              headers={['Lote', 'Viales', 'España', 'Colombia', 'Total ensamblado', 'Potencial cajas', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
               rows={potentialDetailRows.map((r) => [
                 r.lote,
                 Number(r.viales.toFixed(2)),
+                Number(r.ensambladasEsp.toFixed(2)),
+                Number(r.ensambladasCol.toFixed(2)),
                 Number(r.salidas.toFixed(2)),
                 Number(r.potencialCajas.toFixed(2)),
                 r.stockOptimo || '-',

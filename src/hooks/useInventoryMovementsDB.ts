@@ -46,6 +46,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
     const lastMutationAtRef = useRef<number>(0);
+    const lastTrustedServerSnapshotRef = useRef<InventoryMovementRow[] | null>(null);
+    const lastTrustedServerMutationAtRef = useRef<number>(0);
     const pendingUpsertsRef = useRef<Map<number, { row: InventoryMovementRow; at: number }>>(new Map());
     const pendingDeletesRef = useRef<Map<number, number>>(new Map());
     const consecutiveEmptyReadsRef = useRef<number>(0);
@@ -344,20 +346,34 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
                     const rows = ((data || []) as InventoryMovementRow[]);
-                    if (rows.length === 0 && movementsRef.current.length > 0) {
-                        // Nunca pisar una vista no-vacía con una lectura vacía transitoria.
-                        // Esto evita "bailes" de dashboard por rebotes de red/realtime.
+                    const hasPendingWrites = pendingUpsertsRef.current.size > 0 || pendingDeletesRef.current.size > 0;
+                    const hasTrustedServerSnapshot = (lastTrustedServerSnapshotRef.current?.length || 0) > 0;
+                    const serverSnapshotIsStale = lastTrustedServerMutationAtRef.current !== lastMutationAtRef.current;
+                    const shouldProtectAgainstTransientEmpty =
+                        rows.length === 0 &&
+                        movementsRef.current.length > 0 &&
+                        !hasPendingWrites &&
+                        hasTrustedServerSnapshot &&
+                        !serverSnapshotIsStale &&
+                        consecutiveEmptyReadsRef.current < 1;
+
+                    if (shouldProtectAgainstTransientEmpty) {
+                        // Solo protegemos contra un vacío transitorio cuando ya vimos antes
+                        // una respuesta real del servidor. Si no hay snapshot confiable aún,
+                        // el vacío del servidor debe limpiar la caché vieja del navegador.
                         consecutiveEmptyReadsRef.current += 1;
                         console.warn(
                             `[inventory_movements:${inventoryId}] ignored transient empty read (${consecutiveEmptyReadsRef.current}), keeping ${movementsRef.current.length} rows`,
                         );
                         return;
-                    } else {
-                        consecutiveEmptyReadsRef.current = 0;
                     }
+
+                    consecutiveEmptyReadsRef.current = 0;
+                    lastTrustedServerSnapshotRef.current = rows;
+                    lastTrustedServerMutationAtRef.current = lastMutationAtRef.current;
                     const merged = mergeServerRowsWithPending(rows);
                     setMovements(merged);
-                    if (merged.length > 0) persistMovementsCache(merged);
+                    persistMovementsCache(merged);
                 }
             } catch (error) {
                 // Never crash UI on background sync read failures.

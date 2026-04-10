@@ -4,17 +4,27 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
     AlertTriangle,
     CalendarClock,
+    Calendar,
     Coffee,
     Clock3,
     Download,
     Edit2,
+    Pause,
     GraduationCap,
     Info,
+    Boxes,
+    Play,
+    Plus,
     MessageCircle,
+    Bell,
     Save,
     Sparkles,
     UserX,
     XCircle,
+    ShoppingBag,
+    CheckSquare,
+    FileText,
+    Folder,
     Users,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -29,9 +39,11 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 import { useWorkProfile } from '../hooks/useWorkProfile';
 import { useChat } from '../hooks/useChat';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
+import CalendarGrid from '../components/CalendarGrid';
+import TimeTrackingPage from './TimeTrackingPage';
 import { UserAvatar } from '../components/UserAvatar';
 import { CARLOS_EMAIL, ESTEBAN_ID, USERS } from '../constants';
-import { formatDatePretty, toDateKey } from '../utils/dateUtils';
+import { formatDatePretty, formatTimeNow, toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
 import { openPrintablePdfReport } from '../utils/pdfReport';
 import { supabase } from '../lib/supabase';
@@ -41,6 +53,7 @@ import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import LinkifiedText from '../components/LinkifiedText';
@@ -269,10 +282,11 @@ function Dashboard() {
     const { meetingRequests, createMeeting, updateMeetingStatus, deleteMeeting } = useMeetings(currentUser);
     const { trainingRequests, createTrainingRequest, updateTrainingRequest, deleteTrainingRequest } = useTraining(currentUser);
     const { absenceRequests, createAbsence, updateAbsence, updateAbsenceStatus, deleteAbsence } = useAbsences(currentUser);
-    const { timeData, updateTimeEntry } = useTimeData();
+    const { timeData, createTimeEntry, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
     const { calendarEvents, createEvent } = useCalendarEvents();
+    const { overrides: calendarOverrides } = useCalendarOverrides();
     const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
     const {
         conversations: chatConversations,
@@ -282,6 +296,9 @@ function Dashboard() {
 
     const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
     const [eventDraft, setEventDraft] = useState('');
+    const [eventFormTitle, setEventFormTitle] = useState('');
+    const [eventFormDateKey, setEventFormDateKey] = useState(toDateKey(new Date()));
+    const [eventFormDescription, setEventFormDescription] = useState('');
     const [savingMood, setSavingMood] = useState<string | null>(null);
     const [editingDateKey, setEditingDateKey] = useState<string | null>(null);
     const [timeEdit, setTimeEdit] = useState({ entry: '', exit: '' });
@@ -308,6 +325,9 @@ function Dashboard() {
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
     const [sendingBoostTo, setSendingBoostTo] = useState<string | null>(null);
     const [boostToastName, setBoostToastName] = useState<string | null>(null);
+    const [showCalendarModal, setShowCalendarModal] = useState(false);
+    const [calendarMonthDate, setCalendarMonthDate] = useState(new Date());
+    const [calendarSelectedDate, setCalendarSelectedDate] = useState(new Date());
     const [inventoryAlerts] = useSharedJsonState<InventoryAlertsSummary | null>(
         INVENTORY_ALERTS_KEY,
         null,
@@ -353,8 +373,11 @@ function Dashboard() {
     const [manageRequestAttachments, setManageRequestAttachments] = useState<Attachment[]>([]);
     const [manageSaving, setManageSaving] = useState(false);
     const [showCompactTimeTracker, setShowCompactTimeTracker] = useState(false);
+    const [showTimeModal, setShowTimeModal] = useState(false);
+    const [showPulseModal, setShowPulseModal] = useState(false);
+    const [showRequestsModal, setShowRequestsModal] = useState(false);
     const [summaryModal, setSummaryModal] = useState<{
-        kind: 'tasks' | 'meetings' | 'trainings' | 'absences';
+        kind: 'tasks' | 'meetings' | 'trainings' | 'absences' | 'calendar' | 'events';
         title: string;
         items: any[];
     } | null>(null);
@@ -363,6 +386,7 @@ function Dashboard() {
     const [compactSection, setCompactSection] = useState<
         'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat'
     >('events');
+    const showLegacyDashboardSections = false;
 
     useEffect(() => {
         if (location.hash !== '#time-summary') return;
@@ -535,6 +559,13 @@ function Dashboard() {
                 })),
         [weeklyAbsences],
     );
+    const calendarEventsSorted = useMemo(
+        () =>
+            [...calendarEvents]
+                .slice()
+                .sort((a, b) => `${a.date_key || ''}`.localeCompare(`${b.date_key || ''}`) || `${a.title || ''}`.localeCompare(`${b.title || ''}`)),
+        [calendarEvents],
+    );
 
     const summaryLines = useMemo(() => {
         const lines: Array<{
@@ -630,6 +661,120 @@ function Dashboard() {
         weeklyTrainingsSorted,
         weeklyAbsences,
         weeklyAbsenceDetails,
+        todayKey,
+    ]);
+
+    const launchpadGroups = useMemo(() => [
+        {
+            title: 'Hoy',
+            items: [
+                {
+                    label: 'Calendario',
+                    icon: Calendar,
+                    tone: 'primary',
+                    onClick: () => {
+                        setCalendarMonthDate(new Date());
+                        setCalendarSelectedDate(new Date());
+                        setShowCalendarModal(true);
+                    },
+                },
+                {
+                    label: 'Eventos',
+                    icon: CalendarClock,
+                    tone: 'ghost',
+                    onClick: () => {
+                        setEventFormTitle('');
+                        setEventFormDateKey(todayKey);
+                        setEventFormDescription('');
+                        setSummaryModal({
+                            kind: 'events',
+                            title: 'Eventos del día',
+                            items: calendarEventsSorted.filter((event) => event.date_key === todayKey),
+                        });
+                    },
+                },
+                {
+                    label: 'Jornada',
+                    icon: Clock3,
+                    tone: 'ghost',
+                    onClick: () => setShowTimeModal(true),
+                },
+                {
+                    label: 'Solicitudes',
+                    icon: Users,
+                    tone: 'ghost',
+                    onClick: () => setShowRequestsModal(true),
+                },
+                {
+                    label: 'Pulso',
+                    icon: Sparkles,
+                    tone: 'ghost',
+                    onClick: () => setShowPulseModal(true),
+                },
+            ],
+        },
+        {
+            title: 'Operación',
+            items: [
+                {
+                    label: 'Inventario',
+                    icon: Boxes,
+                    tone: 'primary',
+                    onClick: () => navigate('/inventory?tab=control_stock'),
+                },
+                {
+                    label: 'Tareas',
+                    icon: CheckSquare,
+                    tone: 'ghost',
+                    onClick: () => setSummaryModal({ kind: 'tasks', title: 'Tareas pendientes', items: pendingTodos }),
+                },
+                {
+                    label: 'Compras',
+                    icon: ShoppingBag,
+                    tone: 'ghost',
+                    onClick: () => navigate('/shopping'),
+                },
+                {
+                    label: 'Facturación',
+                    icon: FileText,
+                    tone: 'ghost',
+                    onClick: () => navigate('/facturacion'),
+                },
+            ],
+        },
+        {
+            title: 'Comunicación',
+            items: [
+                {
+                    label: 'Chat',
+                    icon: MessageCircle,
+                    tone: 'primary',
+                    onClick: () => navigate('/chat'),
+                },
+                {
+                    label: 'Notificaciones',
+                    icon: Bell,
+                    tone: 'ghost',
+                    onClick: () => window.dispatchEvent(new CustomEvent('open-notifications-modal')),
+                },
+                {
+                    label: 'Checklist',
+                    icon: Save,
+                    tone: 'ghost',
+                    onClick: () => navigate('/checklist'),
+                },
+                {
+                    label: 'Carpetas',
+                    icon: Folder,
+                    tone: 'ghost',
+                    onClick: () => navigate('/folders'),
+                },
+            ],
+        },
+    ], [
+        calendarEventsSorted,
+        navigate,
+        pendingTodos,
         todayKey,
     ]);
 
@@ -883,6 +1028,63 @@ function Dashboard() {
     });
 
     const todayEvents = calendarEvents.filter((e) => e.date_key === todayKey);
+    const currentDayTimeEntries = currentUser ? (timeData[todayKey]?.[currentUser.id] || []) : [];
+    const currentActiveEntry = currentDayTimeEntries.find((e: any) => e.entry && !e.exit);
+    const currentOnBreak = currentActiveEntry?.status === 'break_paid';
+    const currentHasSession = !!currentActiveEntry;
+
+    const handleQuickTimeAction = async () => {
+        if (!currentUser) return;
+        const now = formatTimeNow();
+        try {
+            if (!currentActiveEntry) {
+                await createTimeEntry({
+                    date: new Date(),
+                    userId: currentUser.id,
+                    entry: now,
+                    exit: null,
+                    status: 'present',
+                    note: '',
+                });
+                return;
+            }
+            if (currentOnBreak) {
+                await updateTimeEntry({
+                    id: currentActiveEntry.id,
+                    updates: {
+                        status: 'present',
+                        note: `${currentActiveEntry.note || ''}${currentActiveEntry.note ? ' | ' : ''}PAUSA_FIN:${now}`,
+                    },
+                });
+                return;
+            }
+            await updateTimeEntry({
+                id: currentActiveEntry.id,
+                updates: {
+                    status: 'break_paid',
+                    note: `${currentActiveEntry.note || ''}${currentActiveEntry.note ? ' | ' : ''}PAUSA_INICIO:${now}`,
+                },
+            });
+        } catch {
+            // Keep the dashboard resilient even if time tracking sync fails.
+        }
+    };
+
+    const handleCreateDashboardEvent = async () => {
+        if (!currentUser || !eventFormTitle.trim()) return;
+        try {
+            await createEvent({
+                date_key: eventFormDateKey || todayKey,
+                title: eventFormTitle.trim(),
+                description: eventFormDescription.trim() || null,
+                created_by: currentUser.id,
+            });
+            setEventFormTitle('');
+            setEventFormDescription('');
+        } catch {
+            // Silent fallback: the hook already handles persistence feedback.
+        }
+    };
 
     const categorizeNotification = (n: any): NotificationFilter => {
         const text = `${n.message || ''}`.toLowerCase();
@@ -2001,6 +2203,44 @@ function Dashboard() {
             }).length,
         [unreadPendingNotifications],
     );
+    const dispatchBadgeCount = useMemo(
+        () =>
+            unreadPendingNotifications.filter((n) => {
+                const text = `${n.message || ''}`.toLowerCase();
+                return text.includes('despach') || text.includes('pedido') || text.includes('envío') || text.includes('envio') || text.includes('albar');
+            }).length,
+        [unreadPendingNotifications],
+    );
+    const shoppingBadgeCount = useMemo(
+        () =>
+            unreadPendingNotifications.filter((n) => {
+                const text = `${n.message || ''}`.toLowerCase();
+                return text.includes('compra') || text.includes('compras') || text.includes('pedido compra') || text.includes('shopping');
+            }).length,
+        [unreadPendingNotifications],
+    );
+    const billingBadgeCount = useMemo(
+        () =>
+            unreadPendingNotifications.filter((n) => {
+                const text = `${n.message || ''}`.toLowerCase();
+                return text.includes('factur') || text.includes('invoice') || text.includes('cobro') || text.includes('pendiente de factura');
+            }).length,
+        [unreadPendingNotifications],
+    );
+    const notificationsBadgeCount = unreadPendingNotifications.length;
+    const checklistPendingCount = checklistTasks.filter((task) => !task.completed).length;
+    const calendarBadgeCount = todayEvents.length + weeklyAbsenceDetails.length + weeklyMeetingsSorted.length + weeklyTrainingsSorted.length;
+    const requestsBadgeCount = weeklyAbsenceDetails.length + weeklyMeetingsSorted.length + weeklyTrainingsSorted.length;
+    const inventoryCriticalCount = useMemo(() => (
+        potentialControlRowsFromInventory.filter((row) => row.estadoStock === 'CRITICO').length +
+        canetHuarteControlRowsFromInventory.filter((row) => row.semaforo === 'CRITICO').length +
+        canetControlRowsFromInventory.filter((row) => row.semaforo === 'CRITICO').length
+    ), [potentialControlRowsFromInventory, canetHuarteControlRowsFromInventory, canetControlRowsFromInventory]);
+    const inventoryAttentionCount = useMemo(() => (
+        potentialControlRowsFromInventory.filter((row) => row.estadoStock === 'ATENCION').length +
+        canetHuarteControlRowsFromInventory.filter((row) => row.semaforo === 'ATENCION').length +
+        canetControlRowsFromInventory.filter((row) => row.semaforo === 'ATENCION').length
+    ), [potentialControlRowsFromInventory, canetHuarteControlRowsFromInventory, canetControlRowsFromInventory]);
     const inventoryBadgeCount = useMemo(() => {
         if (
             potentialControlCriticalRows.length > 0 ||
@@ -2054,30 +2294,216 @@ function Dashboard() {
         chat: chatBadgeCount,
     };
 
+    const launchpadGroupsEnhanced = useMemo(() => [
+        {
+            title: 'Hoy',
+            cardClass: 'border-sky-100 bg-gradient-to-br from-sky-50 via-white to-cyan-50',
+            titleClass: 'text-sky-950',
+            eyebrowClass: 'text-sky-600',
+            items: [
+                {
+                    label: 'Calendario',
+                    icon: Calendar,
+                    tone: 'primary',
+                    buttonClass: 'border-sky-200 bg-sky-50 text-sky-950 hover:bg-sky-100',
+                    iconClass: 'bg-white text-sky-600 border-sky-100',
+                    badges: [{ count: calendarBadgeCount, tone: 'sky' }],
+                    onClick: () => {
+                        setCalendarMonthDate(new Date());
+                        setCalendarSelectedDate(new Date());
+                        setShowCalendarModal(true);
+                    },
+                },
+                {
+                    label: 'Eventos',
+                    icon: CalendarClock,
+                    tone: 'ghost',
+                    buttonClass: 'border-amber-200 bg-white text-amber-950 hover:bg-amber-50',
+                    iconClass: 'bg-amber-50 text-amber-600 border-amber-100',
+                    badges: [{ count: todayEvents.length, tone: 'amber' }],
+                    onClick: () => {
+                        setEventFormTitle('');
+                        setEventFormDateKey(todayKey);
+                        setEventFormDescription('');
+                        setSummaryModal({
+                            kind: 'events',
+                            title: 'Eventos del día',
+                            items: calendarEventsSorted.filter((event) => event.date_key === todayKey),
+                        });
+                    },
+                },
+                {
+                    label: 'Jornada',
+                    icon: Clock3,
+                    tone: 'ghost',
+                    buttonClass: 'border-emerald-200 bg-white text-emerald-950 hover:bg-emerald-50',
+                    iconClass: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+                    onClick: () => setShowTimeModal(true),
+                },
+                {
+                    label: 'Solicitudes',
+                    icon: Users,
+                    tone: 'ghost',
+                    buttonClass: 'border-fuchsia-200 bg-white text-fuchsia-950 hover:bg-fuchsia-50',
+                    iconClass: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100',
+                    badges: [{ count: requestsBadgeCount, tone: 'fuchsia' }],
+                    onClick: () => setShowRequestsModal(true),
+                },
+                {
+                    label: 'Pulso',
+                    icon: Sparkles,
+                    tone: 'ghost',
+                    buttonClass: 'border-violet-200 bg-white text-violet-950 hover:bg-violet-50',
+                    iconClass: 'bg-violet-50 text-violet-600 border-violet-100',
+                    onClick: () => setShowPulseModal(true),
+                },
+            ],
+        },
+        {
+            title: 'Operación',
+            cardClass: 'border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-lime-50',
+            titleClass: 'text-emerald-950',
+            eyebrowClass: 'text-emerald-600',
+            items: [
+                {
+                    label: 'Inventario',
+                    icon: Boxes,
+                    tone: 'primary',
+                    buttonClass: 'border-emerald-200 bg-emerald-50 text-emerald-950 hover:bg-emerald-100',
+                    iconClass: 'bg-white text-emerald-600 border-emerald-100',
+                    badges: [
+                        { count: inventoryAttentionCount, tone: 'amber' },
+                        { count: inventoryCriticalCount, tone: 'rose' },
+                    ],
+                    onClick: () => navigate('/inventory?tab=control_stock'),
+                },
+                {
+                    label: 'Tareas',
+                    icon: CheckSquare,
+                    tone: 'ghost',
+                    buttonClass: 'border-amber-200 bg-white text-amber-950 hover:bg-amber-50',
+                    iconClass: 'bg-amber-50 text-amber-600 border-amber-100',
+                    badges: [{ count: pendingTodos.length, tone: 'amber' }],
+                    onClick: () => setSummaryModal({ kind: 'tasks', title: 'Tareas pendientes', items: pendingTodos }),
+                },
+                {
+                    label: 'Compras',
+                    icon: ShoppingBag,
+                    tone: 'ghost',
+                    buttonClass: 'border-indigo-200 bg-white text-indigo-950 hover:bg-indigo-50',
+                    iconClass: 'bg-indigo-50 text-indigo-600 border-indigo-100',
+                    badges: [{ count: shoppingBadgeCount, tone: 'indigo' }],
+                    onClick: () => navigate('/shopping'),
+                },
+                {
+                    label: 'Facturación',
+                    icon: FileText,
+                    tone: 'ghost',
+                    buttonClass: 'border-rose-200 bg-white text-rose-950 hover:bg-rose-50',
+                    iconClass: 'bg-rose-50 text-rose-600 border-rose-100',
+                    badges: [{ count: billingBadgeCount, tone: 'rose' }],
+                    onClick: () => navigate('/facturacion'),
+                },
+            ],
+        },
+        {
+            title: 'Comunicación',
+            cardClass: 'border-fuchsia-100 bg-gradient-to-br from-fuchsia-50 via-white to-sky-50',
+            titleClass: 'text-fuchsia-950',
+            eyebrowClass: 'text-fuchsia-600',
+            items: [
+                {
+                    label: 'Chat',
+                    icon: MessageCircle,
+                    tone: 'primary',
+                    buttonClass: 'border-sky-200 bg-sky-50 text-sky-950 hover:bg-sky-100',
+                    iconClass: 'bg-white text-sky-600 border-sky-100',
+                    badges: [{ count: chatBadgeCount, tone: 'sky' }],
+                    onClick: () => navigate('/chat'),
+                },
+                {
+                    label: 'Notificaciones',
+                    icon: Bell,
+                    tone: 'ghost',
+                    buttonClass: 'border-violet-200 bg-white text-violet-950 hover:bg-violet-50',
+                    iconClass: 'bg-violet-50 text-violet-600 border-violet-100',
+                    badges: [{ count: notificationsBadgeCount, tone: 'rose' }],
+                    onClick: () => window.dispatchEvent(new CustomEvent('open-notifications-modal')),
+                },
+                {
+                    label: 'Checklist',
+                    icon: Save,
+                    tone: 'ghost',
+                    buttonClass: 'border-emerald-200 bg-white text-emerald-950 hover:bg-emerald-50',
+                    iconClass: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+                    badges: [{ count: checklistPendingCount, tone: 'emerald' }],
+                    onClick: () => navigate('/checklist'),
+                },
+                {
+                    label: 'Carpetas',
+                    icon: Folder,
+                    tone: 'ghost',
+                    buttonClass: 'border-slate-200 bg-white text-slate-950 hover:bg-slate-50',
+                    iconClass: 'bg-slate-50 text-slate-600 border-slate-100',
+                    onClick: () => navigate('/folders'),
+                },
+            ],
+        },
+    ], [
+        billingBadgeCount,
+        calendarBadgeCount,
+        calendarEventsSorted,
+        chatBadgeCount,
+        checklistPendingCount,
+        currentUser,
+        inventoryAttentionCount,
+        inventoryCriticalCount,
+        navigate,
+        notificationsBadgeCount,
+        pendingTodos.length,
+        requestsBadgeCount,
+        shoppingBadgeCount,
+        todayEvents.length,
+        todayKey,
+    ]);
+
     if (isRestrictedUser) {
         return (
             <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">
                 <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                    <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'Carlos'}</h1>
-                    <p className="mt-2 text-sm text-gray-700">Vista simplificada: acceso a Chat e Inventario.</p>
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 shadow-sm">
+                                <img src="/logo.png" alt="Lunaris" className="h-9 w-9 object-contain" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Home operativa</p>
+                                <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'Carlos'}</h1>
+                                <p className="mt-1 text-sm text-gray-700">Acceso directo a lo esencial: chat e inventario.</p>
+                            </div>
+                        </div>
+                        <div className="rounded-2xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
+                            Lo importante primero
+                        </div>
+                    </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                         <Link
                             to="/chat"
-                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                            className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-base font-bold text-violet-800 hover:bg-violet-100"
                         >
                             <MessageCircle size={16} />
                             Ir a Chat
                         </Link>
                         <Link
                             to="/inventory"
-                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                            className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-base font-bold text-violet-800 hover:bg-violet-100"
                         >
                             <Info size={16} />
                             Inventario Canet
                         </Link>
                         <Link
                             to="/inventory-facturacion"
-                            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100"
+                            className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-base font-bold text-violet-800 hover:bg-violet-100"
                         >
                             <Info size={16} />
                             Inventario Huarte
@@ -2089,7 +2515,7 @@ function Dashboard() {
                     <div className="flex flex-wrap gap-2 mb-4">
                         <button
                             type="button"
-                            className="px-3 py-2 rounded-xl border text-sm font-bold bg-violet-700 text-white border-violet-700"
+                            className="px-4 py-3 rounded-2xl border text-base font-bold bg-violet-700 text-white border-violet-700 shadow-sm"
                         >
                             Inventario
                         </button>
@@ -2100,14 +2526,14 @@ function Dashboard() {
                             <button
                                 type="button"
                                 onClick={() => setInventoryPanelMode('critical')}
-                                className={`px-3 py-2 rounded-xl border text-sm font-bold ${inventoryPanelMode === 'critical' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-700 border-rose-200'}`}
+                                className={`px-4 py-3 rounded-2xl border text-base font-bold ${inventoryPanelMode === 'critical' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-700 border-rose-200'}`}
                             >
                                 Stock crítico
                             </button>
                             <button
                                 type="button"
                                 onClick={() => setInventoryPanelMode('general')}
-                                className={`px-3 py-2 rounded-xl border text-sm font-bold ${inventoryPanelMode === 'general' ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'}`}
+                                className={`px-4 py-3 rounded-2xl border text-base font-bold ${inventoryPanelMode === 'general' ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-violet-700 border-violet-200'}`}
                             >
                                 Datos generales
                             </button>
@@ -2269,13 +2695,22 @@ function Dashboard() {
     return (
         <div className="max-w-7xl mx-auto pb-16 space-y-6 app-page-shell">
             <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
-                <div className="flex flex-wrap items-center gap-3 mb-2">
-                    <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'equipo'}</h1>
-                    <span className="px-3 py-1 rounded-full bg-violet-700 text-white text-xs font-bold">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 shadow-sm">
+                            <img src="/logo.png" alt="Lunaris" className="h-9 w-9 object-contain" />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Home operativa</p>
+                            <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'equipo'}</h1>
+                            <p className="mt-1 text-sm text-gray-700">Accesos rápidos, inventario y estado del día en una sola mirada.</p>
+                        </div>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full bg-violet-700 px-3 py-1 text-xs font-bold text-white">
                         {weeklyAbsences.length === 0 ? 'Equipo completo' : `${weeklyAbsences.length} ausencia(s) esta semana`}
                     </span>
                 </div>
-                <p className="text-sm font-semibold text-violet-900/90 mb-2">
+                <p className="mt-3 text-sm font-semibold text-violet-900/90 mb-2">
                     Semana: {formatDatePretty(weekStart)} - {formatDatePretty(weekEnd)}.
                 </p>
                 <div className="space-y-1.5">
@@ -2295,6 +2730,67 @@ function Dashboard() {
                 </div>
             </div>
 
+            <div className="rounded-3xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
+                        <h2 className="text-lg font-black text-violet-950">Hoy</h2>
+                    </div>
+                    <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-700">
+                        Accesos rápidos
+                    </span>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-3">
+                    {launchpadGroupsEnhanced.map((group) => (
+                        <div key={group.title} className={`rounded-3xl border p-4 shadow-sm ${group.cardClass}`}>
+                            <div className="mb-3">
+                                <p className={`text-xs font-bold uppercase tracking-widest ${group.eyebrowClass}`}>Centro de mando</p>
+                                <h3 className={`mt-1 text-base font-black ${group.titleClass}`}>{group.title}</h3>
+                            </div>
+                            <div className="space-y-2">
+                                {group.items.map((item) => (
+                                    <button
+                                        key={item.label}
+                                        type="button"
+                                        onClick={item.onClick}
+                                        className={`relative w-full rounded-2xl border px-4 py-3 text-left transition min-h-[64px] flex items-center gap-3 shadow-sm ${item.buttonClass}`}
+                                    >
+                                        <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${item.iconClass}`}>
+                                            <item.icon size={18} />
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block text-sm font-black">{item.label}</span>
+                                        </span>
+                                        {item.badges?.some((badge) => badge.count > 0) && (
+                                            <span className="absolute -top-2 -right-2 flex flex-wrap gap-1">
+                                                {item.badges.filter((badge) => badge.count > 0).map((badge, idx) => (
+                                                    <span
+                                                        key={`${item.label}-${idx}`}
+                                                        className={`min-w-[1.5rem] h-6 px-1.5 rounded-full text-[10px] font-black shadow-sm border flex items-center justify-center
+                                                            ${badge.tone === 'rose' ? 'bg-rose-600 text-white border-rose-500' : ''}
+                                                            ${badge.tone === 'amber' ? 'bg-amber-500 text-white border-amber-400' : ''}
+                                                            ${badge.tone === 'sky' ? 'bg-sky-500 text-white border-sky-400' : ''}
+                                                            ${badge.tone === 'emerald' ? 'bg-emerald-500 text-white border-emerald-400' : ''}
+                                                            ${badge.tone === 'indigo' ? 'bg-indigo-500 text-white border-indigo-400' : ''}
+                                                            ${badge.tone === 'fuchsia' ? 'bg-fuchsia-500 text-white border-fuchsia-400' : ''}
+                                                            ${badge.tone === 'violet' ? 'bg-violet-500 text-white border-violet-400' : ''}
+                                                            ${badge.tone === 'slate' ? 'bg-slate-500 text-white border-slate-400' : ''}`}
+                                                        title={badge.count > 0 ? `${badge.count} pendientes` : 'Sin pendientes'}
+                                                    >
+                                                        {badge.count > 99 ? '99+' : badge.count}
+                                                    </span>
+                                                ))}
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {showLegacyDashboardSections && (
             <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-6">
                 <div className="space-y-6">
                     {isCompact && (
@@ -2303,14 +2799,14 @@ function Dashboard() {
                                 <button
                                     key={key}
                                     onClick={() => setCompactSection(key)}
-                                    className={`compact-card rounded-2xl border p-2 text-xs font-black transition ${compactSection === key
+                                    className={`compact-card rounded-2xl border p-3 text-sm font-black transition min-h-[84px] ${compactSection === key
                                         ? 'border-violet-400 bg-violet-700 text-white'
                                         : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
                                         }`}
                                 >
-                                    <div className="flex flex-col items-center gap-1">
+                                    <div className="flex flex-col items-center gap-1.5">
                                         <div className="relative">
-                                            <Icon size={16} />
+                                            <Icon size={18} />
                                             {(compactTileBadges[key] || 0) > 0 && (
                                                 <span className={`absolute -top-2 -right-2 w-4 h-4 rounded-full text-[10px] leading-4 text-center font-black ${compactSection === key ? 'bg-white text-violet-700' : 'bg-rose-500 text-white'
                                                     }`}>
@@ -2325,29 +2821,29 @@ function Dashboard() {
                         </div>
                     )}
 
-                    {isCompact ? (
-                        <div className="bg-white border border-gray-200 rounded-3xl p-3 shadow-sm compact-card">
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <h3 className="text-sm font-black text-violet-950">Registro de jornada</h3>
-                                    <p className="text-xs text-violet-700">Panel compacto</p>
-                                </div>
-                                <button
-                                    onClick={() => setShowCompactTimeTracker((prev) => !prev)}
-                                    className="px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold"
-                                >
-                                    {showCompactTimeTracker ? 'Ocultar' : 'Abrir'}
-                                </button>
+                    <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-3 shadow-sm compact-card">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <h3 className="text-sm font-black text-violet-950">Registro de jornada</h3>
+                                <p className="text-xs text-violet-700">Compacto, pero siempre disponible.</p>
                             </div>
-                            {showCompactTimeTracker && (
-                                <div className="mt-3">
-                                    <TimeTrackerWidget showEntries={false} compact />
-                                </div>
-                            )}
+                            <button
+                                onClick={() => setShowCompactTimeTracker((prev) => !prev)}
+                                className="px-3 py-1.5 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold"
+                            >
+                                {showCompactTimeTracker ? 'Ocultar' : 'Abrir'}
+                            </button>
                         </div>
-                    ) : (
-                        <TimeTrackerWidget showEntries={false} />
-                    )}
+                        {showCompactTimeTracker ? (
+                            <div className="mt-3">
+                                <TimeTrackerWidget showEntries={false} compact />
+                            </div>
+                        ) : (
+                            <div className="mt-3 rounded-2xl border border-dashed border-violet-200 bg-violet-50/40 px-4 py-5 text-sm text-violet-800">
+                                Pulsa <span className="font-black">Abrir</span> cuando quieras fichar o revisar la jornada.
+                            </div>
+                        )}
+                    </div>
 
                     {(!isCompact || compactSection === 'events') && (
                         <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
@@ -2402,28 +2898,28 @@ function Dashboard() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 <button
                                     onClick={() => openRequestModal('absence')}
-                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                    className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]"
                                 >
                                     <UserX size={16} />
                                     Solicitar ausencia
                                 </button>
                                 <button
                                     onClick={() => openRequestModal('vacation')}
-                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                    className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]"
                                 >
                                     <CalendarClock size={16} />
                                     Solicitar vacaciones
                                 </button>
                                 <button
                                     onClick={() => openRequestModal('meeting')}
-                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                    className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]"
                                 >
                                     <Users size={16} />
                                     Solicitar reunión/sugerencia
                                 </button>
                                 <button
                                     onClick={() => openRequestModal('training')}
-                                    className="p-3 rounded-xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2 text-sm font-bold text-violet-900"
+                                    className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]"
                                 >
                                     <GraduationCap size={16} />
                                     Solicitar formación
@@ -2433,7 +2929,7 @@ function Dashboard() {
                                         const block = document.getElementById('dashboard-my-requests');
                                         if (block) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                     }}
-                                    className="sm:col-span-2 p-3 rounded-xl border border-violet-300 bg-violet-700 hover:bg-violet-800 text-white flex items-center justify-center gap-2 text-sm font-black"
+                                    className="sm:col-span-2 p-4 rounded-2xl border border-violet-300 bg-violet-700 hover:bg-violet-800 text-white flex items-center justify-center gap-2.5 text-base font-black min-h-[58px]"
                                 >
                                     <Clock3 size={16} />
                                     Mis solicitudes
@@ -2496,7 +2992,7 @@ function Dashboard() {
                     )}
 
                     {(!isCompact || compactSection === 'time') && (
-                        <div id="dashboard-time-summary" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
+                        <div id="dashboard-time-details" className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm compact-card">
                             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                                 <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
                                 <div className="flex items-center gap-3">
@@ -2945,7 +3441,7 @@ function Dashboard() {
                     )}
 
                     {(!isCompact || compactSection === 'notifications') && (
-                        <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
+                        <div id="dashboard-pulse-section" className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
                             <div className="flex items-center justify-between mb-3">
                                 <h2 className="text-lg font-black text-violet-950">Notificaciones</h2>
                                 <button
@@ -3137,6 +3633,7 @@ function Dashboard() {
                     )}
                 </div>
             </div>
+            )}
 
             {showAbsencesManageModal && (
                 <div className="app-modal-overlay" onClick={() => {
@@ -3827,6 +4324,310 @@ function Dashboard() {
                     </div>
                 </div>
             )}
+            {currentUser && (
+                <button
+                    type="button"
+                    onClick={handleQuickTimeAction}
+                    className={`fixed right-5 bottom-5 z-[90] h-14 w-14 rounded-full shadow-2xl border flex items-center justify-center transition-all ${currentHasSession
+                        ? currentOnBreak
+                            ? 'bg-violet-700 border-violet-700 text-white'
+                            : 'bg-amber-500 border-amber-500 text-white'
+                        : 'bg-emerald-600 border-emerald-600 text-white'
+                        }`}
+                    title={
+                        !currentHasSession
+                            ? 'Iniciar jornada'
+                            : currentOnBreak
+                                ? 'Retomar jornada'
+                                : 'Pausar jornada'
+                    }
+                >
+                    {!currentHasSession || currentOnBreak ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}
+                </button>
+            )}
+            {showCalendarModal && (
+                <div className="app-modal-overlay" onClick={() => setShowCalendarModal(false)}>
+                    <div className="app-modal-panel w-full max-w-[min(1400px,96vw)] rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-gray-100 p-4">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
+                                <h3 className="text-lg font-black text-gray-900">Calendario</h3>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('/calendar')}
+                                    className="px-3 py-1.5 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold"
+                                >
+                                    Abrir calendario completo
+                                </button>
+                                <button onClick={() => setShowCalendarModal(false)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                    <XCircle size={18} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr] gap-4 p-4">
+                            <div className="h-[72vh]">
+                                <CalendarGrid
+                                    monthDate={calendarMonthDate}
+                                    selectedDate={calendarSelectedDate}
+                                    onChangeMonth={(date) => setCalendarMonthDate(date)}
+                                    onSelectDate={(date) => {
+                                        setCalendarSelectedDate(date);
+                                        setEventFormDateKey(toDateKey(date));
+                                    }}
+                                    overrides={calendarOverrides}
+                                />
+                            </div>
+                            <div className="space-y-3">
+                                <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
+                                    <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Día seleccionado</p>
+                                    <p className="mt-1 text-lg font-black text-violet-950">
+                                        {calendarSelectedDate.toLocaleDateString('es-ES', {
+                                            weekday: 'long',
+                                            day: 'numeric',
+                                            month: 'long',
+                                        })}
+                                    </p>
+                                    <p className="mt-1 text-sm text-violet-700">
+                                        {calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)).length} evento(s) en este día
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl border border-violet-100 bg-white p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Crear evento</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSummaryModal({
+                                                kind: 'events',
+                                                title: 'Eventos del día',
+                                                items: calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)),
+                                            })}
+                                            className="text-xs font-bold text-violet-700"
+                                        >
+                                            Ver listado
+                                        </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <input
+                                            value={eventFormTitle}
+                                            onChange={(e) => setEventFormTitle(e.target.value)}
+                                            placeholder="Título"
+                                            className="w-full rounded-xl border border-violet-200 px-3 py-2 text-sm"
+                                        />
+                                        <input
+                                            type="date"
+                                            value={eventFormDateKey}
+                                            onChange={(e) => setEventFormDateKey(e.target.value)}
+                                            className="w-full rounded-xl border border-violet-200 px-3 py-2 text-sm"
+                                        />
+                                        <textarea
+                                            value={eventFormDescription}
+                                            onChange={(e) => setEventFormDescription(e.target.value)}
+                                            placeholder="Descripción"
+                                            className="w-full min-h-[96px] rounded-xl border border-violet-200 px-3 py-2 text-sm"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleCreateDashboardEvent}
+                                            className="w-full rounded-xl bg-violet-700 px-3 py-2 text-sm font-bold text-white"
+                                        >
+                                            Añadir evento
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl border border-violet-100 bg-white p-4">
+                                    <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Eventos del día</p>
+                                    <div className="space-y-2">
+                                        {calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)).length > 0 ? (
+                                            calendarEvents
+                                                .filter((event) => event.date_key === toDateKey(calendarSelectedDate))
+                                                .map((event) => (
+                                                    <div key={`calendar-modal-${event.id}`} className="rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+                                                        <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                                        <p className="text-xs text-violet-700">{event.description || 'Sin descripción'}</p>
+                                                    </div>
+                                                ))
+                                        ) : (
+                                            <div className="app-empty-card">No hay eventos para este día.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {showTimeModal && (
+                <div className="app-modal-overlay" onClick={() => setShowTimeModal(false)}>
+                    <div className="app-modal-panel w-full max-w-[min(1400px,96vw)] rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-gray-100 p-4">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
+                                <h3 className="text-lg font-black text-gray-900">Jornada</h3>
+                            </div>
+                            <button onClick={() => setShowTimeModal(false)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                <XCircle size={18} />
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <TimeTrackingPage />
+                        </div>
+                    </div>
+                </div>
+            )}
+            {showRequestsModal && (
+                <div className="app-modal-overlay" onClick={() => setShowRequestsModal(false)}>
+                    <div className="app-modal-panel w-full max-w-3xl rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-gray-100 p-4">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
+                                <h3 className="text-lg font-black text-gray-900">Solicitudes</h3>
+                            </div>
+                            <button onClick={() => setShowRequestsModal(false)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                <XCircle size={18} />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('absence'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                    <UserX size={16} />
+                                    Solicitar ausencia
+                                </button>
+                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('vacation'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                    <CalendarClock size={16} />
+                                    Solicitar vacaciones
+                                </button>
+                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('meeting'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                    <Users size={16} />
+                                    Solicitar reunión/sugerencia
+                                </button>
+                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('training'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                    <GraduationCap size={16} />
+                                    Solicitar formación
+                                </button>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {isAdmin && (
+                                    <button
+                                        onClick={() => {
+                                            setShowRequestsModal(false);
+                                            setShowAbsencesManageModal(true);
+                                        }}
+                                        className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold"
+                                    >
+                                        Gestionar solicitudes
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => {
+                                        setShowRequestsModal(false);
+                                        setShowAbsencesManageModal(true);
+                                    }}
+                                    className="px-4 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold"
+                                >
+                                    Mis solicitudes
+                                </button>
+                            </div>
+                            <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Mis solicitudes recientes</p>
+                                <div className="space-y-1.5">
+                                    {myRequestRows.slice(0, 6).map((row) => (
+                                        <button
+                                            key={row.id}
+                                            onClick={() => {
+                                                const target = myDetailedRequestRows.find((r) => r.source === row.source && r.id === row.requestId);
+                                                if (!target) return;
+                                                setShowRequestsModal(false);
+                                                openMyRequest(target);
+                                            }}
+                                            className="w-full text-left rounded-lg border border-violet-100 bg-white p-2 text-xs hover:border-violet-300 transition"
+                                        >
+                                            <p className="font-bold text-violet-900">{row.title}</p>
+                                            <p className="text-violet-700">{row.date} · Estado: {row.status}</p>
+                                        </button>
+                                    ))}
+                                    {myRequestRows.length === 0 && <div className="app-empty-card">Aún no tienes solicitudes creadas.</div>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {showPulseModal && (
+                <div className="app-modal-overlay" onClick={() => setShowPulseModal(false)}>
+                    <div className="app-modal-panel w-full max-w-4xl rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-gray-100 p-4">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
+                                <h3 className="text-lg font-black text-gray-900">Pulso del equipo</h3>
+                            </div>
+                            <button onClick={() => setShowPulseModal(false)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
+                                <XCircle size={18} />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-4 max-h-[72vh] overflow-y-auto">
+                            <div className="grid grid-cols-2 gap-2">
+                                {[
+                                    { emoji: '✨', label: 'Protagonista' },
+                                    { emoji: '🌸', label: 'Zen' },
+                                    { emoji: '☁️', label: 'Paciencia' },
+                                    { emoji: '🔥', label: 'A tope' },
+                                ].map((mood) => (
+                                    <button
+                                        key={mood.emoji}
+                                        onClick={() => handleMoodSelect(mood.emoji, mood.label)}
+                                        className={`px-2 py-2 rounded-xl border text-xs font-bold ${myStatusToday?.custom_emoji === mood.emoji
+                                            ? 'bg-violet-700 text-white border-violet-700'
+                                            : 'bg-white border-violet-200 text-violet-700'
+                                            }`}
+                                    >
+                                        <span className="mr-1">{mood.emoji}</span>
+                                        {mood.label}
+                                        {savingMood === mood.emoji ? ' ...' : ''}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="space-y-2">
+                                {teamPulse.map((item) => (
+                                    <div key={item.user.id} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 flex items-center gap-3">
+                                        <UserAvatar name={item.user.name} size="sm" />
+                                        <div className="flex-1">
+                                            <p className="text-sm font-bold text-violet-900">{item.user.name}</p>
+                                            <p className="text-xs text-violet-600">
+                                                {item.mood?.custom_emoji || '🙂'} {item.mood?.custom_status || (item.isActive ? 'Activo' : 'Sin estado')}
+                                            </p>
+                                        </div>
+                                        {item.user.id !== currentUser?.id && (
+                                            <button
+                                                onClick={() => openDirectChat(item.user.id)}
+                                                className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
+                                                title={`Abrir chat con ${item.user.name}`}
+                                            >
+                                                <MessageCircle size={14} />
+                                            </button>
+                                        )}
+                                        {item.user.id !== currentUser?.id && (
+                                            <button
+                                                onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
+                                                disabled={sendingBoostTo === item.user.id}
+                                                className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${sendingBoostTo === item.user.id
+                                                    ? 'bg-violet-300 text-violet-900'
+                                                    : 'bg-violet-200 text-violet-800 hover:bg-violet-300 hover:scale-[1.03] active:scale-[0.98]'
+                                                    }`}
+                                                title="Enviar chute de energía"
+                                            >
+                                                <Coffee size={14} />
+                                                {sendingBoostTo === item.user.id ? 'Enviando...' : 'Café'}
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {summaryModal && (
                 <div className="app-modal-overlay" onClick={() => setSummaryModal(null)}>
                     <div className="app-modal-panel w-full max-w-2xl rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -3837,9 +4638,65 @@ function Dashboard() {
                             </button>
                         </div>
                         <div className="space-y-2 p-4 max-h-[60vh] overflow-y-auto">
+                            {summaryModal.kind === 'events' && (
+                                <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3 mb-3 space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Nuevo evento</p>
+                                        <button
+                                            type="button"
+                                            onClick={handleCreateDashboardEvent}
+                                            className="inline-flex items-center gap-1 rounded-full bg-violet-700 px-3 py-1.5 text-xs font-bold text-white"
+                                        >
+                                            <Plus size={13} />
+                                            Añadir
+                                        </button>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        <input
+                                            value={eventFormTitle}
+                                            onChange={(e) => setEventFormTitle(e.target.value)}
+                                            placeholder="Título del evento"
+                                            className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+                                        />
+                                        <input
+                                            type="date"
+                                            value={eventFormDateKey}
+                                            onChange={(e) => setEventFormDateKey(e.target.value)}
+                                            className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+                                        />
+                                        <textarea
+                                            value={eventFormDescription}
+                                            onChange={(e) => setEventFormDescription(e.target.value)}
+                                            placeholder="Descripción"
+                                            className="min-h-[84px] rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                             {summaryModal.items.length === 0 && (
                                 <div className="app-empty-card">No hay elementos para mostrar.</div>
                             )}
+                            {summaryModal.kind === 'calendar' && summaryModal.items.map((event: any) => (
+                                <div key={`summary-calendar-${event.id}`} className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                                    <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                    <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
+                                </div>
+                            ))}
+                            {summaryModal.kind === 'events' && summaryModal.items.map((event: any) => (
+                                <div key={`summary-event-${event.id}`} className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                                    <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                    <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
+                                    <p className="text-xs text-violet-700">
+                                        {event.description ? (
+                                            <LinkifiedText
+                                                as="span"
+                                                text={event.description}
+                                                linkClassName="underline decoration-dotted underline-offset-2 text-violet-700 hover:text-violet-800"
+                                            />
+                                        ) : 'Sin descripción'}
+                                    </p>
+                                </div>
+                            ))}
                             {summaryModal.kind === 'tasks' && summaryModal.items.map((task: any) => (
                                 <button
                                     key={`summary-task-${task.id}`}
