@@ -46,6 +46,7 @@ type BillingOrder = {
   documentType: BillingDocumentType;
   movementType: BillingMovementType;
   sourceWarehouse: BillingWarehouse;
+  transferOrigin?: string;
   transferDestination?: string;
   inventoryTarget: 'canet' | 'huarte';
   invoiceNumber: string;
@@ -180,7 +181,7 @@ function normalizeWarehouseAlias(input: string): BillingWarehouse | '' {
   return '';
 }
 
-function normalizeTransferDestination(input: string): string {
+function normalizeTransferNode(input: string): string {
   const v = clean(input)
     .toUpperCase()
     .normalize('NFD')
@@ -194,6 +195,10 @@ function normalizeTransferDestination(input: string): string {
   if (v.includes('VALENCIA')) return 'VALENCIA';
   if (v.includes('MAS BORR')) return 'MAS BORRAS';
   return clean(input).toUpperCase();
+}
+
+function normalizeTransferDestination(input: string): string {
+  return normalizeTransferNode(input);
 }
 
 function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
@@ -1562,6 +1567,7 @@ function parseTransferFromText(
   const originRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+ORIGEN[:\-\s]*/i, 4);
   const destinationRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+DESTINO[:\-\s]*/i, 4);
   const sourceWarehouse = normalizeWarehouseAlias(originRaw) || fallbackWarehouse;
+  const transferOrigin = normalizeTransferNode(originRaw) || sourceWarehouse;
   const transferDestination = normalizeTransferDestination(destinationRaw);
 
   const motive = findValueAfterLabel(lines, /^MOTIVO[:\-\s]*/i, 3);
@@ -1580,6 +1586,7 @@ function parseTransferFromText(
     documentType: 'TRANSFERENCIA',
     movementType: 'traspaso',
     sourceWarehouse,
+    transferOrigin,
     transferDestination,
     inventoryTarget: sourceWarehouse === 'CANET' ? 'canet' : 'huarte',
     invoiceNumber: transferNumber,
@@ -2998,7 +3005,12 @@ export default function FacturacionPage() {
     const movementSource = order.inventoryTarget === 'canet' ? canetMovements : huarteMovements;
     const mutation = order.inventoryTarget === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
     const isTransfer = order.movementType === 'traspaso';
+    const transferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
     const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    if (isTransfer && !transferOrigin) {
+      alert('Este traspaso necesita una bodega origen. Selecciónala antes de despachar.');
+      return;
+    }
     if (isTransfer && !transferDestination) {
       alert('Este traspaso necesita una bodega destino. Selecciónala antes de despachar.');
       return;
@@ -3021,7 +3033,7 @@ export default function FacturacionPage() {
         const lineKey = `${productCode}|${lote}|${qty}`;
         const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
         lineOccurrence.set(lineKey, occurrence);
-        const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
+        const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${transferOrigin || clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
 
         if (!productCode || !lote) {
           lineErrors.push(`${line.productRaw || line.productCode}: faltan datos de producto/lote.`);
@@ -3051,7 +3063,7 @@ export default function FacturacionPage() {
               cantidad: qty,
               cantidad_signed: -qty,
               signo: -1,
-              bodega: order.sourceWarehouse,
+              bodega: isTransfer ? transferOrigin || order.sourceWarehouse : order.sourceWarehouse,
               cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
               destino: isTransfer ? transferDestination : '',
               notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
@@ -3087,7 +3099,7 @@ export default function FacturacionPage() {
           }
         }
 
-        if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(order.sourceWarehouse).toUpperCase()) {
+        if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(transferOrigin || order.sourceWarehouse).toUpperCase()) {
           const autoMarker = `${marker}|AUTO_IN`;
           const autoStableMarker = `${stableMarker}|AUTO_IN`;
           let existingAuto =
@@ -3108,9 +3120,9 @@ export default function FacturacionPage() {
                 cantidad_signed: qty,
                 signo: 1,
                 bodega: transferDestination,
-                cliente: clean(order.sourceWarehouse),
+                cliente: transferOrigin || clean(order.sourceWarehouse),
                 destino: transferDestination,
-                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde ${clean(order.sourceWarehouse)}`,
+                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde ${transferOrigin || clean(order.sourceWarehouse)}`,
                 factura_doc: order.invoiceNumber,
                 responsable: currentUser?.name || 'Sistema',
                 source: 'facturacion_pdf_auto_in',
@@ -3242,6 +3254,7 @@ export default function FacturacionPage() {
         order.movementType,
         order.documentType,
         order.sourceWarehouse,
+        order.transferOrigin || '',
         order.transferDestination || '',
         order.sourceFileName,
         order.orderNote || '',
@@ -3529,6 +3542,26 @@ export default function FacturacionPage() {
                     </span>
                     {order.documentType === 'TRANSFERENCIA' ? (
                       <div className="flex flex-col gap-1">
+                        <label className="flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-800">
+                          <span>Origen</span>
+                          <select
+                            value={order.transferOrigin || order.sourceWarehouse || ''}
+                            onChange={(e) =>
+                              updateOrder(order.id, (current) => ({
+                                ...current,
+                                transferOrigin: normalizeTransferNode(e.target.value),
+                              }))
+                            }
+                            className="min-w-[150px] rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] font-black text-violet-900 outline-none"
+                          >
+                            <option value="">Seleccionar origen...</option>
+                            {TRANSFER_DESTINATION_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
                           <span>Destino</span>
                           <select
