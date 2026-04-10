@@ -215,9 +215,30 @@ const toVialesNum = (value: unknown) => {
 };
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
+const TRANSFER_NODE_OPTIONS = [
+  'CANET',
+  'HUARTE',
+  'BARCELONA',
+  'BILBAO',
+  'LOGROÑO',
+  'MAS BORRAS',
+  'PAMPLONA',
+  'VALENCIA',
+];
 const normalizeWarehouseAlias = (v: any) => {
-  const value = clean(v).toUpperCase();
+  const value = clean(v)
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
   if (value === 'CAN') return 'CANET';
+  if (value === 'HUARTE' || value === 'GUARTE' || value === 'WARTE' || value === 'WUARTE') return 'HUARTE';
+  if (value.includes('BARCELONA')) return 'BARCELONA';
+  if (value.includes('BILBAO')) return 'BILBAO';
+  if (value.includes('LOGRONO')) return 'LOGROÑO';
+  if (value.includes('MAS BORRAS') || value.includes('MASBORRAS') || value.includes('MAS BORRAS')) return 'MAS BORRAS';
+  if (value.includes('PAMPLONA')) return 'PAMPLONA';
+  if (value.includes('VALENCIA')) return 'VALENCIA';
+  if (TRANSFER_NODE_OPTIONS.includes(value)) return value;
   return value;
 };
 const describeDbError = (error: unknown) => {
@@ -1497,6 +1518,19 @@ function InventoryPage() {
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
+  const transferNodeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...TRANSFER_NODE_OPTIONS,
+          ...warehouseOptions.map((v) => normalizeWarehouseAlias(v)),
+          ...clientOptions.map((v) => normalizeWarehouseAlias(v)),
+        ]),
+      )
+        .filter(Boolean)
+        .sort(),
+    [warehouseOptions, clientOptions],
+  );
 
   useEffect(() => {
     if (!lotFilter) return;
@@ -3112,11 +3146,15 @@ function InventoryPage() {
     }
     if (savingMovement) return;
     const qty = Math.abs(toNum(movementForm.cantidad));
+    const isTransfer = normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const transferDestination = clean(movementForm.destino || movementForm.cliente);
+    const transferOrigin = clean(movementForm.bodega);
     const missingFields: string[] = [];
     if (!clean(movementForm.tipo_movimiento)) missingFields.push('Tipo');
     if (!clean(movementForm.producto)) missingFields.push('Producto');
     if (!clean(movementForm.lote)) missingFields.push('Lote');
-    if (!clean(movementForm.bodega)) missingFields.push('Bodega');
+    if (!transferOrigin) missingFields.push(isTransfer ? 'Origen' : 'Bodega');
+    if (isTransfer && !transferDestination) missingFields.push('Destino');
     if (!qty) missingFields.push('Cantidad');
     if (missingFields.length > 0) {
       window.alert(`Completa estos campos para guardar:\n- ${missingFields.join('\n- ')}`);
@@ -3124,13 +3162,18 @@ function InventoryPage() {
     }
     const producto = clean(movementForm.producto);
     const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
-    const bodega = normalizeWarehouseAlias(clean(movementForm.bodega));
+    const bodega = normalizeWarehouseAlias(transferOrigin);
+    const destinoNormalizado = isTransfer ? normalizeWarehouseAlias(transferDestination) || transferDestination : clean(movementForm.destino);
     const loteValido = visibleLotes.some((l) => {
       if (clean(l.producto) !== producto) return false;
       return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(lote);
     });
     if (!loteValido) {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
+      return;
+    }
+    if (isTransfer && !destinoNormalizado) {
+      window.alert('Selecciona una bodega o cliente destino válido.');
       return;
     }
     const lotState = lotStateByProductLot.get(lotKeyOf(producto, lote)) || 'ACTIVO';
@@ -3174,8 +3217,8 @@ function InventoryPage() {
           lote,
           cantidad: qty,
           bodega,
-          cliente: movementForm.cliente,
-          destino: movementForm.destino,
+          cliente: isTransfer ? destinoNormalizado : movementForm.cliente,
+          destino: isTransfer ? destinoNormalizado : movementForm.destino,
           notas: movementForm.notas,
           signo: sign,
           cantidad_signed: qty * sign,
@@ -3204,8 +3247,8 @@ function InventoryPage() {
           lote,
           cantidad: qty,
           bodega,
-          cliente: movementForm.cliente,
-          destino: movementForm.destino,
+          cliente: isTransfer ? destinoNormalizado : movementForm.cliente,
+          destino: isTransfer ? destinoNormalizado : movementForm.destino,
           notas: movementForm.notas,
           afecta_stock: 'SI',
           signo: sign,
@@ -4719,6 +4762,25 @@ function InventoryPage() {
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <Input label="Fecha" type="date" value={movementForm.fecha} onChange={(v) => setMovementForm({ ...movementForm, fecha: v })} />
               <InputDatalist label="Tipo" value={movementForm.tipo_movimiento} onChange={(v) => setMovementForm({ ...movementForm, tipo_movimiento: v })} listId="inventory-types" options={typeOptions} placeholder="venta, traspaso..." />
+              {normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+                <InputDatalist
+                  label="Origen"
+              value={movementForm.bodega}
+              onChange={(v) => setMovementForm({ ...movementForm, bodega: v })}
+              listId="inventory-transfer-origin"
+              options={transferNodeOptions}
+              placeholder="Bodega o cliente origen"
+            />
+          ) : (
+            <InputDatalist
+              label="Bodega"
+              value={movementForm.bodega}
+                  onChange={(v) => setMovementForm({ ...movementForm, bodega: v })}
+                  listId="inventory-bodegas"
+                  options={warehouseOptions}
+                  placeholder="Bodega"
+                />
+              )}
               <ProductColorSelect
                 label="Producto"
                 value={movementForm.producto}
@@ -4728,9 +4790,21 @@ function InventoryPage() {
               />
               <InputDatalist label="Lote" value={movementForm.lote} onChange={(v) => setMovementForm({ ...movementForm, lote: v })} listId="inventory-lotes" options={lotOptionsForForm} placeholder="Lote" />
               <Input label="Cantidad" type="number" value={movementForm.cantidad} onChange={(v) => setMovementForm({ ...movementForm, cantidad: v })} />
-              <InputDatalist label="Bodega" value={movementForm.bodega} onChange={(v) => setMovementForm({ ...movementForm, bodega: v })} listId="inventory-bodegas" options={warehouseOptions} placeholder="Bodega" />
-              <InputDatalist label="Cliente" value={movementForm.cliente} onChange={(v) => setMovementForm({ ...movementForm, cliente: v })} listId="inventory-clientes" options={clientOptions} placeholder="Opcional" />
-              <Input label="Destino" value={movementForm.destino} onChange={(v) => setMovementForm({ ...movementForm, destino: v })} />
+              {normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+                <InputDatalist
+                  label="Destino"
+              value={movementForm.destino || movementForm.cliente}
+              onChange={(v) => setMovementForm({ ...movementForm, destino: v, cliente: v })}
+              listId="inventory-transfer-destination"
+              options={transferNodeOptions}
+              placeholder="Bodega o cliente destino"
+            />
+          ) : (
+                <>
+                  <InputDatalist label="Cliente" value={movementForm.cliente} onChange={(v) => setMovementForm({ ...movementForm, cliente: v })} listId="inventory-clientes" options={clientOptions} placeholder="Opcional" />
+                  <Input label="Destino" value={movementForm.destino} onChange={(v) => setMovementForm({ ...movementForm, destino: v })} />
+                </>
+              )}
               <Input label="Notas" value={movementForm.notas} onChange={(v) => setMovementForm({ ...movementForm, notas: v })} />
             </div>
             <div className="mt-4 flex gap-2">
