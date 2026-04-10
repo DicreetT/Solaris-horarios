@@ -1035,6 +1035,8 @@ function InventoryPage() {
   });
   const syncMirrorUpsert = async (m: Movement) => {
     if (!canWriteHuarteMirrorFromCanet) return;
+    const tipo = normalizeSearch(clean(m.tipo_movimiento));
+    if (tipo.includes('traspaso')) return;
     const mirror = toHuarteMirrorMovement(m);
     const destination = clean(m.destino) || clean(m.cliente);
     const shouldAutoIn = isCanetTransferToHuarte(m, destination);
