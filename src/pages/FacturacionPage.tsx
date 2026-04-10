@@ -115,6 +115,16 @@ declare global {
 }
 
 const PRODUCT_OPTIONS: ProductCode[] = ['AV', 'ENT', 'ISO', 'KL', 'RG', 'SV'];
+const TRANSFER_DESTINATION_OPTIONS = [
+  { value: 'CANET', label: 'Canet' },
+  { value: 'HUARTE', label: 'Huarte' },
+  { value: 'BARCELONA', label: 'Barcelona' },
+  { value: 'BILBAO', label: 'Bilbao' },
+  { value: 'LOGROÑO', label: 'Logroño' },
+  { value: 'MAS BORRAS', label: 'Mas Borras' },
+  { value: 'PAMPLONA', label: 'Pamplona' },
+  { value: 'VALENCIA', label: 'Valencia' },
+];
 const OCR_MIN_TEXT_LENGTH = 30;
 const OCR_MAX_PAGES = 12;
 const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
@@ -1552,10 +1562,10 @@ function parseTransferFromText(
   const originRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+ORIGEN[:\-\s]*/i, 4);
   const destinationRaw = findValueAfterLabel(lines, /^ALMAC[EÉ]N\s+DE\s+DESTINO[:\-\s]*/i, 4);
   const sourceWarehouse = normalizeWarehouseAlias(originRaw) || fallbackWarehouse;
-  const transferDestination = normalizeTransferDestination(destinationRaw) || (sourceWarehouse === 'CANET' ? 'HUARTE' : 'CANET');
+  const transferDestination = normalizeTransferDestination(destinationRaw);
 
   const motive = findValueAfterLabel(lines, /^MOTIVO[:\-\s]*/i, 3);
-  const customerName = transferDestination;
+  const customerName = transferDestination || 'DESTINO POR DEFINIR';
   const transferLines = extractTransferLines(normalized);
   const hasPending = transferLines.some((line) => line.lotePending || !clean(line.lote));
   const createdAt = nowIso();
@@ -2989,6 +2999,10 @@ export default function FacturacionPage() {
     const mutation = order.inventoryTarget === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
     const isTransfer = order.movementType === 'traspaso';
     const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    if (isTransfer && !transferDestination) {
+      alert('Este traspaso necesita una bodega destino. Selecciónala antes de despachar.');
+      return;
+    }
     const destinationInventory: 'canet' | 'huarte' = clean(transferDestination).toUpperCase() === 'CANET' ? 'canet' : 'huarte';
     const destinationMovements = destinationInventory === 'canet' ? canetMovements : huarteMovements;
     const destinationMutation = destinationInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
@@ -3513,10 +3527,40 @@ export default function FacturacionPage() {
                     <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-700">
                       {order.sourceWarehouse}
                     </span>
-                    {order.transferDestination && (
-                      <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
-                        Destino {order.transferDestination}
-                      </span>
+                    {order.documentType === 'TRANSFERENCIA' ? (
+                      <div className="flex flex-col gap-1">
+                        <label className="flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
+                          <span>Destino</span>
+                          <select
+                            value={order.transferDestination || ''}
+                            onChange={(e) =>
+                              updateOrder(order.id, (current) => ({
+                                ...current,
+                                transferDestination: normalizeTransferDestination(e.target.value),
+                              }))
+                            }
+                            className="min-w-[150px] rounded-md border border-cyan-200 bg-white px-2 py-1 text-[11px] font-black text-cyan-900 outline-none"
+                          >
+                            <option value="">Seleccionar destino...</option>
+                            {TRANSFER_DESTINATION_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {!order.transferDestination && (
+                          <span className="pl-2 text-[10px] font-bold text-amber-700">
+                            Este traspaso necesita destino manual antes de despachar.
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      order.transferDestination && (
+                        <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
+                          Destino {order.transferDestination}
+                        </span>
+                      )
                     )}
                     <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-black text-indigo-700">
                       {order.movementType}

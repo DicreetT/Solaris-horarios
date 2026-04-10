@@ -1036,7 +1036,7 @@ function InventoryPage() {
   const syncMirrorUpsert = async (m: Movement) => {
     if (!canWriteHuarteMirrorFromCanet) return;
     const mirror = toHuarteMirrorMovement(m);
-    const destination = normalizeWarehouseAlias(clean(m.destino) || clean(m.cliente));
+    const destination = clean(m.destino) || clean(m.cliente);
     const shouldAutoIn = isCanetTransferToHuarte(m, destination);
     const autoIn = shouldAutoIn ? toHuarteAutoInMovement(m, destination) : null;
 
