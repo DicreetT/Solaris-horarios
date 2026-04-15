@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   BellRing,
@@ -40,6 +40,16 @@ function formatDueDate(dueDateKey?: string) {
   return parsed.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
 }
 
+function formatCreatedAt(createdAt: string) {
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return createdAt;
+  return parsed.toLocaleDateString('es-ES', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
 function getTaskPriority(task: Todo, currentUserId: string) {
   const isDoneForMe = task.completed_by.includes(currentUserId);
   const isAssignedToMe = task.assigned_to.includes(currentUserId);
@@ -59,6 +69,10 @@ function getTaskPriority(task: Todo, currentUserId: string) {
 
 function sortTasks(tasks: Todo[], currentUserId: string) {
   return [...tasks].sort((a, b) => {
+    if (a.created_at && b.created_at && a.created_at !== b.created_at) {
+      return b.created_at.localeCompare(a.created_at);
+    }
+
     const pA = getTaskPriority(a, currentUserId);
     const pB = getTaskPriority(b, currentUserId);
     if (pA !== pB) return pA - pB;
@@ -66,7 +80,6 @@ function sortTasks(tasks: Todo[], currentUserId: string) {
     if (a.due_date_key && b.due_date_key) return a.due_date_key.localeCompare(b.due_date_key);
     if (a.due_date_key) return -1;
     if (b.due_date_key) return 1;
-
     return b.created_at.localeCompare(a.created_at);
   });
 }
@@ -118,6 +131,7 @@ function TaskPoster({
   const totalCount = task.assigned_to.length;
   const tags = (task.tags || []).filter((tag) => tag !== PRIORITY_TAG);
   const isFullyDone = isGloballyDone(task);
+  const hasRelampago = !!task.shocked_users?.length;
 
   return (
     <article
@@ -145,6 +159,12 @@ function TaskPoster({
           <span className="inline-flex items-center gap-1 rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-black text-white">
             <Flame size={11} />
             Relámpago
+          </span>
+        )}
+        {hasRelampago && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-700">
+            <BellRing size={11} />
+            Señalado
           </span>
         )}
         {unreadCommentsCount > 0 && (
@@ -185,6 +205,12 @@ function TaskPoster({
               {assignee.name}
             </span>
           ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+          <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 shadow-sm">
+            <Calendar size={11} />
+            Creada {formatCreatedAt(task.created_at)}
+          </span>
         </div>
       </div>
 
@@ -353,10 +379,16 @@ function TaskPreviewDetailModal({
   task,
   onClose,
   highlightRelampago,
+  relampagoRecipients,
+  onRelampagoRecipientsChange,
+  onToggleRelampagoRecipient,
 }: {
   task: Todo;
   onClose: () => void;
   highlightRelampago?: boolean;
+  relampagoRecipients: string[];
+  onRelampagoRecipientsChange: (ids: string[]) => void;
+  onToggleRelampagoRecipient: (uid: string) => void;
 }) {
   const { currentUser } = useAuth();
   const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
@@ -364,10 +396,7 @@ function TaskPreviewDetailModal({
   const [newComment, setNewComment] = useState('');
   const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedRelampagoUserId, setSelectedRelampagoUserId] = useState(
-    task.assigned_to.find((uid) => !task.completed_by.includes(uid)) || task.assigned_to[0] || '',
-  );
-
+  const selectedRelampagoUserId = relampagoRecipients[0] || task.assigned_to.find((uid) => !task.completed_by.includes(uid)) || task.assigned_to[0] || '';
   const selectedRelampagoName = personName(selectedRelampagoUserId);
   const creator = personName(task.created_by);
   const isGloballyComplete = isGloballyDone(task);
@@ -414,6 +443,30 @@ function TaskPreviewDetailModal({
     if (!isDoneForMe) {
       await toggleTodo(task);
     }
+  };
+
+  const handleSendRelampago = async () => {
+    const nextRecipients = relampagoRecipients.filter((uid) => task.assigned_to.includes(uid));
+    if (nextRecipients.length === 0) {
+      alert('Selecciona al menos una persona para enviar el relámpago.');
+      return;
+    }
+    await updateTodo({
+      id: task.id,
+      updates: {
+        shocked_users: Array.from(new Set(nextRecipients)),
+      },
+    });
+  };
+
+  const handleClearRelampago = async () => {
+    await updateTodo({
+      id: task.id,
+      updates: {
+        shocked_users: [],
+      },
+    });
+    onRelampagoRecipientsChange([]);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -640,15 +693,18 @@ function TaskPreviewDetailModal({
               highlightRelampago ? 'border-red-300 bg-red-50 shadow-[0_0_0_4px_rgba(239,68,68,0.09)]' : 'border-violet-200 bg-violet-50'
             }`}>
               <p className="text-xs font-black uppercase tracking-[0.28em] text-violet-600">Relámpago para</p>
+              <p className="mt-1 text-sm font-semibold text-slate-600">
+                Puedes señalar una o varias personas. El aviso rojo se le quita solo a quien lo resuelva.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {task.assigned_to.map((uid) => {
                   const done = isDoneForUser(task, uid);
-                  const selected = uid === selectedRelampagoUserId;
+                  const selected = relampagoRecipients.includes(uid);
                   return (
                     <button
                       key={uid}
                       type="button"
-                      onClick={() => setSelectedRelampagoUserId(uid)}
+                      onClick={() => onToggleRelampagoRecipient(uid)}
                       className={`rounded-full border px-3 py-2 text-sm font-bold transition ${
                         selected
                           ? 'border-red-300 bg-red-500 text-white shadow-[0_0_0_4px_rgba(239,68,68,0.12)]'
@@ -667,10 +723,14 @@ function TaskPreviewDetailModal({
               }`}>
                 <div className="flex items-center gap-2 text-rose-700">
                   <BellRing size={16} />
-                  <p className="text-sm font-black">Esta alerta iría solo a {selectedRelampagoName}</p>
+                  <p className="text-sm font-black">
+                    {relampagoRecipients.length > 1
+                      ? `Esta alerta iría a ${relampagoRecipients.map((uid) => personName(uid)).join(', ')}`
+                      : `Esta alerta iría solo a ${selectedRelampagoName}`}
+                  </p>
                 </div>
                 <p className="mt-2 text-sm font-medium text-rose-900/80">
-                  En la maqueta, eliges a una sola persona aunque la tarea tenga varios asignados.
+                  En la maqueta, eliges una o varias personas aunque la tarea tenga varios asignados.
                 </p>
               </div>
             </div>
@@ -712,6 +772,21 @@ function TaskPreviewDetailModal({
             <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4">
               <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-400">Acciones</p>
               <div className="mt-3 grid gap-2">
+                <button
+                  type="button"
+                  onClick={handleSendRelampago}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-500 px-4 py-3 text-sm font-black text-white hover:bg-red-400"
+                >
+                  <BellRing size={16} />
+                  Enviar relámpago
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearRelampago}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700 hover:bg-rose-100"
+                >
+                  Quitar relámpago
+                </button>
                 <button
                   type="button"
                   onClick={markCommentsRead}
@@ -759,6 +834,7 @@ export default function TasksModernPreviewPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
   const [highlightRelampago, setHighlightRelampago] = useState(false);
+  const [relampagoRecipients, setRelampagoRecipients] = useState<string[]>([]);
   const [openSections, setOpenSections] = useState({
     assigned: true,
     urgent: true,
@@ -806,16 +882,47 @@ export default function TasksModernPreviewPage() {
     () => sortTasks(todos.filter((task) => !isGloballyDone(task)), currentUser.id),
     [todos, currentUser.id],
   );
+  const relampagoTasks = useMemo(
+    () => sortTasks(
+      todos.filter((task) => (task.shocked_users || []).includes(currentUser.id) && !isGloballyDone(task)),
+      currentUser.id,
+    ),
+    [todos, currentUser.id],
+  );
 
   const urgentCount = urgent.length;
   const assignedOpenCount = assignedToMe.filter((task) => !task.completed_by.includes(currentUser.id)).length;
   const createdCount = createdByMe.length;
-  const spotlightTask = urgent[0] || assignedToMe[0] || createdByMe[0] || allTeam[0] || completed[0] || null;
+  const spotlightTask = relampagoTasks[0] || urgent[0] || assignedToMe[0] || createdByMe[0] || allTeam[0] || completed[0] || null;
+
+  useEffect(() => {
+    if (!selectedTask) return;
+    const fresh = todos.find((task) => task.id === selectedTask.id);
+    if (fresh && fresh !== selectedTask) {
+      setSelectedTask(fresh);
+    }
+  }, [todos, selectedTask]);
 
   const openRelampago = (task: Todo) => {
     setHighlightRelampago(true);
     setSelectedTask(task);
   };
+
+  useEffect(() => {
+    if (!selectedTask) {
+      setRelampagoRecipients([]);
+      return;
+    }
+
+    const currentRelampago = (selectedTask.shocked_users || []).filter((uid) => selectedTask.assigned_to.includes(uid));
+    if (currentRelampago.length > 0) {
+      setRelampagoRecipients(currentRelampago);
+      return;
+    }
+
+    const initialRecipient = selectedTask.assigned_to.find((uid) => !selectedTask.completed_by.includes(uid)) || selectedTask.assigned_to[0] || '';
+    setRelampagoRecipients(initialRecipient ? [initialRecipient] : []);
+  }, [selectedTask]);
 
   const toggleMyPart = async (task: Todo) => {
     try {
@@ -837,6 +944,12 @@ export default function TasksModernPreviewPage() {
 
   const toggleSection = (key: keyof typeof openSections) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleRelampagoRecipient = (uid: string) => {
+    setRelampagoRecipients((prev) =>
+      prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid],
+    );
   };
 
   return (
@@ -879,15 +992,15 @@ export default function TasksModernPreviewPage() {
                 <Plus size={15} />
                 Nueva tarea
               </button>
-              <button
-                type="button"
-                onClick={() => spotlightTask && openRelampago(spotlightTask)}
-                disabled={!spotlightTask}
-                className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800 hover:bg-amber-100"
-              >
-                <BellRing size={15} />
-                Ver alerta relámpago
-              </button>
+                <button
+                  type="button"
+                  onClick={() => spotlightTask && openRelampago(spotlightTask)}
+                  disabled={!spotlightTask}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800 hover:bg-amber-100"
+                >
+                  <BellRing size={15} />
+                  Ver relámpago mío
+                </button>
             </div>
           </div>
 
@@ -915,7 +1028,7 @@ export default function TasksModernPreviewPage() {
                 disabled={!spotlightTask}
                 className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-black text-slate-950 hover:bg-amber-400"
               >
-                Ver maqueta relámpago
+                Ver tarea destacada
                 <ArrowRight size={15} />
               </button>
             </div>
@@ -923,9 +1036,9 @@ export default function TasksModernPreviewPage() {
         </div>
       </section>
 
-      <TaskRail
+        <TaskRail
         title="Asignadas a mí"
-        subtitle="Más claras, con nombres visibles y prioridad arriba. Sin scroll vertical infinito."
+        subtitle="Más claras, con nombres visibles, fecha de creación y prioridad por lo más reciente."
         tasks={assignedToMe}
         currentUserId={currentUser.id}
         unreadCommentsByTask={unreadCommentsByTask}
@@ -937,9 +1050,9 @@ export default function TasksModernPreviewPage() {
         onToggleOpen={() => toggleSection('assigned')}
       />
 
-      <TaskRail
+        <TaskRail
         title="Urgentes / relámpago"
-        subtitle="Una fila que agrupa vencidas, prioritarias o con aviso fuerte."
+        subtitle="Una fila que agrupa las tareas que ya están señaladas o vencidas."
         tasks={urgent}
         currentUserId={currentUser.id}
         unreadCommentsByTask={unreadCommentsByTask}
@@ -951,9 +1064,9 @@ export default function TasksModernPreviewPage() {
         onToggleOpen={() => toggleSection('urgent')}
       />
 
-      <TaskRail
+        <TaskRail
         title="Creadas por mí"
-        subtitle="Lo que tú generaste, con tu firma, tus destinatarios y la urgencia visible."
+        subtitle="Lo que tú generaste, ordenado por fecha de creación y con la urgencia visible."
         tasks={createdByMe}
         currentUserId={currentUser.id}
         unreadCommentsByTask={unreadCommentsByTask}
@@ -981,7 +1094,7 @@ export default function TasksModernPreviewPage() {
         />
       )}
 
-      <TaskRail
+        <TaskRail
         title="Completas"
         subtitle="Todo lo que ya está terminado por todo el equipo, al final y plegado."
         tasks={completed}
@@ -1005,9 +1118,13 @@ export default function TasksModernPreviewPage() {
         <TaskPreviewDetailModal
           task={selectedTask}
           highlightRelampago={highlightRelampago}
+          relampagoRecipients={relampagoRecipients}
+          onRelampagoRecipientsChange={setRelampagoRecipients}
+          onToggleRelampagoRecipient={toggleRelampagoRecipient}
           onClose={() => {
             setSelectedTask(null);
             setHighlightRelampago(false);
+            setRelampagoRecipients([]);
           }}
         />
       )}
