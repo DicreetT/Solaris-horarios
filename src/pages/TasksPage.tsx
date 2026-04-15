@@ -18,7 +18,6 @@ function TasksPage() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
     const [searchParams, setSearchParams] = useSearchParams();
-
     // Auto-open task if task ID is in URL
     useEffect(() => {
         const taskId = searchParams.get('task');

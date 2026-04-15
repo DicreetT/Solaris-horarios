@@ -13,7 +13,7 @@ import { CARLOS_EMAIL } from './constants';
 // Pages
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const CalendarPage = React.lazy(() => import('./pages/CalendarPage'));
-const TasksPage = React.lazy(() => import('./pages/TasksPage'));
+const TasksModernPreviewPage = React.lazy(() => import('./pages/TasksModernPreviewPage'));
 const MeetingsPage = React.lazy(() => import('./pages/MeetingsPage'));
 const AbsencesPage = React.lazy(() => import('./pages/AbsencesPage'));
 const TrainingsPage = React.lazy(() => import('./pages/TrainingsPage'));
@@ -104,7 +104,7 @@ function App() {
           }>
             <Route path="/dashboard" element={withLazyPage(<Dashboard />)} />
             <Route path="/calendar" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<CalendarPage />)} />
-            <Route path="/tasks" element={withLazyPage(<TasksPage />)} />
+            <Route path="/tasks" element={withLazyPage(<TasksModernPreviewPage />)} />
             <Route path="/meetings" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<MeetingsPage />)} />
             <Route path="/absences" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<AbsencesPage />)} />
             <Route path="/trainings" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TrainingsPage />)} />
