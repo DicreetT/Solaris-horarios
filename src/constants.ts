@@ -67,10 +67,10 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
     },
     {
         id: "conteo",
-        label: "CONTEO CANET LUNES",
-        description: "Registro semanal de conteo en la sede Canet.",
-        emoji: "📊",
-        url: "https://drive.google.com/drive/folders/1dCWJQMj1Ax7K3xJqiMaQqkK2QLIs9Fu-",
+        label: "ALBARANES",
+        description: "Gestión interna de albaranes por producto.",
+        emoji: "🗂️",
+        url: "/albaranes",
         users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", "cb5d2e6e-9046-4b22-b509-469076999d78", ESTEBAN_ID, "1c42e44a-7e58-4c86-94ca-404061f8863d"],
     },
     {

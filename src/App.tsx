@@ -20,6 +20,7 @@ const TrainingsPage = React.lazy(() => import('./pages/TrainingsPage'));
 const ExportsPage = React.lazy(() => import('./pages/ExportsPage'));
 const TimeTrackingPage = React.lazy(() => import('./pages/TimeTrackingPage'));
 const FoldersPage = React.lazy(() => import('./pages/FoldersPage'));
+const AlbaranesPage = React.lazy(() => import('./pages/AlbaranesPage'));
 const ShoppingListPage = React.lazy(() => import('./pages/ShoppingListPage'));
 const DailyChecklistPage = React.lazy(() => import('./pages/DailyChecklistPage'));
 const ChatPage = React.lazy(() => import('./pages/ChatPage'));
@@ -110,6 +111,7 @@ function App() {
             <Route path="/time-tracking" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<TimeTrackingPage />)} />
             <Route path="/exports" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ExportsPage />)} />
             <Route path="/folders" element={withLazyPage(<FoldersPage />)} />
+            <Route path="/albaranes" element={withLazyPage(<AlbaranesPage />)} />
             <Route path="/shopping" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ShoppingListPage />)} />
             <Route path="/checklist" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<DailyChecklistPage />)} />
             <Route path="/chat" element={withLazyPage(<ChatPage />)} />

@@ -50,6 +50,7 @@ const SearchPalette: React.FC = () => {
         { label: 'Inventario Huarte', path: '/inventory-facturacion', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
         { label: 'Carpetas', path: '/folders', icon: Folder },
+        { label: 'Albaranes', path: '/albaranes', icon: FileText },
     ].filter((link) => {
         if (!isRestrictedUser) return true;
         return ['/dashboard', '/chat', '/tasks', '/inventory', '/inventory-facturacion', '/folders'].includes(link.path);

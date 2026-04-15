@@ -94,7 +94,7 @@ function isPlainObject(value: unknown): value is Record<string, any> {
 }
 
 function entityVersionMs(value: Record<string, any>) {
-  const candidates = ['lastChangedAt', 'updatedAt', 'updated_at', 'attachedAt', 'archivedAt', 'createdAt', 'created_at'];
+  const candidates = ['lastChangedAt', 'updatedAt', 'updated_at', 'deletedAt', 'attachedAt', 'archivedAt', 'createdAt', 'created_at'];
   for (const field of candidates) {
     const raw = value[field];
     if (raw == null || raw === '') continue;

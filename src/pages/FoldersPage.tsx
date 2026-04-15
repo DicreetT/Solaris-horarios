@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
 import { Folder, ExternalLink, FileText, Printer, Trash2 } from 'lucide-react';
@@ -169,6 +170,7 @@ function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
  */
 function FoldersPage() {
     const { currentUser } = useAuth();
+    const navigate = useNavigate();
     const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const [facturacionArchive, setFacturacionArchive, archiveLoading] = useSharedJsonState<BillingArchiveEntry[]>(
         FACTURACION_ARCHIVE_KEY,
@@ -377,12 +379,10 @@ function FoldersPage() {
             {/* Folders Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {foldersForUser.map((folder) => {
+                    const isInternalAlbaranes = folder.id === 'conteo';
                     return (
-                        <a
+                        <div
                             key={folder.id}
-                            href={folder.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             className="group relative bg-white rounded-3xl border-2 border-gray-100 shadow-lg overflow-hidden hover:border-primary/30 hover:shadow-xl transition-all duration-200 flex flex-col"
                         >
                             <div className="p-6 flex-1 flex flex-col items-center text-center">
@@ -398,11 +398,26 @@ function FoldersPage() {
                                     {folder.description}
                                 </p>
 
-                                <div className="mt-auto flex items-center gap-2 text-sm font-bold text-primary bg-primary/10 px-4 py-2.5 rounded-xl group-hover:bg-primary group-hover:text-white transition-all">
-                                    Abrir carpeta <ExternalLink size={16} />
-                                </div>
+                                {isInternalAlbaranes ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate('/albaranes')}
+                                        className="mt-auto flex items-center gap-2 text-sm font-bold text-primary bg-primary/10 px-4 py-2.5 rounded-xl group-hover:bg-primary group-hover:text-white transition-all"
+                                    >
+                                        Abrir módulo <FileText size={16} />
+                                    </button>
+                                ) : (
+                                    <a
+                                        href={folder.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="mt-auto flex items-center gap-2 text-sm font-bold text-primary bg-primary/10 px-4 py-2.5 rounded-xl group-hover:bg-primary group-hover:text-white transition-all"
+                                    >
+                                        Abrir carpeta <ExternalLink size={16} />
+                                    </a>
+                                )}
                             </div>
-                        </a>
+                        </div>
                     );
                 })}
             </div>
