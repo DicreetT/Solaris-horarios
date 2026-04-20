@@ -6,6 +6,7 @@ type Options = {
   initializeIfMissing?: boolean;
   pollIntervalMs?: number;
   protectFromEmptyOverwrite?: boolean;
+  preferRemoteSnapshot?: boolean;
   mergeBeforePersist?: boolean;
   mergeStrategy?: (remote: any, local: any) => any;
   mergeIncomingWithLocal?: boolean;
@@ -241,6 +242,7 @@ export function useSharedJsonState<T>(
     initializeIfMissing = true,
     pollIntervalMs = 120000,
     protectFromEmptyOverwrite = false,
+    preferRemoteSnapshot = false,
     mergeBeforePersist = false,
     mergeStrategy,
     mergeIncomingWithLocal = true,
@@ -312,7 +314,7 @@ export function useSharedJsonState<T>(
         throw error;
       }
 
-      if (protectFromEmptyOverwrite && !isEffectivelyEmpty(payloadToStore)) {
+      if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(payloadToStore)) {
         const backupKey = backupKeyRef.current;
         const { error: backupError } = await withTimeout<{ error: any }>(
           supabase
@@ -336,7 +338,7 @@ export function useSharedJsonState<T>(
       }
       return payloadToStore;
     },
-    [key, mergeBeforePersist, mergeStrategy, protectFromEmptyOverwrite, userId],
+    [key, mergeBeforePersist, mergeStrategy, preferRemoteSnapshot, protectFromEmptyOverwrite, userId],
   );
 
   useEffect(() => {
@@ -346,7 +348,7 @@ export function useSharedJsonState<T>(
     localCacheKeyRef.current = `shared_json_state_cache:${key}`;
     backupKeyRef.current = `shared_json_state_backup_non_empty:${key}`;
 
-    if (protectFromEmptyOverwrite) {
+    if (protectFromEmptyOverwrite && !preferRemoteSnapshot) {
       const cached = safeReadLocal<T>(localCacheKeyRef.current);
       if (cached !== undefined && !isEffectivelyEmpty(cached)) {
         setValue(cached);
@@ -401,31 +403,35 @@ export function useSharedJsonState<T>(
             return;
           }
 
-          const cached = safeReadLocal<T>(localCacheKeyRef.current);
-          if (cached !== undefined && !isEffectivelyEmpty(cached)) {
-            setValue(cached);
-            valueRef.current = cached;
-            if (!silent) await persist(cached);
-            if (active && !silent) setLoading(false);
-            return;
+          if (!preferRemoteSnapshot) {
+            const cached = safeReadLocal<T>(localCacheKeyRef.current);
+            if (cached !== undefined && !isEffectivelyEmpty(cached)) {
+              setValue(cached);
+              valueRef.current = cached;
+              if (!silent) await persist(cached);
+              if (active && !silent) setLoading(false);
+              return;
+            }
           }
 
           // Intento de recuperación multi-dispositivo desde backup no vacío.
-          const backupKey = backupKeyRef.current;
-          const { data: backupData, error: backupError } = await supabase
-            .from('shared_json_state')
-            .select('payload')
-            .eq('key', backupKey)
-            .maybeSingle();
-          if (!backupError) {
-            const backupPayload = (backupData?.payload as T | undefined);
-            if (backupPayload !== undefined && !isEffectivelyEmpty(backupPayload)) {
-              setValue(backupPayload);
-              valueRef.current = backupPayload;
-              safeWriteLocal(localCacheKeyRef.current, backupPayload);
-              if (!silent) await persist(backupPayload);
-              if (active && !silent) setLoading(false);
-              return;
+          if (!preferRemoteSnapshot) {
+            const backupKey = backupKeyRef.current;
+            const { data: backupData, error: backupError } = await supabase
+              .from('shared_json_state')
+              .select('payload')
+              .eq('key', backupKey)
+              .maybeSingle();
+            if (!backupError) {
+              const backupPayload = (backupData?.payload as T | undefined);
+              if (backupPayload !== undefined && !isEffectivelyEmpty(backupPayload)) {
+                setValue(backupPayload);
+                valueRef.current = backupPayload;
+                safeWriteLocal(localCacheKeyRef.current, backupPayload);
+                if (!silent) await persist(backupPayload);
+                if (active && !silent) setLoading(false);
+                return;
+              }
             }
           }
         }
@@ -439,7 +445,7 @@ export function useSharedJsonState<T>(
 
         setValue(incoming);
         valueRef.current = incoming;
-        if (protectFromEmptyOverwrite && !isEffectivelyEmpty(incoming)) {
+        if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(incoming)) {
           safeWriteLocal(localCacheKeyRef.current, incoming);
         }
       } else {
@@ -527,7 +533,7 @@ export function useSharedJsonState<T>(
             : (nextRaw as T);
           setValue(next as T);
           valueRef.current = next as T;
-          if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
+          if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(next)) {
             safeWriteLocal(localCacheKeyRef.current, next as T);
           }
         },
@@ -560,7 +566,7 @@ export function useSharedJsonState<T>(
             ? (updater as (prevState: T) => T)(prev)
             : updater;
         valueRef.current = next;
-        if (protectFromEmptyOverwrite && !isEffectivelyEmpty(next)) {
+        if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(next)) {
           safeWriteLocal(localCacheKeyRef.current, next);
         }
         const writeVersion = ++writeVersionRef.current;
@@ -583,7 +589,7 @@ export function useSharedJsonState<T>(
               if (stored === next) return;
               valueRef.current = stored;
               setValue(stored);
-              if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
+              if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(stored)) {
                 safeWriteLocal(localCacheKeyRef.current, stored);
               }
             })
@@ -614,7 +620,7 @@ export function useSharedJsonState<T>(
                         if (stored === snapshot) return;
                         valueRef.current = stored;
                         setValue(stored);
-                        if (protectFromEmptyOverwrite && !isEffectivelyEmpty(stored)) {
+                        if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(stored)) {
                           safeWriteLocal(localCacheKeyRef.current, stored);
                         }
                       })
@@ -648,7 +654,7 @@ export function useSharedJsonState<T>(
               setValue((current) => {
                 if (current !== next) return current;
                 valueRef.current = previous;
-                if (protectFromEmptyOverwrite && !isEffectivelyEmpty(previous)) {
+                if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(previous)) {
                   safeWriteLocal(localCacheKeyRef.current, previous);
                 }
                 return previous;

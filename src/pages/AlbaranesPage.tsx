@@ -224,11 +224,12 @@ export default function AlbaranesPage() {
     emptyState,
     {
       userId: currentUser?.id,
-      initializeIfMissing: true,
-      pollIntervalMs: 5000,
+      initializeIfMissing: false,
+      pollIntervalMs: 2000,
       protectFromEmptyOverwrite: true,
+      preferRemoteSnapshot: true,
       mergeBeforePersist: true,
-      mergeIncomingWithLocal: true,
+      mergeIncomingWithLocal: false,
     },
   );
 
