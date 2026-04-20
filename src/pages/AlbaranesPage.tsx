@@ -11,6 +11,7 @@ type AlbaranDamageKind = 'origen' | 'envio';
 
 type AlbaranDocument = {
   id: string;
+  title: string;
   attachment?: Attachment;
   attachments: Attachment[];
   note: string;
@@ -184,6 +185,10 @@ function getDocumentPrimaryAttachment(document: AlbaranDocument) {
   return getDocumentAttachments(document)[0] || null;
 }
 
+function getDocumentTitle(document: AlbaranDocument) {
+  return clean(document.title) || getDocumentPrimaryAttachment(document)?.name || 'Albarán';
+}
+
 function getAlbaranStatus(document: AlbaranDocument) {
   if (isAlbaranActive(document)) return 'active' as const;
   if (document.exhaustedAt) return 'exhausted' as const;
@@ -218,6 +223,7 @@ function normalizeTag(tag: Partial<AlbaranTag> | any, fallbackName = 'General'):
     deletedAt: clean(tag?.deletedAt) || '',
     documents: Array.isArray(tag?.documents) ? tag.documents.map((doc: any) => ({
       id: clean(doc?.id) || uid('doc'),
+      title: clean(doc?.title) || clean(doc?.attachment?.name) || 'Albarán',
       attachment: normalizeAttachment(doc?.attachment) || undefined,
       attachments: normalizeAttachments(doc?.attachments || doc?.attachment),
       note: clean(doc?.note),
@@ -314,6 +320,7 @@ export default function AlbaranesPage() {
   const [editingDocumentId, setEditingDocumentId] = useState<string>('');
   const [editingDamageId, setEditingDamageId] = useState<string>('');
   const [selectedNote, setSelectedNote] = useState<{ title: string; note: string } | null>(null);
+  const [docTitle, setDocTitle] = useState('');
   const [docNote, setDocNote] = useState('');
   const [docActive, setDocActive] = useState(false);
   const [docFiles, setDocFiles] = useState<Attachment[]>([]);
@@ -601,6 +608,7 @@ export default function AlbaranesPage() {
   const openDocumentModal = () => {
     if (!selectedProduct || !selectedTag) return;
     setEditingDocumentId('');
+    setDocTitle('');
     setDocNote('');
     setDocActive(false);
     setDocFiles([]);
@@ -610,6 +618,7 @@ export default function AlbaranesPage() {
   const openEditDocumentModal = (document: AlbaranDocument) => {
     if (!selectedProduct || !selectedTag) return;
     setEditingDocumentId(document.id);
+    setDocTitle(getDocumentTitle(document));
     setDocNote(document.note || '');
     setDocActive(isAlbaranActive(document));
     setDocFiles(getDocumentAttachments(document));
@@ -618,8 +627,13 @@ export default function AlbaranesPage() {
 
   const saveDocuments = () => {
     if (!selectedProduct || !selectedTag) return;
+    const title = clean(docTitle);
     if (docFiles.length === 0) {
       window.alert('Adjunta al menos un PDF o una foto.');
+      return;
+    }
+    if (!title) {
+      window.alert('Escribe un título para el albarán.');
       return;
     }
     const now = new Date().toISOString();
@@ -634,6 +648,7 @@ export default function AlbaranesPage() {
                   document.id === editingDocumentId
                     ? {
                         ...document,
+                        title,
                         attachments: docFiles,
                         attachment: docFiles[0],
                         note: docNote.trim(),
@@ -654,6 +669,7 @@ export default function AlbaranesPage() {
     } else {
       const entry: AlbaranDocument = {
         id: uid('doc'),
+        title,
         attachments: docFiles,
         attachment: docFiles[0],
         note: docNote.trim(),
@@ -677,6 +693,7 @@ export default function AlbaranesPage() {
     }
     setShowDocumentModal(false);
     setEditingDocumentId('');
+    setDocTitle('');
   };
 
   const openDamageModal = () => {
@@ -702,7 +719,7 @@ export default function AlbaranesPage() {
   const openNoteModal = (document: AlbaranDocument) => {
     if (!document.note) return;
     setSelectedNote({
-      title: document.attachment.name,
+      title: getDocumentTitle(document),
       note: document.note,
     });
     setShowNoteModal(true);
@@ -778,7 +795,7 @@ export default function AlbaranesPage() {
     const totalOrigin = originEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
     const totalShipping = shippingEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
     const linkedDocuments = selectedTag.documents
-      .map((doc) => getDocumentPrimaryAttachment(doc)?.name || '')
+      .map((doc) => getDocumentTitle(doc) || getDocumentPrimaryAttachment(doc)?.name || '')
       .filter(Boolean);
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const marginX = 36;
@@ -1220,9 +1237,9 @@ export default function AlbaranesPage() {
                                 return (
                                   <div key={doc.id} className={`rounded-2xl border ${palette.softBorder} bg-white p-4`}>
                                     <div className="flex flex-wrap items-start justify-between gap-3">
-                                      <div className="min-w-0">
+                <div className="min-w-0">
                                         <p className={`truncate text-sm font-black ${palette.accent}`}>
-                                          {primaryAttachment?.name || 'Albarán sin archivo'}
+                                          {getDocumentTitle(doc)}
                                         </p>
                                         <p className={`mt-1 text-xs font-semibold ${palette.accent}`}>
                                           {getFileKind(primaryAttachment || attachments[0] || { name: '', url: '', type: '', size: 0 })} · {doc.createdBy} · {formatDateTime(doc.createdAt)}
@@ -1591,6 +1608,15 @@ export default function AlbaranesPage() {
               </button>
             </div>
             <div className="mt-4 space-y-4">
+              <label className="block text-xs font-black uppercase tracking-wide text-violet-700">
+                Título del albarán
+                <input
+                  value={docTitle}
+                  onChange={(e) => setDocTitle(e.target.value)}
+                  placeholder="Lote 2511A20, factura 003355..."
+                  className="mt-1 w-full rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-3 text-sm font-semibold text-violet-900 outline-none placeholder:text-violet-400"
+                />
+              </label>
               <label className="block text-xs font-black uppercase tracking-wide text-violet-700">
                 Nota opcional
                 <textarea
