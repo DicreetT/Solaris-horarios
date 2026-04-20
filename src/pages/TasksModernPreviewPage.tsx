@@ -66,12 +66,9 @@ function isUrgentForUser(task: Todo, currentUserId: string) {
   if (isDoneForMe) return false;
 
   const isPriority = (task.tags || []).includes(PRIORITY_TAG);
-  const today = new Date().toISOString().split('T')[0];
-  const isDueToday = task.due_date_key === today;
-  const isOverdue = task.due_date_key ? task.due_date_key < today : false;
   const isShocked = !!task.shocked_users?.includes(currentUserId);
 
-  return isShocked || isPriority || isDueToday || isOverdue;
+  return isShocked || isPriority;
 }
 
 function getTaskPriority(task: Todo, currentUserId: string) {
@@ -393,6 +390,7 @@ function TaskPreviewDetailModal({
   relampagoRecipients,
   onRelampagoRecipientsChange,
   onToggleRelampagoRecipient,
+  onRelampagoVisualChange,
 }: {
   task: Todo;
   onClose: () => void;
@@ -400,6 +398,7 @@ function TaskPreviewDetailModal({
   relampagoRecipients: string[];
   onRelampagoRecipientsChange: (ids: string[]) => void;
   onToggleRelampagoRecipient: (uid: string) => void;
+  onRelampagoVisualChange: (active: boolean) => void;
 }) {
   const { currentUser } = useAuth();
   const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
@@ -468,6 +467,7 @@ function TaskPreviewDetailModal({
         shocked_users: Array.from(new Set(nextRecipients)),
       },
     });
+    onRelampagoVisualChange(true);
   };
 
   const handleClearRelampago = async () => {
@@ -478,6 +478,7 @@ function TaskPreviewDetailModal({
       },
     });
     onRelampagoRecipientsChange([]);
+    onRelampagoVisualChange(false);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -841,7 +842,7 @@ function TaskPreviewDetailModal({
 
 export default function TasksModernPreviewPage() {
   const { currentUser } = useAuth();
-  const { todos, toggleTodo } = useTodos(currentUser);
+  const { todos, toggleTodo, deleteTodo } = useTodos(currentUser);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
@@ -958,12 +959,14 @@ export default function TasksModernPreviewPage() {
     }
   };
 
-  const deleteTask = (task: Todo) => {
+  const deleteTask = async (task: Todo) => {
     if (task.created_by !== currentUser.id) return;
     const ok = window.confirm(`¿Borrar la tarea "${task.title}"?`);
     if (!ok) return;
-    // Solo demo visual por ahora.
+    await deleteTodo(task.id);
     setSelectedTask((current) => (current?.id === task.id ? null : current));
+    setHighlightRelampago(false);
+    setRelampagoRecipients([]);
   };
 
   const toggleSection = (key: keyof typeof openSections) => {
@@ -1145,6 +1148,7 @@ export default function TasksModernPreviewPage() {
           relampagoRecipients={relampagoRecipients}
           onRelampagoRecipientsChange={setRelampagoRecipients}
           onToggleRelampagoRecipient={toggleRelampagoRecipient}
+          onRelampagoVisualChange={setHighlightRelampago}
           onClose={() => {
             setSelectedTask(null);
             setHighlightRelampago(false);
