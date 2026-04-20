@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   BellRing,
@@ -50,55 +51,65 @@ function formatCreatedAt(createdAt: string) {
   });
 }
 
-function getTaskPriority(task: Todo, currentUserId: string) {
-  const isDoneForMe = task.completed_by.includes(currentUserId);
-  const isAssignedToMe = task.assigned_to.includes(currentUserId);
+function toMillis(value?: string | null) {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isDoneForUser(task: Todo, userId: string) {
+  return task.completed_by.includes(userId);
+}
+
+function isUrgentForUser(task: Todo, currentUserId: string) {
+  const isDoneForMe = isDoneForUser(task, currentUserId);
+  if (isDoneForMe) return false;
+
   const isPriority = (task.tags || []).includes(PRIORITY_TAG);
   const today = new Date().toISOString().split('T')[0];
   const isDueToday = task.due_date_key === today;
   const isOverdue = task.due_date_key ? task.due_date_key < today : false;
   const isShocked = !!task.shocked_users?.includes(currentUserId);
 
-  if (isShocked) return 0;
-  if ((isOverdue || isDueToday) && (!isAssignedToMe || !isDoneForMe)) return 1;
-  if (isPriority) return 1;
-  if (isAssignedToMe && !isDoneForMe) return 2;
-  if (task.created_by === currentUserId) return 3;
+  return isShocked || isPriority || isDueToday || isOverdue;
+}
+
+function getTaskPriority(task: Todo, currentUserId: string) {
+  const isDoneForMe = isDoneForUser(task, currentUserId);
+  const isAssignedToMe = task.assigned_to.includes(currentUserId);
+  const isCreator = task.created_by === currentUserId;
+  const urgent = isUrgentForUser(task, currentUserId);
+
+  if (urgent) return 0;
+  if (isAssignedToMe && !isDoneForMe) return 1;
+  if (isCreator && !isDoneForMe) return 2;
+  if (isAssignedToMe && isDoneForMe) return 3;
   return 4;
 }
 
 function sortTasks(tasks: Todo[], currentUserId: string) {
   return [...tasks].sort((a, b) => {
-    if (a.created_at && b.created_at && a.created_at !== b.created_at) {
-      return b.created_at.localeCompare(a.created_at);
-    }
-
     const pA = getTaskPriority(a, currentUserId);
     const pB = getTaskPriority(b, currentUserId);
     if (pA !== pB) return pA - pB;
 
+    const createdA = toMillis(a.created_at);
+    const createdB = toMillis(b.created_at);
+    if (createdA !== createdB) return createdB - createdA;
+
     if (a.due_date_key && b.due_date_key) return a.due_date_key.localeCompare(b.due_date_key);
     if (a.due_date_key) return -1;
     if (b.due_date_key) return 1;
-    return b.created_at.localeCompare(a.created_at);
+    return 0;
   });
 }
 
 function isUrgent(task: Todo, currentUserId: string) {
-  const isPriority = (task.tags || []).includes(PRIORITY_TAG);
-  const today = new Date().toISOString().split('T')[0];
-  const isDueToday = task.due_date_key === today;
-  const isOverdue = task.due_date_key ? task.due_date_key < today : false;
-  const isShocked = !!task.shocked_users?.includes(currentUserId);
-  return isShocked || isPriority || isDueToday || isOverdue;
+  return isUrgentForUser(task, currentUserId);
 }
 
 function isGloballyDone(task: Todo) {
   return task.assigned_to.length > 0 && task.assigned_to.every((uid) => task.completed_by.includes(uid));
-}
-
-function isDoneForUser(task: Todo, userId: string) {
-  return task.completed_by.includes(userId);
 }
 
 function TaskPoster({
@@ -131,7 +142,7 @@ function TaskPoster({
   const totalCount = task.assigned_to.length;
   const tags = (task.tags || []).filter((tag) => tag !== PRIORITY_TAG);
   const isFullyDone = isGloballyDone(task);
-  const hasRelampago = !!task.shocked_users?.length;
+  const hasRelampago = !!task.shocked_users?.includes(currentUserId) && !isDoneForMe;
 
   return (
     <article
@@ -831,6 +842,7 @@ function TaskPreviewDetailModal({
 export default function TasksModernPreviewPage() {
   const { currentUser } = useAuth();
   const { todos, toggleTodo } = useTodos(currentUser);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
   const [highlightRelampago, setHighlightRelampago] = useState(false);
@@ -902,6 +914,18 @@ export default function TasksModernPreviewPage() {
       setSelectedTask(fresh);
     }
   }, [todos, selectedTask]);
+
+  useEffect(() => {
+    const taskParam = searchParams.get('task');
+    if (!taskParam || todos.length === 0) return;
+    const task = todos.find((item) => String(item.id) === taskParam);
+    if (!task) return;
+    setSelectedTask(task);
+    setHighlightRelampago(!!task.shocked_users?.includes(currentUser.id));
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('task');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams, todos, currentUser.id]);
 
   const openRelampago = (task: Todo) => {
     setHighlightRelampago(true);

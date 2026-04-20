@@ -71,7 +71,7 @@ export const DRIVE_FOLDERS: DriveFolder[] = [
         description: "Gestión interna de albaranes por producto.",
         emoji: "🗂️",
         url: "/albaranes",
-        users: ["6bafcb97-6a1b-4224-adbb-1340b86ffeb9", "cb5d2e6e-9046-4b22-b509-469076999d78", ESTEBAN_ID, "1c42e44a-7e58-4c86-94ca-404061f8863d"],
+        users: USERS.filter((user) => !user.isRestricted).map((user) => user.id),
     },
     {
         id: "etiquetas",
