@@ -22,10 +22,12 @@ type AlbaranDocument = {
   exhaustedAt?: string;
   createdBy: string;
   updatedBy?: string;
+  damageHistory: AlbaranDamageEntry[];
 };
 
 type AlbaranDamageEntry = {
   id: string;
+  documentId?: string;
   quantity: number;
   comment: string;
   attachments: Attachment[];
@@ -189,6 +191,14 @@ function getDocumentTitle(document: AlbaranDocument) {
   return clean(document.title) || getDocumentPrimaryAttachment(document)?.name || 'Albarán';
 }
 
+function getDocumentDamageHistory(document: AlbaranDocument) {
+  return Array.isArray(document.damageHistory) ? document.damageHistory : [];
+}
+
+function getTagDamageHistory(tag: AlbaranTag) {
+  return tag.documents.flatMap((document) => getDocumentDamageHistory(document));
+}
+
 function getAlbaranStatus(document: AlbaranDocument) {
   if (isAlbaranActive(document)) return 'active' as const;
   if (document.exhaustedAt) return 'exhausted' as const;
@@ -214,29 +224,24 @@ function safePdfText(value: unknown) {
 
 function normalizeTag(tag: Partial<AlbaranTag> | any, fallbackName = 'General'): AlbaranTag {
   const now = new Date().toISOString();
-  return {
-    id: clean(tag?.id) || uid('tag'),
-    name: clean(tag?.name) || fallbackName,
-    active: tag?.active !== false,
-    createdAt: clean(tag?.createdAt) || now,
-    updatedAt: clean(tag?.updatedAt) || clean(tag?.createdAt) || now,
-    deletedAt: clean(tag?.deletedAt) || '',
-    documents: Array.isArray(tag?.documents) ? tag.documents.map((doc: any) => ({
-      id: clean(doc?.id) || uid('doc'),
-      title: clean(doc?.title) || clean(doc?.attachment?.name) || 'Albarán',
-      attachment: normalizeAttachment(doc?.attachment) || undefined,
-      attachments: normalizeAttachments(doc?.attachments || doc?.attachment),
-      note: clean(doc?.note),
-      active: doc?.active !== false,
-      createdAt: clean(doc?.createdAt) || now,
-      updatedAt: clean(doc?.updatedAt) || clean(doc?.createdAt) || now,
-      activeAt: clean(doc?.activeAt) || (doc?.active === false ? '' : clean(doc?.createdAt) || now),
-      exhaustedAt: clean(doc?.exhaustedAt) || '',
-      createdBy: clean(doc?.createdBy) || 'Sistema',
-      updatedBy: clean(doc?.updatedBy) || '',
-    })) : [],
-    damageHistory: Array.isArray(tag?.damageHistory) ? tag.damageHistory.map((entry: any) => ({
+  const rawDocuments = Array.isArray(tag?.documents) ? tag.documents : [];
+  const rawLegacyDamages = Array.isArray(tag?.damageHistory) ? tag.damageHistory : [];
+  const normalizedDocuments = rawDocuments.map((doc: any) => ({
+    id: clean(doc?.id) || uid('doc'),
+    title: clean(doc?.title) || clean(doc?.attachment?.name) || 'Albarán',
+    attachment: normalizeAttachment(doc?.attachment) || undefined,
+    attachments: normalizeAttachments(doc?.attachments || doc?.attachment),
+    note: clean(doc?.note),
+    active: doc?.active !== false,
+    createdAt: clean(doc?.createdAt) || now,
+    updatedAt: clean(doc?.updatedAt) || clean(doc?.createdAt) || now,
+    activeAt: clean(doc?.activeAt) || (doc?.active === false ? '' : clean(doc?.createdAt) || now),
+    exhaustedAt: clean(doc?.exhaustedAt) || '',
+    createdBy: clean(doc?.createdBy) || 'Sistema',
+    updatedBy: clean(doc?.updatedBy) || '',
+    damageHistory: Array.isArray(doc?.damageHistory) ? doc.damageHistory.map((entry: any) => ({
       id: clean(entry?.id) || uid('dam'),
+      documentId: clean(entry?.documentId) || clean(doc?.id) || '',
       quantity: Math.abs(Number(entry?.quantity) || 0),
       comment: clean(entry?.comment),
       attachments: normalizeAttachments(entry?.attachments),
@@ -246,6 +251,35 @@ function normalizeTag(tag: Partial<AlbaranTag> | any, fallbackName = 'General'):
       createdBy: clean(entry?.createdBy) || 'Sistema',
       updatedBy: clean(entry?.updatedBy) || '',
     })) : [],
+  }));
+
+  if (normalizedDocuments.length > 0 && rawLegacyDamages.length > 0) {
+    normalizedDocuments[0] = {
+      ...normalizedDocuments[0],
+      damageHistory: [...rawLegacyDamages.map((entry: any) => ({
+        id: clean(entry?.id) || uid('dam'),
+        quantity: Math.abs(Number(entry?.quantity) || 0),
+        comment: clean(entry?.comment),
+        attachments: normalizeAttachments(entry?.attachments),
+        kind: entry?.kind === 'envio' ? 'envio' : 'origen',
+        documentId: clean(entry?.documentId) || '',
+        createdAt: clean(entry?.createdAt) || now,
+        updatedAt: clean(entry?.updatedAt) || clean(entry?.createdAt) || now,
+        createdBy: clean(entry?.createdBy) || 'Sistema',
+        updatedBy: clean(entry?.updatedBy) || '',
+      })), ...normalizedDocuments[0].damageHistory],
+    };
+  }
+
+  return {
+    id: clean(tag?.id) || uid('tag'),
+    name: clean(tag?.name) || fallbackName,
+    active: tag?.active !== false,
+    createdAt: clean(tag?.createdAt) || now,
+    updatedAt: clean(tag?.updatedAt) || clean(tag?.createdAt) || now,
+    deletedAt: clean(tag?.deletedAt) || '',
+    documents: normalizedDocuments,
+    damageHistory: [],
   };
 }
 
@@ -319,6 +353,7 @@ export default function AlbaranesPage() {
   const [editingTagId, setEditingTagId] = useState<string>('');
   const [editingDocumentId, setEditingDocumentId] = useState<string>('');
   const [editingDamageId, setEditingDamageId] = useState<string>('');
+  const [damageDocumentId, setDamageDocumentId] = useState<string>('');
   const [selectedNote, setSelectedNote] = useState<{ title: string; note: string } | null>(null);
   const [docTitle, setDocTitle] = useState('');
   const [docNote, setDocNote] = useState('');
@@ -337,6 +372,10 @@ export default function AlbaranesPage() {
     () => selectedProduct?.tags.find((tag) => tag.id === selectedTagId) || selectedProduct?.tags[0] || null,
     [selectedProduct, selectedTagId],
   );
+  const selectedDamageDocument = useMemo(
+    () => selectedTag?.documents.find((document) => document.id === damageDocumentId) || selectedTag?.documents[0] || null,
+    [selectedTag, damageDocumentId],
+  );
 
   const filteredProducts = useMemo(() => {
     const q = clean(query).toLowerCase();
@@ -351,6 +390,10 @@ export default function AlbaranesPage() {
   const stats = useMemo(() => {
     const totalDocs = products.reduce(
       (acc, product) => acc + product.tags.reduce((tagAcc, tag) => tagAcc + (tag.documents?.length || 0), 0),
+      0,
+    );
+    const totalDamages = products.reduce(
+      (acc, product) => acc + product.tags.reduce((tagAcc, tag) => tagAcc + getTagDamageHistory(tag).length, 0),
       0,
     );
     const activeDocs = products.reduce(
@@ -390,6 +433,7 @@ export default function AlbaranesPage() {
       totalDocs,
       pendingDocs,
       exhaustedDocs,
+      totalDamages,
     };
   }, [products]);
 
@@ -582,14 +626,17 @@ export default function AlbaranesPage() {
 
   const deleteDamageEntry = (productId: string, entryId: string) => {
     const product = products.find((item) => item.id === productId);
-    const entry = product?.tags.flatMap((tag) => tag.damageHistory).find((item) => item.id === entryId);
+    const entry = product?.tags.flatMap((tag) => tag.documents.flatMap((document) => getDocumentDamageHistory(document))).find((item) => item.id === entryId);
     if (!product || !entry) return;
     if (!window.confirm('¿Borrar este registro de dañado?')) return;
     updateProduct(productId, (current) => ({
       ...current,
       tags: current.tags.map((tag) => ({
         ...tag,
-        damageHistory: tag.damageHistory.filter((item) => item.id !== entryId),
+        documents: tag.documents.map((document) => ({
+          ...document,
+          damageHistory: getDocumentDamageHistory(document).filter((item) => item.id !== entryId),
+        })),
       })),
       updatedAt: new Date().toISOString(),
     }));
@@ -680,6 +727,7 @@ export default function AlbaranesPage() {
         exhaustedAt: docActive ? '' : '',
         createdBy: currentUser?.name || 'Sistema',
         updatedBy: currentUser?.name || 'Sistema',
+        damageHistory: [],
       };
       updateProduct(selectedProduct.id, (product) => ({
         ...product,
@@ -696,23 +744,29 @@ export default function AlbaranesPage() {
     setDocTitle('');
   };
 
-  const openDamageModal = () => {
+  const openDamageModal = (documentId?: string) => {
     if (!selectedProduct || !selectedTag) return;
+    const document = selectedTag.documents.find((item) => item.id === (documentId || damageDocumentId)) || selectedTag.documents[0];
+    if (!document) return;
     setEditingDamageId('');
     setDamageQty('');
     setDamageComment('');
     setDamageFiles([]);
     setDamageKind('origen');
+    setDamageDocumentId(document.id);
     setShowDamageModal(true);
   };
 
   const openEditDamageModal = (entry: AlbaranDamageEntry) => {
     if (!selectedProduct || !selectedTag) return;
+    const document = selectedTag.documents.find((item) => item.id === entry.documentId) || selectedTag.documents[0];
+    if (!document) return;
     setEditingDamageId(entry.id);
     setDamageQty(String(entry.quantity || ''));
     setDamageComment(entry.comment || '');
     setDamageFiles(entry.attachments || []);
     setDamageKind(entry.kind || 'origen');
+    setDamageDocumentId(document.id);
     setShowDamageModal(true);
   };
 
@@ -726,7 +780,7 @@ export default function AlbaranesPage() {
   };
 
   const saveDamage = () => {
-    if (!selectedProduct || !selectedTag) return;
+    if (!selectedProduct || !selectedTag || !selectedDamageDocument) return;
     const qty = Math.abs(Number(clean(damageQty)));
     if (!Number.isFinite(qty) || qty <= 0) {
       window.alert('Escribe una cantidad válida de dañados.');
@@ -740,18 +794,28 @@ export default function AlbaranesPage() {
           tag.id === selectedTag.id
             ? {
                 ...tag,
-                damageHistory: tag.damageHistory.map((entry) =>
-                  entry.id === editingDamageId
+                documents: tag.documents.map((document) =>
+                  document.id === selectedDamageDocument.id
                     ? {
-                        ...entry,
-                        quantity: qty,
-                        comment: clean(damageComment),
-                        attachments: damageFiles,
-                        kind: damageKind,
+                        ...document,
+                        damageHistory: getDocumentDamageHistory(document).map((entry) =>
+                          entry.id === editingDamageId
+                            ? {
+                                ...entry,
+                                documentId: document.id,
+                                quantity: qty,
+                                comment: clean(damageComment),
+                                attachments: damageFiles,
+                                kind: damageKind,
+                                updatedAt: now,
+                                updatedBy: currentUser?.name || 'Sistema',
+                              }
+                            : entry,
+                        ),
                         updatedAt: now,
                         updatedBy: currentUser?.name || 'Sistema',
                       }
-                    : entry,
+                    : document,
                 ),
                 updatedAt: now,
               }
@@ -762,6 +826,7 @@ export default function AlbaranesPage() {
     } else {
       const entry: AlbaranDamageEntry = {
         id: uid('dam'),
+        documentId: selectedDamageDocument.id,
         quantity: qty,
         comment: clean(damageComment),
         attachments: damageFiles,
@@ -775,7 +840,15 @@ export default function AlbaranesPage() {
         ...product,
         tags: product.tags.map((tag) =>
           tag.id === selectedTag.id
-            ? { ...tag, damageHistory: [entry, ...tag.damageHistory], updatedAt: now }
+            ? {
+                ...tag,
+                documents: tag.documents.map((document) =>
+                  document.id === selectedDamageDocument.id
+                    ? { ...document, damageHistory: [entry, ...getDocumentDamageHistory(document)], updatedAt: now, updatedBy: currentUser?.name || 'Sistema' }
+                    : document,
+                ),
+                updatedAt: now,
+              }
             : tag,
         ),
         updatedAt: now,
@@ -783,20 +856,18 @@ export default function AlbaranesPage() {
     }
     setShowDamageModal(false);
     setEditingDamageId('');
+    setDamageDocumentId('');
   };
 
-  const downloadDamageHistoryPdf = () => {
-    if (!selectedProduct || !selectedTag) return;
-    const title = `${selectedProduct.name} · ${selectedTag.name}`;
-    const fileName = `albaran-danados-${selectedProduct.name.toLowerCase().replace(/\s+/g, '-')}-${selectedTag.name.toLowerCase().replace(/\s+/g, '-')}.pdf`;
-    const entries = [...selectedTag.damageHistory].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const downloadDamageHistoryPdf = (document?: AlbaranDocument) => {
+    if (!selectedProduct || !selectedTag || !document) return;
+    const title = `${selectedProduct.name} · ${selectedTag.name} · ${getDocumentTitle(document)}`;
+    const fileName = `albaran-danados-${selectedProduct.name.toLowerCase().replace(/\s+/g, '-')}-${selectedTag.name.toLowerCase().replace(/\s+/g, '-')}-${getDocumentTitle(document).toLowerCase().replace(/\s+/g, '-')}.pdf`;
+    const entries = [...getDocumentDamageHistory(document)].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const originEntries = entries.filter((entry) => (entry.kind || 'origen') !== 'envio');
     const shippingEntries = entries.filter((entry) => (entry.kind || 'origen') === 'envio');
     const totalOrigin = originEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
     const totalShipping = shippingEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
-    const linkedDocuments = selectedTag.documents
-      .map((doc) => getDocumentTitle(doc) || getDocumentPrimaryAttachment(doc)?.name || '')
-      .filter(Boolean);
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const marginX = 36;
     let startY = 36;
@@ -816,10 +887,12 @@ export default function AlbaranesPage() {
     startY += 12;
     doc.text(`Etiqueta: ${safePdfText(selectedTag.name)}`, marginX, startY);
     startY += 12;
-    doc.text(`Total albaranes: ${selectedTag.documents.length} · Incidencias: ${selectedTag.damageHistory.length}`, marginX, startY);
+    doc.text(`Albarán: ${safePdfText(getDocumentTitle(document))}`, marginX, startY);
     startY += 12;
-    if (linkedDocuments.length > 0) {
-      doc.text(`Albaranes asociados: ${linkedDocuments.join(' · ')}`, marginX, startY, { maxWidth: 760 });
+    doc.text(`Adjuntos: ${getDocumentAttachments(document).length} · Incidencias: ${entries.length}`, marginX, startY);
+    startY += 12;
+    if (document.note) {
+      doc.text(`Notas: ${safePdfText(document.note)}`, marginX, startY, { maxWidth: 760 });
       startY += 24;
     } else {
       startY += 6;
@@ -1084,7 +1157,7 @@ export default function AlbaranesPage() {
                 <div>
                   <h3 className={`text-2xl font-black ${palette.accent}`}>{selectedProduct.name}</h3>
                   <p className={`text-sm font-semibold ${palette.accent}`}>
-                    {selectedProduct.tags.length} etiqueta(s) · {totalDocs} albarán(es) · {selectedProduct.tags.reduce((acc, tag) => acc + tag.damageHistory.length, 0)} incidencias
+                    {selectedProduct.tags.length} etiqueta(s) · {totalDocs} albarán(es) · {selectedProduct.tags.reduce((acc, tag) => acc + getTagDamageHistory(tag).length, 0)} incidencias
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1141,7 +1214,7 @@ export default function AlbaranesPage() {
                             <button type="button" onClick={() => openTag(tag.id)} className="flex-1 text-left">
                               <p className={`text-sm font-black ${paletteIndex.accent}`}>{tag.name}</p>
                               <p className="mt-1 text-xs font-semibold text-slate-500">
-                                {tag.documents.length} albarán(es) · {tag.damageHistory.length} incidencias
+                                {tag.documents.length} albarán(es) · {getTagDamageHistory(tag).length} incidencias
                               </p>
                               <p className="mt-1 text-[11px] font-semibold text-slate-500">
                                 Activos {tagActiveDocs} · Pendientes {tagPendingDocs} · Agotados {tagExhaustedDocs}
@@ -1197,244 +1270,265 @@ export default function AlbaranesPage() {
                             <Upload size={15} />
                             Añadir albarán
                           </button>
-                          <button
-                            type="button"
-                            onClick={openDamageModal}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100"
-                          >
-                            <ShieldAlert size={15} />
-                            Añadir dañado
-                          </button>
-                          <button
-                            type="button"
-                            onClick={downloadDamageHistoryPdf}
-                            className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-bold text-cyan-800 hover:bg-cyan-100"
-                          >
-                            <Download size={15} />
-                            Descargar PDF
-                          </button>
                         </div>
                       </div>
 
-                      <div className="mt-5 grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
-                        <section className={`rounded-[1.5rem] border ${palette.softBorder} bg-white p-4`}>
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <h5 className={`text-lg font-black ${palette.accent}`}>Albaranes asociados</h5>
-                              <p className={`text-xs font-semibold ${palette.accent}`}>PDFs y fotos guardados para esta etiqueta.</p>
-                            </div>
+                      <div className="mt-5 space-y-3">
+                        {selectedTag.documents.length === 0 ? (
+                          <div className={`rounded-2xl border border-dashed ${palette.border} bg-white p-5 text-center text-sm font-semibold ${palette.accent}`}>
+                            Todavía no hay albaranes cargados.
                           </div>
-
-                          {selectedTag.documents.length === 0 ? (
-                            <div className={`mt-4 rounded-2xl border border-dashed ${palette.border} bg-white p-5 text-center text-sm font-semibold ${palette.accent}`}>
-                              Todavía no hay albaranes cargados.
-                            </div>
-                          ) : (
-                            <div className="mt-4 space-y-2">
-                              {selectedTag.documents.map((doc) => {
-                                const primaryAttachment = getDocumentPrimaryAttachment(doc);
-                                const attachments = getDocumentAttachments(doc);
-                                return (
-                                  <div key={doc.id} className={`rounded-2xl border ${palette.softBorder} bg-white p-4`}>
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                                        <p className={`truncate text-sm font-black ${palette.accent}`}>
-                                          {getDocumentTitle(doc)}
-                                        </p>
-                                        <p className={`mt-1 text-xs font-semibold ${palette.accent}`}>
-                                          {getFileKind(primaryAttachment || attachments[0] || { name: '', url: '', type: '', size: 0 })} · {doc.createdBy} · {formatDateTime(doc.createdAt)}
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                                          <span
-                                            className={`rounded-full px-2 py-1 text-[11px] font-black ${
-                                              getAlbaranStatus(doc) === 'active'
-                                                ? 'bg-emerald-100 text-emerald-700'
-                                                : getAlbaranStatus(doc) === 'pending'
-                                                  ? 'bg-sky-100 text-sky-700'
-                                                  : 'bg-rose-100 text-rose-700'
-                                            }`}
-                                          >
-                                            {getAlbaranStatus(doc) === 'active'
-                                              ? 'ACTIVO'
-                                              : getAlbaranStatus(doc) === 'pending'
-                                                ? 'PENDIENTE'
-                                                : 'AGOTADO'}
-                                          </span>
-                                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black text-slate-600">
-                                            {attachments.length} adjunto(s)
-                                          </span>
-                                          {doc.note && (
-                                            <button
-                                              type="button"
-                                              onClick={() => openNoteModal(doc)}
-                                              className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
-                                            >
-                                              <FileText size={11} />
-                                              Notas
-                                            </button>
-                                          )}
-                                        </div>
-                                        <div className="mt-2 grid gap-1 text-[11px] font-semibold text-slate-500 sm:grid-cols-4">
-                                          <span className="rounded-lg bg-slate-50 px-2 py-1">
-                                            Ingreso: {formatDateTime(doc.createdAt)}
-                                          </span>
-                                          <span className="rounded-lg bg-slate-50 px-2 py-1">
-                                            Activación: {doc.activeAt ? formatDateTime(doc.activeAt) : 'Pendiente'}
-                                          </span>
-                                          <span className="rounded-lg bg-slate-50 px-2 py-1">
-                                            Agotado: {doc.exhaustedAt ? formatDateTime(doc.exhaustedAt) : '—'}
-                                          </span>
-                                          <span className="rounded-lg bg-slate-50 px-2 py-1">
-                                            Editado: {doc.updatedAt ? formatDateTime(doc.updatedAt) : '—'}
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div className="flex flex-wrap items-center gap-2">
+                        ) : (
+                          selectedTag.documents.map((doc) => {
+                            const primaryAttachment = getDocumentPrimaryAttachment(doc);
+                            const attachments = getDocumentAttachments(doc);
+                            const damages = getDocumentDamageHistory(doc);
+                            const originDamages = damages.filter((entry) => (entry.kind || 'origen') !== 'envio');
+                            const shippingDamages = damages.filter((entry) => (entry.kind || 'origen') === 'envio');
+                            return (
+                              <details key={doc.id} className={`rounded-[1.5rem] border ${palette.softBorder} bg-white p-4`}>
+                                <summary className="flex list-none cursor-pointer items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`truncate text-sm font-black ${palette.accent}`}>{getDocumentTitle(doc)}</p>
+                                    <p className={`mt-1 text-xs font-semibold ${palette.accent}`}>
+                                      {getFileKind(primaryAttachment || attachments[0] || { name: '', url: '', type: '', size: 0 })} · {doc.createdBy} · {formatDateTime(doc.createdAt)}
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <span
+                                        className={`rounded-full px-2 py-1 text-[11px] font-black ${
+                                          getAlbaranStatus(doc) === 'active'
+                                            ? 'bg-emerald-100 text-emerald-700'
+                                            : getAlbaranStatus(doc) === 'pending'
+                                              ? 'bg-sky-100 text-sky-700'
+                                              : 'bg-rose-100 text-rose-700'
+                                        }`}
+                                      >
+                                        {getAlbaranStatus(doc) === 'active'
+                                          ? 'ACTIVO'
+                                          : getAlbaranStatus(doc) === 'pending'
+                                            ? 'PENDIENTE'
+                                            : 'AGOTADO'}
+                                      </span>
+                                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black text-slate-600">
+                                        {attachments.length} adjunto(s)
+                                      </span>
+                                      {doc.note && (
                                         <button
                                           type="button"
-                                          onClick={() => openEditDocumentModal(doc)}
-                                          className={`inline-flex items-center gap-1 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50`}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            openNoteModal(doc);
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
                                         >
-                                          Editar
+                                          <FileText size={11} />
+                                          Notas
                                         </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleDocumentStatus(selectedProduct.id, doc.id)}
-                                          className={`inline-flex items-center gap-1 rounded-xl border ${palette.border} bg-white px-3 py-2 text-xs font-bold ${palette.accent} hover:bg-white/80`}
-                                        >
-                                          {getAlbaranStatus(doc) === 'active' ? 'Agotar' : 'Activar'}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => deleteDocument(selectedProduct.id, doc.id)}
-                                          className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
-                                        >
-                                          <Trash2 size={13} />
-                                          Borrar
-                                        </button>
-                                      </div>
+                                      )}
                                     </div>
-
-                                    {attachments.length > 0 && (
-                                      <div className="mt-3 flex flex-wrap gap-2">
-                                        {attachments.map((attachment, idx) => (
-                                          <button
-                                            type="button"
-                                            key={`${doc.id}-${attachment.url}-${idx}`}
-                                            onClick={() => openAttachment(attachment.url)}
-                                            className={`inline-flex items-center gap-2 rounded-xl border ${palette.border} ${palette.soft} px-3 py-2 text-xs font-bold ${palette.accent} hover:opacity-90`}
-                                          >
-                                            {attachment.type.startsWith('image/') ? <ImageIcon size={13} /> : <FileText size={13} />}
-                                            {attachment.name}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </section>
-
-                        <section className="rounded-[1.5rem] border border-amber-100 bg-amber-50/40 p-4">
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <h5 className="text-lg font-black text-amber-950">Historial de dañados</h5>
-                              <p className="text-xs font-semibold text-amber-700">Cantidad, comentario, adjuntos y origen/envío de cada incidencia.</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black text-amber-800">
-                                Origen: {selectedTag.damageHistory.filter((entry) => entry.kind !== 'envio').length}
-                              </span>
-                              <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-black text-cyan-800">
-                                Envío: {selectedTag.damageHistory.filter((entry) => entry.kind === 'envio').length}
-                              </span>
-                            </div>
-                          </div>
-
-                          {selectedTag.damageHistory.length === 0 ? (
-                            <div className="mt-4 rounded-2xl border border-dashed border-amber-200 bg-white p-5 text-center text-sm font-semibold text-amber-800">
-                              No hay incidencias registradas.
-                            </div>
-                          ) : (
-                            <div className="mt-4 space-y-3">
-                              {(['origen', 'envio'] as const).map((kind) => {
-                                const entries = selectedTag.damageHistory.filter((entry) => (entry.kind || 'origen') === kind);
-                                if (entries.length === 0) return null;
-                                return (
-                                  <div key={kind} className="space-y-2">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <h6 className={`text-sm font-black ${kind === 'envio' ? 'text-cyan-900' : 'text-amber-900'}`}>
-                                        {getDamageKindLabel(kind)}
-                                      </h6>
-                                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${getDamageKindTone(kind)}`}>
-                                        {entries.length} registro(s)
+                                    <div className="mt-2 grid gap-1 text-[11px] font-semibold text-slate-500 sm:grid-cols-4">
+                                      <span className="rounded-lg bg-slate-50 px-2 py-1">
+                                        Ingreso: {formatDateTime(doc.createdAt)}
+                                      </span>
+                                      <span className="rounded-lg bg-slate-50 px-2 py-1">
+                                        Activación: {doc.activeAt ? formatDateTime(doc.activeAt) : 'Pendiente'}
+                                      </span>
+                                      <span className="rounded-lg bg-slate-50 px-2 py-1">
+                                        Agotado: {doc.exhaustedAt ? formatDateTime(doc.exhaustedAt) : '—'}
+                                      </span>
+                                      <span className="rounded-lg bg-slate-50 px-2 py-1">
+                                        Editado: {doc.updatedAt ? formatDateTime(doc.updatedAt) : '—'}
                                       </span>
                                     </div>
-                                    <div className="space-y-2">
-                                      {entries.map((entry) => (
-                                        <details key={entry.id} className="rounded-2xl border border-amber-100 bg-white p-3">
-                                <summary className="flex list-none cursor-pointer items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-sm font-black text-amber-950">
-                                      {entry.quantity} uds · {entry.createdBy}
-                                    </p>
-                                    <p className="mt-1 text-xs font-semibold text-amber-700">{formatDateTime(entry.createdAt)}</p>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${getDamageKindTone(entry.kind || 'origen')}`}>
-                                      {getDamageKindLabel(entry.kind || 'origen')}
+                                  <div className="flex flex-col items-end gap-2">
+                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${palette.chip}`}>
+                                      {damages.length} daño(s)
                                     </span>
-                                    <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black text-amber-800">
-                                      {entry.attachments.length} adjunto(s)
-                                    </span>
+                                    <div className="flex flex-wrap justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          openEditDocumentModal(doc);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50"
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          toggleDocumentStatus(selectedProduct.id, doc.id);
+                                        }}
+                                        className={`inline-flex items-center gap-1 rounded-xl border ${palette.border} bg-white px-3 py-2 text-xs font-bold ${palette.accent} hover:bg-white/80`}
+                                      >
+                                        {getAlbaranStatus(doc) === 'active' ? 'Agotar' : 'Activar'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          deleteDocument(selectedProduct.id, doc.id);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
+                                      >
+                                        <Trash2 size={13} />
+                                        Borrar
+                                      </button>
+                                    </div>
                                   </div>
                                 </summary>
-                                <div className="mt-3 space-y-3 border-t border-amber-100 pt-3">
-                                  {entry.comment && <p className="text-sm text-slate-700">{entry.comment}</p>}
-                                  <div className="flex flex-wrap justify-end gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => openEditDamageModal(entry)}
-                                      className="inline-flex items-center gap-1 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50"
-                                    >
-                                      Editar
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => deleteDamageEntry(selectedProduct.id, entry.id)}
-                                      className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
-                                    >
-                                      <Trash2 size={13} />
-                                      Borrar
-                                    </button>
+
+                                {attachments.length > 0 && (
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {attachments.map((attachment, idx) => (
+                                      <button
+                                        type="button"
+                                        key={`${doc.id}-${attachment.url}-${idx}`}
+                                        onClick={() => openAttachment(attachment.url)}
+                                        className={`inline-flex items-center gap-2 rounded-xl border ${palette.border} ${palette.soft} px-3 py-2 text-xs font-bold ${palette.accent} hover:opacity-90`}
+                                      >
+                                        {attachment.type.startsWith('image/') ? <ImageIcon size={13} /> : <FileText size={13} />}
+                                        {attachment.name}
+                                      </button>
+                                    ))}
                                   </div>
-                                  {entry.attachments.length > 0 && (
+                                )}
+
+                                <div className="mt-4 rounded-[1.35rem] border border-amber-100 bg-amber-50/40 p-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <h5 className="text-base font-black text-amber-950">Historial de dañados</h5>
+                                      <p className="text-xs font-semibold text-amber-700">
+                                        Cantidad, comentario, adjuntos y origen/envío de este albarán.
+                                      </p>
+                                    </div>
                                     <div className="flex flex-wrap gap-2">
-                                      {entry.attachments.map((attachment, idx) => (
-                                        <button
-                                          type="button"
-                                          key={`${entry.id}-${idx}`}
-                                          onClick={() => openAttachment(attachment.url)}
-                                          className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100"
-                                        >
-                                          {attachment.type.startsWith('image/') ? <ImageIcon size={13} /> : <FileText size={13} />}
-                                          {attachment.name}
-                                        </button>
-                                      ))}
+                                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black text-amber-800">
+                                        Origen: {originDamages.length}
+                                      </span>
+                                      <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-black text-cyan-800">
+                                        Envío: {shippingDamages.length}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          openDamageModal(doc.id);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50"
+                                      >
+                                        <Plus size={13} />
+                                        Añadir dañado
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          downloadDamageHistoryPdf(doc);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-800 hover:bg-cyan-50"
+                                      >
+                                        <Download size={13} />
+                                        Descargar PDF
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {damages.length === 0 ? (
+                                    <div className="mt-4 rounded-2xl border border-dashed border-amber-200 bg-white p-5 text-center text-sm font-semibold text-amber-800">
+                                      No hay incidencias registradas.
+                                    </div>
+                                  ) : (
+                                    <div className="mt-4 space-y-3">
+                                      {(['origen', 'envio'] as const).map((kind) => {
+                                        const entries = damages.filter((entry) => (entry.kind || 'origen') === kind);
+                                        if (entries.length === 0) return null;
+                                        return (
+                                          <div key={kind} className="space-y-2">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <h6 className={`text-sm font-black ${kind === 'envio' ? 'text-cyan-900' : 'text-amber-900'}`}>
+                                                {getDamageKindLabel(kind)}
+                                              </h6>
+                                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${getDamageKindTone(kind)}`}>
+                                                {entries.length} registro(s)
+                                              </span>
+                                            </div>
+                                            <div className="space-y-2">
+                                              {entries.map((entry) => (
+                                                <details key={entry.id} className="rounded-2xl border border-amber-100 bg-white p-3">
+                                                  <summary className="flex list-none cursor-pointer items-start justify-between gap-3">
+                                                    <div>
+                                                      <p className="text-sm font-black text-amber-950">
+                                                        {entry.quantity} uds · {entry.createdBy}
+                                                      </p>
+                                                      <p className="mt-1 text-xs font-semibold text-amber-700">{formatDateTime(entry.createdAt)}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${getDamageKindTone(entry.kind || 'origen')}`}>
+                                                        {getDamageKindLabel(entry.kind || 'origen')}
+                                                      </span>
+                                                      <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black text-amber-800">
+                                                        {entry.attachments.length} adjunto(s)
+                                                      </span>
+                                                    </div>
+                                                  </summary>
+                                                  <div className="mt-3 space-y-3 border-t border-amber-100 pt-3">
+                                                    {entry.comment && <p className="text-sm text-slate-700">{entry.comment}</p>}
+                                                    <div className="flex flex-wrap justify-end gap-2">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => openEditDamageModal(entry)}
+                                                        className="inline-flex items-center gap-1 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50"
+                                                      >
+                                                        Editar
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => deleteDamageEntry(selectedProduct.id, entry.id)}
+                                                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
+                                                      >
+                                                        <Trash2 size={13} />
+                                                        Borrar
+                                                      </button>
+                                                    </div>
+                                                    {entry.attachments.length > 0 && (
+                                                      <div className="flex flex-wrap gap-2">
+                                                        {entry.attachments.map((attachment, idx) => (
+                                                          <button
+                                                            type="button"
+                                                            key={`${entry.id}-${idx}`}
+                                                            onClick={() => openAttachment(attachment.url)}
+                                                            className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100"
+                                                          >
+                                                            {attachment.type.startsWith('image/') ? <ImageIcon size={13} /> : <FileText size={13} />}
+                                                            {attachment.name}
+                                                          </button>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </details>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>
                               </details>
-                                      ))}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </section>
+                            );
+                          })
+                        )}
                       </div>
                     </>
                   ) : (
@@ -1676,13 +1770,14 @@ export default function AlbaranesPage() {
           <div className="w-full max-w-2xl rounded-[2rem] border border-amber-200 bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-black text-amber-950">
-                {editingDamageId ? 'Editar dañado' : 'Añadir dañado'} · {selectedProduct.name}{selectedTag ? ` · ${selectedTag.name}` : ''}
+                {editingDamageId ? 'Editar dañado' : 'Añadir dañado'} · {selectedProduct.name}{selectedTag ? ` · ${selectedTag.name}` : ''}{selectedDamageDocument ? ` · ${getDocumentTitle(selectedDamageDocument)}` : ''}
               </h3>
               <button
                 type="button"
                 onClick={() => {
                   setShowDamageModal(false);
                   setEditingDamageId('');
+                  setDamageDocumentId('');
                 }}
                 className="rounded-lg p-1.5 text-amber-800 hover:bg-amber-50"
               >
@@ -1741,6 +1836,7 @@ export default function AlbaranesPage() {
                   onClick={() => {
                     setShowDamageModal(false);
                     setEditingDamageId('');
+                    setDamageDocumentId('');
                   }}
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
                 >
