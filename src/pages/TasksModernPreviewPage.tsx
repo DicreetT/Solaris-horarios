@@ -128,7 +128,8 @@ function TaskPoster({
 }) {
   const isDoneForMe = task.completed_by.includes(currentUserId);
   const isMine = task.assigned_to.includes(currentUserId);
-  const urgent = isUrgent(task, currentUserId);
+  const isPriority = (task.tags || []).includes(PRIORITY_TAG);
+  const isShocked = !!task.shocked_users?.includes(currentUserId) && !isDoneForMe;
   const creator = personName(task.created_by);
   const assignees = task.assigned_to.map((uid) => ({
     id: uid,
@@ -139,15 +140,16 @@ function TaskPoster({
   const totalCount = task.assigned_to.length;
   const tags = (task.tags || []).filter((tag) => tag !== PRIORITY_TAG);
   const isFullyDone = isGloballyDone(task);
-  const hasRelampago = !!task.shocked_users?.includes(currentUserId) && !isDoneForMe;
 
   return (
     <article
       className={`snap-start w-[330px] shrink-0 rounded-[2rem] border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl ${
-        urgent && !isFullyDone
+        isShocked && !isFullyDone
           ? 'border-red-300 bg-gradient-to-br from-white via-red-50 to-rose-100 shadow-[0_0_0_1px_rgba(239,68,68,0.18),0_20px_40px_-20px_rgba(239,68,68,0.45)]'
           : isDoneForMe
             ? 'border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-50'
+            : isPriority
+              ? 'border-red-300 bg-white shadow-[0_0_0_1px_rgba(239,68,68,0.10)]'
             : 'border-slate-200 bg-gradient-to-br from-white via-slate-50 to-violet-50'
       }`}
     >
@@ -157,22 +159,36 @@ function TaskPoster({
           <h3 className="mt-1 line-clamp-2 text-lg font-black leading-tight text-slate-950">{task.title}</h3>
           <p className="mt-1 text-xs font-semibold text-slate-500">Creada por {creator}</p>
         </div>
-        <div className={`rounded-2xl p-2 ${urgent && !isFullyDone ? 'bg-red-500/15 text-red-600' : 'bg-violet-100 text-violet-700'}`}>
-          {urgent && !isFullyDone ? <BellRing size={18} className="animate-pulse" /> : <Sparkles size={18} />}
+        <div
+          className={`rounded-2xl p-2 ${
+            isShocked && !isFullyDone
+              ? 'bg-red-500/15 text-red-600'
+              : isPriority
+                ? 'bg-red-50 text-red-500'
+                : 'bg-violet-100 text-violet-700'
+          }`}
+        >
+          {isShocked && !isFullyDone ? (
+            <BellRing size={18} className="animate-pulse" />
+          ) : isPriority ? (
+            <BellRing size={18} />
+          ) : (
+            <Sparkles size={18} />
+          )}
         </div>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {urgent && !isFullyDone && (
+        {isShocked && !isFullyDone && (
           <span className="inline-flex items-center gap-1 rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-black text-white">
             <Flame size={11} />
             Relámpago
           </span>
         )}
-        {hasRelampago && (
+        {!isShocked && isPriority && (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-700">
             <BellRing size={11} />
-            Señalado
+            Prioritaria
           </span>
         )}
         {unreadCommentsCount > 0 && (
@@ -196,7 +212,7 @@ function TaskPoster({
         </div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
           <div
-            className={`h-full rounded-full ${urgent ? 'bg-amber-500' : isDoneForMe ? 'bg-emerald-500' : 'bg-violet-500'}`}
+            className={`h-full rounded-full ${isShocked ? 'bg-red-500' : isDoneForMe ? 'bg-emerald-500' : 'bg-violet-500'}`}
             style={{ width: `${totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0}%` }}
           />
         </div>
@@ -232,10 +248,10 @@ function TaskPoster({
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onOpen(task)}
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpen(task)}
           className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
         >
           Abrir
@@ -255,7 +271,7 @@ function TaskPoster({
             {isDoneForMe ? 'Hecha' : 'Marcar mía'}
           </button>
         )}
-      </div>
+        </div>
 
         <div className="mt-3 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-500">
         <span>{task.assigned_to.length} asignado(s)</span>
@@ -906,7 +922,8 @@ export default function TasksModernPreviewPage() {
   const urgentCount = urgent.length;
   const assignedOpenCount = assignedToMe.filter((task) => !task.completed_by.includes(currentUser.id)).length;
   const createdCount = createdByMe.length;
-  const spotlightTask = relampagoTasks[0] || urgent[0] || assignedToMe[0] || createdByMe[0] || allTeam[0] || completed[0] || null;
+  const relampagoSpotlightTask = relampagoTasks[0] || null;
+  const spotlightTask = urgent[0] || assignedToMe[0] || createdByMe[0] || allTeam[0] || completed[0] || null;
 
   useEffect(() => {
     if (!selectedTask) return;
@@ -1019,15 +1036,15 @@ export default function TasksModernPreviewPage() {
                 <Plus size={15} />
                 Nueva tarea
               </button>
-                <button
-                  type="button"
-                  onClick={() => spotlightTask && openRelampago(spotlightTask)}
-                  disabled={!spotlightTask}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800 hover:bg-amber-100"
-                >
-                  <BellRing size={15} />
-                  Ver relámpago mío
-                </button>
+              <button
+                type="button"
+                onClick={() => relampagoSpotlightTask && openRelampago(relampagoSpotlightTask)}
+                disabled={!relampagoSpotlightTask}
+                className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800 hover:bg-amber-100"
+              >
+                <BellRing size={15} />
+                Ver relámpago mío
+              </button>
             </div>
           </div>
 
