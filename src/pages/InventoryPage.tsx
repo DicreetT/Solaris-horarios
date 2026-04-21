@@ -102,24 +102,6 @@ const normalizeEnsamblajeFinalizado = (v: any) => {
   const token = clean(v).toUpperCase();
   return token === 'SI' || token === 'TRUE' || token === '1' || token === 'FINALIZADO' ? 'SI' : 'NO';
 };
-const lotAssemblyFinalizedAtMs = (row: GenericRow) => {
-  const candidates = [
-    clean((row as any).ensamblaje_finalizado_at),
-    clean((row as any).ensamblajeFinalizadoAt),
-    clean((row as any).assemblyFinalizedAt),
-    clean((row as any).lastChangedAt),
-    clean((row as any).updated_at),
-    clean((row as any).updatedAt),
-    clean((row as any).created_at),
-    clean((row as any).createdAt),
-  ];
-  for (const raw of candidates) {
-    if (!raw) continue;
-    const ts = new Date(raw).getTime();
-    if (Number.isFinite(ts)) return ts;
-  }
-  return 0;
-};
 const mergeLotState = (current: 'ACTIVO' | 'AGOTADO' | undefined, incoming: 'ACTIVO' | 'AGOTADO') => {
   // Si hay registros duplicados del mismo lote, prevalece ACTIVO para no bloquear stock/potencial por un duplicado AGOTADO.
   if (current === 'ACTIVO' || incoming === 'ACTIVO') return 'ACTIVO';
@@ -426,39 +408,12 @@ const mergeLotRows = (prev: GenericRow, normalizedIncoming: GenericRow) => {
   const prevAsm = normalizeEnsamblajeFinalizado((prev as any).ensamblaje_finalizado);
   const incomingAsmRaw = clean((normalizedIncoming as any).ensamblaje_finalizado);
   const incomingAsm = normalizeEnsamblajeFinalizado((normalizedIncoming as any).ensamblaje_finalizado);
-  const prevAsmAt = lotAssemblyFinalizedAtMs(prev);
-  const incomingAsmAt = lotAssemblyFinalizedAtMs(normalizedIncoming);
-  if (incomingAsmRaw) {
-    const keepIncomingAsm = incomingAsmAt > 0 && incomingAsmAt >= prevAsmAt;
-    if (keepIncomingAsm) {
-      merged.ensamblaje_finalizado = incomingAsm;
-      if (clean((normalizedIncoming as any).ensamblaje_finalizado_at)) {
-        (merged as any).ensamblaje_finalizado_at = clean((normalizedIncoming as any).ensamblaje_finalizado_at);
-      } else if (clean((normalizedIncoming as any).ensamblajeFinalizadoAt)) {
-        (merged as any).ensamblaje_finalizado_at = clean((normalizedIncoming as any).ensamblajeFinalizadoAt);
-      } else if (incomingAsm === 'SI') {
-        (merged as any).ensamblaje_finalizado_at = clean((prev as any).ensamblaje_finalizado_at || (prev as any).ensamblajeFinalizadoAt || (normalizedIncoming as any).lastChangedAt || (normalizedIncoming as any).updated_at || (normalizedIncoming as any).created_at);
-      }
-    } else if (!clean((prev as any).ensamblaje_finalizado) && incomingAsmRaw) {
-      merged.ensamblaje_finalizado = incomingAsm;
-    } else {
-      merged.ensamblaje_finalizado = prevAsm;
-    }
+  if (((nextTs > prevTs && incomingNotLessSpecific) || incomingMoreSpecific) && incomingAsmRaw) {
+    merged.ensamblaje_finalizado = incomingAsm;
+  } else if (!clean((prev as any).ensamblaje_finalizado) && incomingAsmRaw) {
+    merged.ensamblaje_finalizado = incomingAsm;
   } else {
     merged.ensamblaje_finalizado = prevAsm;
-  }
-  const prevAsmAtClean = clean((prev as any).ensamblaje_finalizado_at || (prev as any).ensamblajeFinalizadoAt);
-  const incomingAsmAtClean = clean((normalizedIncoming as any).ensamblaje_finalizado_at || (normalizedIncoming as any).ensamblajeFinalizadoAt);
-  if (incomingAsmAtClean && (!prevAsmAtClean || incomingAsmAt >= prevAsmAt)) {
-    (merged as any).ensamblaje_finalizado_at = incomingAsmAtClean;
-  } else if (prevAsmAtClean) {
-    (merged as any).ensamblaje_finalizado_at = prevAsmAtClean;
-  } else if (merged.ensamblaje_finalizado === 'SI') {
-    (merged as any).ensamblaje_finalizado_at = clean((normalizedIncoming as any).lastChangedAt || (normalizedIncoming as any).updated_at || (normalizedIncoming as any).created_at || (prev as any).lastChangedAt || (prev as any).updated_at || (prev as any).created_at);
-  } else {
-    delete (merged as any).ensamblaje_finalizado_at;
-    delete (merged as any).ensamblajeFinalizadoAt;
-    delete (merged as any).assemblyFinalizedAt;
   }
 
   // Borrado persistente ("tombstone"): evita que clientes stale resuciten lotes eliminados.
@@ -2962,12 +2917,6 @@ function InventoryPage() {
       if (fromSeed && !currentAsmRaw && clean((fromSeed as any).ensamblaje_finalizado)) {
         next = { ...next, ensamblaje_finalizado: normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) };
         rowChanged = true;
-        const seedAsmAt = clean((fromSeed as any).ensamblaje_finalizado_at || (fromSeed as any).ensamblajeFinalizadoAt || (fromSeed as any).assemblyFinalizedAt);
-        if (seedAsmAt) {
-          next = { ...next, ensamblaje_finalizado_at: seedAsmAt };
-        } else if (normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) === 'SI') {
-          next = { ...next, ensamblaje_finalizado_at: clean((fromSeed as any).lastChangedAt || (fromSeed as any).updated_at || (fromSeed as any).created_at) || nowIso() };
-        }
       }
 
       if (lote !== clean(row.lote)) {
@@ -3407,22 +3356,11 @@ function InventoryPage() {
     const normalizedState = isForcedAgotadoLot(lotForm.producto, lotForm.lote)
       ? 'AGOTADO'
       : normalizeLotState(lotForm.estado);
-    const currentLotRow = editingLotKey
-      ? lotes.find((l) => `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey)
-      : null;
-    const currentAsm = normalizeEnsamblajeFinalizado((currentLotRow as any)?.ensamblaje_finalizado);
-    const currentAsmAt = clean((currentLotRow as any)?.ensamblaje_finalizado_at || (currentLotRow as any)?.ensamblajeFinalizadoAt);
-    const nextAsm = normalizeEnsamblajeFinalizado(lotForm.ensamblaje_finalizado);
-    const asmChanged = nextAsm !== currentAsm;
-    const assemblyFinalizedAt = nextAsm === 'SI'
-      ? (asmChanged || !currentAsmAt ? nowIso() : currentAsmAt)
-      : (asmChanged ? nowIso() : currentAsmAt);
     const lotPatch = {
       ...lotForm,
       viales_recibidos: normalizeVialesDigits(lotForm.viales_recibidos),
       estado: normalizedState,
-      ensamblaje_finalizado: nextAsm,
-      ...(assemblyFinalizedAt ? { ensamblaje_finalizado_at: assemblyFinalizedAt } : {}),
+      ensamblaje_finalizado: normalizeEnsamblajeFinalizado(lotForm.ensamblaje_finalizado),
       semaforo_caducidad: semaforo,
     };
     if (editingLotKey) {
@@ -3512,7 +3450,7 @@ function InventoryPage() {
     setLotes((prev) =>
       prev.map((row) => {
         if (lotKeyOf(row.producto, row.lote) !== key) return row;
-        return stampLotRow({ ...row, ensamblaje_finalizado: nextState, ensamblaje_finalizado_at: nowIso() });
+        return stampLotRow({ ...row, ensamblaje_finalizado: nextState });
       }),
     );
     const nextLabel = nextState === 'SI' ? 'FINALIZADO' : 'REABIERTO';
