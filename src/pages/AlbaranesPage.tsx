@@ -191,6 +191,17 @@ function getDocumentTitle(document: AlbaranDocument) {
   return clean(document.title) || getDocumentPrimaryAttachment(document)?.name || 'Albarán';
 }
 
+function compareDocumentLotTitlesDesc(a: AlbaranDocument, b: AlbaranDocument) {
+  return getDocumentTitle(b).localeCompare(getDocumentTitle(a), 'es', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function sortDocumentsByLotDesc(documents: AlbaranDocument[]) {
+  return [...(Array.isArray(documents) ? documents : [])].sort(compareDocumentLotTitlesDesc);
+}
+
 function getDocumentDamageHistory(document: AlbaranDocument) {
   return Array.isArray(document.damageHistory) ? document.damageHistory : [];
 }
@@ -252,6 +263,8 @@ function normalizeTag(tag: Partial<AlbaranTag> | any, fallbackName = 'General'):
       updatedBy: clean(entry?.updatedBy) || '',
     })) : [],
   }));
+
+  normalizedDocuments.sort(compareDocumentLotTitlesDesc);
 
   if (normalizedDocuments.length > 0 && rawLegacyDamages.length > 0) {
     normalizedDocuments[0] = {
@@ -372,9 +385,13 @@ export default function AlbaranesPage() {
     () => selectedProduct?.tags.find((tag) => tag.id === selectedTagId) || selectedProduct?.tags[0] || null,
     [selectedProduct, selectedTagId],
   );
+  const selectedTagDocuments = useMemo(
+    () => sortDocumentsByLotDesc(selectedTag?.documents || []),
+    [selectedTag],
+  );
   const selectedDamageDocument = useMemo(
-    () => selectedTag?.documents.find((document) => document.id === damageDocumentId) || selectedTag?.documents[0] || null,
-    [selectedTag, damageDocumentId],
+    () => selectedTagDocuments.find((document) => document.id === damageDocumentId) || selectedTagDocuments[0] || null,
+    [damageDocumentId, selectedTagDocuments],
   );
 
   const filteredProducts = useMemo(() => {
@@ -733,7 +750,7 @@ export default function AlbaranesPage() {
         ...product,
         tags: product.tags.map((tag) =>
           tag.id === selectedTag.id
-            ? { ...tag, documents: [entry, ...tag.documents], updatedAt: now }
+            ? { ...tag, documents: sortDocumentsByLotDesc([entry, ...tag.documents]), updatedAt: now }
             : tag,
         ),
         updatedAt: now,
@@ -1274,12 +1291,12 @@ export default function AlbaranesPage() {
                       </div>
 
                       <div className="mt-5 space-y-3">
-                        {selectedTag.documents.length === 0 ? (
+                        {selectedTagDocuments.length === 0 ? (
                           <div className={`rounded-2xl border border-dashed ${palette.border} bg-white p-5 text-center text-sm font-semibold ${palette.accent}`}>
                             Todavía no hay albaranes cargados.
                           </div>
                         ) : (
-                          selectedTag.documents.map((doc) => {
+                          selectedTagDocuments.map((doc) => {
                             const primaryAttachment = getDocumentPrimaryAttachment(doc);
                             const attachments = getDocumentAttachments(doc);
                             const damages = getDocumentDamageHistory(doc);

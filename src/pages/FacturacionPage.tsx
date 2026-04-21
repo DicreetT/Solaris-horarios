@@ -2752,6 +2752,27 @@ export default function FacturacionPage() {
     reviveLabelsInQueue(new Set([clean(labelId)]));
   };
 
+  const finalizeLabelsForDispatchedOrder = useCallback(
+    (orderId: string, labelIds: string[]) => {
+      const ids = new Set(labelIds.map((id) => clean(id)).filter(Boolean));
+      if (ids.size === 0) return;
+      const changedAt = nowIso();
+      setLabelQueue((prev) =>
+        (prev || []).map((label) => {
+          if (!ids.has(clean(label.id))) return label;
+          return {
+            ...label,
+            consumedAt: label.consumedAt || changedAt,
+            consumedByOrderId: label.consumedByOrderId || orderId,
+            cancelledAt: changedAt,
+            lastChangedAt: changedAt,
+          };
+        }),
+      );
+    },
+    [setLabelQueue],
+  );
+
   const openPdfDataUrl = (dataUrl?: string, emptyMessage = 'No hay PDF adjunto.') => {
     if (!dataUrl) {
       alert(emptyMessage);
@@ -3164,6 +3185,7 @@ export default function FacturacionPage() {
 
       const changedAt = nowIso();
       const currentOrder = (ordersRef.current || []).find((item) => item.id === order.id) || order;
+      const labelsToFinalize = getOrderLabels(currentOrder).map((label) => label.id);
       const dispatchedSnapshot: BillingOrder = {
         ...currentOrder,
         status: 'DESPACHADO',
@@ -3171,6 +3193,7 @@ export default function FacturacionPage() {
       };
 
       updateOrder(order.id, () => dispatchedSnapshot);
+      finalizeLabelsForDispatchedOrder(order.id, labelsToFinalize);
       const dateKey = toLocalDateKey(new Date()) || toLocalDateKey(order.createdAt);
       if (dateKey) {
         setArchives((prev) => {
