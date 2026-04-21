@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import seed from '../data/inventory_seed.json';
 import { AlertTriangle, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
@@ -67,6 +67,14 @@ type Movement = {
 };
 
 type GenericRow = Record<string, any>;
+type LotAssemblyFinalizationEntry = {
+  id: string;
+  producto: string;
+  lote: string;
+  ensamblaje_finalizado: 'SI' | 'NO';
+  updatedAt: string;
+  updatedBy?: string;
+};
 
 const CANET_LOT_REFERENCE_ROWS: GenericRow[] = [
   ...((((huarteSeed as any) || {}).lotes || []) as GenericRow[]),
@@ -93,6 +101,7 @@ const LOT_VIALES_CORRECTIONS = new Map<string, number>([
   ['ENT|2507A19', 95075],
   ['ENT|2511A20', 100730],
 ]);
+const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
 const lotKeyOf = (producto: any, lote: any) =>
   `${clean(producto).toUpperCase()}|${normalizeLotCompareToken(lote)}`;
 const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
@@ -154,6 +163,33 @@ const buildLotAssemblyFinalizedMap = (rows: GenericRow[]) => {
     const key = lotKeyOf(producto, lote);
     const incoming = normalizeEnsamblajeFinalizado((row as any).ensamblaje_finalizado);
     map.set(key, incoming);
+  }
+  return map;
+};
+const buildLotAssemblyFinalizedMapFromEntries = (
+  rows: GenericRow[],
+  entries: LotAssemblyFinalizationEntry[] = [],
+) => {
+  const map = buildLotAssemblyFinalizedMap(rows);
+  const latestByKey = new Map<string, LotAssemblyFinalizationEntry>();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const producto = clean(entry?.producto);
+    const lote = clean(entry?.lote);
+    if (!producto || !lote) continue;
+    const key = lotKeyOf(producto, lote);
+    const prev = latestByKey.get(key);
+    if (!prev) {
+      latestByKey.set(key, entry);
+      continue;
+    }
+    const prevTs = new Date(String(prev.updatedAt || '')).getTime();
+    const nextTs = new Date(String(entry.updatedAt || '')).getTime();
+    if (!Number.isFinite(prevTs) || nextTs >= prevTs) {
+      latestByKey.set(key, entry);
+    }
+  }
+  for (const [key, entry] of latestByKey.entries()) {
+    map.set(key, normalizeEnsamblajeFinalizado(entry.ensamblaje_finalizado));
   }
   return map;
 };
@@ -895,6 +931,31 @@ function InventoryPage() {
       mergeStrategy: mergeCanetLotesPayload,
     },
   );
+  const [lotAssemblyFinalizations, setLotAssemblyFinalizations] = useSharedJsonState<LotAssemblyFinalizationEntry[]>(
+    INVENTORY_CANET_LOT_FINALIZATIONS_KEY,
+    [],
+    {
+      userId: actorId,
+      mergeBeforePersist: true,
+      protectFromEmptyOverwrite: true,
+    },
+  );
+  const upsertLotAssemblyFinalization = useCallback((producto: string, lote: string, nextState: 'SI' | 'NO') => {
+    const key = lotKeyOf(producto, lote);
+    const now = nowIso();
+    setLotAssemblyFinalizations((prev) => {
+      const next: LotAssemblyFinalizationEntry[] = (Array.isArray(prev) ? prev : []).filter((entry) => clean(entry.id) !== key);
+      next.unshift({
+        id: key,
+        producto: clean(producto),
+        lote: clean(lote),
+        ensamblaje_finalizado: nextState,
+        updatedAt: now,
+        updatedBy: actorName,
+      });
+      return next;
+    });
+  }, [actorName, setLotAssemblyFinalizations]);
   const [deletedLotKeys, setDeletedLotKeys] = useSharedJsonState<string[]>(
     'inventory_canet_deleted_lot_keys_v1',
     [],
@@ -1822,13 +1883,7 @@ function InventoryPage() {
       }
     }
 
-    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
-    for (const l of visibleLotes) {
-      lotAssemblyFinalizedByKey.set(
-        lotKeyOf(l.producto, l.lote),
-        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
-      );
-    }
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMapFromEntries(visibleLotes, lotAssemblyFinalizations);
 
     return visibleLotes
       .map((l) => {
@@ -2037,13 +2092,7 @@ function InventoryPage() {
     }
 
     const lotStateByKey = buildLotStateMap(visibleLotes);
-    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
-    for (const l of visibleLotes) {
-      lotAssemblyFinalizedByKey.set(
-        lotKeyOf(l.producto, l.lote),
-        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
-      );
-    }
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMapFromEntries(visibleLotes, lotAssemblyFinalizations);
     const lotBase = new Map<string, { producto: string; lote: string; viales: number }>();
     for (const l of visibleLotes) {
       const producto = clean(l.producto);
@@ -2317,6 +2366,7 @@ function InventoryPage() {
     monthFilter,
     monthEnd,
     effectiveLotVialesByKey,
+    lotAssemblyFinalizations,
     visibleLotes,
     productos,
     productFilters,
@@ -2557,13 +2607,7 @@ function InventoryPage() {
     }
 
     const lotStateByKey = buildLotStateMap(visibleLotes);
-    const lotAssemblyFinalizedByKey = new Map<string, 'SI' | 'NO'>();
-    for (const l of visibleLotes) {
-      lotAssemblyFinalizedByKey.set(
-        lotKeyOf(l.producto, l.lote),
-        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
-      );
-    }
+    const lotAssemblyFinalizedByKey = buildLotAssemblyFinalizedMapFromEntries(visibleLotes, lotAssemblyFinalizations);
     const potentialByProduct = new Map<string, number>();
     const potentialByProductLote = new Map<string, Map<string, number>>();
     for (const l of visibleLotes) {
@@ -2873,6 +2917,7 @@ function InventoryPage() {
     deletedLotKeySet,
     inferredLotVialesByKey,
     lotes,
+    lotAssemblyFinalizations,
     visibleLotes,
     normalizedMovements,
     stockByProductLotToken,
@@ -2977,6 +3022,7 @@ function InventoryPage() {
         } else if (normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) === 'SI') {
           next = { ...next, ensamblaje_finalizado_at: clean((fromSeed as any).lastChangedAt || (fromSeed as any).updated_at || (fromSeed as any).created_at) || nowIso() };
         }
+        upsertLotAssemblyFinalization(producto, lote, 'SI');
         rowChanged = true;
       }
 
@@ -3002,9 +3048,60 @@ function InventoryPage() {
     seedLotByKey,
     setLotes,
     stockByProductLotToken,
+    upsertLotAssemblyFinalization,
   ]);
 
   const lotStateByProductLot = useMemo(() => buildLotStateMap(visibleLotes), [visibleLotes]);
+  const lotAssemblyFinalizedByProductLot = useMemo(
+    () => buildLotAssemblyFinalizedMapFromEntries(visibleLotes, lotAssemblyFinalizations),
+    [lotAssemblyFinalizations, visibleLotes],
+  );
+
+  useEffect(() => {
+    if (!Array.isArray(lotAssemblyFinalizations) || lotAssemblyFinalizations.length === 0) return;
+    const latestByKey = new Map<string, LotAssemblyFinalizationEntry>();
+    for (const entry of lotAssemblyFinalizations) {
+      const producto = clean(entry?.producto);
+      const lote = clean(entry?.lote);
+      if (!producto || !lote) continue;
+      const key = lotKeyOf(producto, lote);
+      const prev = latestByKey.get(key);
+      if (!prev) {
+        latestByKey.set(key, entry);
+        continue;
+      }
+      const prevTs = lotAssemblyFinalizedAtMs(prev);
+      const nextTs = lotAssemblyFinalizedAtMs(entry);
+      if (!Number.isFinite(prevTs) || nextTs >= prevTs) {
+        latestByKey.set(key, entry);
+      }
+    }
+
+    let changed = false;
+    const repaired = lotes.map((row) => {
+      if (isLotDeleted(row)) return row;
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      if (!producto || !lote) return row;
+      const entry = latestByKey.get(lotKeyOf(producto, lote));
+      if (!entry) return row;
+      const nextState = normalizeEnsamblajeFinalizado(entry.ensamblaje_finalizado);
+      const currentState = normalizeEnsamblajeFinalizado((row as any).ensamblaje_finalizado);
+      const currentAt = lotAssemblyFinalizedAtMs(row);
+      const entryAt = lotAssemblyFinalizedAtMs(entry);
+      if (currentState === nextState && currentAt >= entryAt) return row;
+      changed = true;
+      return stampLotRow({
+        ...row,
+        ensamblaje_finalizado: nextState,
+        ensamblaje_finalizado_at: entry.updatedAt || nowIso(),
+      });
+    });
+
+    if (changed) {
+      setLotes(repaired);
+    }
+  }, [lotAssemblyFinalizations, lotes, setLotes]);
 
   const lotOptionsForForm = useMemo(() => {
     const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
@@ -3405,7 +3502,9 @@ function InventoryPage() {
         effectiveLotCaducityByKey.get(lotKeyOf(l.producto, l.lote)) || clean(l.fecha_caducidad),
       ),
       estado: effectiveLotState(l.producto, l.lote, l.estado),
-      ensamblaje_finalizado: normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
+      ensamblaje_finalizado:
+        lotAssemblyFinalizedByProductLot.get(lotKeyOf(l.producto, l.lote)) ||
+        normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado),
     });
     setLotModalOpen(true);
   };
@@ -3450,6 +3549,7 @@ function InventoryPage() {
             : l,
         ),
       );
+      upsertLotAssemblyFinalization(newProducto, newLote, nextAsm);
       setDeletedLotKeys((prev) => prev.filter((storedKey) => clean(storedKey) !== oldKey && clean(storedKey) !== newKey));
       const oldLotToken = normalizeLotCompareToken(oldLote);
       const changedMovements = movimientos
@@ -3479,6 +3579,7 @@ function InventoryPage() {
       emitSuccessFeedback('Lote actualizado con éxito.');
     } else {
       setLotes((prev) => [stampLotRow(clearDeletedLotFields({ ...lotPatch })), ...prev]);
+      upsertLotAssemblyFinalization(lotForm.producto, lotForm.lote, nextAsm);
       const createdKey = lotKeyOf(lotForm.producto, lotForm.lote);
       setDeletedLotKeys((prev) => prev.filter((storedKey) => clean(storedKey) !== createdKey));
       await notifyAnabela(`${actorName} creó un lote en Inventario: ${lotForm.producto} ${lotForm.lote}.`);
@@ -3517,7 +3618,9 @@ function InventoryPage() {
     const producto = clean(lot.producto);
     const lote = clean(lot.lote);
     const key = lotKeyOf(producto, lote);
-    const currentState = normalizeEnsamblajeFinalizado((lot as any).ensamblaje_finalizado);
+    const currentState =
+      lotAssemblyFinalizedByProductLot.get(key) ||
+      normalizeEnsamblajeFinalizado((lot as any).ensamblaje_finalizado);
     const nextState: 'SI' | 'NO' = currentState === 'SI' ? 'NO' : 'SI';
     setLotes((prev) =>
       prev.map((row) => {
@@ -3525,6 +3628,7 @@ function InventoryPage() {
         return stampLotRow({ ...row, ensamblaje_finalizado: nextState, ensamblaje_finalizado_at: nowIso() });
       }),
     );
+    upsertLotAssemblyFinalization(producto, lote, nextState);
     const nextLabel = nextState === 'SI' ? 'FINALIZADO' : 'REABIERTO';
     await notifyAnabela(`${actorName} marcó ensamblaje ${nextLabel} para lote ${producto} ${lote}.`);
     appendAudit('Cambio ensamblaje lote', `${producto} ${lote} → ${nextLabel}`);
@@ -4695,8 +4799,10 @@ function InventoryPage() {
             headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
             rows={visibleLotes.map((l, idx) => {
               const lotState = effectiveLotState(l.producto, l.lote, l.estado);
-              const lotFinalizado = normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
               const lotKey = lotKeyOf(l.producto, l.lote);
+              const lotFinalizado =
+                lotAssemblyFinalizedByProductLot.get(lotKey) === 'SI' ||
+                normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
               const vialesDisplay = effectiveLotVialesByKey.get(lotKey) || toVialesNum(l.viales_recibidos);
               const caducityDisplay = effectiveLotCaducityByKey.get(lotKey) || clean(l.fecha_caducidad);
               return [
