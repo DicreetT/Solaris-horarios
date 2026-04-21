@@ -81,6 +81,7 @@ type BillingLabelDoc = {
   lastChangedAt?: string;
   consumedAt?: string;
   consumedByOrderId?: string;
+  detachedAt?: string;
   cancelledAt?: string;
   sourceFileName: string;
   sourcePdfRef?: string;
@@ -1724,6 +1725,10 @@ function nowIso() {
 }
 
 function isLabelDocActive(label: BillingLabelDoc) {
+  return !clean(label.consumedAt) && !clean(label.cancelledAt) && !clean(label.detachedAt);
+}
+
+function isLabelDocVisibleInQueue(label: BillingLabelDoc) {
   return !clean(label.consumedAt) && !clean(label.cancelledAt);
 }
 
@@ -1863,7 +1868,7 @@ export default function FacturacionPage() {
   }, [stockByWarehouseProductLot]);
 
   const activeLabelQueue = useMemo(
-    () => (labelQueue || []).filter((item) => isLabelDocActive(item)),
+    () => (labelQueue || []).filter((item) => isLabelDocVisibleInQueue(item)),
     [labelQueue],
   );
 
@@ -2018,6 +2023,7 @@ export default function FacturacionPage() {
           ...label,
           consumedAt: changedAt,
           consumedByOrderId: orderId,
+          detachedAt: undefined,
           cancelledAt: undefined,
           lastChangedAt: changedAt,
         };
@@ -2035,6 +2041,7 @@ export default function FacturacionPage() {
               ...label,
               consumedAt: undefined,
               consumedByOrderId: undefined,
+              detachedAt: undefined,
               cancelledAt: undefined,
               lastChangedAt: changedAt,
             }
@@ -2182,6 +2189,7 @@ export default function FacturacionPage() {
             ...label,
             consumedAt: label.consumedAt || changedAt,
             consumedByOrderId: label.consumedByOrderId || nextOrders[orderIdx].id,
+            detachedAt: undefined,
             cancelledAt: undefined,
             lastChangedAt: changedAt,
           });
@@ -2209,6 +2217,7 @@ export default function FacturacionPage() {
           ...label,
           consumedAt: changedAt,
           consumedByOrderId: nextOrders[orderIdx].id,
+          detachedAt: undefined,
           cancelledAt: undefined,
           lastChangedAt: changedAt,
         });
@@ -2701,6 +2710,7 @@ export default function FacturacionPage() {
                 ...item,
                 consumedAt: item.consumedAt || changedAt,
                 consumedByOrderId: item.consumedByOrderId || orderId,
+                detachedAt: undefined,
                 cancelledAt: undefined,
                 lastChangedAt: changedAt,
               }
@@ -2749,7 +2759,21 @@ export default function FacturacionPage() {
       ...order,
       labels: getOrderLabels(order).filter((item) => item.id !== labelId),
     }));
-    reviveLabelsInQueue(new Set([clean(labelId)]));
+    const changedAt = nowIso();
+    setLabelQueue((prev) =>
+      (prev || []).map((label) =>
+        clean(label.id) === clean(labelId)
+          ? {
+              ...label,
+              consumedAt: undefined,
+              consumedByOrderId: undefined,
+              detachedAt: changedAt,
+              cancelledAt: undefined,
+              lastChangedAt: changedAt,
+            }
+          : label,
+      ),
+    );
   };
 
   const finalizeLabelsForDispatchedOrder = useCallback(
@@ -2764,6 +2788,7 @@ export default function FacturacionPage() {
             ...label,
             consumedAt: label.consumedAt || changedAt,
             consumedByOrderId: label.consumedByOrderId || orderId,
+            detachedAt: undefined,
             cancelledAt: changedAt,
             lastChangedAt: changedAt,
           };
