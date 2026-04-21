@@ -226,6 +226,13 @@ function getDamageKindTone(kind: AlbaranDamageKind) {
     : 'bg-amber-100 text-amber-800 border-amber-200';
 }
 
+function getDamageBoxFactor(productName: string) {
+  const normalized = clean(productName).toUpperCase().replace(/\s+/g, ' ');
+  if (/^(?:ENT|ENTERO\s*VITAL|ENTEROVITAL)\b/.test(normalized)) return 20;
+  if (/^(?:SV|SOLAR\s*VITAL|SOLARVITAL)\b/.test(normalized)) return 20;
+  return 1;
+}
+
 function safePdfText(value: unknown) {
   return clean(value)
     .replace(/\s+/g, ' ')
@@ -885,6 +892,9 @@ export default function AlbaranesPage() {
     const shippingEntries = entries.filter((entry) => (entry.kind || 'origen') === 'envio');
     const totalOrigin = originEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
     const totalShipping = shippingEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
+    const totalGeneralVials = totalOrigin + totalShipping;
+    const boxFactor = getDamageBoxFactor(selectedProduct.name);
+    const totalGeneralBoxes = boxFactor > 1 ? Math.floor(totalGeneralVials / boxFactor) : 0;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const marginX = 36;
     let startY = 36;
@@ -908,6 +918,10 @@ export default function AlbaranesPage() {
     startY += 12;
     doc.text(`Adjuntos: ${getDocumentAttachments(document).length} · Incidencias: ${entries.length}`, marginX, startY);
     startY += 12;
+    if (boxFactor > 1) {
+      doc.text(`Conversión: ${boxFactor} viales = 1 caja`, marginX, startY);
+      startY += 12;
+    }
     if (document.note) {
       doc.text(`Notas: ${safePdfText(document.note)}`, marginX, startY, { maxWidth: 760 });
       startY += 24;
@@ -918,8 +932,11 @@ export default function AlbaranesPage() {
     const summaryRows = [
       ['Origen', String(totalOrigin)],
       ['Envío', String(totalShipping)],
-      ['Total general', String(totalOrigin + totalShipping)],
+      ['Total general viales', String(totalGeneralVials)],
     ];
+    if (boxFactor > 1) {
+      summaryRows.push(['Total general cajas', String(totalGeneralBoxes)]);
+    }
     autoTable(doc, {
       head: [['Resumen', 'Valor']],
       body: summaryRows,
