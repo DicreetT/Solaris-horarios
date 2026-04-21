@@ -1496,6 +1496,17 @@ export default function AlbaranesPage() {
                                                       <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-black text-amber-800">
                                                         {entry.attachments.length} adjunto(s)
                                                       </span>
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.preventDefault();
+                                                          e.stopPropagation();
+                                                          deleteDamageEntry(selectedProduct.id, entry.id);
+                                                        }}
+                                                        className="rounded-full border border-rose-200 bg-white px-2 py-1 text-[11px] font-black text-rose-700 hover:bg-rose-50"
+                                                      >
+                                                        Borrar
+                                                      </button>
                                                     </div>
                                                   </summary>
                                                   <div className="mt-3 space-y-3 border-t border-amber-100 pt-3">
