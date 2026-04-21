@@ -83,6 +83,21 @@ const CANET_LOT_REFERENCE_ROWS: GenericRow[] = [
 ];
 
 const clean = (v: any) => (v == null ? '' : String(v).trim());
+const rowTimestampMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).updatedAt),
+    clean((row as any).updated_at),
+    clean((row as any).lastChangedAt),
+    clean((row as any).createdAt),
+    clean((row as any).created_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
 const normalizeLotState = (v: any) => (clean(v).toUpperCase() === 'AGOTADO' ? 'AGOTADO' : 'ACTIVO');
 const normalizeSearch = (v: any) =>
   clean(v)
@@ -194,15 +209,10 @@ const buildLotAssemblyFinalizedMapFromEntries = (
   return map;
 };
 const mergeProductRows = (base: GenericRow, incoming: GenericRow) => {
-  const merged = { ...base, ...incoming };
-  const keys = new Set([...Object.keys(base || {}), ...Object.keys(incoming || {})]);
-  for (const key of keys) {
-    const incomingValue = (incoming as any)?.[key];
-    const baseValue = (base as any)?.[key];
-    if (!hasMeaningfulValue(incomingValue) && hasMeaningfulValue(baseValue)) {
-      (merged as any)[key] = baseValue;
-    }
-  }
+  const baseTs = rowTimestampMs(base);
+  const incomingTs = rowTimestampMs(incoming);
+  const preferIncoming = incomingTs > baseTs;
+  const merged = preferIncoming ? { ...base, ...incoming } : { ...incoming, ...base };
   if (clean((incoming as any)?.producto) || clean((base as any)?.producto)) {
     (merged as any).producto = clean((incoming as any)?.producto || (base as any)?.producto).toUpperCase();
   }
@@ -3872,6 +3882,7 @@ function InventoryPage() {
   const createProducto = async () => {
     const code = clean(newProductForm.producto).toUpperCase();
     if (!code) return;
+    const now = nowIso();
     if (editingProductCode) {
       const target = editingProductCode.toUpperCase();
       setProductos((prev) =>
@@ -3884,6 +3895,10 @@ function InventoryPage() {
               stock_optimo: clean(newProductForm.stock_optimo),
               stock_opt: clean(newProductForm.stock_optimo),
               consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
+              updatedAt: now,
+              updated_at: now,
+              updatedBy: actorName,
+              updated_by: actorName,
             }
             : p,
         ),
@@ -3903,6 +3918,10 @@ function InventoryPage() {
         stock_optimo: clean(newProductForm.stock_optimo),
         stock_opt: clean(newProductForm.stock_optimo),
         consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
+        updatedAt: now,
+        updated_at: now,
+        updatedBy: actorName,
+        updated_by: actorName,
       },
     ]);
     closeProductModal();
