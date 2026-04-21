@@ -193,6 +193,54 @@ const buildLotAssemblyFinalizedMapFromEntries = (
   }
   return map;
 };
+const mergeProductRows = (base: GenericRow, incoming: GenericRow) => {
+  const merged = { ...base, ...incoming };
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(incoming || {})]);
+  for (const key of keys) {
+    const incomingValue = (incoming as any)?.[key];
+    const baseValue = (base as any)?.[key];
+    if (!hasMeaningfulValue(incomingValue) && hasMeaningfulValue(baseValue)) {
+      (merged as any)[key] = baseValue;
+    }
+  }
+  if (clean((incoming as any)?.producto) || clean((base as any)?.producto)) {
+    (merged as any).producto = clean((incoming as any)?.producto || (base as any)?.producto).toUpperCase();
+  }
+  return merged;
+};
+const mergeProductsPayload = (remotePayload: any, localPayload: any) => {
+  if (!Array.isArray(remotePayload)) return localPayload;
+  if (!Array.isArray(localPayload)) return remotePayload;
+
+  const byKey = new Map<string, GenericRow>();
+  const remoteOrder: string[] = [];
+  const upsert = (row: GenericRow, fromRemote: boolean) => {
+    if (!row || typeof row !== 'object') return;
+    const producto = clean(row.producto).toUpperCase();
+    if (!producto) return;
+    const normalizedIncoming: GenericRow = { ...row, producto };
+    if (fromRemote && !remoteOrder.includes(producto)) remoteOrder.push(producto);
+    const prev = byKey.get(producto);
+    if (!prev) {
+      byKey.set(producto, normalizedIncoming);
+      return;
+    }
+    byKey.set(producto, mergeProductRows(prev, normalizedIncoming));
+  };
+
+  remotePayload.forEach((row: GenericRow) => upsert(row, true));
+  localPayload.forEach((row: GenericRow) => upsert(row, false));
+
+  const localOrder = localPayload
+    .filter((row: GenericRow) => row && typeof row === 'object')
+    .map((row: GenericRow) => clean(row.producto).toUpperCase())
+    .filter(Boolean);
+  const finalOrder = Array.from(new Set([...remoteOrder, ...localOrder]));
+
+  return finalOrder
+    .map((key) => byKey.get(key))
+    .filter((row): row is GenericRow => !!row);
+};
 const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
   const producto = clean(productoRaw);
   const lote = clean(loteRaw);
@@ -919,7 +967,7 @@ function InventoryPage() {
   const [productos, setProductos] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_productos_v1',
     seed.productos as GenericRow[],
-    { userId: actorId },
+    { userId: actorId, mergeStrategy: mergeProductsPayload },
   );
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
