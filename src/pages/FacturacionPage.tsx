@@ -42,6 +42,7 @@ type BillingOrder = {
   createdAt: string;
   lastChangedAt?: string;
   requiredPackagesUpdatedAt?: string;
+  detachedLabelIds?: string[];
   createdBy: string;
   documentType: BillingDocumentType;
   movementType: BillingMovementType;
@@ -1661,7 +1662,12 @@ function statusClass(status: BillingOrderStatus) {
 }
 
 function getOrderLabels(order: BillingOrder): BillingLabelAttachment[] {
-  if (Array.isArray(order.labels) && order.labels.length > 0) return order.labels;
+  const detachedIds = new Set((Array.isArray(order.detachedLabelIds) ? order.detachedLabelIds : []).map((id) => clean(id)).filter(Boolean));
+  if (Array.isArray(order.labels) && order.labels.length > 0) {
+    const filtered = order.labels.filter((label) => !detachedIds.has(clean(label.id)));
+    if (filtered.length > 0) return filtered;
+  }
+  if (detachedIds.size > 0) return [];
   if (order.labelPdfDataUrl || order.labelFileName) {
     return [
       {
@@ -2724,9 +2730,12 @@ export default function FacturacionPage() {
       const currentLabels = getOrderLabels(current);
       const duplicate = currentLabels.some((item) => clean(item.id) === clean(label.id));
       if (duplicate) return current;
+      const detachedIds = new Set((Array.isArray(current.detachedLabelIds) ? current.detachedLabelIds : []).map((id) => clean(id)).filter(Boolean));
+      detachedIds.delete(clean(label.id));
       const attachedAt = nowIso();
       return {
         ...current,
+        detachedLabelIds: Array.from(detachedIds),
         labels: [
           ...currentLabels,
           {
@@ -2757,6 +2766,13 @@ export default function FacturacionPage() {
   const removeAttachedLabelFromOrder = (orderId: string, labelId: string) => {
     updateOrder(orderId, (order) => ({
       ...order,
+      labelFileName: getOrderLabels(order)
+        .filter((item) => item.id !== labelId)
+        .map((item) => item.sourceFileName)[0],
+      labelPdfDataUrl: undefined,
+      detachedLabelIds: Array.from(
+        new Set([...(Array.isArray(order.detachedLabelIds) ? order.detachedLabelIds : []), clean(labelId)]),
+      ).filter(Boolean),
       labels: getOrderLabels(order).filter((item) => item.id !== labelId),
     }));
     const changedAt = nowIso();

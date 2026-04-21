@@ -139,6 +139,18 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
     merged.labels = Array.from(byId.values());
   }
 
+  // Keep detached label tombstones so a stale merge cannot reattach labels
+  // that were manually removed from a despacho.
+  const baseDetachedLabelIds = Array.isArray(base.detachedLabelIds)
+    ? base.detachedLabelIds.map((item: unknown) => String(item).trim()).filter(Boolean)
+    : [];
+  const incomingDetachedLabelIds = Array.isArray(incoming.detachedLabelIds)
+    ? incoming.detachedLabelIds.map((item: unknown) => String(item).trim()).filter(Boolean)
+    : [];
+  if (baseDetachedLabelIds.length > 0 || incomingDetachedLabelIds.length > 0) {
+    merged.detachedLabelIds = Array.from(new Set([...baseDetachedLabelIds, ...incomingDetachedLabelIds]));
+  }
+
   // Preserve requiredPackages by its own field-level timestamp to avoid
   // stale cross-client overwrites (e.g. bultos bouncing back to 0).
   const baseRequiredTs = parseTimestampMs(base.requiredPackagesUpdatedAt);
@@ -158,6 +170,24 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
       }
       if (Object.prototype.hasOwnProperty.call(base, 'requiredPackagesUpdatedAt')) {
         merged.requiredPackagesUpdatedAt = base.requiredPackagesUpdatedAt;
+      }
+    }
+  }
+
+  // Detached labels should stay detached until someone explicitly reattaches
+  // them. This prevents a stale sync from resurrecting labels that were
+  // manually removed from a despacho and sent back to pending state.
+  const baseDetachedTs = parseTimestampMs(base.detachedAt);
+  const incomingDetachedTs = parseTimestampMs(incoming.detachedAt);
+  if (baseDetachedTs > 0 || incomingDetachedTs > 0) {
+    const keepIncomingDetached = incomingDetachedTs >= baseDetachedTs;
+    if (keepIncomingDetached) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'detachedAt')) {
+        merged.detachedAt = incoming.detachedAt;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'detachedAt')) {
+        merged.detachedAt = base.detachedAt;
       }
     }
   }
