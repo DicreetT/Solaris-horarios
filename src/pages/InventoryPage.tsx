@@ -2969,7 +2969,7 @@ function InventoryPage() {
         next = { ...next, estado: effectiveLotState(producto, lote, (fromSeed as any).estado) };
         rowChanged = true;
       }
-      if (fromSeed && !currentAsmRaw && clean((fromSeed as any).ensamblaje_finalizado)) {
+      if (fromSeed && !currentAsmRaw && normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) === 'SI') {
         next = { ...next, ensamblaje_finalizado: normalizeEnsamblajeFinalizado((fromSeed as any).ensamblaje_finalizado) };
         const seedAsmAt = clean((fromSeed as any).ensamblaje_finalizado_at || (fromSeed as any).ensamblajeFinalizadoAt || (fromSeed as any).assemblyFinalizedAt);
         if (seedAsmAt) {
