@@ -228,7 +228,7 @@ function getDamageKindTone(kind: AlbaranDamageKind) {
 
 function getDamageBoxFactor(productName: string) {
   const normalized = clean(productName).toUpperCase().replace(/\s+/g, ' ');
-  if (/^(?:ENT|ENTERO\s*VITAL|ENTEROVITAL)\b/.test(normalized)) return 20;
+  if (/^(?:ENT|ENTERO\s*VITAL|ENTEROVITAL|ENTHERO\s*VITAL|ENTHEROVITAL|ENTHERO)\b/.test(normalized)) return 20;
   if (/^(?:SV|SOLAR\s*VITAL|SOLARVITAL)\b/.test(normalized)) return 20;
   return 1;
 }
