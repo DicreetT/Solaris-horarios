@@ -13,6 +13,8 @@ type PaymentRequest = {
   createdAt: string;
   updatedAt?: string;
   lastChangedAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
   createdById: string;
   createdByName: string;
   createdByEmail: string;
@@ -342,7 +344,8 @@ export default function BillingPaymentsPage() {
     const filtered = canViewAll
       ? list
       : list.filter((r) => clean(r.createdById) === clean(currentUser?.id));
-    return [...filtered].sort((a, b) => {
+    const active = filtered.filter((r) => !clean((r as any).deletedAt));
+    return [...active].sort((a, b) => {
       if (a.status !== b.status) {
         if (a.status === 'PENDIENTE') return -1;
         if (b.status === 'PENDIENTE') return 1;
@@ -596,12 +599,20 @@ export default function BillingPaymentsPage() {
   };
 
   const deleteRequest = (requestId: string) => {
-    setRequests((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== requestId));
+    const now = new Date().toISOString();
+    updateRequest(requestId, (item) => ({
+      ...item,
+      deletedAt: now,
+      deletedBy: clean(currentUser?.name) || clean(currentUser?.email) || 'Sistema',
+    }));
     setCommentDrafts((prev) => {
       const next = { ...prev };
       delete next[requestId];
       return next;
     });
+    if (editingRequestId === requestId) {
+      closeEditRequest();
+    }
   };
 
   const setCommentDraft = (requestId: string, value: string) => {

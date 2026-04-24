@@ -192,6 +192,29 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
     }
   }
 
+  // Deleted entities should stay deleted until explicitly restored.
+  // This avoids resurrecting rows that another client already removed.
+  const baseDeletedTs = parseTimestampMs(base.deletedAt);
+  const incomingDeletedTs = parseTimestampMs(incoming.deletedAt);
+  if (baseDeletedTs > 0 || incomingDeletedTs > 0) {
+    const keepIncomingDeleted = incomingDeletedTs >= baseDeletedTs;
+    if (keepIncomingDeleted) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'deletedAt')) {
+        merged.deletedAt = incoming.deletedAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'deletedBy')) {
+        merged.deletedBy = incoming.deletedBy;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'deletedAt')) {
+        merged.deletedAt = base.deletedAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'deletedBy')) {
+        merged.deletedBy = base.deletedBy;
+      }
+    }
+  }
+
   // Tombstone-like behavior for cancelled entities:
   // once cancelledAt exists on any side, keep it and force CANCELADO status
   // so stale clients cannot resurrect deleted/cancelled records.
