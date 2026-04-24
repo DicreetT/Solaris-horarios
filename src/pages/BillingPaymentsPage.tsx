@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, FileDown, FileSpreadsheet, FileUp, Plus, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Edit3, FileDown, FileSpreadsheet, FileUp, Plus, Save, Trash2, XCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
@@ -11,9 +11,13 @@ type PaymentStatus = 'PENDIENTE' | 'PAGADO' | 'CANCELADO';
 type PaymentRequest = {
   id: string;
   createdAt: string;
+  updatedAt?: string;
+  lastChangedAt?: string;
   createdById: string;
   createdByName: string;
   createdByEmail: string;
+  updatedById?: string;
+  updatedByName?: string;
   sourceType: 'excel' | 'manual';
   sourceFileName?: string;
   providerName: string;
@@ -277,9 +281,13 @@ function parsePaymentRequestsFromWorkbook(
       results.push({
         id: uid('pay'),
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastChangedAt: new Date().toISOString(),
         createdById: clean(currentUser?.id),
         createdByName: clean(currentUser?.name) || 'Sistema',
         createdByEmail: clean(currentUser?.email).toLowerCase(),
+        updatedById: clean(currentUser?.id),
+        updatedByName: clean(currentUser?.name) || 'Sistema',
         sourceType: 'excel',
         sourceFileName: fileName,
         providerName: providerName || 'Proveedor sin detectar',
@@ -314,6 +322,13 @@ export default function BillingPaymentsPage() {
   const [manualRequestFile, setManualRequestFile] = useState<File | null>(null);
   const [searchText, setSearchText] = useState('');
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [editProvider, setEditProvider] = useState('');
+  const [editInvoice, setEditInvoice] = useState('');
+  const [editAmount, setEditAmount] = useState('');
+  const [editIban, setEditIban] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editComments, setEditComments] = useState('');
 
   const email = clean(currentUser?.email).toLowerCase();
   const isAdmin = !!currentUser?.isAdmin;
@@ -372,6 +387,26 @@ export default function BillingPaymentsPage() {
     setManualRequestFile(null);
   };
 
+  const closeEditRequest = () => {
+    setEditingRequestId(null);
+    setEditProvider('');
+    setEditInvoice('');
+    setEditAmount('');
+    setEditIban('');
+    setEditNotes('');
+    setEditComments('');
+  };
+
+  const openEditRequest = (item: PaymentRequest) => {
+    setEditingRequestId(item.id);
+    setEditProvider(item.providerName || '');
+    setEditInvoice(item.invoiceRef || '');
+    setEditAmount(item.amount ? String(item.amount) : '');
+    setEditIban(item.iban || '');
+    setEditNotes(item.notes || '');
+    setEditComments(item.comments || '');
+  };
+
   const addManualRequest = async () => {
     const providerName = clean(manualProvider);
     const invoiceRef = clean(manualInvoice);
@@ -386,12 +421,17 @@ export default function BillingPaymentsPage() {
       return;
     }
     const requestFileDataUrl = manualRequestFile ? await readFileAsDataUrl(manualRequestFile) : undefined;
+    const now = new Date().toISOString();
     const next: PaymentRequest = {
       id: uid('pay'),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
+      lastChangedAt: now,
       createdById: clean(currentUser?.id),
       createdByName: clean(currentUser?.name) || 'Sistema',
       createdByEmail: email,
+      updatedById: clean(currentUser?.id),
+      updatedByName: clean(currentUser?.name) || 'Sistema',
       sourceType: 'manual',
       providerName,
       invoiceRef: invoiceRef || '-',
@@ -479,7 +519,18 @@ export default function BillingPaymentsPage() {
     const safeId = clean(requestId);
     if (!safeId) return;
     setRequests((prev) =>
-      (Array.isArray(prev) ? prev : []).map((item) => (item.id === safeId ? updater(item) : item)),
+      (Array.isArray(prev) ? prev : []).map((item) => {
+        if (item.id !== safeId) return item;
+        const updated = updater(item);
+        const now = new Date().toISOString();
+        return {
+          ...updated,
+          updatedAt: updated.updatedAt || now,
+          lastChangedAt: updated.lastChangedAt || updated.updatedAt || now,
+          updatedById: updated.updatedById || clean(currentUser?.id),
+          updatedByName: updated.updatedByName || clean(currentUser?.name) || 'Sistema',
+        };
+      }),
     );
   };
 
@@ -517,6 +568,27 @@ export default function BillingPaymentsPage() {
         paidByName: clean(currentUser?.name) || 'Sistema',
       };
     });
+  };
+
+  const saveEditedRequest = () => {
+    if (!editingRequestId) return;
+    const providerName = clean(editProvider);
+    const invoiceRef = clean(editInvoice);
+    const iban = normalizeIban(editIban);
+    if (!providerName) {
+      alert('Completa el proveedor.');
+      return;
+    }
+    updateRequest(editingRequestId, (item) => ({
+      ...item,
+      providerName,
+      invoiceRef: invoiceRef || '-',
+      amount: parseAmount(editAmount),
+      iban,
+      notes: clean(editNotes),
+      comments: clean(editComments),
+    }));
+    closeEditRequest();
   };
 
   const cancelRequest = (requestId: string) => {
@@ -811,6 +883,13 @@ export default function BillingPaymentsPage() {
                       </td>
                       <td className="px-2 py-2">
                         <div className="flex flex-wrap items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditRequest(item)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-black text-violet-800 hover:bg-violet-100"
+                          >
+                            <Edit3 size={12} /> Editar
+                          </button>
                           {item.requestFileDataUrl ? (
                             <>
                               <button
@@ -932,6 +1011,85 @@ export default function BillingPaymentsPage() {
           </div>
         )}
       </section>
+
+      {editingRequestId && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-violet-200 bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-violet-950">Editar solicitud</h3>
+                <p className="text-xs font-semibold text-violet-600">
+                  Cualquier usuario puede ajustar los datos visibles de la fila.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditRequest}
+                className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"
+                aria-label="Cerrar"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <input
+                value={editProvider}
+                onChange={(e) => setEditProvider(e.target.value)}
+                placeholder="Proveedor"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+              <input
+                value={editInvoice}
+                onChange={(e) => setEditInvoice(e.target.value)}
+                placeholder="Factura / referencia"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+              <input
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                placeholder="Importe"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+              <input
+                value={editIban}
+                onChange={(e) => setEditIban(e.target.value)}
+                placeholder="IBAN"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+            </div>
+            <textarea
+              value={editNotes}
+              onChange={(e) => setEditNotes(e.target.value)}
+              placeholder="Notas"
+              rows={3}
+              className="mt-3 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+            />
+            <textarea
+              value={editComments}
+              onChange={(e) => setEditComments(e.target.value)}
+              placeholder="Comentarios"
+              rows={3}
+              className="mt-3 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeEditRequest}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={saveEditedRequest}
+                className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-sm font-black text-white hover:bg-violet-800"
+              >
+                <Save size={14} /> Guardar cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
