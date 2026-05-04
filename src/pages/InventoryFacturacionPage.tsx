@@ -1531,12 +1531,14 @@ export default function InventoryFacturacionPage() {
       if (editingId) {
         await huarteDB.updateMovement(editingId, payload);
         emitSuccessFeedback('Movimiento actualizado con éxito.');
+        setShowAllRows((s) => ({ ...s, movimientos: true }));
       } else {
         await huarteDB.addMovement({
           ...payload,
           created_at: nowIso,
         } as any);
         emitSuccessFeedback('Movimiento creado con éxito.');
+        setShowAllRows((s) => ({ ...s, movimientos: true }));
       }
       setModalOpen(false);
     } catch (error) {
