@@ -861,10 +861,10 @@ export default function InventoryFacturacionPage() {
         const isHuarte = isHuarteAlias(m.bodega);
 
         // Canet: Purge old lot 2504A18 (16 units) to match requested 1599 + 760 view
-        if (isCanet && lot === '2504A18') return false;
+        if (isCanet && !wasTouchedToday(m) && lot === '2504A18') return false;
 
         // Huarte: Purge old/residue lots to leave only the confirmed 174
-        if (isHuarte && (lot === '2405A14' || lot === '2502A17' || lot === '2504A18')) return false;
+        if (isHuarte && !wasTouchedToday(m) && (lot === '2405A14' || lot === '2502A17' || lot === '2504A18')) return false;
       }
 
       if (product === 'ISO') {
@@ -872,10 +872,10 @@ export default function InventoryFacturacionPage() {
         const isHuarte = isHuarteAlias(m.bodega);
 
         // Canet: Purge zero-stock lot 230730
-        if (isCanet && lot === '230730') return false;
+        if (isCanet && !wasTouchedToday(m) && lot === '230730') return false;
 
         // Huarte: Purge old lot 240931 to leave only the confirmed 133
-        if (isHuarte && lot === '240931') return false;
+        if (isHuarte && !wasTouchedToday(m) && lot === '240931') return false;
       }
 
       if (product === 'RG') {
@@ -883,7 +883,7 @@ export default function InventoryFacturacionPage() {
         const isMasBorras = normalizeSearch(m.bodega).includes('mas borras');
 
         // Huarte & Mas Borras: Purge old/residue lots (like 241030) to keep it clean
-        if ((isHuarte || isMasBorras) && lot === '241030') return false;
+        if ((isHuarte || isMasBorras) && !wasTouchedToday(m) && lot === '241030') return false;
       }
 
       return true;
@@ -1007,6 +1007,22 @@ export default function InventoryFacturacionPage() {
     }
     return true;
   };
+
+  function isSameLocalDay(value: unknown, day: Date) {
+    const raw = clean(value);
+    if (!raw) return false;
+    const parsed = parseDate(raw) || new Date(raw);
+    if (!parsed) return false;
+    return (
+      parsed.getFullYear() === day.getFullYear() &&
+      parsed.getMonth() === day.getMonth() &&
+      parsed.getDate() === day.getDate()
+    );
+  }
+  function wasTouchedToday(m: Movement) {
+    const today = new Date();
+    return isSameLocalDay(m.updated_at || m.created_at, today) || isSameLocalDay(m.created_at || m.updated_at, today);
+  }
 
   const filteredMovements = useMemo(() => monthSortedMovements.filter((m) => movementPassesFilters(m, true)), [monthSortedMovements, monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, quickSearch]);
   const filteredMovementsForStock = useMemo(() => {
