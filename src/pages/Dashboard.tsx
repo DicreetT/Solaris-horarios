@@ -19,6 +19,7 @@ import {
     Bell,
     Save,
     Sparkles,
+    FileSpreadsheet,
     UserX,
     XCircle,
     ShoppingBag,
@@ -46,6 +47,7 @@ import { CARLOS_EMAIL, ESTEBAN_ID, USERS } from '../constants';
 import { formatDatePretty, formatTimeNow, toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import { openTableXlsx } from '../utils/tableExport';
 import { supabase } from '../lib/supabase';
 import { FileUploader, Attachment } from '../components/FileUploader';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -1372,6 +1374,16 @@ function Dashboard() {
         }
     };
 
+    const downloadTableXlsx = (title: string, headers: string[], rows: Array<Array<string | number>>, fileName: string, subtitle: string) => {
+        openTableXlsx({
+            title,
+            headers,
+            rows,
+            fileName,
+            subtitle,
+        });
+    };
+
     const downloadMonthlyPdf = () => {
         if (!currentUser) return;
 
@@ -1386,6 +1398,21 @@ function Dashboard() {
             signatures: ['Firma trabajador', 'Firma responsable'],
         });
         emitSuccessFeedback('PDF mensual generado con éxito.');
+    };
+
+    const downloadMonthlyExcel = () => {
+        if (!currentUser) return;
+
+        const monthLabel = monthStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+        const vacationsLeft = Math.max(0, vacationTotal - vacationUsed);
+        downloadTableXlsx(
+            'Registro horario mensual',
+            ['Fecha', 'Entrada', 'Salida', 'Horas', 'Estado'],
+            monthlyRows.map((row) => [row.dateKey, row.entry, row.exit, row.hours > 0 ? row.hours.toFixed(2) : '-', row.status]),
+            `registro-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}-${toDateKey(monthStart)}.xlsx`,
+            `Trabajador: ${currentUser.name} · Mes: ${monthLabel} · Horas mes: ${monthlyWorkedHours.toFixed(1)} · Objetivo: ${monthlyObjectiveHours.toFixed(1)} · Restantes: ${monthlyRemainingHours.toFixed(1)} · Vacaciones restantes: ${vacationsLeft}`,
+        );
+        emitSuccessFeedback('Excel mensual generado con éxito.');
     };
 
     const downloadAbsencesPdf = () => {
@@ -1410,6 +1437,30 @@ function Dashboard() {
             rows,
         });
         emitSuccessFeedback('PDF de ausencias generado con éxito.');
+    };
+
+    const downloadAbsencesExcel = () => {
+        if (!currentUser) return;
+        const rows = managedAbsenceRows.map((r) => {
+            const owner = USERS.find((u) => u.id === r.created_by)?.name || r.created_by;
+            return [
+                owner,
+                r.type === 'vacation' ? 'Vacaciones' : r.type === 'special_permit' ? 'Permiso especial' : 'Ausencia',
+                r.date_key,
+                r.end_date || '-',
+                r.status,
+                r.resolution_type || '-',
+                r.reason || '-',
+            ];
+        });
+        downloadTableXlsx(
+            isAdmin ? 'Gestión de ausencias del equipo' : 'Mis ausencias y vacaciones',
+            ['Persona', 'Tipo', 'Inicio', 'Fin', 'Estado', 'Resolución', 'Motivo'],
+            rows,
+            `ausencias-${currentUser.name.toLowerCase().replace(/\s+/g, '-')}.xlsx`,
+            `Usuario: ${currentUser.name} · Registros: ${rows.length}`,
+        );
+        emitSuccessFeedback('Excel de ausencias generado con éxito.');
     };
 
     const openManagedRequest = (request: ManagedRequestRow) => {
@@ -2997,12 +3048,22 @@ function Dashboard() {
                                 <h2 className="text-lg font-black text-violet-950">Registro de jornada</h2>
                                 <div className="flex items-center gap-3">
                                     {!isAdmin && (
-                                        <button
-                                            onClick={downloadMonthlyPdf}
-                                            className="text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
-                                        >
-                                            Descargar PDF del mes
-                                        </button>
+                                        <>
+                                            <button
+                                                onClick={downloadMonthlyExcel}
+                                                className="text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 bg-emerald-50"
+                                            >
+                                                <FileSpreadsheet size={13} className="inline mr-1" />
+                                                Descargar Excel del mes
+                                            </button>
+                                            <button
+                                                onClick={downloadMonthlyPdf}
+                                                className="text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                                            >
+                                                <Download size={13} className="inline mr-1" />
+                                                Descargar PDF del mes
+                                            </button>
+                                        </>
                                     )}
                                     <button
                                         onClick={() => setShowAllTimeRows((prev) => !prev)}
@@ -3644,6 +3705,13 @@ function Dashboard() {
                         <div className="p-5 border-b border-gray-100 flex items-center justify-between">
                             <h3 className="text-xl font-black text-gray-900">{isAdmin ? 'Gestionar solicitudes' : 'Mis solicitudes'}</h3>
                             <div className="flex items-center gap-2">
+                                <button
+                                    onClick={downloadAbsencesExcel}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"
+                                >
+                                    <FileSpreadsheet size={13} />
+                                    Descargar Excel
+                                </button>
                                 <button
                                     onClick={downloadAbsencesPdf}
                                     className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700"

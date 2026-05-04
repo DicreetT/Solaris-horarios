@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { CARLOS_EMAIL, USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import { openTableXlsx } from '../utils/tableExport';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
@@ -802,6 +803,18 @@ const openTablePdf = (title: string, fileName: string, headers: string[], rows: 
     headers,
     rows: appendTotalRow(headers, rows),
     subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
+  });
+};
+
+const openTableExcel = (title: string, fileName: string, headers: string[], rows: Array<Array<string | number>>, subtitle?: string, summaryRows?: Array<[string, string | number]>) => {
+  openTableXlsx({
+    title,
+    fileName,
+    headers,
+    rows,
+    subtitle: subtitle || `Generado: ${new Date().toLocaleString('es-ES')}`,
+    sheetName: title,
+    summaryRows,
   });
 };
 
@@ -3964,6 +3977,14 @@ function InventoryPage() {
     appendAudit('Descarga PDF', `Movimientos (${monthFilter || 'todos'})`);
     emitSuccessFeedback('PDF generado con éxito.');
   };
+  const downloadMovementsExcel = async () => {
+    const headers = ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Destino', 'Notas'];
+    const rows = visibleMovements.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed ?? m.cantidad, m.bodega, m.cliente || '', m.destino || '', m.notas || '']);
+    openTableExcel('Inventario - Movimientos', `inventario-movimientos-${monthFilter || 'todos'}.xlsx`, headers, rows);
+    await notifyAnabela(`${actorName} descargó Excel de movimientos de Inventario (${monthFilter || 'todos'}).`);
+    appendAudit('Descarga Excel', `Movimientos (${monthFilter || 'todos'})`);
+    emitSuccessFeedback('Excel generado con éxito.');
+  };
   const downloadExecutiveReport = async () => {
     const summaryRows: Array<Array<string | number>> = [
       ['Productos en riesgo', criticalProducts.length],
@@ -3982,6 +4003,25 @@ function InventoryPage() {
     await notifyAnabela(`${actorName} descargó reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
     appendAudit('Descarga PDF', `Gerencial (${monthFilter || 'todos'})`);
     emitSuccessFeedback('PDF gerencial generado con éxito.');
+  };
+  const downloadExecutiveReportExcel = async () => {
+    const summaryRows: Array<[string, string | number]> = [
+      ['Productos en riesgo', criticalProducts.length],
+      ['Salidas del mes', monthOutputTotal],
+      ['Ajustes del mes', monthAdjustmentsTotal],
+      ['Stock total (filtro)', stockByPLB.reduce((acc, r) => acc + toNum(r.stock), 0)],
+    ];
+    openTableExcel(
+      'Inventario Canet - Reporte gerencial',
+      `inventario-canet-gerencial-${monthFilter || 'todos'}.xlsx`,
+      ['Indicador', 'Valor'],
+      appendTotalRow(['Indicador', 'Valor'], summaryRows),
+      `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      summaryRows,
+    );
+    await notifyAnabela(`${actorName} descargó Excel de reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
+    appendAudit('Descarga Excel', `Gerencial (${monthFilter || 'todos'})`);
+    emitSuccessFeedback('Excel gerencial generado con éxito.');
   };
 
   const tabs: Array<{ key: InventoryTab; label: string; icon: React.ElementType; compact?: boolean }> = [
@@ -4099,14 +4139,18 @@ function InventoryPage() {
             </div>
           ))}
         </div>
-        {accessReady && (
-          <div className="mt-3 flex justify-end">
-            <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
-              <Download size={14} />
-              PDF gerencial
-            </button>
-          </div>
-        )}
+          {accessReady && (
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => void downloadExecutiveReportExcel()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                <Download size={14} />
+                Excel gerencial
+              </button>
+              <button onClick={() => void downloadExecutiveReport()} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                <Download size={14} />
+                PDF gerencial
+              </button>
+            </div>
+          )}
       </div>
 
       {showAccessSelector && accessMode === 'unset' ? (
@@ -4364,6 +4408,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Stock Cartonaje (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard stock cartonaje (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario Canet - Stock Cartonaje',
+                `dashboard-stock-cartonaje-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Stock'],
+                stockCartonaje.map((r) => [r.producto, r.lote, r.stock]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock Cartonaje (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard stock cartonaje (${monthFilter || 'todos'})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Stock']} rows={stockCartonaje.map((r) => [
                 <ProductPill key={`${r.producto}-${r.lote}-cart`} code={r.producto} colorMap={productColorMap} />,
@@ -4384,6 +4437,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard stock (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Stock por producto/lote/bodega',
+                `dashboard-stock-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Bodega', 'Stock'],
+                stockByPLB.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard stock (${monthFilter || 'todos'})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Stock', 'Estado']} rows={stockByPLB.map((r) => {
                 const stockVal = toNum(r.stock);
@@ -4443,6 +4505,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Movimientos por lote del mes',
+                `dashboard-mov-lote-${monthFilter || 'todos'}.xlsx`,
+                ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad'],
+                movementByLotDetail.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || 0]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
             }}>
               <div className="grid gap-2 md:grid-cols-3 mb-3">
                 <SelectFilter label="Producto" value={dashMoveProduct} onChange={setDashMoveProduct} options={productOptions} />
@@ -4466,6 +4537,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Stock por cliente/bodega (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Stock por cliente o bodega',
+                `dashboard-clientes-${monthFilter || 'todos'}.xlsx`,
+                ['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad'],
+                stockByClient.map((r) => [r.destino_cliente, r.producto, r.lote, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock cliente/bodega (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
             }}>
               <div className="mb-3">
                 <SelectFilter label="Cliente/Bodega" value={dashClientTarget} onChange={setDashClientTarget} options={clientTargetOptions} />
@@ -4487,6 +4567,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Control de ajustes (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard ajustes (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Control de ajustes',
+                `dashboard-ajustes-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
+                adjustmentControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control de ajustes (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard ajustes (${monthFilter || 'todos'})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(adjustmentControl, showAdjustAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
               {adjustmentControl.length > 5 && (
@@ -4505,6 +4594,15 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Control de salidas (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Dashboard salidas (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Control de salidas por lote',
+                `dashboard-salidas-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
+                outputControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control de salidas (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Dashboard salidas (${monthFilter || 'todos'})`);
             }}>
               <div className="grid gap-2 md:grid-cols-2 mb-3">
                 <SelectFilter label="Producto" value={dashOutProduct} onChange={setDashOutProduct} options={productOptions} />
@@ -4559,6 +4657,26 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Control stock potencial (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Control stock potencial (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Control stock potencial',
+                `control-stock-potencial-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
+                stockControlTables.potentialRows.map((r) => [
+                  r.producto,
+                  r.lotes,
+                  Number(r.viales.toFixed(2)),
+                  Number(r.salidas.toFixed(2)),
+                  Number(r.potencialCajas.toFixed(2)),
+                  Number(r.stockCHP.toFixed(2)),
+                  r.stockOptimo || '-',
+                  r.consumoMes,
+                  formatCoverage(r.coberturaMeses),
+                  r.estadoStock,
+                ]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock potencial (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Control stock potencial (${monthFilter || 'todos'})`);
             }}
           >
             <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -4627,6 +4745,23 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Control stock Canet + Huarte (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Control stock Canet + Huarte (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Control stock cajas Canet + Huarte',
+                `control-stock-canet-huarte-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo'],
+                stockControlTables.canetHuarteRows.map((r) => [
+                  r.producto,
+                  r.lote,
+                  Number(r.stockCanetHuarte.toFixed(2)),
+                  r.stockMinCH || '-',
+                  r.consumoMes,
+                  formatCoverage(r.coberturaMeses),
+                  r.semaforo,
+                ]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock Canet + Huarte (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Control stock Canet + Huarte (${monthFilter || 'todos'})`);
             }}
           >
             <div className="mb-2 flex justify-end">
@@ -4684,6 +4819,24 @@ function InventoryPage() {
               );
               await notifyAnabela(`${actorName} descargó tablero: Control stock Canet (${monthFilter || 'todos'}).`);
               appendAudit('Descarga PDF', `Control stock Canet (${monthFilter || 'todos'})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Control stock Canet',
+                `control-stock-canet-${monthFilter || 'todos'}.xlsx`,
+                ['Producto', 'Lote', 'Stock Canet', 'Potenciales + C', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo'],
+                stockControlTables.canetRows.map((r) => [
+                  r.producto,
+                  r.lote,
+                  Number(r.stockCanet.toFixed(2)),
+                  Number(r.potencialesMasC.toFixed(2)),
+                  r.stockMin || '-',
+                  r.consumoMes,
+                  formatCoverage(r.coberturaMeses),
+                  r.semaforo,
+                ]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock Canet (${monthFilter || 'todos'}).`);
+              appendAudit('Descarga Excel', `Control stock Canet (${monthFilter || 'todos'})`);
             }}
           >
             <div className="mb-2 flex justify-end">
@@ -4721,9 +4874,10 @@ function InventoryPage() {
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-black text-violet-950">Movimientos</h3>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button onClick={openCreateModal} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Nuevo movimiento</button>
-                <button onClick={() => void downloadMovements()} className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"><Download size={14} /> Descargar mes/filtro</button>
+                <button onClick={() => void downloadMovementsExcel()} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"><Download size={14} /> Excel mes/filtro</button>
+                <button onClick={() => void downloadMovements()} className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"><Download size={14} /> PDF mes/filtro</button>
               </div>
             </div>
           </div>
@@ -5554,7 +5708,23 @@ function KpiCard({
   );
 }
 
-function DataSection({ id, title, subtitle, children, tone, onDownload }: { id?: string; title: string; subtitle?: string; children: React.ReactNode; tone: 'violet' | 'indigo' | 'emerald' | 'amber' | 'rose'; onDownload?: () => void }) {
+function DataSection({
+  id,
+  title,
+  subtitle,
+  children,
+  tone,
+  onDownload,
+  onDownloadExcel,
+}: {
+  id?: string;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  tone: 'violet' | 'indigo' | 'emerald' | 'amber' | 'rose';
+  onDownload?: () => void;
+  onDownloadExcel?: () => void;
+}) {
   const toneMap: Record<string, string> = {
     violet: 'border-violet-200 bg-violet-50/30',
     indigo: 'border-indigo-200 bg-indigo-50/30',
@@ -5569,7 +5739,16 @@ function DataSection({ id, title, subtitle, children, tone, onDownload }: { id?:
           <h2 className="text-base md:text-lg font-black text-violet-950 adaptive-text-strong">{title}</h2>
           {subtitle && <p className="text-xs text-violet-700/80 adaptive-text-muted">{subtitle}</p>}
         </div>
-        {onDownload && <button onClick={onDownload} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"><Download size={12} /> Descargar</button>}
+        {(onDownload || onDownloadExcel) && (
+          <div className="flex items-center gap-2">
+            {onDownloadExcel && (
+              <button onClick={onDownloadExcel} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
+                <Download size={12} /> Excel
+              </button>
+            )}
+            {onDownload && <button onClick={onDownload} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"><Download size={12} /> PDF</button>}
+          </div>
+        )}
       </div>
       {children}
     </section>

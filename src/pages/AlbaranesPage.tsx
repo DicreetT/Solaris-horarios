@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Download, FileText, FolderOpen, Image as ImageIcon, Plus, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, Download, FileSpreadsheet, FileText, FolderOpen, Image as ImageIcon, Plus, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
 import { FileUploader, Attachment } from '../components/FileUploader';
+import { openTableXlsx } from '../utils/tableExport';
 
 type AlbaranDamageKind = 'origen' | 'envio';
 
@@ -1029,6 +1030,41 @@ export default function AlbaranesPage() {
     doc.save(fileName);
   };
 
+  const downloadDamageHistoryExcel = (document?: AlbaranDocument) => {
+    if (!selectedProduct || !selectedTag || !document) return;
+    const title = `${selectedProduct.name} · ${selectedTag.name} · ${getDocumentTitle(document)}`;
+    const fileName = `albaran-danados-${selectedProduct.name.toLowerCase().replace(/\s+/g, '-')}-${selectedTag.name.toLowerCase().replace(/\s+/g, '-')}-${getDocumentTitle(document).toLowerCase().replace(/\s+/g, '-')}.xlsx`;
+    const entries = [...getDocumentDamageHistory(document)].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const originEntries = entries.filter((entry) => (entry.kind || 'origen') !== 'envio');
+    const shippingEntries = entries.filter((entry) => (entry.kind || 'origen') === 'envio');
+    const totalOrigin = originEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
+    const totalShipping = shippingEntries.reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
+    const totalGeneralVials = totalOrigin + totalShipping;
+    const boxFactor = getDamageBoxFactor(selectedProduct.name);
+    const totalGeneralBoxes = boxFactor > 1 ? Math.floor(totalGeneralVials / boxFactor) : 0;
+
+    openTableXlsx({
+      title: 'Lunaris · Albaranes',
+      subtitle: `${safePdfText(title)} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      fileName,
+      headers: ['Tipo', 'Fecha', 'Cantidad', 'Comentario', 'Adjuntos', 'Creado por'],
+      rows: entries.map((entry) => [
+        getDamageKindLabel(entry.kind || 'origen'),
+        formatDateTime(entry.createdAt),
+        Number(entry.quantity) || 0,
+        safePdfText(entry.comment || '-'),
+        String((entry.attachments || []).length),
+        safePdfText(entry.createdBy || '-'),
+      ]),
+      summaryRows: [
+        ['Origen', totalOrigin],
+        ['Envío', totalShipping],
+        ['Total general viales', totalGeneralVials],
+        ...(boxFactor > 1 ? [['Total general cajas', totalGeneralBoxes] as [string, number]] : []),
+      ],
+    });
+  };
+
   if (!canAccess) {
     return (
       <div className="max-w-5xl mx-auto">
@@ -1461,6 +1497,18 @@ export default function AlbaranesPage() {
                                       >
                                         <Plus size={13} />
                                         Añadir dañado
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          downloadDamageHistoryExcel(doc);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-50"
+                                      >
+                                        <FileSpreadsheet size={13} />
+                                        Descargar Excel
                                       </button>
                                       <button
                                         type="button"

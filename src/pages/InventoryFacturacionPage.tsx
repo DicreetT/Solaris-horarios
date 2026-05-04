@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BarChart3, Boxes, Calculator, Download, FileWarning, FolderTree, Plus, Save, Trash2, X } from 'lucide-react';
+import { BarChart3, Boxes, Calculator, Download, FileSpreadsheet, FileWarning, FolderTree, Plus, Save, Trash2, X } from 'lucide-react';
 import seed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +8,7 @@ import { useNotificationsContext } from '../context/NotificationsContext';
 import { CARLOS_EMAIL, USERS } from '../constants';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import { openTableXlsx } from '../utils/tableExport';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
@@ -1681,6 +1682,21 @@ export default function InventoryFacturacionPage() {
       subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
     });
   };
+  const exportXlsx = (
+    title: string,
+    headers: string[],
+    rows: Array<Array<string | number>>,
+    summaryRows?: Array<[string, string | number]>,
+  ) => {
+    openTableXlsx({
+      title,
+      headers,
+      rows: appendTotalRow(headers, rows),
+      fileName: `${title.toLowerCase().replace(/\s+/g, '-')}.xlsx`,
+      subtitle: `Generado: ${new Date().toLocaleString('es-ES')}`,
+      summaryRows,
+    });
+  };
   const exportExecutivePdf = () => {
     const summaryRows: Array<Array<string | number>> = [
       ['Stock total (filtro)', safeKpiStockTotal],
@@ -1715,6 +1731,43 @@ export default function InventoryFacturacionPage() {
       rows: appendTotalRow(['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'], detailRows),
     });
     emitSuccessFeedback('PDF gerencial y detalle generados.');
+  };
+  const exportExecutiveXlsx = () => {
+    const summaryRows: Array<[string, string | number]> = [
+      ['Stock total (filtro)', safeKpiStockTotal],
+      ['Movimientos (filtro)', dashboard.totalMovements],
+      ['Rectificativas (filtro)', dashboard.totalRect],
+      ['Lotes activos (stock>0)', dashboard.totalLots],
+    ];
+    openTableXlsx({
+      title: 'Inventario Huarte - Reporte gerencial',
+      subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      fileName: `inventario-huarte-gerencial-${monthFilter || 'todos'}.xlsx`,
+      headers: ['Indicador', 'Valor'],
+      rows: appendTotalRow(['Indicador', 'Valor'], summaryRows),
+      summaryRows,
+    });
+    openTableXlsx({
+      title: 'Inventario Huarte - Detalle operativo',
+      subtitle: `Top ${Math.min(filteredMovements.length, 120)} movimientos filtrados`,
+      fileName: `inventario-huarte-detalle-${monthFilter || 'todos'}.xlsx`,
+      headers: ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'],
+      rows: appendTotalRow(
+        ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Responsable', 'Última edición por', 'Última edición'],
+        filteredMovements.slice(0, 120).map((m) => [
+          displayDate(m.fecha),
+          m.tipo_movimiento,
+          m.producto,
+          m.lote,
+          m.bodega,
+          m.cantidad_signed || m.cantidad,
+          m.responsable || '-',
+          m.updated_by || '-',
+          m.updated_at ? new Date(m.updated_at).toLocaleString('es-ES') : '-',
+        ]),
+      ),
+    });
+    emitSuccessFeedback('Excel gerencial y detalle generados.');
   };
 
   const limitRows = <T,>(key: string, rows: T[]) => (showAllRows[key] ? rows : rows.slice(0, 6));
@@ -1787,10 +1840,16 @@ export default function InventoryFacturacionPage() {
         </div>
         {accessReady && (
           <div className="mt-3 flex justify-end">
-            <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
-              <Download size={14} />
-              PDF gerencial
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={exportExecutiveXlsx} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                <FileSpreadsheet size={14} />
+                Excel gerencial
+              </button>
+              <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                <Download size={14} />
+                PDF gerencial
+              </button>
+            </div>
           </div>
         )}
       </section>
@@ -1908,10 +1967,16 @@ export default function InventoryFacturacionPage() {
               <KpiCard title="Lotes activos (stock>0)" value={String(dashboard.totalLots)} tone="emerald" onClick={() => setLotsActiveModalOpen(true)} />
             </div>
             <div className="mt-2 flex justify-end">
-              <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
-                <Download size={14} />
-                PDF gerencial
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={exportExecutiveXlsx} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                  <FileSpreadsheet size={14} />
+                  Excel gerencial
+                </button>
+                <button onClick={exportExecutivePdf} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                  <Download size={14} />
+                  PDF gerencial
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2005,6 +2070,13 @@ export default function InventoryFacturacionPage() {
           {visibleDashboardSections.includes('stock') && (!isCompact || dashboardSection === 'stock') && (
             <Panel
               title={`Stock por producto/lote/bodega · ${HUARTE_BUILD_TAG}`}
+              onDownloadExcel={() =>
+                exportXlsx(
+                  'Inventario Facturacion - Stock por Lote',
+                  ['Producto', 'Lote', 'Bodega', 'Stock'],
+                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                )
+              }
               onDownload={() =>
                 exportPdf(
                   'Inventario Facturacion - Stock por Lote',
@@ -2039,6 +2111,13 @@ export default function InventoryFacturacionPage() {
           {visibleDashboardSections.includes('control') && (!isCompact || dashboardSection === 'control') && (
             <Panel
               title={`Control por lote${monthFilter ? ` · ${monthLabel(monthFilter)}` : ''}`}
+              onDownloadExcel={() =>
+                exportXlsx(
+                  'Inventario Facturacion - Control por lote',
+                  ['Producto', 'Lote', 'Bodega', 'Stock calculado'],
+                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                )
+              }
               onDownload={() =>
                 exportPdf(
                   'Inventario Facturacion - Control por lote',
@@ -2062,6 +2141,13 @@ export default function InventoryFacturacionPage() {
           {visibleDashboardSections.includes('rect') && (!isCompact || dashboardSection === 'rect') && (
             <Panel
               title="Rectificativas recientes"
+              onDownloadExcel={() =>
+                exportXlsx(
+                  'Inventario Facturacion - Rectificativas',
+                  ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc'],
+                  rectificativas.map((r) => [displayDate(r.fecha), r.tipo_movimiento, r.producto, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || '']),
+                )
+              }
               onDownload={() => exportPdf('Inventario Facturacion - Rectificativas', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Factura/Doc'], rectificativas.map((r) => [displayDate(r.fecha), r.tipo_movimiento, r.producto, r.lote, r.bodega, r.cantidad_signed || r.cantidad, r.factura_doc || '']))}
               actions={rectificativas.length > 6 ? <ToggleMore k="rect" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
@@ -2070,7 +2156,11 @@ export default function InventoryFacturacionPage() {
           )}
 
           {visibleDashboardSections.includes('ventas_anual') && (!isCompact || dashboardSection === 'ventas_anual') && (
-            <Panel title="Ventas anuales" onDownload={() => exportPdf('Inventario Facturacion - Ventas anuales', ['Año', 'Cantidad'], ventasAnuales.map(([y, q]) => [y, q]))}>
+            <Panel
+              title="Ventas anuales"
+              onDownloadExcel={() => exportXlsx('Inventario Facturacion - Ventas anuales', ['Año', 'Cantidad'], ventasAnuales.map(([y, q]) => [y, q]))}
+              onDownload={() => exportPdf('Inventario Facturacion - Ventas anuales', ['Año', 'Cantidad'], ventasAnuales.map(([y, q]) => [y, q]))}
+            >
               <DataTable
                 headers={['Año', 'Cantidad']}
                 rows={limitRows('ventas_anual', ventasAnuales).map(([y, q]) => [y, q])}
@@ -2083,7 +2173,11 @@ export default function InventoryFacturacionPage() {
           )}
 
           {visibleDashboardSections.includes('envios_mes') && (!isCompact || dashboardSection === 'envios_mes') && (
-            <Panel title="Envíos mensuales" onDownload={() => exportPdf('Inventario Facturacion - Envios mensuales', ['Mes', 'Cantidad'], enviosMensuales.map(([m, q]) => [monthLabel(m), q]))}>
+            <Panel
+              title="Envíos mensuales"
+              onDownloadExcel={() => exportXlsx('Inventario Facturacion - Envios mensuales', ['Mes', 'Cantidad'], enviosMensuales.map(([m, q]) => [monthLabel(m), q]))}
+              onDownload={() => exportPdf('Inventario Facturacion - Envios mensuales', ['Mes', 'Cantidad'], enviosMensuales.map(([m, q]) => [monthLabel(m), q]))}
+            >
               <DataTable
                 headers={['Mes', 'Cantidad']}
                 rows={limitRows('envios_mes', enviosMensuales).map(([m, q]) => [monthLabel(m), q])}
@@ -2096,7 +2190,11 @@ export default function InventoryFacturacionPage() {
           )}
 
           {visibleDashboardSections.includes('ensam_anual') && (!isCompact || dashboardSection === 'ensam_anual') && (
-            <Panel title="Ensamblajes anuales" onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes anuales', ['Año', 'Cantidad'], ensamblajesAnuales.map(([y, q]) => [y, q]))}>
+            <Panel
+              title="Ensamblajes anuales"
+              onDownloadExcel={() => exportXlsx('Inventario Facturacion - Ensamblajes anuales', ['Año', 'Cantidad'], ensamblajesAnuales.map(([y, q]) => [y, q]))}
+              onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes anuales', ['Año', 'Cantidad'], ensamblajesAnuales.map(([y, q]) => [y, q]))}
+            >
               <DataTable
                 headers={['Año', 'Cantidad']}
                 rows={limitRows('ensam_anual', ensamblajesAnuales).map(([y, q]) => [y, q])}
@@ -2170,8 +2268,19 @@ export default function InventoryFacturacionPage() {
       {accessReady && tab === 'movimientos' && (
         <Panel
           title="Movimientos"
+          onDownloadExcel={() =>
+            exportXlsx(
+              'Inventario Facturacion - Movimientos',
+              ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Motivo', 'Fuente'],
+              filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.motivo || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']),
+            )
+          }
           actions={
             <div className="flex items-center gap-2">
+              <button onClick={() => exportXlsx('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Motivo', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.motivo || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                <FileSpreadsheet size={14} />
+                Descargar Excel
+              </button>
               <button onClick={() => exportPdf('Inventario Facturacion - Movimientos', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Factura/Doc', 'Motivo', 'Fuente'], filteredMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed || m.cantidad, m.bodega, m.cliente || '', m.factura_doc || '', m.motivo || '', (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : m.source === 'canet_auto_in' ? 'Auto entrada Huarte' : 'Inventario/Facturación']))} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
                 <Download size={14} />
                 Descargar PDF
@@ -2225,11 +2334,16 @@ export default function InventoryFacturacionPage() {
                 </div>
               ) : undefined
             }
+            onDownloadExcel={() => exportXlsx('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
             onDownload={() => exportPdf('Inventario Facturacion - Rectificativas detalle', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable'], rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '']))}
           >
             <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Factura/Doc', 'Responsable', 'Últ. edición', 'Acciones']} rows={rectificativas.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-r2-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.motivo || '', m.factura_doc || '', m.responsable || '', `${m.updated_by || '-'} ${m.updated_at ? `· ${new Date(m.updated_at).toLocaleDateString('es-ES')}` : ''}`, canEdit && canMutateMovement(m) ? <div key={`rr-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
           </Panel>
-          <Panel title="Auditoría de rectificativas" onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}>
+          <Panel
+            title="Auditoría de rectificativas"
+            onDownloadExcel={() => exportXlsx('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}
+            onDownload={() => exportPdf('Inventario Facturacion - Audit rectificativas', ['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable'], rectAudit.map((r) => [r.fecha, r.tipo, r.factura, r.producto, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable]))}
+          >
             <DataTable headers={['Fecha', 'Tipo', 'Factura', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Motivo', 'Responsable']} rows={rectAudit.map((r, idx) => [r.fecha, r.tipo, r.factura, <ProductPill key={`h-ra-${idx}-${r.producto}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.cantidad, r.motivo, r.responsable])} />
           </Panel>
         </section>
@@ -2240,6 +2354,7 @@ export default function InventoryFacturacionPage() {
           <Panel
             title="Ensamblajes registrados por movimiento"
             actions={canEdit ? <button onClick={() => openCreateWithType('ensamblaje_esp')} className="rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Nuevo ensamblaje</button> : undefined}
+            onDownloadExcel={() => exportXlsx('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
             onDownload={() => exportPdf('Inventario Facturacion - Ensamblajes', ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente'], ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || m.cantidad, m.source || '']))}
           >
             <DataTable headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad', 'Fuente', 'Acciones']} rows={ensamblajesMovements.map((m) => [displayDate(m.fecha), m.tipo_movimiento, <ProductPill key={`h-ens-${m.id}-${m.producto}`} code={m.producto} colorMap={productColorMap} />, m.lote, m.bodega, m.cantidad_signed || m.cantidad, (m.source === 'canet' || m.source === 'canet_live') ? 'Inventario Canet' : 'Inventario/Facturación', canEdit && canMutateMovement(m) ? <div key={`ee-${m.id}`} className="flex items-center gap-1"><button onClick={() => openEdit(m)} className="rounded-lg border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><Save size={13} /></button><button onClick={() => void deleteMovement(m.id)} className="rounded-lg border border-rose-200 p-1 text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button></div> : '-'])} />
@@ -2552,12 +2667,30 @@ function ToggleMore({ k, showAllRows, setShowAllRows }: { k: string; showAllRows
   );
 }
 
-function Panel({ title, children, actions, onDownload }: { title: string; children: React.ReactNode; actions?: React.ReactNode; onDownload?: () => void }) {
+function Panel({
+  title,
+  children,
+  actions,
+  onDownload,
+  onDownloadExcel,
+}: {
+  title: string;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+  onDownload?: () => void;
+  onDownloadExcel?: () => void;
+}) {
   return (
     <section className="rounded-2xl border border-violet-200 bg-white p-3 adaptive-surface">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-black text-violet-950 adaptive-text-strong">{title}</h2>
         <div className="flex items-center gap-2">
+          {onDownloadExcel && (
+            <button onClick={onDownloadExcel} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+              <FileSpreadsheet size={14} />
+              Descargar Excel
+            </button>
+          )}
           {onDownload && (
             <button onClick={onDownload} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
               <Download size={14} />

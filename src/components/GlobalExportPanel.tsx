@@ -6,10 +6,11 @@ import { useMeetings } from '../hooks/useMeetings';
 import { useTimeData } from '../hooks/useTimeData';
 import { useTodos } from '../hooks/useTodos';
 import { useTraining } from '../hooks/useTraining';
-import { FileText, Download } from 'lucide-react';
+import { FileText, Download, FileSpreadsheet } from 'lucide-react';
 import { useState } from 'react';
 import RoleBadge from './RoleBadge';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import { openTableXlsx } from '../utils/tableExport';
 
 export default function GlobalExportPanel() {
     const { currentUser: user } = useAuth();
@@ -75,6 +76,22 @@ export default function GlobalExportPanel() {
         });
     }
 
+    function openXlsx(
+        title: string,
+        headers: string[],
+        rows: Array<Array<string | number>>,
+        fileName: string,
+        subtitle: string,
+    ) {
+        openTableXlsx({
+            title,
+            headers,
+            rows,
+            fileName,
+            subtitle,
+        });
+    }
+
     function exportMonthlyTimes() {
         const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Horas', 'Estado', 'Nota'];
         const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
@@ -119,6 +136,49 @@ export default function GlobalExportPanel() {
         );
     }
 
+    function exportMonthlyTimesExcel() {
+        const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Horas', 'Estado', 'Nota'];
+        const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const sortedDates = Object.keys(timeData).sort();
+        const currentMonthPrefix = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
+
+        for (const dateKey of sortedDates) {
+            if (!dateKey.startsWith(currentMonthPrefix)) continue;
+
+            const dayData = timeData[dateKey];
+            for (const userId of Object.keys(dayData)) {
+                const entries = dayData[userId] || [];
+                entries.forEach((r: TimeEntry) => {
+                    const persona = userMap[userId] || userId;
+                    const row: Array<string | number> = [
+                        dateKey,
+                        persona,
+                        r.entry || '',
+                        r.exit || '',
+                        (r.entry && r.exit) ? calculateHours(r.entry, r.exit) : '',
+                        r.status || '',
+                        (r.note || '').replace(/\n/g, ' '),
+                    ];
+                    flatRows.push({ persona, fecha: safeDate(dateKey), row });
+                });
+            }
+        }
+
+        const rows = flatRows
+            .sort((a, b) => cmpEs(a.persona, b.persona) || cmpEs(a.fecha, b.fecha))
+            .map((x) => x.row);
+
+        const monthName = selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
+        openXlsx(
+            `Horarios de ${monthName}`,
+            headers,
+            rows,
+            `horarios-${monthName.replace(/ /g, '-')}.xlsx`,
+            `Registros del equipo para ${monthName}`,
+        );
+    }
+
     function exportTimes() {
         const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Estado', 'Nota'];
         const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
@@ -150,6 +210,37 @@ export default function GlobalExportPanel() {
         openPdf('Histórico de horarios', headers, rows, 'lunaris-horarios.pdf', 'Exportación completa de horarios');
     }
 
+    function exportTimesExcel() {
+        const headers = ['Fecha', 'Persona', 'Entrada', 'Salida', 'Estado', 'Nota'];
+        const flatRows: Array<{ persona: string; fecha: string; row: Array<string | number> }> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const sortedDates = Object.keys(timeData).sort();
+        for (const dateKey of sortedDates) {
+            const dayData = timeData[dateKey];
+            for (const userId of Object.keys(dayData)) {
+                const entries = dayData[userId] || [];
+                const r = (entries[0] || {}) as TimeEntry;
+                const persona = userMap[userId] || userId;
+                flatRows.push({
+                    persona,
+                    fecha: safeDate(dateKey),
+                    row: [
+                        dateKey,
+                        persona,
+                        r.entry || '',
+                        r.exit || '',
+                        r.status || '',
+                        (r.note || '').replace(/\n/g, ' '),
+                    ],
+                });
+            }
+        }
+        const rows = flatRows
+            .sort((a, b) => cmpEs(a.persona, b.persona) || cmpEs(a.fecha, b.fecha))
+            .map((x) => x.row);
+        openXlsx('Histórico de horarios', headers, rows, 'lunaris-horarios.xlsx', 'Exportación completa de horarios');
+    }
+
     function exportTrainings() {
         const headers = ['ID', 'Persona', 'Fecha solicitada', 'Fecha programada', 'Estado', 'N mensajes'];
         const rows: Array<Array<string | number>> = [];
@@ -170,6 +261,28 @@ export default function GlobalExportPanel() {
             ]);
         });
         openPdf('Histórico de formaciones', headers, rows, 'lunaris-formaciones.pdf', 'Solicitudes y estados de formaciones');
+    }
+
+    function exportTrainingsExcel() {
+        const headers = ['ID', 'Persona', 'Fecha solicitada', 'Fecha programada', 'Estado', 'N mensajes'];
+        const rows: Array<Array<string | number>> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const ordered = [...trainingRequests].sort((a, b) => {
+            const personaA = userMap[a.user_id] || a.user_id;
+            const personaB = userMap[b.user_id] || b.user_id;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.requested_date_key), safeDate(b.requested_date_key));
+        });
+        ordered.forEach((r) => {
+            rows.push([
+                r.id.toString(),
+                userMap[r.user_id] || r.user_id,
+                r.requested_date_key || '',
+                r.scheduled_date_key || '',
+                r.status || '',
+                (r.comments || []).length.toString(),
+            ]);
+        });
+        openXlsx('Histórico de formaciones', headers, rows, 'lunaris-formaciones.xlsx', 'Solicitudes y estados de formaciones');
     }
 
     function exportMeetings() {
@@ -214,6 +327,48 @@ export default function GlobalExportPanel() {
         openPdf('Histórico de reuniones', headers, rows, 'lunaris-reuniones.pdf', 'Reuniones creadas, participantes y estados');
     }
 
+    function exportMeetingsExcel() {
+        const headers = [
+            'ID',
+            'Creada por',
+            'Fecha creación',
+            'Título',
+            'Descripción',
+            'Fecha preferida',
+            'Franja',
+            'Participantes',
+            'Estado',
+            'Fecha programada',
+            'Nota respuesta',
+        ];
+        const rows: Array<Array<string | number>> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const ordered = [...meetingRequests].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.created_at), safeDate(b.created_at));
+        });
+        ordered.forEach((m) => {
+            const participantsNames = (m.participants || [])
+                .map((id: string) => userMap[id] || id)
+                .join(' / ');
+            rows.push([
+                m.id.toString(),
+                userMap[m.created_by] || m.created_by,
+                m.created_at || '',
+                m.title || '',
+                (m.description || '').replace(/\n/g, ' '),
+                m.preferred_date_key || '',
+                m.preferred_slot || '',
+                participantsNames,
+                m.status || '',
+                m.scheduled_date_key || '',
+                (m.response_message || '').replace(/\n/g, ' '),
+            ]);
+        });
+        openXlsx('Histórico de reuniones', headers, rows, 'lunaris-reuniones.xlsx', 'Reuniones creadas, participantes y estados');
+    }
+
     function exportAbsences() {
         const headers = ['Solicitud ID', 'Persona', 'Fecha permiso', 'Motivo', 'Estado', 'Nota respuesta', 'Fecha solicitud'];
         const rows: Array<Array<string | number>> = [];
@@ -235,6 +390,29 @@ export default function GlobalExportPanel() {
             ]);
         });
         openPdf('Histórico de permisos especiales', headers, rows, 'lunaris-permisos-especiales.pdf', 'Ausencias y permisos registrados');
+    }
+
+    function exportAbsencesExcel() {
+        const headers = ['Solicitud ID', 'Persona', 'Fecha permiso', 'Motivo', 'Estado', 'Nota respuesta', 'Fecha solicitud'];
+        const rows: Array<Array<string | number>> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const ordered = [...absenceRequests].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.date_key), safeDate(b.date_key));
+        });
+        ordered.forEach((r) => {
+            rows.push([
+                r.id.toString(),
+                userMap[r.created_by] || r.created_by,
+                r.date_key || '',
+                (r.reason || '').replace(/\n/g, ' '),
+                r.status || '',
+                (r.response_message || '').replace(/\n/g, ' '),
+                r.created_at || '',
+            ]);
+        });
+        openXlsx('Histórico de permisos especiales', headers, rows, 'lunaris-permisos-especiales.xlsx', 'Ausencias y permisos registrados');
     }
 
     function exportTodos() {
@@ -265,6 +443,36 @@ export default function GlobalExportPanel() {
             ]);
         });
         openPdf('Histórico de tareas', headers, rows, 'lunaris-tareas.pdf', 'Listado de tareas con asignaciones y estados');
+    }
+
+    function exportTodosExcel() {
+        const headers = ['ID', 'Título', 'Descripción', 'Creada por', 'Asignada a', 'Fecha creación', 'Fecha objetivo', 'Completada por'];
+        const rows: Array<Array<string | number>> = [];
+        const userMap = Object.fromEntries(USERS.map((u) => [u.id, u.name]));
+        const ordered = [...todos].sort((a, b) => {
+            const personaA = userMap[a.created_by] || a.created_by;
+            const personaB = userMap[b.created_by] || b.created_by;
+            return cmpEs(personaA, personaB) || cmpEs(safeDate(a.created_at), safeDate(b.created_at));
+        });
+        ordered.forEach((t) => {
+            const assignedNames = (t.assigned_to || [])
+                .map((id: string) => userMap[id] || id)
+                .join(' / ');
+            const completedNames = (t.completed_by || [])
+                .map((id: string) => userMap[id] || id)
+                .join(' / ');
+            rows.push([
+                t.id,
+                t.title || '',
+                (t.description || '').replace(/\n/g, ' '),
+                userMap[t.created_by] || t.created_by,
+                assignedNames,
+                t.created_at || '',
+                t.due_date_key || '',
+                completedNames,
+            ]);
+        });
+        openXlsx('Histórico de tareas', headers, rows, 'lunaris-tareas.xlsx', 'Listado de tareas con asignaciones y estados');
     }
 
     return (
@@ -315,6 +523,14 @@ export default function GlobalExportPanel() {
                             <Download size={20} />
                             <span>Descargar Horarios de {selectedDate.toLocaleString('es-ES', { month: 'long' })}</span>
                         </button>
+                        <button
+                            type="button"
+                            className="mt-3 w-full md:w-auto flex items-center justify-center gap-3 px-6 py-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 font-bold hover:bg-emerald-100 hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+                            onClick={exportMonthlyTimesExcel}
+                        >
+                            <FileSpreadsheet size={20} />
+                            <span>Descargar Excel de {selectedDate.toLocaleString('es-ES', { month: 'long' })}</span>
+                        </button>
                     </div>
 
                     <div className="border-t border-gray-100 my-8"></div>
@@ -342,6 +558,14 @@ export default function GlobalExportPanel() {
                             <span className="font-bold text-gray-700 group-hover:text-amber-800">Horarios (Todos)</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
                         </button>
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTimesExcel}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-emerald-800">Horarios (Excel)</span>
+                            <FileSpreadsheet size={18} className="text-gray-400 group-hover:text-emerald-600" />
+                        </button>
 
                         <button
                             type="button"
@@ -350,6 +574,14 @@ export default function GlobalExportPanel() {
                         >
                             <span className="font-bold text-gray-700 group-hover:text-amber-800">Formaciones</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTrainingsExcel}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-emerald-800">Formaciones (Excel)</span>
+                            <FileSpreadsheet size={18} className="text-gray-400 group-hover:text-emerald-600" />
                         </button>
 
                         <button
@@ -360,6 +592,14 @@ export default function GlobalExportPanel() {
                             <span className="font-bold text-gray-700 group-hover:text-amber-800">Reuniones</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
                         </button>
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportMeetingsExcel}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-emerald-800">Reuniones (Excel)</span>
+                            <FileSpreadsheet size={18} className="text-gray-400 group-hover:text-emerald-600" />
+                        </button>
 
                         <button
                             type="button"
@@ -369,6 +609,14 @@ export default function GlobalExportPanel() {
                             <span className="font-bold text-gray-700 group-hover:text-amber-800">Permisos especiales</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
                         </button>
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportAbsencesExcel}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-emerald-800">Permisos (Excel)</span>
+                            <FileSpreadsheet size={18} className="text-gray-400 group-hover:text-emerald-600" />
+                        </button>
 
                         <button
                             type="button"
@@ -377,6 +625,14 @@ export default function GlobalExportPanel() {
                         >
                             <span className="font-bold text-gray-700 group-hover:text-amber-800">Tareas (To-Do)</span>
                             <Download size={18} className="text-gray-400 group-hover:text-amber-600" />
+                        </button>
+                        <button
+                            type="button"
+                            className="group flex items-center justify-between p-4 rounded-2xl border border-emerald-200 hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md transition-all duration-200 bg-white"
+                            onClick={exportTodosExcel}
+                        >
+                            <span className="font-bold text-gray-700 group-hover:text-emerald-800">Tareas (Excel)</span>
+                            <FileSpreadsheet size={18} className="text-gray-400 group-hover:text-emerald-600" />
                         </button>
                     </div>
                 </div>
