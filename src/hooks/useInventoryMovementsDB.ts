@@ -18,6 +18,7 @@ export type InventoryMovementRow = {
     cantidad_signed?: number;
     source?: string;
     origin_canet_id?: number;
+    origin_huarte_id?: number;
     created_at?: string;
     updated_at?: string;
     updated_by?: string;

@@ -81,7 +81,13 @@ const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const STORAGE_CANET_ASSEMBLIES_SEEN = 'invhf_canet_assemblies_seen_v1';
 const STORAGE_CANET_ASSEMBLIES_NOTIFIED = 'invhf_canet_assemblies_notified_v1';
 const STORAGE_HUARTE_HIDDEN_CORRECTIONS = 'inventory_huarte_hidden_corrections_v1';
-const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v1';
+const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v2';
+const HUARTE_VISUAL_STOCK_CORRECTIONS = new Map<string, number>([
+  ['ENT|2507A19|MAS BORRAS', 10],
+  ['ENT|2507A19|VALENCIA', 4],
+  ['ISO|250932|MAS BORRAS', 2],
+  ['ISO|250932|VALENCIA', 2],
+]);
 // Desde esta fecha se activa la integración automática de ensamblajes de Canet -> Huarte.
 const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 // Desde esta fecha se activa la integración automática de movimientos de Canet -> Huarte.
@@ -646,6 +652,14 @@ export default function InventoryFacturacionPage() {
     seed.clientes as GenericRow[],
     { userId: actorId },
   );
+  const activeBodegas = useMemo(
+    () => bodegas.filter((b) => !clean((b as any).deletedAt) && !clean((b as any).deleted_at)),
+    [bodegas],
+  );
+  const activeClientes = useMemo(
+    () => clientes.filter((c) => !clean((c as any).deletedAt) && !clean((c as any).deleted_at)),
+    [clientes],
+  );
 
   const [newProducto, setNewProducto] = useState('');
   const [newLote, setNewLote] = useState({ producto: '', lote: '', bodega: '', estado: 'ACTIVO' });
@@ -1112,9 +1126,9 @@ export default function InventoryFacturacionPage() {
       ),
     ).sort();
   }, [activeLotes, form.producto, editingId, monthSortedMovements]);
-  const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
+  const warehouseOptions = useMemo(() => Array.from(new Set(activeBodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [activeBodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
-  const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
+  const clientOptions = useMemo(() => Array.from(new Set(activeClientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [activeClientes]);
 
   const movementPassesFilters = (m: Movement, includeMonth = true) => {
     if (includeMonth && monthFilter) {
@@ -1222,10 +1236,14 @@ export default function InventoryFacturacionPage() {
   }, [filteredMovementsForStock]);
   const safeControlByLot = useMemo(
     () =>
-      controlByLot.map((r) => ({
-        ...r,
-        stock: Math.max(0, Math.round(toNum(r.stock))),
-      })),
+      controlByLot.map((r) => {
+        const correctionKey = `${clean(r.producto).toUpperCase()}|${clean(r.lote)}|${normalizeWarehouseAlias(r.bodega).toUpperCase()}`;
+        const correctedStock = HUARTE_VISUAL_STOCK_CORRECTIONS.get(correctionKey) ?? Math.max(0, Math.round(toNum(r.stock)));
+        return {
+          ...r,
+          stock: Math.max(0, Math.round(toNum(correctedStock))),
+        };
+      }),
     [controlByLot],
   );
   const visibleSafeControlByLot = useMemo(
@@ -1857,7 +1875,7 @@ export default function InventoryFacturacionPage() {
   const createBodega = () => {
     const b = clean(newBodega.bodega).toUpperCase();
     if (!b) return;
-    if (bodegas.some((x) => clean(x.bodega).toLowerCase() === b.toLowerCase())) return;
+    if (activeBodegas.some((x) => clean(x.bodega).toLowerCase() === b.toLowerCase())) return;
     setBodegas((prev) => [...prev, { bodega: b, activo_si_no: clean(newBodega.activo_si_no || 'SI') }]);
     setNewBodega({ bodega: '', activo_si_no: 'SI' });
     emitSuccessFeedback('Bodega creada con éxito.');
@@ -1883,14 +1901,21 @@ export default function InventoryFacturacionPage() {
     const oldBodega = clean(oldBodegaRaw).toUpperCase();
     if (!oldBodega) return;
     if (!window.confirm(`¿Borrar la bodega "${oldBodegaRaw}"?`)) return;
-    setBodegas((prev) => prev.filter((b) => clean(b.bodega).toUpperCase() !== oldBodega));
+    const ts = new Date().toISOString();
+    setBodegas((prev) =>
+      prev.map((b) =>
+        clean(b.bodega).toUpperCase() === oldBodega
+          ? { ...b, deletedAt: ts, deleted_at: ts, deletedBy: actorName, deleted_by: actorName, updatedAt: ts, updated_at: ts, updatedBy: actorName, updated_by: actorName }
+          : b,
+      ),
+    );
     emitSuccessFeedback('Bodega eliminada con éxito.');
   };
 
   const createCliente = () => {
     const c = clean(newCliente);
     if (!c) return;
-    if (clientes.some((x) => clean(x.cliente).toLowerCase() === c.toLowerCase())) return;
+    if (activeClientes.some((x) => clean(x.cliente).toLowerCase() === c.toLowerCase())) return;
     setClientes((prev) => [...prev, { cliente: c }]);
     setNewCliente('');
     emitSuccessFeedback('Cliente creado con éxito.');
@@ -1916,7 +1941,14 @@ export default function InventoryFacturacionPage() {
     const oldClient = clean(oldClientRaw);
     if (!oldClient) return;
     if (!window.confirm(`¿Borrar el cliente "${oldClientRaw}"?`)) return;
-    setClientes((prev) => prev.filter((c) => clean(c.cliente) !== oldClient));
+    const ts = new Date().toISOString();
+    setClientes((prev) =>
+      prev.map((c) =>
+        clean(c.cliente) === oldClient
+          ? { ...c, deletedAt: ts, deleted_at: ts, deletedBy: actorName, deleted_by: actorName, updatedAt: ts, updated_at: ts, updatedBy: actorName, updated_by: actorName }
+          : c,
+      ),
+    );
     emitSuccessFeedback('Cliente eliminado con éxito.');
   };
 
@@ -2785,7 +2817,7 @@ export default function InventoryFacturacionPage() {
             >
               <DataTable
                 headers={['Bodega', 'Activo', 'Acciones']}
-                rows={limitRows('maestros_bodegas', bodegas).map((b, idx) => [
+                rows={limitRows('maestros_bodegas', activeBodegas).map((b, idx) => [
                   clean(b.bodega),
                   clean(b.activo_si_no || 'SI'),
                   <div key={`bodega-actions-${idx}`} className="flex items-center gap-1">
@@ -2798,7 +2830,7 @@ export default function InventoryFacturacionPage() {
                   </div>,
                 ])}
               />
-              {bodegas.length > 6 && (
+              {activeBodegas.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_bodegas" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />
                 </div>
@@ -2841,7 +2873,7 @@ export default function InventoryFacturacionPage() {
             >
               <DataTable
                 headers={['Cliente', 'Acciones']}
-                rows={limitRows('maestros_clientes', clientes).map((c, idx) => [
+                rows={limitRows('maestros_clientes', activeClientes).map((c, idx) => [
                   clean(c.cliente),
                   <div key={`client-actions-${idx}`} className="flex items-center gap-1">
                     <button onClick={() => editCliente(c.cliente)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200" title="Editar cliente">
@@ -2853,7 +2885,7 @@ export default function InventoryFacturacionPage() {
                   </div>,
                 ])}
               />
-              {clientes.length > 6 && (
+              {activeClientes.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_clientes" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />
                 </div>
