@@ -3,6 +3,8 @@ import { FileUp, Send, ClipboardCheck, Truck, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { InventoryMovementRow, useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
+import canetInventorySeed from '../data/inventory_seed.json';
+import huarteInventorySeed from '../data/inventory_facturacion_seed.json';
 import { supabase } from '../lib/supabase';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -24,6 +26,7 @@ type BillingOrderStatus =
 type BillingMovementType = 'venta' | 'traspaso';
 type BillingDocumentType = 'FACTURA' | 'TRANSFERENCIA';
 type ProductCode = 'AV' | 'ENT' | 'ISO' | 'KL' | 'RG' | 'SV' | '';
+type GenericRow = Record<string, any>;
 
 type BillingOrderLine = {
   id: string;
@@ -190,6 +193,47 @@ function archiveSignature(entries: BillingArchiveEntry[]) {
     .join('|');
 }
 
+function mergeBodegaRows(remotePayload: any, localPayload: any) {
+  if (!Array.isArray(remotePayload)) return localPayload;
+  if (!Array.isArray(localPayload)) return remotePayload;
+
+  const byKey = new Map<string, GenericRow>();
+  const remoteOrder: string[] = [];
+
+  const upsert = (row: GenericRow, fromRemote: boolean) => {
+    if (!row || typeof row !== 'object') return;
+    const bodega = clean(row.bodega).toUpperCase();
+    if (!bodega) return;
+    const normalizedIncoming: GenericRow = {
+      ...row,
+      bodega,
+      activo_si_no: clean(row.activo_si_no) || 'SI',
+    };
+    if (fromRemote && !remoteOrder.includes(bodega)) remoteOrder.push(bodega);
+    const prev = byKey.get(bodega);
+    if (!prev) {
+      byKey.set(bodega, normalizedIncoming);
+      return;
+    }
+    byKey.set(bodega, {
+      ...prev,
+      ...normalizedIncoming,
+      activo_si_no: clean(normalizedIncoming.activo_si_no || prev.activo_si_no) || 'SI',
+    });
+  };
+
+  remotePayload.forEach((row: GenericRow) => upsert(row, true));
+  localPayload.forEach((row: GenericRow) => upsert(row, false));
+
+  const localOrder = localPayload
+    .filter((row: GenericRow) => row && typeof row === 'object')
+    .map((row: GenericRow) => clean(row.bodega).toUpperCase())
+    .filter(Boolean);
+  const finalOrder = Array.from(new Set([...remoteOrder, ...localOrder]));
+
+  return finalOrder.map((bodega) => byKey.get(bodega)).filter((row): row is GenericRow => !!row);
+}
+
 type TesseractLike = {
   recognize: (
     image: HTMLCanvasElement | string,
@@ -205,16 +249,6 @@ declare global {
 }
 
 const PRODUCT_OPTIONS: ProductCode[] = ['AV', 'ENT', 'ISO', 'KL', 'RG', 'SV'];
-const TRANSFER_DESTINATION_OPTIONS = [
-  { value: 'CANET', label: 'Canet' },
-  { value: 'HUARTE', label: 'Huarte' },
-  { value: 'BARCELONA', label: 'Barcelona' },
-  { value: 'BILBAO', label: 'Bilbao' },
-  { value: 'LOGROÑO', label: 'Logroño' },
-  { value: 'MAS BORRAS', label: 'Mas Borras' },
-  { value: 'PAMPLONA', label: 'Pamplona' },
-  { value: 'VALENCIA', label: 'Valencia' },
-];
 const OCR_MIN_TEXT_LENGTH = 30;
 const OCR_MAX_PAGES = 12;
 const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
@@ -1912,6 +1946,24 @@ export default function FacturacionPage() {
       mergeIncomingWithLocal: true,
     },
   );
+  const [canetBodegas] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_bodegas_v1',
+    canetInventorySeed.bodegas as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      mergeIncomingWithLocal: false,
+    },
+  );
+  const [huarteBodegas] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_bodegas_v1',
+    huarteInventorySeed.bodegas as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      mergeIncomingWithLocal: false,
+    },
+  );
   const ordersRef = useRef<BillingOrder[]>([]);
   const labelQueueRef = useRef<BillingLabelDoc[]>([]);
   const pdfBlobCacheRef = useRef<Map<string, string>>(new Map());
@@ -1964,6 +2016,30 @@ export default function FacturacionPage() {
     () => (labelQueue || []).filter((item) => isLabelDocVisibleInQueue(item)),
     [labelQueue],
   );
+
+  const transferNodeOptions = useMemo(() => {
+    const fixed = new Map<string, string>([
+      ['CANET', 'Canet'],
+      ['HUARTE', 'Huarte'],
+      ['BARCELONA', 'Barcelona'],
+      ['BILBAO', 'Bilbao'],
+      ['LOGROÑO', 'Logroño'],
+      ['MAS BORRAS', 'Mas Borras'],
+      ['PAMPLONA', 'Pamplona'],
+      ['VALENCIA', 'Valencia'],
+    ]);
+    const pushRow = (row: GenericRow) => {
+      const value = clean(row?.bodega).toUpperCase();
+      if (!value) return;
+      const label = clean(row?.bodega) || value;
+      if (!fixed.has(value)) fixed.set(value, label);
+    };
+    (Array.isArray(canetBodegas) ? canetBodegas : []).forEach(pushRow);
+    (Array.isArray(huarteBodegas) ? huarteBodegas : []).forEach(pushRow);
+    return Array.from(fixed.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [canetBodegas, huarteBodegas]);
 
   const persistPdfBlob = useCallback(
     async (ref: string, dataUrl: string, fileName: string) => {
@@ -3752,7 +3828,7 @@ export default function FacturacionPage() {
                             className="min-w-[150px] rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] font-black text-violet-900 outline-none"
                           >
                             <option value="">Seleccionar origen...</option>
-                            {TRANSFER_DESTINATION_OPTIONS.map((option) => (
+                            {transferNodeOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -3772,7 +3848,7 @@ export default function FacturacionPage() {
                             className="min-w-[150px] rounded-md border border-cyan-200 bg-white px-2 py-1 text-[11px] font-black text-cyan-900 outline-none"
                           >
                             <option value="">Seleccionar destino...</option>
-                            {TRANSFER_DESTINATION_OPTIONS.map((option) => (
+                            {transferNodeOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>

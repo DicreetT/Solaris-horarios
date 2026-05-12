@@ -262,6 +262,49 @@ const mergeProductsPayload = (remotePayload: any, localPayload: any) => {
     .map((key) => byKey.get(key))
     .filter((row): row is GenericRow => !!row);
 };
+
+const mergeBodegasPayload = (remotePayload: any, localPayload: any) => {
+  if (!Array.isArray(remotePayload)) return localPayload;
+  if (!Array.isArray(localPayload)) return remotePayload;
+
+  const byKey = new Map<string, GenericRow>();
+  const remoteOrder: string[] = [];
+
+  const upsert = (row: GenericRow, fromRemote: boolean) => {
+    if (!row || typeof row !== 'object') return;
+    const bodega = clean(row.bodega).toUpperCase();
+    if (!bodega) return;
+    const normalizedIncoming: GenericRow = {
+      ...row,
+      bodega,
+      activo_si_no: clean(row.activo_si_no) || 'SI',
+    };
+    if (fromRemote && !remoteOrder.includes(bodega)) remoteOrder.push(bodega);
+    const prev = byKey.get(bodega);
+    if (!prev) {
+      byKey.set(bodega, normalizedIncoming);
+      return;
+    }
+    byKey.set(bodega, {
+      ...prev,
+      ...normalizedIncoming,
+      activo_si_no: clean(normalizedIncoming.activo_si_no || prev.activo_si_no) || 'SI',
+    });
+  };
+
+  remotePayload.forEach((row: GenericRow) => upsert(row, true));
+  localPayload.forEach((row: GenericRow) => upsert(row, false));
+
+  const localOrder = localPayload
+    .filter((row: GenericRow) => row && typeof row === 'object')
+    .map((row: GenericRow) => clean(row.bodega).toUpperCase())
+    .filter(Boolean);
+  const finalOrder = Array.from(new Set([...remoteOrder, ...localOrder]));
+
+  return finalOrder
+    .map((key) => byKey.get(key))
+    .filter((row): row is GenericRow => !!row);
+};
 const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, loteRaw: string) => {
   const producto = clean(productoRaw);
   const lote = clean(loteRaw);
@@ -1079,7 +1122,7 @@ function InventoryPage() {
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_bodegas_v1',
     seed.bodegas as GenericRow[],
-    { userId: actorId },
+    { userId: actorId, mergeStrategy: mergeBodegasPayload },
   );
   const [clientes, setClientes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_clientes_v1',
