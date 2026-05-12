@@ -95,7 +95,17 @@ function isPlainObject(value: unknown): value is Record<string, any> {
 }
 
 function entityVersionMs(value: Record<string, any>) {
-  const candidates = ['lastChangedAt', 'updatedAt', 'updated_at', 'deletedAt', 'attachedAt', 'archivedAt', 'createdAt', 'created_at'];
+  const candidates = [
+    'lastChangedAt',
+    'updatedAt',
+    'updated_at',
+    'deletedAt',
+    'attachedAt',
+    'archivedAt',
+    'restoredAt',
+    'createdAt',
+    'created_at',
+  ];
   for (const field of candidates) {
     const raw = value[field];
     if (raw == null || raw === '') continue;
@@ -188,6 +198,49 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
     } else {
       if (Object.prototype.hasOwnProperty.call(base, 'detachedAt')) {
         merged.detachedAt = base.detachedAt;
+      }
+    }
+  }
+
+  // Archived entries should stay archived until explicitly restored.
+  const baseArchivedTs = parseTimestampMs(base.archivedAt);
+  const incomingArchivedTs = parseTimestampMs(incoming.archivedAt);
+  if (baseArchivedTs > 0 || incomingArchivedTs > 0) {
+    const keepIncomingArchived = incomingArchivedTs >= baseArchivedTs;
+    if (keepIncomingArchived) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'archivedAt')) {
+        merged.archivedAt = incoming.archivedAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'archivedBy')) {
+        merged.archivedBy = incoming.archivedBy;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'archivedAt')) {
+        merged.archivedAt = base.archivedAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'archivedBy')) {
+        merged.archivedBy = base.archivedBy;
+      }
+    }
+  }
+
+  const baseRestoredTs = parseTimestampMs(base.restoredAt);
+  const incomingRestoredTs = parseTimestampMs(incoming.restoredAt);
+  if (baseRestoredTs > 0 || incomingRestoredTs > 0) {
+    const keepIncomingRestored = incomingRestoredTs >= baseRestoredTs;
+    if (keepIncomingRestored) {
+      if (Object.prototype.hasOwnProperty.call(incoming, 'restoredAt')) {
+        merged.restoredAt = incoming.restoredAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(incoming, 'restoredBy')) {
+        merged.restoredBy = incoming.restoredBy;
+      }
+    } else {
+      if (Object.prototype.hasOwnProperty.call(base, 'restoredAt')) {
+        merged.restoredAt = base.restoredAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, 'restoredBy')) {
+        merged.restoredBy = base.restoredBy;
       }
     }
   }

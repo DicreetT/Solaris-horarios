@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BarChart3, Boxes, Calculator, Download, FileSpreadsheet, FileWarning, FolderTree, Plus, Save, Trash2, X } from 'lucide-react';
+import { Archive, BarChart3, Boxes, Calculator, Download, FileSpreadsheet, FileWarning, FolderTree, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import seed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import { useAuth } from '../context/AuthContext';
@@ -60,6 +60,15 @@ type InventoryEditGrant = {
   approvedAt: string;
   expiresAt: string;
 };
+type ArchivedLotEntry = {
+  id: string;
+  producto: string;
+  lote: string;
+  archivedAt: string;
+  archivedBy?: string;
+  restoredAt?: string;
+  restoredBy?: string;
+};
 
 const STORAGE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
@@ -73,6 +82,7 @@ const CANET_ASSEMBLY_SYNC_START = '2026-02-23';
 const CANET_MOVEMENT_SYNC_START = '2026-02-23';
 const STORAGE_HUARTE_EDIT_REQUESTS = 'inventory_huarte_edit_requests_v1';
 const STORAGE_HUARTE_EDIT_GRANTS = 'inventory_huarte_edit_grants_v1';
+const STORAGE_LOT_ARCHIVES = 'inventory_huarte_lot_archives_v1';
 const EDIT_GRANT_HOURS = 6;
 const HUARTE_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
@@ -236,6 +246,29 @@ const describeDbError = (error: unknown) => {
 const isHuarteAlias = (v: unknown) => {
   const x = normalizeSearch(v);
   return x.includes('huarte') || x.includes('guarte') || x.includes('warte') || x.includes('wuarte');
+};
+const lotArchiveAtMs = (row: GenericRow) => {
+  const candidates = [clean((row as any).archivedAt), clean((row as any).archived_at)];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+const lotRestoredAtMs = (row: GenericRow) => {
+  const candidates = [clean((row as any).restoredAt), clean((row as any).restored_at)];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+const isArchivedLotEntryActive = (row: GenericRow) => {
+  const archivedAt = lotArchiveAtMs(row);
+  if (archivedAt <= 0) return false;
+  return archivedAt > lotRestoredAtMs(row);
 };
 const inferMovementSign = (typeRaw: string, qtyRaw: number) => {
   const t = normalizeSearch(typeRaw).replace(/[−–—]/g, '-');
@@ -547,6 +580,11 @@ export default function InventoryFacturacionPage() {
     'inventory_huarte_lotes_v1',
     seed.lotes as GenericRow[],
     { userId: actorId },
+  );
+  const [archivedLotEntries, setArchivedLotEntries] = useSharedJsonState<ArchivedLotEntry[]>(
+    STORAGE_LOT_ARCHIVES,
+    [],
+    { userId: actorId, mergeBeforePersist: true },
   );
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_huarte_bodegas_v1',
@@ -902,7 +940,7 @@ export default function InventoryFacturacionPage() {
       (m) => clean(m.bodega).toUpperCase() !== 'CANET',
     );
     return [...withoutCanetWarehouse, ...canonicalCanetMirror];
-  }, [movimientos, canetMovimientos, canetLotes, canetTipos, lotes]);
+  }, [movimientos, canetMovimientos, canetTipos, lotes, canetLotes]);
 
   const monthSortedMovements = useMemo(() => {
     return [...integratedMovements].sort((a, b) => {
@@ -953,18 +991,68 @@ export default function InventoryFacturacionPage() {
     });
     return map;
   }, [productOptions]);
+  const archivedLotEntryByKey = useMemo(() => {
+    const map = new Map<string, ArchivedLotEntry>();
+    for (const entry of Array.isArray(archivedLotEntries) ? archivedLotEntries : []) {
+      const producto = clean(entry?.producto);
+      const lote = clean(entry?.lote);
+      if (!producto || !lote) continue;
+      const key = `${producto}|${lote}`;
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, { ...entry, id: key, producto, lote });
+        continue;
+      }
+      const prevArchived = lotArchiveAtMs(prev);
+      const nextArchived = lotArchiveAtMs(entry);
+      const prevRestored = lotRestoredAtMs(prev);
+      const nextRestored = lotRestoredAtMs(entry);
+      if (nextArchived > prevArchived || nextRestored > prevRestored) {
+        map.set(key, {
+          ...prev,
+          ...entry,
+          id: key,
+          producto,
+          lote,
+          archivedAt: clean((entry as any).archivedAt || (prev as any).archivedAt),
+          archivedBy: clean((entry as any).archivedBy || (prev as any).archivedBy) || undefined,
+          restoredAt: clean((entry as any).restoredAt || (prev as any).restoredAt) || undefined,
+          restoredBy: clean((entry as any).restoredBy || (prev as any).restoredBy) || undefined,
+        });
+      }
+    }
+    return map;
+  }, [archivedLotEntries]);
+  const archivedLotKeySet = useMemo(
+    () =>
+      new Set(
+        Array.from(archivedLotEntryByKey.values())
+          .filter((entry) => isArchivedLotEntryActive(entry))
+          .map((entry) => `${clean(entry.producto)}|${clean(entry.lote)}`),
+      ),
+    [archivedLotEntryByKey],
+  );
+  const activeLotes = useMemo(
+    () => lotes.filter((row) => !archivedLotKeySet.has(`${clean(row.producto)}|${clean(row.lote)}`)),
+    [archivedLotKeySet, lotes],
+  );
+  const archivedLotes = useMemo(
+    () => lotes.filter((row) => archivedLotKeySet.has(`${clean(row.producto)}|${clean(row.lote)}`)),
+    [archivedLotKeySet, lotes],
+  );
+  const [lotViewMode, setLotViewMode] = useState<'active' | 'archived'>('active');
   const lotOptions = useMemo(() => {
-    const all = Array.from(new Set(lotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
+    const all = Array.from(new Set(activeLotes.map((l) => clean(l.lote)).filter(Boolean))).sort();
     if (selectedProducts.length === 0) return all;
-    return all.filter((lot) => lotes.some((l) => clean(l.lote) === lot && selectedProducts.includes(clean(l.producto))));
-  }, [lotes, selectedProducts]);
+    return all.filter((lot) => activeLotes.some((l) => clean(l.lote) === lot && selectedProducts.includes(clean(l.producto))));
+  }, [activeLotes, selectedProducts]);
   const modalLotOptions = useMemo(() => {
     const selectedProduct = clean(form.producto);
     const editingMovement = editingId ? monthSortedMovements.find((m) => m.id === editingId) : null;
     const keepKey = editingMovement ? `${clean(editingMovement.producto)}|${clean(editingMovement.lote)}` : '';
     const source = selectedProduct
-      ? lotes.filter((l) => clean(l.producto) === selectedProduct)
-      : lotes;
+      ? activeLotes.filter((l) => clean(l.producto) === selectedProduct)
+      : activeLotes;
     return Array.from(
       new Set(
         source
@@ -977,7 +1065,7 @@ export default function InventoryFacturacionPage() {
           .filter(Boolean),
       ),
     ).sort();
-  }, [lotes, form.producto, editingId, monthSortedMovements]);
+  }, [activeLotes, form.producto, editingId, monthSortedMovements]);
   const warehouseOptions = useMemo(() => Array.from(new Set(bodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [bodegas]);
   const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
   const clientOptions = useMemo(() => Array.from(new Set(clientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [clientes]);
@@ -1094,6 +1182,10 @@ export default function InventoryFacturacionPage() {
       })),
     [controlByLot],
   );
+  const visibleSafeControlByLot = useMemo(
+    () => safeControlByLot.filter((r) => !archivedLotKeySet.has(`${clean(r.producto)}|${clean(r.lote)}`)),
+    [archivedLotKeySet, safeControlByLot],
+  );
   const globalSafeControlByLot = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
     const ordered = [...globalMovementsForStock].sort((a, b) => {
@@ -1127,7 +1219,7 @@ export default function InventoryFacturacionPage() {
         byBodega: Record<string, number>;
       }
     >();
-    safeControlByLot.forEach((m) => {
+    visibleSafeControlByLot.forEach((m) => {
       const producto = clean(m.producto);
       const lote = clean(m.lote);
       const bodega = clean(m.bodega);
@@ -1143,11 +1235,11 @@ export default function InventoryFacturacionPage() {
       .filter((r) => r.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 14);
-  }, [safeControlByLot]);
+  }, [visibleSafeControlByLot]);
   useEffect(() => {
     const byLot: Record<string, number> = {};
     const byLotBodega: Record<string, number> = {};
-    globalSafeControlByLot.forEach((row) => {
+    visibleSafeControlByLot.forEach((row) => {
       const producto = clean(row.producto);
       const lote = clean(row.lote);
       const bodega = clean(row.bodega);
@@ -1177,7 +1269,7 @@ export default function InventoryFacturacionPage() {
       byLotBodega: nextPayload.byLotBodega,
     });
     if (prevStable !== nextStable) setHuarteVisualStockByLotCache(nextPayload);
-  }, [globalSafeControlByLot, monthFilter, huarteVisualStockByLotCache, setHuarteVisualStockByLotCache]);
+  }, [monthFilter, huarteVisualStockByLotCache, setHuarteVisualStockByLotCache, visibleSafeControlByLot]);
   useEffect(() => {
     setStockSectionSelected(null);
   }, [monthFilter, selectedProducts, lotFilter, warehouseFilter, typeFilter, dashboardSection]);
@@ -1225,39 +1317,44 @@ export default function InventoryFacturacionPage() {
   }, [canetAssemblyIds.length, currentUser, addNotification, canetAssembliesNotifiedKey, setCanetAssembliesNotifiedKey]);
 
   const dashboard = useMemo(() => {
-    const totalStock = Math.max(0, controlByLot.reduce((acc, row) => acc + Math.max(0, toNum(row.stock)), 0));
+    const totalStock = Math.max(0, visibleSafeControlByLot.reduce((acc, row) => acc + Math.max(0, toNum(row.stock)), 0));
     const totalMovements = filteredMovements.length;
     const totalRect = rectificativas.length;
     const activeMaster = new Set(
-      lotes
+      activeLotes
         .filter((l) => {
           const state = clean(l.estado || 'ACTIVO').toUpperCase();
           return state !== 'CERRADO' && state !== 'AGOTADO';
         })
         .map((l) => `${clean(l.producto)}|${clean(l.lote)}|${clean(l.bodega)}`),
     );
-    const totalLots = safeControlByLot.filter((r) => r.stock > 0).filter((r) => activeMaster.size === 0 || activeMaster.has(`${r.producto}|${r.lote}|${r.bodega}`)).length;
+    const totalLots = visibleSafeControlByLot.filter((r) => r.stock > 0).filter((r) => activeMaster.size === 0 || activeMaster.has(`${r.producto}|${r.lote}|${r.bodega}`)).length;
     return { totalStock, totalMovements, totalRect, totalLots };
-  }, [controlByLot, safeControlByLot, filteredMovements, rectificativas, lotes]);
+  }, [activeLotes, filteredMovements, rectificativas, visibleSafeControlByLot]);
 
   const stockByProductTotals = useMemo(() => {
     const map = new Map<string, number>();
-    safeControlByLot.forEach((r) => {
+    visibleSafeControlByLot.forEach((r) => {
       map.set(r.producto, (map.get(r.producto) || 0) + Math.max(0, toNum(r.stock)));
     });
     return Array.from(map.entries())
       .map(([producto, total]) => ({ producto, total: Math.max(0, toNum(total)) }))
       .sort((a, b) => b.total - a.total);
-  }, [safeControlByLot]);
+  }, [visibleSafeControlByLot]);
   const safeKpiStockTotal = useMemo(
-    () => Math.max(0, Math.round(safeControlByLot.reduce((acc, r) => acc + Math.max(0, toNum(r.stock)), 0))),
-    [safeControlByLot],
+    () =>
+      Math.max(
+        0,
+        Math.round(
+          visibleSafeControlByLot.reduce((acc, r) => acc + Math.max(0, toNum(r.stock)), 0),
+        ),
+      ),
+    [visibleSafeControlByLot],
   );
 
   const activeLotsByProduct = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    safeControlByLot
-      .filter((r) => toNum(r.stock) > 0)
+    visibleSafeControlByLot.filter((r) => toNum(r.stock) > 0)
       .forEach((r) => {
         if (!map.has(r.producto)) map.set(r.producto, new Set<string>());
         map.get(r.producto)!.add(r.lote);
@@ -1265,9 +1362,13 @@ export default function InventoryFacturacionPage() {
     return Array.from(map.entries())
       .map(([producto, lots]) => ({ producto, lots: lots.size }))
       .sort((a, b) => b.lots - a.lots);
-  }, [safeControlByLot]);
+  }, [visibleSafeControlByLot]);
   const masterLotesRows = useMemo(() => {
-    const byKey = new Map<string, { producto: string; lote: string; estado: 'ACTIVO' | 'AGOTADO'; fechaAlta: string }>();
+    const source = lotViewMode === 'archived' ? archivedLotes : activeLotes;
+    const byKey = new Map<
+      string,
+      { producto: string; lote: string; estado: 'ACTIVO' | 'AGOTADO'; fechaAlta: string; archivedAt?: string; restoredAt?: string }
+    >();
     const pickEarlierDate = (a: string, b: string) => {
       const da = parseDate(clean(a));
       const db = parseDate(clean(b));
@@ -1276,7 +1377,7 @@ export default function InventoryFacturacionPage() {
       if (!db) return clean(a);
       return da.getTime() <= db.getTime() ? clean(a) : clean(b);
     };
-    lotes.forEach((row) => {
+    source.forEach((row) => {
       const producto = clean(row.producto);
       const lote = clean(row.lote);
       if (!producto || !lote) return;
@@ -1289,12 +1390,16 @@ export default function InventoryFacturacionPage() {
           lote,
           estado: state,
           fechaAlta,
+          archivedAt: clean((archivedLotEntryByKey.get(key) as any)?.archivedAt || ''),
+          restoredAt: clean((archivedLotEntryByKey.get(key) as any)?.restoredAt || ''),
         });
         return;
       }
       const current = byKey.get(key)!;
       if (state === 'ACTIVO') current.estado = 'ACTIVO';
       current.fechaAlta = pickEarlierDate(current.fechaAlta, fechaAlta);
+      current.archivedAt = clean((archivedLotEntryByKey.get(key) as any)?.archivedAt || current.archivedAt || '');
+      current.restoredAt = clean((archivedLotEntryByKey.get(key) as any)?.restoredAt || current.restoredAt || '');
     });
     return Array.from(byKey.values())
       .filter((r) => (selectedProducts.length > 0 ? selectedProducts.includes(r.producto) : true))
@@ -1306,7 +1411,7 @@ export default function InventoryFacturacionPage() {
         return hay.includes(q);
       })
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
-  }, [lotes, selectedProducts, lotFilter, quickSearch]);
+  }, [activeLotes, archivedLotes, archivedLotEntryByKey, lotFilter, lotViewMode, quickSearch, selectedProducts]);
 
   const movementTypeSummary = useMemo(() => {
     const map = new Map<string, number>();
@@ -1479,15 +1584,15 @@ export default function InventoryFacturacionPage() {
     const qty = Math.abs(rawQty);
     if (!form.tipo_movimiento || !form.producto || !form.lote || !form.bodega || !qty) return;
     const producto = clean(form.producto);
-    const lote = canonicalLotForProduct(lotes, producto, clean(form.lote));
+    const lote = canonicalLotForProduct(activeLotes, producto, clean(form.lote));
     const bodega = clean(form.bodega);
     const lotRow =
-      lotes.find(
+      activeLotes.find(
         (l) =>
           clean(l.producto) === producto &&
           clean(l.lote) === lote &&
           (!clean(l.bodega) || clean(l.bodega) === bodega),
-      ) || lotes.find((l) => clean(l.producto) === producto && clean(l.lote) === lote);
+      ) || activeLotes.find((l) => clean(l.producto) === producto && clean(l.lote) === lote);
     if (!lotRow) {
       window.alert(`El lote ${lote} no corresponde al producto ${producto}. Revisa producto/lote.`);
       return;
@@ -1625,7 +1730,7 @@ export default function InventoryFacturacionPage() {
     const producto = clean(lotRow.producto);
     const lote = clean(lotRow.lote);
     const bodega = clean(lotRow.bodega);
-    const matches = lotes.filter((l) => {
+    const matches = activeLotes.filter((l) => {
       const sameLot = clean(l.producto) === producto && clean(l.lote) === lote;
       if (!sameLot) return false;
       if (!bodega) return true;
@@ -1644,6 +1749,54 @@ export default function InventoryFacturacionPage() {
       }),
     );
     emitSuccessFeedback(`Lote ${lote} marcado como ${nextState}.`);
+  };
+
+  const archiveLot = (lotRow: GenericRow) => {
+    if (!canEdit) return;
+    const producto = clean(lotRow.producto);
+    const lote = clean(lotRow.lote);
+    if (!producto || !lote) return;
+    const key = `${producto}|${lote}`;
+    const now = new Date().toISOString();
+    setArchivedLotEntries((prev) => {
+      const entries = Array.isArray(prev) ? prev.filter((entry) => clean(entry.id) !== key) : [];
+      const current = Array.isArray(prev) ? prev.find((entry) => clean(entry.id) === key) : null;
+      entries.unshift({
+        id: key,
+        producto,
+        lote,
+        archivedAt: now,
+        archivedBy: actorName,
+        restoredAt: current?.restoredAt ? clean(current.restoredAt) : undefined,
+        restoredBy: current?.restoredBy ? clean(current.restoredBy) : undefined,
+      });
+      return entries;
+    });
+    emitSuccessFeedback(`Lote ${lote} archivado con éxito.`);
+  };
+
+  const restoreLot = (lotRow: GenericRow) => {
+    if (!canEdit) return;
+    const producto = clean(lotRow.producto);
+    const lote = clean(lotRow.lote);
+    if (!producto || !lote) return;
+    const key = `${producto}|${lote}`;
+    const now = new Date().toISOString();
+    setArchivedLotEntries((prev) => {
+      const entries = Array.isArray(prev) ? prev.filter((entry) => clean(entry.id) !== key) : [];
+      const current = Array.isArray(prev) ? prev.find((entry) => clean(entry.id) === key) : null;
+      entries.unshift({
+        id: key,
+        producto,
+        lote,
+        archivedAt: current?.archivedAt ? clean(current.archivedAt) : now,
+        archivedBy: current?.archivedBy ? clean(current.archivedBy) : actorName,
+        restoredAt: now,
+        restoredBy: actorName,
+      });
+      return entries;
+    });
+    emitSuccessFeedback(`Lote ${lote} restaurado con éxito.`);
   };
 
   const createTipo = () => {
@@ -2074,21 +2227,21 @@ export default function InventoryFacturacionPage() {
                 exportXlsx(
                   'Inventario Facturacion - Stock por Lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock'],
-                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                  visibleSafeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
               onDownload={() =>
                 exportPdf(
                   'Inventario Facturacion - Stock por Lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock'],
-                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                  visibleSafeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
-              actions={safeControlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
+              actions={visibleSafeControlByLot.length > 6 ? <ToggleMore k="stock" showAllRows={showAllRows} setShowAllRows={setShowAllRows} /> : undefined}
             >
               <DataTable
                 headers={['Producto', 'Lote', 'Bodega', 'Stock']}
-                rows={limitRows('stock', safeControlByLot).map((r, idx) => [
+                rows={limitRows('stock', visibleSafeControlByLot).map((r, idx) => [
                   <ProductPill key={`h-stock-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
                   r.lote,
                   r.bodega,
@@ -2115,20 +2268,20 @@ export default function InventoryFacturacionPage() {
                 exportXlsx(
                   'Inventario Facturacion - Control por lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock calculado'],
-                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                  visibleSafeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
               onDownload={() =>
                 exportPdf(
                   'Inventario Facturacion - Control por lote',
                   ['Producto', 'Lote', 'Bodega', 'Stock calculado'],
-                  safeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
+                  visibleSafeControlByLot.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
                 )
               }
             >
               <DataTable
                 headers={['Producto', 'Lote', 'Bodega', 'Stock calculado']}
-                rows={safeControlByLot.map((r, idx) => [
+                rows={visibleSafeControlByLot.map((r, idx) => [
                   <ProductPill key={`h-control-${idx}-${r.producto}-${r.lote}`} code={r.producto} colorMap={productColorMap} />,
                   r.lote,
                   r.bodega,
@@ -2420,28 +2573,97 @@ export default function InventoryFacturacionPage() {
                 ) : undefined
               }
             >
-              <DataTable
-                headers={['Producto', 'Lote', 'Estado', 'Fecha alta', 'Acciones']}
-                rows={limitRows('maestros_lotes', masterLotesRows).map((l, idx) => [
-                  <ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />,
-                  clean(l.lote),
-                  <span
-                    key={`h-lote-state-${idx}`}
-                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="inline-flex rounded-xl border border-violet-200 bg-violet-50 p-1">
+                  <button
+                    onClick={() => setLotViewMode('active')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                      lotViewMode === 'active' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-100'
+                    }`}
                   >
-                    {normalizeLotState(l.estado)}
-                  </span>,
-                  clean((l as any).fechaAlta || ''),
-                  canEdit ? (
-                    <button
-                      key={`h-lot-toggle-${idx}`}
-                      onClick={() => toggleLotState(l)}
-                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50"
+                    Activos ({activeLotes.length})
+                  </button>
+                  <button
+                    onClick={() => setLotViewMode('archived')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                      lotViewMode === 'archived' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-100'
+                    }`}
+                  >
+                    Archivados ({archivedLotes.length})
+                  </button>
+                </div>
+              </div>
+              <DataTable
+                headers={lotViewMode === 'archived' ? ['Producto', 'Lote', 'Estado', 'Fecha alta', 'Archivado', 'Acciones'] : ['Producto', 'Lote', 'Estado', 'Fecha alta', 'Acciones']}
+                rows={limitRows('maestros_lotes', masterLotesRows).map((l, idx) => {
+                  const isArchived = lotViewMode === 'archived';
+                  const archivedMeta = archivedLotEntryByKey.get(`${clean(l.producto)}|${clean(l.lote)}`);
+                  const stateCell = isArchived ? (
+                    <div key={`h-lote-state-${idx}`} className="flex items-center gap-1">
+                      <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">ARCHIVADO</span>
+                      {normalizeLotState(l.estado) === 'AGOTADO' && (
+                        <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">AGOTADO</span>
+                      )}
+                    </div>
+                  ) : (
+                    <span
+                      key={`h-lote-state-${idx}`}
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${normalizeLotState(l.estado) === 'AGOTADO' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}
                     >
-                      {normalizeLotState(l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
-                    </button>
-                  ) : '-',
-                ])}
+                      {normalizeLotState(l.estado)}
+                    </span>
+                  );
+                  const actionsCell = canEdit ? (
+                    isArchived ? (
+                      <button
+                        key={`h-lot-restore-${idx}`}
+                        onClick={() => restoreLot(l)}
+                        className="rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          <RotateCcw size={12} />
+                          Restaurar
+                        </span>
+                      </button>
+                    ) : (
+                      <div key={`h-lot-actions-${idx}`} className="flex items-center gap-1">
+                        <button
+                          onClick={() => toggleLotState(l)}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          {normalizeLotState(l.estado) === 'AGOTADO' ? 'Activar' : 'Agotar'}
+                        </button>
+                        <button
+                          onClick={() => archiveLot(l)}
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100"
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <Archive size={12} />
+                            Archivar
+                          </span>
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    '-'
+                  );
+                  return isArchived
+                    ? [
+                        <ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />,
+                        clean(l.lote),
+                        stateCell,
+                        clean((l as any).fechaAlta || ''),
+                        archivedMeta?.archivedAt ? displayDate(archivedMeta.archivedAt) : '-',
+                        actionsCell,
+                      ]
+                    : [
+                        <ProductPill key={`h-lm-${idx}-${clean(l.producto)}-${clean(l.lote)}`} code={clean(l.producto)} colorMap={productColorMap} />,
+                        clean(l.lote),
+                        stateCell,
+                        clean((l as any).fechaAlta || ''),
+                        actionsCell,
+                      ];
+                })}
               />
               {masterLotesRows.length > 6 && (
                 <div className="mt-2">

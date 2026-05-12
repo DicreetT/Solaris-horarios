@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import seed from '../data/inventory_seed.json';
-import { AlertTriangle, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
+import { AlertTriangle, Archive, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, RotateCcw, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { CARLOS_EMAIL, USERS } from '../constants';
@@ -76,6 +76,15 @@ type LotAssemblyFinalizationEntry = {
   updatedAt: string;
   updatedBy?: string;
 };
+type ArchivedLotEntry = {
+  id: string;
+  producto: string;
+  lote: string;
+  archivedAt: string;
+  archivedBy?: string;
+  restoredAt?: string;
+  restoredBy?: string;
+};
 
 const CANET_LOT_REFERENCE_ROWS: GenericRow[] = [
   ...((((huarteSeed as any) || {}).lotes || []) as GenericRow[]),
@@ -118,6 +127,7 @@ const LOT_VIALES_CORRECTIONS = new Map<string, number>([
   ['ENT|2511A20', 100730],
 ]);
 const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
+const INVENTORY_LOT_ARCHIVES_KEY = 'inventory_canet_lot_archives_v1';
 const lotKeyOf = (producto: any, lote: any) =>
   `${clean(producto).toUpperCase()}|${normalizeLotCompareToken(lote)}`;
 const isForcedAgotadoLot = (producto: any, lote: any) => FORCED_AGOTADO_LOTS.has(lotKeyOf(producto, lote));
@@ -444,6 +454,35 @@ const lotDeletedAtMs = (row: GenericRow) => {
 };
 
 const isLotDeleted = (row: GenericRow) => lotDeletedAtMs(row) > 0;
+const lotArchivedAtMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).archivedAt),
+    clean((row as any).archived_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+const lotRestoredAtMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).restoredAt),
+    clean((row as any).restored_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+};
+const isArchivedLotEntryActive = (row: GenericRow) => {
+  const archivedAt = lotArchivedAtMs(row);
+  if (archivedAt <= 0) return false;
+  return archivedAt > lotRestoredAtMs(row);
+};
 
 const lotMergeKey = (row: GenericRow) => lotKeyOf(clean(row.producto), clean(row.lote));
 
@@ -1032,6 +1071,11 @@ function InventoryPage() {
     [],
     { userId: actorId, mergeBeforePersist: true },
   );
+  const [archivedLotEntries, setArchivedLotEntries] = useSharedJsonState<ArchivedLotEntry[]>(
+    INVENTORY_LOT_ARCHIVES_KEY,
+    [],
+    { userId: actorId, mergeBeforePersist: true },
+  );
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_bodegas_v1',
     seed.bodegas as GenericRow[],
@@ -1179,13 +1223,68 @@ function InventoryPage() {
     () => new Set((deletedLotKeys || []).map((key) => clean(key)).filter(Boolean)),
     [deletedLotKeys],
   );
+  const archivedLotEntryByKey = useMemo(() => {
+    const map = new Map<string, ArchivedLotEntry>();
+    for (const entry of Array.isArray(archivedLotEntries) ? archivedLotEntries : []) {
+      const producto = clean(entry?.producto);
+      const lote = clean(entry?.lote);
+      if (!producto || !lote) continue;
+      const key = lotKeyOf(producto, lote);
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, { ...entry, id: key, producto, lote });
+        continue;
+      }
+      const prevArchived = lotArchivedAtMs(prev);
+      const nextArchived = lotArchivedAtMs(entry);
+      const prevRestored = lotRestoredAtMs(prev);
+      const nextRestored = lotRestoredAtMs(entry);
+      if (nextArchived > prevArchived || nextRestored > prevRestored) {
+        map.set(key, {
+          ...prev,
+          ...entry,
+          id: key,
+          producto,
+          lote,
+          archivedAt: clean((entry as any).archivedAt || (prev as any).archivedAt),
+          archivedBy: clean((entry as any).archivedBy || (prev as any).archivedBy) || undefined,
+          restoredAt: clean((entry as any).restoredAt || (prev as any).restoredAt) || undefined,
+          restoredBy: clean((entry as any).restoredBy || (prev as any).restoredBy) || undefined,
+        });
+      }
+    }
+    return map;
+  }, [archivedLotEntries]);
+  const archivedLotKeySet = useMemo(
+    () =>
+      new Set(
+        Array.from(archivedLotEntryByKey.values())
+          .filter((entry) => isArchivedLotEntryActive(entry))
+          .map((entry) => lotKeyOf(entry.producto, entry.lote)),
+      ),
+    [archivedLotEntryByKey],
+  );
   const visibleLotes = useMemo(
     () =>
       dedupeCanonicalCanetLots(lotes).filter(
-        (row) => !isLotDeleted(row) && !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+        (row) =>
+          !isLotDeleted(row) &&
+          !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)) &&
+          !archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
       ),
-    [deletedLotKeySet, lotes],
+    [archivedLotKeySet, deletedLotKeySet, lotes],
   );
+  const archivedLotes = useMemo(
+    () =>
+      dedupeCanonicalCanetLots(lotes).filter(
+        (row) =>
+          !isLotDeleted(row) &&
+          !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)) &&
+          archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+      ),
+    [archivedLotKeySet, deletedLotKeySet, lotes],
+  );
+  const [lotViewMode, setLotViewMode] = useState<'active' | 'archived'>('active');
 
   const isCanetMirroredMovement = (m: Movement) => clean((m as any).source).toLowerCase() === 'canet';
   const isHuarteInternalDestination = (v: string) => {
@@ -2941,6 +3040,7 @@ function InventoryPage() {
       if (!producto || !lote) continue;
       existingKeys.add(lotKeyOf(producto, lote));
     }
+    for (const key of archivedLotKeySet) existingKeys.add(key);
     for (const row of lotes) {
       if (!isLotDeleted(row)) continue;
       const producto = clean(row.producto);
@@ -2986,6 +3086,7 @@ function InventoryPage() {
     assemblyBoxesByProductLotToken,
     canonicalKnownCanetLotRows,
     deletedLotKeySet,
+    archivedLotKeySet,
     inferredLotVialesByKey,
     lotes,
     lotAssemblyFinalizations,
@@ -3708,6 +3809,58 @@ function InventoryPage() {
         ? `Lote ${lote}: ensamblaje finalizado (potenciales = 0).`
         : `Lote ${lote}: ensamblaje reabierto.`,
     );
+  };
+
+  const archiveLot = async (lot: GenericRow) => {
+    if (!canEditNow) return;
+    const producto = clean(lot.producto);
+    const lote = clean(lot.lote);
+    if (!producto || !lote) return;
+    const key = lotKeyOf(producto, lote);
+    const now = nowIso();
+    setArchivedLotEntries((prev) => {
+      const entries = Array.isArray(prev) ? prev.filter((entry) => clean(entry.id) !== key) : [];
+      const current = Array.isArray(prev) ? prev.find((entry) => clean(entry.id) === key) : null;
+      entries.unshift({
+        id: key,
+        producto,
+        lote,
+        archivedAt: now,
+        archivedBy: actorName,
+        restoredAt: current?.restoredAt ? clean(current.restoredAt) : undefined,
+        restoredBy: current?.restoredBy ? clean(current.restoredBy) : undefined,
+      });
+      return entries;
+    });
+    await notifyAnabela(`${actorName} archivó el lote ${producto} ${lote}.`);
+    appendAudit('Archivado de lote', `${producto} ${lote}`);
+    emitSuccessFeedback(`Lote ${lote} archivado con éxito.`);
+  };
+
+  const restoreLot = async (lot: GenericRow) => {
+    if (!canEditNow) return;
+    const producto = clean(lot.producto);
+    const lote = clean(lot.lote);
+    if (!producto || !lote) return;
+    const key = lotKeyOf(producto, lote);
+    const now = nowIso();
+    setArchivedLotEntries((prev) => {
+      const entries = Array.isArray(prev) ? prev.filter((entry) => clean(entry.id) !== key) : [];
+      const current = Array.isArray(prev) ? prev.find((entry) => clean(entry.id) === key) : null;
+      entries.unshift({
+        id: key,
+        producto,
+        lote,
+        archivedAt: current?.archivedAt ? clean(current.archivedAt) : now,
+        archivedBy: current?.archivedBy ? clean(current.archivedBy) : actorName,
+        restoredAt: now,
+        restoredBy: actorName,
+      });
+      return entries;
+    });
+    await notifyAnabela(`${actorName} restauró el lote ${producto} ${lote}.`);
+    appendAudit('Restauración de lote', `${producto} ${lote}`);
+    emitSuccessFeedback(`Lote ${lote} restaurado con éxito.`);
   };
 
   const deleteLot = async (lot: GenericRow) => {
@@ -5011,11 +5164,84 @@ function InventoryPage() {
       {accessReady && tab === 'lotes' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-lg font-black text-violet-950">Lotes</h3>
-              <button onClick={openLotCreateModal} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir lote</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-xl border border-violet-200 bg-violet-50 p-1">
+                  <button
+                    onClick={() => setLotViewMode('active')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                      lotViewMode === 'active' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-100'
+                    }`}
+                  >
+                    Activos ({visibleLotes.length})
+                  </button>
+                  <button
+                    onClick={() => setLotViewMode('archived')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                      lotViewMode === 'archived' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-100'
+                    }`}
+                  >
+                    Archivados ({archivedLotes.length})
+                  </button>
+                </div>
+                <button onClick={openLotCreateModal} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir lote</button>
+              </div>
             </div>
           </div>
+          {lotViewMode === 'archived' ? (
+            <SimpleDataTable
+              headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Archivado', 'Acciones']}
+              rows={archivedLotes.map((l, idx) => {
+                const lotState = effectiveLotState(l.producto, l.lote, l.estado);
+                const lotKey = lotKeyOf(l.producto, l.lote);
+                const lotFinalizado =
+                  lotAssemblyFinalizedByProductLot.get(lotKey) === 'SI' ||
+                  normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
+                const vialesDisplay = effectiveLotVialesByKey.get(lotKey) || toVialesNum(l.viales_recibidos);
+                const caducityDisplay = effectiveLotCaducityByKey.get(lotKey) || clean(l.fecha_caducidad);
+                const archivedEntry = archivedLotEntryByKey.get(lotKey);
+                return [
+                  <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,
+                  clean(l.lote),
+                  <div key={`arch-lot-state-wrap-${idx}`} className="flex flex-wrap items-center gap-1">
+                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                      ARCHIVADO
+                    </span>
+                    {lotFinalizado && (
+                      <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                        ENS. FINALIZADO
+                      </span>
+                    )}
+                    {lotState === 'AGOTADO' && (
+                      <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                        AGOTADO
+                      </span>
+                    )}
+                  </div>,
+                  vialesDisplay > 0 ? formatVialesForInput(String(vialesDisplay)) : '-',
+                  formatDateForDisplay(caducityDisplay),
+                  archivedEntry?.archivedAt ? formatDateForDisplay(archivedEntry.archivedAt) : '-',
+                  <div key={`arch-lot-actions-${idx}`} className="flex flex-wrap items-center gap-1">
+                    <button
+                      disabled={!isEditModeActive}
+                      onClick={() => void restoreLot(l)}
+                      className={`rounded-lg px-2 py-1 text-[11px] font-bold ${
+                        isEditModeActive
+                          ? 'border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                          : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <RotateCcw size={12} />
+                        Restaurar
+                      </span>
+                    </button>
+                  </div>,
+                ];
+              })}
+            />
+          ) : (
           <SimpleDataTable
             headers={['Producto', 'Lote', 'Estado', 'Viales', 'Caducidad', 'Semáforo', 'Acciones']}
             rows={visibleLotes.map((l, idx) => {
@@ -5065,7 +5291,21 @@ function InventoryPage() {
                         : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                     }`}
                   >
-                    {lotFinalizado ? 'Reabrir ensamblaje' : 'Finalizar ensamblaje'}
+                  {lotFinalizado ? 'Reabrir ensamblaje' : 'Finalizar ensamblaje'}
+                  </button>
+                  <button
+                    disabled={!isEditModeActive}
+                    onClick={() => void archiveLot(l)}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-bold ${
+                      isEditModeActive
+                        ? 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Archive size={12} />
+                      Archivar
+                    </span>
                   </button>
                   <button
                     disabled={!isEditModeActive || deletingLotKey === lotKeyOf(l.producto, l.lote) || isForcedAgotadoLot(l.producto, l.lote)}
@@ -5083,6 +5323,7 @@ function InventoryPage() {
               ];
             })}
           />
+          )}
         </div>
       )}
 
