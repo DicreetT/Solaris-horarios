@@ -1603,7 +1603,7 @@ function parseInvoiceFromText(
     clean(normalized.match(/\b[A-Z]\d{8}\b/)?.[0]);
   const invoiceLines = extractInvoiceLines(normalizedForLines);
   const hasPending = invoiceLines.some((line) => line.lotePending || !clean(line.lote));
-  const orderNote = isSegLabFormat ? 'Pertenece a MIMEDICO' : '';
+  const orderNote = isMimedicoDocText(normalized) ? 'Pertenece a MIMEDICO' : '';
   const createdAt = nowIso();
 
   const id = uid('ord');
