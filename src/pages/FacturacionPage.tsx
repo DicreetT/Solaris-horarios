@@ -1316,6 +1316,12 @@ function isMimedicoDocText(text: string) {
   );
 }
 
+function isMimedicoDispatchOrder(order: BillingOrder) {
+  const note = clean(order.orderNote).toUpperCase();
+  const snippet = clean(order.extractedTextSnippet);
+  return note.includes('MIMEDICO') || isMimedicoDocText(snippet);
+}
+
 function countLikelyProductAnchors(text: string) {
   const tokens = normalizeTextLines(text);
   return tokens.filter((line) => isProductAnchorLine(line)).length;
@@ -3276,8 +3282,10 @@ export default function FacturacionPage() {
     const movementSource = order.inventoryTarget === 'canet' ? canetMovements : huarteMovements;
     const mutation = order.inventoryTarget === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
     const isTransfer = order.movementType === 'traspaso';
+    const isMimedicoDispatch = isMimedicoDispatchOrder(order);
     const transferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
     const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    const dispatchWarehouse = isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse).toUpperCase();
     if (isTransfer && !transferOrigin) {
       alert('Este traspaso necesita una bodega origen. Selecciónala antes de despachar.');
       return;
@@ -3305,6 +3313,7 @@ export default function FacturacionPage() {
         const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
         lineOccurrence.set(lineKey, occurrence);
         const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${transferOrigin || clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
+        const stableDispatchMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${dispatchWarehouse}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
 
         if (!productCode || !lote) {
           lineErrors.push(`${line.productRaw || line.productCode}: faltan datos de producto/lote.`);
@@ -3318,26 +3327,27 @@ export default function FacturacionPage() {
         let existing =
           movementSource.find((m) => clean(m.notas).includes(marker)) ||
           movementSource.find((m) => clean(m.notas).includes(stableMarker)) ||
+          movementSource.find((m) => clean(m.notas).includes(stableDispatchMarker)) ||
           null;
         if (!existing) {
-          existing = await findMovementByMarkerInDb(sourceInventory, [marker, stableMarker]);
+          existing = await findMovementByMarkerInDb(sourceInventory, [marker, stableMarker, stableDispatchMarker]);
         }
         if (existing) {
           updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
         } else {
           try {
-            const payload = {
-              fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+              const payload = {
+                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
               tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
               producto: clean(line.productCode),
               lote: clean(line.lote),
               cantidad: qty,
               cantidad_signed: -qty,
               signo: -1,
-              bodega: isTransfer ? transferOrigin || order.sourceWarehouse : order.sourceWarehouse,
-              cliente: isTransfer ? transferDestination || order.customerName : order.customerName,
+              bodega: isTransfer ? (isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || order.sourceWarehouse) : dispatchWarehouse,
+              cliente: isMimedicoDispatch ? 'MIMEDICO' : isTransfer ? transferDestination || order.customerName : order.customerName,
               destino: isTransfer ? transferDestination : '',
-              notas: `${marker} | ${stableMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+              notas: `${marker} | ${stableMarker} | ${stableDispatchMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
               factura_doc: order.invoiceNumber,
               responsable: currentUser?.name || 'Sistema',
               source: 'facturacion_pdf',
@@ -3373,12 +3383,14 @@ export default function FacturacionPage() {
         if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(transferOrigin || order.sourceWarehouse).toUpperCase()) {
           const autoMarker = `${marker}|AUTO_IN`;
           const autoStableMarker = `${stableMarker}|AUTO_IN`;
+          const autoStableDispatchMarker = `${stableDispatchMarker}|AUTO_IN`;
           let existingAuto =
             destinationMovements.find((m) => clean(m.notas).includes(autoMarker)) ||
             destinationMovements.find((m) => clean(m.notas).includes(autoStableMarker)) ||
+            destinationMovements.find((m) => clean(m.notas).includes(autoStableDispatchMarker)) ||
             null;
           if (!existingAuto) {
-            existingAuto = await findMovementByMarkerInDb(destinationInventory, [autoMarker, autoStableMarker]);
+            existingAuto = await findMovementByMarkerInDb(destinationInventory, [autoMarker, autoStableMarker, autoStableDispatchMarker]);
           }
           if (!existingAuto) {
             try {
@@ -3391,9 +3403,9 @@ export default function FacturacionPage() {
                 cantidad_signed: qty,
                 signo: 1,
                 bodega: transferDestination,
-                cliente: transferOrigin || clean(order.sourceWarehouse),
+                cliente: isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse),
                 destino: transferDestination,
-                notas: `${autoMarker} | ${autoStableMarker} | Auto entrada por traspaso desde ${transferOrigin || clean(order.sourceWarehouse)}`,
+                notas: `${autoMarker} | ${autoStableMarker} | ${autoStableDispatchMarker} | Auto entrada por traspaso desde ${isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse)}`,
                 factura_doc: order.invoiceNumber,
                 responsable: currentUser?.name || 'Sistema',
                 source: 'facturacion_pdf_auto_in',

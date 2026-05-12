@@ -85,6 +85,12 @@ type ArchivedLotEntry = {
   restoredAt?: string;
   restoredBy?: string;
 };
+type TextEditDialogPayload = {
+  title: string;
+  value: string;
+  confirmLabel: string;
+  onConfirm: (nextValue: string) => void | Promise<void>;
+};
 
 const CANET_LOT_REFERENCE_ROWS: GenericRow[] = [
   ...((((huarteSeed as any) || {}).lotes || []) as GenericRow[]),
@@ -1256,6 +1262,9 @@ function InventoryPage() {
   const [tipoModalOpen, setTipoModalOpen] = useState(false);
   const [tipoForm, setTipoForm] = useState({ tipo_movimiento: '', signo_1_1: '-1', afecta_stock_si_no: 'SI' });
   const [newClient, setNewClient] = useState('');
+  const [textEditDialog, setTextEditDialog] = useState<TextEditDialogPayload | null>(null);
+  const mimedicoClientMigrationDoneRef = useRef(false);
+  const mimedicoClientMigrationRunningRef = useRef(false);
   const canetMovementSyncStartDate = useMemo(
     () => dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
     [],
@@ -1431,6 +1440,54 @@ function InventoryPage() {
     }
     throw lastError || new Error('No se pudo sincronizar el espejo de Huarte.');
   };
+
+  useEffect(() => {
+    if (movimientosLoading) return;
+    if (mimedicoClientMigrationDoneRef.current) return;
+    if (mimedicoClientMigrationRunningRef.current) return;
+
+    const pending = movimientos.filter((m) => {
+      const notes = clean(m.notas).toUpperCase();
+      const client = clean(m.cliente).toUpperCase();
+      return (
+        notes.includes('MIMEDICO') &&
+        client !== 'MIMEDICO'
+      );
+    });
+
+    if (pending.length === 0) {
+      mimedicoClientMigrationDoneRef.current = true;
+      return;
+    }
+
+    mimedicoClientMigrationRunningRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        for (const m of pending) {
+          if (cancelled) return;
+          const nextMovement = await canetDB.updateMovement(m.id, {
+            cliente: 'MIMEDICO',
+            updated_by: actorName,
+          });
+          await syncMirrorUpsert(nextMovement);
+        }
+        if (!cancelled) {
+          mimedicoClientMigrationDoneRef.current = true;
+        }
+      } finally {
+        mimedicoClientMigrationRunningRef.current = false;
+      }
+    })().catch((err) => {
+      console.warn('No se pudo normalizar cliente MIMEDICO en inventario Canet:', err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actorName, canetDB, movimientos, movimientosLoading, syncMirrorUpsert]);
+
   const syncMirrorDelete = async (canetId: number) => {
     if (!canWriteHuarteMirrorFromCanet) return;
     const toDelete = huarteMovimientosShared.filter((row: any) => {
@@ -3976,11 +4033,17 @@ function InventoryPage() {
     if (!canEditNow) return;
     const oldBodega = clean(oldBodegaRaw).toUpperCase();
     if (!oldBodega) return;
-    const nextBodega = window.prompt('Nuevo nombre de bodega', oldBodegaRaw)?.trim().toUpperCase();
-    if (!nextBodega) return;
-    if (clean(nextBodega).toUpperCase() === oldBodega) return;
-    setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
-    emitSuccessFeedback('Bodega actualizada con éxito.');
+    setTextEditDialog({
+      title: 'Editar bodega',
+      value: oldBodegaRaw,
+      confirmLabel: 'Guardar bodega',
+      onConfirm: async (nextValue) => {
+        const nextBodega = clean(nextValue).toUpperCase();
+        if (!nextBodega || nextBodega === oldBodega) return;
+        setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
+        emitSuccessFeedback('Bodega actualizada con éxito.');
+      },
+    });
   };
 
   const deleteBodega = async (oldBodegaRaw: string) => {
@@ -4038,64 +4101,70 @@ function InventoryPage() {
     if (!canEditNow) return;
     const oldClient = clean(oldClientRaw);
     if (!oldClient) return;
-    const nextClient = window.prompt('Nuevo nombre de cliente', oldClientRaw)?.trim();
-    if (!nextClient) return;
-    const nextClientClean = clean(nextClient);
-    if (!nextClientClean || nextClientClean === oldClient) return;
-    setClientes((prev) =>
-      prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)),
-    );
-    const changedMovements = movimientos
-      .filter((m) => clean(m.cliente) === oldClient)
-      .map((m) => ({
-        ...m,
-        cliente: nextClient,
-        updated_at: new Date().toISOString(),
-        updated_by: actorName,
-      }));
-    if (changedMovements.length > 0) {
-      for (const m of changedMovements) {
-        const nextMovement = await canetDB.updateMovement(m.id, { cliente: nextClient, updated_by: m.updated_by });
-        await syncMirrorUpsert(nextMovement);
-      }
-    }
-    await notifyAnabela(`${actorName} editó cliente en Inventario: ${oldClientRaw} → ${nextClient}.`);
-    appendAudit('Edición de cliente', `${oldClientRaw} → ${nextClient} · Movimientos actualizados: ${changedMovements.length}`);
-    emitSuccessFeedback('Cliente actualizado con éxito.');
+    setTextEditDialog({
+      title: 'Editar cliente',
+      value: oldClientRaw,
+      confirmLabel: 'Guardar cliente',
+      onConfirm: async (nextValue) => {
+        const nextClient = clean(nextValue);
+        if (!nextClient || nextClient === oldClient) return;
+        setClientes((prev) => prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)));
+        const changedMovements = movimientos
+          .filter((m) => clean(m.cliente) === oldClient)
+          .map((m) => ({
+            ...m,
+            cliente: nextClient,
+            updated_at: new Date().toISOString(),
+            updated_by: actorName,
+          }));
+        if (changedMovements.length > 0) {
+          for (const m of changedMovements) {
+            const nextMovement = await canetDB.updateMovement(m.id, { cliente: nextClient, updated_by: m.updated_by });
+            await syncMirrorUpsert(nextMovement);
+          }
+        }
+        await notifyAnabela(`${actorName} editó cliente en Inventario: ${oldClientRaw} → ${nextClient}.`);
+        appendAudit('Edición de cliente', `${oldClientRaw} → ${nextClient} · Movimientos actualizados: ${changedMovements.length}`);
+        emitSuccessFeedback('Cliente actualizado con éxito.');
+      },
+    });
   };
 
   const editTipoMovimiento = async (oldTipoRaw: string) => {
     if (!canEditNow) return;
     const oldTipo = clean(oldTipoRaw);
     if (!oldTipo) return;
-    const nextTipo = window.prompt('Nuevo tipo de movimiento', oldTipoRaw)?.trim();
-    if (!nextTipo) return;
-    const nextTipoClean = clean(nextTipo);
-    if (!nextTipoClean || nextTipoClean === oldTipo) return;
-    setTipos((prev) =>
-      prev.map((t) =>
-        clean(t.tipo_movimiento) === oldTipo
-          ? { ...t, tipo_movimiento: nextTipo }
-          : t,
-      ),
-    );
-    const changedMovements = movimientos
-      .filter((m) => clean(m.tipo_movimiento) === oldTipo)
-      .map((m) => ({
-        ...m,
-        tipo_movimiento: nextTipo,
-        updated_at: new Date().toISOString(),
-        updated_by: actorName,
-      }));
-    if (changedMovements.length > 0) {
-      for (const m of changedMovements) {
-        const nextMovement = await canetDB.updateMovement(m.id, { tipo_movimiento: nextTipo, updated_by: m.updated_by });
-        await syncMirrorUpsert(nextMovement);
-      }
-    }
-    await notifyAnabela(`${actorName} editó tipo de movimiento: ${oldTipoRaw} → ${nextTipo}.`);
-    appendAudit('Edición de tipo', `${oldTipoRaw} → ${nextTipo} · Movimientos actualizados: ${changedMovements.length}`);
-    emitSuccessFeedback('Tipo de movimiento actualizado con éxito.');
+    setTextEditDialog({
+      title: 'Editar tipo de movimiento',
+      value: oldTipoRaw,
+      confirmLabel: 'Guardar tipo',
+      onConfirm: async (nextValue) => {
+        const nextTipo = clean(nextValue);
+        if (!nextTipo || nextTipo === oldTipo) return;
+        setTipos((prev) =>
+          prev.map((t) =>
+            clean(t.tipo_movimiento) === oldTipo ? { ...t, tipo_movimiento: nextTipo } : t,
+          ),
+        );
+        const changedMovements = movimientos
+          .filter((m) => clean(m.tipo_movimiento) === oldTipo)
+          .map((m) => ({
+            ...m,
+            tipo_movimiento: nextTipo,
+            updated_at: new Date().toISOString(),
+            updated_by: actorName,
+          }));
+        if (changedMovements.length > 0) {
+          for (const m of changedMovements) {
+            const nextMovement = await canetDB.updateMovement(m.id, { tipo_movimiento: nextTipo, updated_by: m.updated_by });
+            await syncMirrorUpsert(nextMovement);
+          }
+        }
+        await notifyAnabela(`${actorName} editó tipo de movimiento: ${oldTipoRaw} → ${nextTipo}.`);
+        appendAudit('Edición de tipo', `${oldTipoRaw} → ${nextTipo} · Movimientos actualizados: ${changedMovements.length}`);
+        emitSuccessFeedback('Tipo de movimiento actualizado con éxito.');
+      },
+    });
   };
 
   const closeProductModal = () => {
@@ -5509,6 +5578,10 @@ function InventoryPage() {
         </div>
       )}
 
+      {textEditDialog && (
+        <TextEditModal dialog={textEditDialog} onClose={() => setTextEditDialog(null)} />
+      )}
+
       {movementModalOpen && (
         <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
@@ -6281,6 +6354,83 @@ function SimpleDataTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function TextEditModal({
+  dialog,
+  onClose,
+}: {
+  dialog: TextEditDialogPayload | null;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(dialog?.value || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!dialog) return;
+    setValue(dialog.value);
+    setSaving(false);
+  }, [dialog?.title, dialog?.value]);
+
+  if (!dialog) return null;
+
+  const close = () => {
+    if (saving) return;
+    onClose();
+  };
+
+  const confirm = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await dialog.onConfirm(value);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="app-modal-overlay" onClick={close}>
+      <div className="app-modal-panel w-full max-w-xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-lg font-black text-violet-950">{dialog.title}</h3>
+          <button onClick={close} className="rounded-full border border-violet-200 p-1 text-violet-700 hover:bg-violet-50"><X size={16} /></button>
+        </div>
+        <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+          Nuevo valor
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoFocus
+            className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+          />
+        </label>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            disabled={saving}
+            onClick={close}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
+              saving
+                ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'border-violet-200 bg-violet-50 text-violet-700'
+            }`}
+          >
+            Cancelar
+          </button>
+          <button
+            disabled={saving}
+            onClick={() => void confirm()}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white ${
+              saving ? 'bg-violet-300 cursor-wait' : 'bg-violet-600 hover:bg-violet-700'
+            }`}
+          >
+            {saving ? 'Guardando...' : dialog.confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -69,6 +69,12 @@ type ArchivedLotEntry = {
   restoredAt?: string;
   restoredBy?: string;
 };
+type TextEditDialogPayload = {
+  title: string;
+  value: string;
+  confirmLabel: string;
+  onConfirm: (nextValue: string) => void | Promise<void>;
+};
 
 const STORAGE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
@@ -646,6 +652,7 @@ export default function InventoryFacturacionPage() {
   const [newTipo, setNewTipo] = useState('');
   const [newCliente, setNewCliente] = useState('');
   const [newBodega, setNewBodega] = useState({ bodega: '', activo_si_no: 'SI' });
+  const [textEditDialog, setTextEditDialog] = useState<TextEditDialogPayload | null>(null);
 
   const ensamblajesArchivos = seed.ensamblajes_archivos as GenericRow[];
   const canetAssemblySyncStartDate = useMemo(
@@ -1859,11 +1866,17 @@ export default function InventoryFacturacionPage() {
   const editBodega = (oldBodegaRaw: string) => {
     const oldBodega = clean(oldBodegaRaw).toUpperCase();
     if (!oldBodega) return;
-    const nextBodega = window.prompt('Nuevo nombre de bodega', oldBodegaRaw)?.trim().toUpperCase();
-    if (!nextBodega) return;
-    if (clean(nextBodega).toUpperCase() === oldBodega) return;
-    setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
-    emitSuccessFeedback('Bodega actualizada con éxito.');
+    setTextEditDialog({
+      title: 'Editar bodega',
+      value: oldBodegaRaw,
+      confirmLabel: 'Guardar bodega',
+      onConfirm: async (nextValue) => {
+        const nextBodega = clean(nextValue).toUpperCase();
+        if (!nextBodega || nextBodega === oldBodega) return;
+        setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
+        emitSuccessFeedback('Bodega actualizada con éxito.');
+      },
+    });
   };
 
   const deleteBodega = (oldBodegaRaw: string) => {
@@ -1886,12 +1899,17 @@ export default function InventoryFacturacionPage() {
   const editCliente = (oldClientRaw: string) => {
     const oldClient = clean(oldClientRaw);
     if (!oldClient) return;
-    const nextClient = window.prompt('Nuevo nombre de cliente', oldClientRaw)?.trim();
-    if (!nextClient) return;
-    const nextClientClean = clean(nextClient);
-    if (!nextClientClean || nextClientClean === oldClient) return;
-    setClientes((prev) => prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)));
-    emitSuccessFeedback('Cliente actualizado con éxito.');
+    setTextEditDialog({
+      title: 'Editar cliente',
+      value: oldClientRaw,
+      confirmLabel: 'Guardar cliente',
+      onConfirm: async (nextValue) => {
+        const nextClient = clean(nextValue);
+        if (!nextClient || nextClient === oldClient) return;
+        setClientes((prev) => prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)));
+        emitSuccessFeedback('Cliente actualizado con éxito.');
+      },
+    });
   };
 
   const deleteCliente = (oldClientRaw: string) => {
@@ -2845,6 +2863,10 @@ export default function InventoryFacturacionPage() {
         </section>
       )}
 
+      {textEditDialog && (
+        <TextEditModal dialog={textEditDialog} onClose={() => setTextEditDialog(null)} />
+      )}
+
       {stockTotalModalOpen && (
         <SimpleModal title="Stock total por producto" onClose={() => setStockTotalModalOpen(false)}>
           <DataTable headers={['Producto', 'Stock total']} rows={stockByProductTotals.map((r) => [r.producto, Math.round(r.total)])} />
@@ -3162,6 +3184,79 @@ function SimpleModal({ title, children, onClose }: { title: string; children: Re
         {children}
       </div>
     </div>
+  );
+}
+
+function TextEditModal({
+  dialog,
+  onClose,
+}: {
+  dialog: TextEditDialogPayload | null;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(dialog?.value || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!dialog) return;
+    setValue(dialog.value);
+    setSaving(false);
+  }, [dialog?.title, dialog?.value]);
+
+  if (!dialog) return null;
+
+  const close = () => {
+    if (saving) return;
+    onClose();
+  };
+
+  const confirm = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await dialog.onConfirm(value);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SimpleModal title={dialog.title} onClose={close}>
+      <div className="space-y-3">
+        <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+          Nuevo valor
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoFocus
+            className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+          />
+        </label>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            disabled={saving}
+            onClick={close}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
+              saving
+                ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'border-violet-200 bg-violet-50 text-violet-700'
+            }`}
+          >
+            Cancelar
+          </button>
+          <button
+            disabled={saving}
+            onClick={() => void confirm()}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white ${
+              saving ? 'bg-violet-300 cursor-wait' : 'bg-violet-600 hover:bg-violet-700'
+            }`}
+          >
+            {saving ? 'Guardando...' : dialog.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </SimpleModal>
   );
 }
 
