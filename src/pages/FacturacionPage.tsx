@@ -103,6 +103,93 @@ type BillingArchiveEntry = {
   totalQuantity: number;
 };
 
+function calcArchiveTotals(orders: BillingOrder[]) {
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const totalLines = safeOrders.reduce((acc, order) => acc + ((order.lines || []).length || 0), 0);
+  const totalQuantity = safeOrders.reduce(
+    (acc, order) =>
+      acc +
+      (order.lines || []).reduce((lineAcc, line) => lineAcc + (Number(line?.quantity) || 0), 0),
+    0,
+  );
+  return {
+    totalOrders: safeOrders.length,
+    totalLines,
+    totalQuantity,
+  };
+}
+
+function pickBestArchiveOrder(prev: BillingOrder, next: BillingOrder) {
+  const prevScore =
+    (clean(prev.sourcePdfRef) ? 4 : 0) +
+    (clean(prev.sourcePdfDataUrl) ? 2 : 0) +
+    ((prev.lines || []).length > 0 ? 1 : 0);
+  const nextScore =
+    (clean(next.sourcePdfRef) ? 4 : 0) +
+    (clean(next.sourcePdfDataUrl) ? 2 : 0) +
+    ((next.lines || []).length > 0 ? 1 : 0);
+  return nextScore >= prevScore ? { ...prev, ...next } : { ...next, ...prev };
+}
+
+function mergeArchiveEntries(base: BillingArchiveEntry[], incoming: BillingArchiveEntry[]) {
+  const byDay = new Map<string, BillingArchiveEntry>();
+
+  const upsertDay = (day: BillingArchiveEntry) => {
+    const key = clean(day?.dateKey);
+    if (!key) return;
+    const current = byDay.get(key);
+    if (!current) {
+      const safeOrders = Array.isArray(day.orders) ? day.orders : [];
+      const totals = calcArchiveTotals(safeOrders);
+      byDay.set(key, {
+        ...day,
+        dateKey: key,
+        orders: safeOrders,
+        ...totals,
+      });
+      return;
+    }
+    const orderMap = new Map<string, BillingOrder>();
+    for (const order of current.orders || []) {
+      const id = clean(order?.id);
+      if (!id) continue;
+      orderMap.set(id, order);
+    }
+    for (const order of day.orders || []) {
+      const id = clean(order?.id);
+      if (!id) continue;
+      const prev = orderMap.get(id);
+      orderMap.set(id, prev ? pickBestArchiveOrder(prev, order) : order);
+    }
+    const mergedOrders = Array.from(orderMap.values()).sort((a, b) => {
+      const aDate = new Date(String(a.createdAt || '')).getTime();
+      const bDate = new Date(String(b.createdAt || '')).getTime();
+      if (Number.isFinite(aDate) && Number.isFinite(bDate) && aDate !== bDate) return aDate - bDate;
+      return clean(a.invoiceNumber).localeCompare(clean(b.invoiceNumber));
+    });
+    const totals = calcArchiveTotals(mergedOrders);
+    byDay.set(key, {
+      ...current,
+      ...day,
+      dateKey: key,
+      archivedAt: clean(day.archivedAt) || clean(current.archivedAt) || new Date().toISOString(),
+      orders: mergedOrders,
+      ...totals,
+    });
+  };
+
+  (Array.isArray(base) ? base : []).forEach(upsertDay);
+  (Array.isArray(incoming) ? incoming : []).forEach(upsertDay);
+
+  return Array.from(byDay.values()).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+}
+
+function archiveSignature(entries: BillingArchiveEntry[]) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((day) => `${clean(day.dateKey)}:${(day.orders || []).map((order) => clean(order.id)).join(',')}`)
+    .join('|');
+}
+
 type TesseractLike = {
   recognize: (
     image: HTMLCanvasElement | string,
@@ -2312,6 +2399,52 @@ export default function FacturacionPage() {
     const id = window.setInterval(archiveDueDays, 60_000);
     return () => window.clearInterval(id);
   }, [archives, orders, setArchives]);
+
+  const dispatchedArchiveSnapshots = useMemo(() => {
+    const byDate = new Map<string, BillingOrder[]>();
+    const dispatched = (orders || []).filter((order) => order.status === 'DESPACHADO');
+    for (const order of dispatched) {
+      const dateKey = toLocalDateKey(order.lastChangedAt || order.createdAt || order.invoiceDate);
+      if (!dateKey) continue;
+      const list = byDate.get(dateKey) || [];
+      list.push(order);
+      byDate.set(dateKey, list);
+    }
+    return Array.from(byDate.entries())
+      .map(([dateKey, dayOrders]) => {
+        const ordered = [...dayOrders].sort((a, b) => {
+          const aTs = new Date(String(a.lastChangedAt || a.createdAt || '')).getTime();
+          const bTs = new Date(String(b.lastChangedAt || b.createdAt || '')).getTime();
+          if (Number.isFinite(aTs) && Number.isFinite(bTs) && aTs !== bTs) return bTs - aTs;
+          return clean(a.invoiceNumber).localeCompare(clean(b.invoiceNumber));
+        });
+        const totals = calcArchiveTotals(ordered);
+        const archivedAt = ordered.reduce((latest, order) => {
+          const candidates = [order.lastChangedAt, order.createdAt];
+          for (const candidate of candidates) {
+            const ts = new Date(String(candidate || '')).getTime();
+            if (Number.isFinite(ts) && ts > latest) return ts;
+          }
+          return latest;
+        }, 0);
+        return {
+          dateKey,
+          archivedAt: archivedAt > 0 ? new Date(archivedAt).toISOString() : new Date().toISOString(),
+          orders: ordered,
+          ...totals,
+        } as BillingArchiveEntry;
+      })
+      .sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+  }, [orders]);
+
+  useEffect(() => {
+    if (dispatchedArchiveSnapshots.length === 0) return;
+    const current = Array.isArray(archives) ? archives : [];
+    const merged = mergeArchiveEntries(current, dispatchedArchiveSnapshots);
+    if (archiveSignature(merged) !== archiveSignature(current)) {
+      setArchives(merged);
+    }
+  }, [archives, dispatchedArchiveSnapshots, setArchives]);
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
