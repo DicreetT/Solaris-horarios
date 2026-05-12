@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, BarChart3, Boxes, Calculator, Download, FileSpreadsheet, FileWarning, FolderTree, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { Archive, BarChart3, Boxes, Calculator, Download, FileSpreadsheet, FileWarning, FolderTree, Pencil, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import seed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import { useAuth } from '../context/AuthContext';
@@ -1856,6 +1856,24 @@ export default function InventoryFacturacionPage() {
     emitSuccessFeedback('Bodega creada con éxito.');
   };
 
+  const editBodega = (oldBodegaRaw: string) => {
+    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    if (!oldBodega) return;
+    const nextBodega = window.prompt('Nuevo nombre de bodega', oldBodegaRaw)?.trim().toUpperCase();
+    if (!nextBodega) return;
+    if (clean(nextBodega).toUpperCase() === oldBodega) return;
+    setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
+    emitSuccessFeedback('Bodega actualizada con éxito.');
+  };
+
+  const deleteBodega = (oldBodegaRaw: string) => {
+    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    if (!oldBodega) return;
+    if (!window.confirm(`¿Borrar la bodega "${oldBodegaRaw}"?`)) return;
+    setBodegas((prev) => prev.filter((b) => clean(b.bodega).toUpperCase() !== oldBodega));
+    emitSuccessFeedback('Bodega eliminada con éxito.');
+  };
+
   const createCliente = () => {
     const c = clean(newCliente);
     if (!c) return;
@@ -1863,6 +1881,25 @@ export default function InventoryFacturacionPage() {
     setClientes((prev) => [...prev, { cliente: c }]);
     setNewCliente('');
     emitSuccessFeedback('Cliente creado con éxito.');
+  };
+
+  const editCliente = (oldClientRaw: string) => {
+    const oldClient = clean(oldClientRaw);
+    if (!oldClient) return;
+    const nextClient = window.prompt('Nuevo nombre de cliente', oldClientRaw)?.trim();
+    if (!nextClient) return;
+    const nextClientClean = clean(nextClient);
+    if (!nextClientClean || nextClientClean === oldClient) return;
+    setClientes((prev) => prev.map((c) => (clean(c.cliente) === oldClient ? { ...c, cliente: nextClient } : c)));
+    emitSuccessFeedback('Cliente actualizado con éxito.');
+  };
+
+  const deleteCliente = (oldClientRaw: string) => {
+    const oldClient = clean(oldClientRaw);
+    if (!oldClient) return;
+    if (!window.confirm(`¿Borrar el cliente "${oldClientRaw}"?`)) return;
+    setClientes((prev) => prev.filter((c) => clean(c.cliente) !== oldClient));
+    emitSuccessFeedback('Cliente eliminado con éxito.');
   };
 
   const exportPdf = (title: string, headers: string[], rows: Array<Array<string | number>>) => {
@@ -2728,7 +2765,21 @@ export default function InventoryFacturacionPage() {
                 ) : undefined
               }
             >
-              <DataTable headers={['Bodega', 'Activo']} rows={limitRows('maestros_bodegas', bodegas).map((b) => [clean(b.bodega), clean(b.activo_si_no || 'SI')])} />
+              <DataTable
+                headers={['Bodega', 'Activo', 'Acciones']}
+                rows={limitRows('maestros_bodegas', bodegas).map((b, idx) => [
+                  clean(b.bodega),
+                  clean(b.activo_si_no || 'SI'),
+                  <div key={`bodega-actions-${idx}`} className="flex items-center gap-1">
+                    <button onClick={() => editBodega(b.bodega)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200" title="Editar bodega">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => deleteBodega(b.bodega)} className="rounded-lg bg-rose-100 p-1.5 text-rose-700 hover:bg-rose-200" title="Eliminar bodega">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>,
+                ])}
+              />
               {bodegas.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_bodegas" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />
@@ -2770,7 +2821,20 @@ export default function InventoryFacturacionPage() {
                 ) : undefined
               }
             >
-              <DataTable headers={['Cliente']} rows={limitRows('maestros_clientes', clientes).map((c) => [clean(c.cliente)])} />
+              <DataTable
+                headers={['Cliente', 'Acciones']}
+                rows={limitRows('maestros_clientes', clientes).map((c, idx) => [
+                  clean(c.cliente),
+                  <div key={`client-actions-${idx}`} className="flex items-center gap-1">
+                    <button onClick={() => editCliente(c.cliente)} className="rounded-lg bg-violet-100 p-1.5 text-violet-700 hover:bg-violet-200" title="Editar cliente">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => deleteCliente(c.cliente)} className="rounded-lg bg-rose-100 p-1.5 text-rose-700 hover:bg-rose-200" title="Eliminar cliente">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>,
+                ])}
+              />
               {clientes.length > 6 && (
                 <div className="mt-2">
                   <ToggleMore k="maestros_clientes" showAllRows={showAllRows} setShowAllRows={setShowAllRows} />

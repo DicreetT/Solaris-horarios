@@ -3972,6 +3972,27 @@ function InventoryPage() {
     setBodegaModalOpen(false);
   };
 
+  const editBodega = async (oldBodegaRaw: string) => {
+    if (!canEditNow) return;
+    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    if (!oldBodega) return;
+    const nextBodega = window.prompt('Nuevo nombre de bodega', oldBodegaRaw)?.trim().toUpperCase();
+    if (!nextBodega) return;
+    if (clean(nextBodega).toUpperCase() === oldBodega) return;
+    setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
+    emitSuccessFeedback('Bodega actualizada con éxito.');
+  };
+
+  const deleteBodega = async (oldBodegaRaw: string) => {
+    if (!canEditNow) return;
+    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    if (!oldBodega) return;
+    const ok = window.confirm(`¿Borrar la bodega "${oldBodegaRaw}"?`);
+    if (!ok) return;
+    setBodegas((prev) => prev.filter((b) => clean(b.bodega).toUpperCase() !== oldBodega));
+    emitSuccessFeedback('Bodega eliminada con éxito.');
+  };
+
   const saveTipo = async () => {
     if (!canEditNow) return;
     if (!tipoForm.tipo_movimiento.trim()) return;
@@ -4001,6 +4022,16 @@ function InventoryPage() {
     appendAudit('Creación de cliente', newClient.trim());
     emitSuccessFeedback('Cliente creado con éxito.');
     setNewClient('');
+  };
+
+  const deleteClient = async (oldClientRaw: string) => {
+    if (!canEditNow) return;
+    const oldClient = clean(oldClientRaw);
+    if (!oldClient) return;
+    const ok = window.confirm(`¿Borrar el cliente "${oldClientRaw}"?`);
+    if (!ok) return;
+    setClientes((prev) => prev.filter((c) => clean(c.cliente) !== oldClient));
+    emitSuccessFeedback('Cliente eliminado con éxito.');
   };
 
   const editClient = async (oldClientRaw: string) => {
@@ -5387,7 +5418,31 @@ function InventoryPage() {
               <button onClick={() => setBodegaModalOpen(true)} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir bodega</button>
             </div>
           </div>
-          <SimpleDataTable headers={['Bodega', 'Activo']} rows={bodegas.map((b) => [b.bodega, b.activo_si_no])} />
+              <SimpleDataTable
+                headers={['Bodega', 'Activo', 'Acciones']}
+                rows={bodegas.map((b, idx) => [
+                  b.bodega,
+                  b.activo_si_no,
+                  <div key={`bodega-actions-${idx}`} className="flex items-center gap-1">
+                    <button
+                      disabled={!isEditModeActive}
+                      onClick={() => void editBodega(b.bodega)}
+                      className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      title="Editar bodega"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      disabled={!isEditModeActive}
+                      onClick={() => void deleteBodega(b.bodega)}
+                      className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      title="Eliminar bodega"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>,
+                ])}
+              />
         </div>
       )}
 
@@ -5400,20 +5455,30 @@ function InventoryPage() {
               <button onClick={addClient} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir</button>
             </div>
           </div>
-          <SimpleDataTable
-            headers={['Cliente', 'Acciones']}
-            rows={clientes.map((c, idx) => [
-              c.cliente,
-              <button
-                key={`client-edit-${idx}`}
-                disabled={!isEditModeActive}
-                onClick={() => void editClient(c.cliente)}
-                className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
-              >
-                <Pencil size={13} />
-              </button>,
-            ])}
-          />
+              <SimpleDataTable
+                headers={['Cliente', 'Acciones']}
+                rows={clientes.map((c, idx) => [
+                  c.cliente,
+                  <div key={`client-actions-${idx}`} className="flex items-center gap-1">
+                    <button
+                      disabled={!isEditModeActive}
+                      onClick={() => void editClient(c.cliente)}
+                      className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      title="Editar cliente"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      disabled={!isEditModeActive}
+                      onClick={() => void deleteClient(c.cliente)}
+                      className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      title="Eliminar cliente"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>,
+                ])}
+              />
         </div>
       )}
 
