@@ -1602,11 +1602,20 @@ function InventoryPage() {
     });
   }, [normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd, quickSearch]);
 
+  const stockBaseVisible = useMemo(
+    () =>
+      stockBase.filter((m) => {
+        const key = lotKeyOf(m.producto, m.lote);
+        return !archivedLotKeySet.has(key);
+      }),
+    [archivedLotKeySet, stockBase],
+  );
+
   const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
 
   const stockByPLB = useMemo(() => {
     const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
-    for (const m of stockBase) {
+    for (const m of stockBaseVisible) {
       const bodega = normalizeWarehouseAlias(clean(m.bodega));
       const key = `${clean(m.producto)}|${clean(m.lote)}|${bodega}`;
       if (!map.has(key)) map.set(key, { producto: clean(m.producto), lote: clean(m.lote), bodega, stock: 0 });
@@ -1621,7 +1630,7 @@ function InventoryPage() {
         return { ...row, stock: safeStock };
       })
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
-  }, [stockBase]);
+  }, [stockBaseVisible]);
 
   const stockTotalCanet = useMemo(
     () =>
