@@ -1868,6 +1868,7 @@ function InventoryPage() {
       map.get(rowKey)!.stock += toNum(row.stock);
     }
     return Array.from(map.values())
+      .filter((row) => !archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)))
       .map((row) => {
         const correctionKey = `${clean(row.producto).toUpperCase()}|${normalizeLotCompareToken(row.lote)}|${normalizeWarehouseAlias(row.bodega).toUpperCase()}`;
         const correctedStock =
@@ -1880,7 +1881,7 @@ function InventoryPage() {
         return { ...row, stock: safeStock };
       })
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
-  }, [huarteMirrorStockByLotBodega, stockBaseVisible, warehouseFilter]);
+  }, [archivedLotKeySet, huarteMirrorStockByLotBodega, stockBaseVisible, warehouseFilter]);
 
   const stockTotalCanet = useMemo(
     () =>
@@ -2835,9 +2836,13 @@ function InventoryPage() {
   const potentialDetailRows = useMemo(
     () =>
       potentialDetailProduct
-        ? stockControlTables.potentialLotRows.filter((r) => r.producto === potentialDetailProduct)
+        ? stockControlTables.potentialLotRows.filter(
+            (r) =>
+              r.producto === potentialDetailProduct &&
+              !archivedLotKeySet.has(lotKeyOf(r.producto, r.lote)),
+          )
         : [],
-    [potentialDetailProduct, stockControlTables.potentialLotRows],
+    [archivedLotKeySet, potentialDetailProduct, stockControlTables.potentialLotRows],
   );
   const hypotheticalRows = useMemo(() => {
     if (!hypotheticalScope) return [] as Array<{
@@ -2848,7 +2853,9 @@ function InventoryPage() {
       stockOptimo: number;
     }>;
     if (hypotheticalScope === 'potential') {
-      return stockControlTables.potentialLotRows.map((r) => ({
+      return stockControlTables.potentialLotRows
+        .filter((r) => !archivedLotKeySet.has(lotKeyOf(r.producto, r.lote)))
+        .map((r) => ({
         producto: r.producto,
         lote: r.lote,
         stockBase: Math.max(0, toNum(r.stockCHP)),
