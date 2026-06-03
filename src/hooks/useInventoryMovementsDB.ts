@@ -45,13 +45,9 @@ const INVENTORY_MOVEMENT_COLUMNS = [
     'cantidad_signed',
     'source',
     'origin_canet_id',
-    'origin_huarte_id',
     'created_at',
     'updated_at',
     'updated_by',
-    'factura_doc',
-    'responsable',
-    'motivo',
 ].join(',');
 
 const sortMovementsByNewest = (rows: InventoryMovementRow[]) =>
