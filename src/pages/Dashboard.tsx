@@ -38,7 +38,6 @@ import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useWorkProfile } from '../hooks/useWorkProfile';
-import { useChat } from '../hooks/useChat';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
 import CalendarGrid from '../components/CalendarGrid';
 import TimeTrackingPage from './TimeTrackingPage';
@@ -290,12 +289,6 @@ function Dashboard() {
     const { calendarEvents, createEvent } = useCalendarEvents();
     const { overrides: calendarOverrides } = useCalendarOverrides();
     const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
-    const {
-        conversations: chatConversations,
-        unreadByConversation,
-        unreadTotal: chatUnreadTotal,
-    } = useChat(currentUser, null);
-
     const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
     const [eventDraft, setEventDraft] = useState('');
     const [eventFormTitle, setEventFormTitle] = useState('');
@@ -748,15 +741,9 @@ function Dashboard() {
             title: 'Comunicación',
             items: [
                 {
-                    label: 'Chat',
-                    icon: MessageCircle,
-                    tone: 'primary',
-                    onClick: () => navigate('/chat'),
-                },
-                {
                     label: 'Notificaciones',
                     icon: Bell,
-                    tone: 'ghost',
+                    tone: 'primary',
                     onClick: () => window.dispatchEvent(new CustomEvent('open-notifications-modal')),
                 },
                 {
@@ -1325,36 +1312,6 @@ function Dashboard() {
             setSendingBoostTo(null);
         }
     };
-
-    const openDirectChat = (targetUserId: string) => {
-        navigate(`/chat?user=${targetUserId}`);
-    };
-
-    const chatConversationName = (conversation: any) => {
-        if (conversation?.title?.trim()) {
-            return conversation.title.trim();
-        }
-        if (conversation?.kind === 'group') {
-            return conversation.title || `Grupo (${conversation?.participants?.length || 0})`;
-        }
-        const otherUserId = (conversation?.participants || []).find((id: string) => id !== currentUser?.id);
-        return otherUserId ? (USERS.find((u) => u.id === otherUserId)?.name || `Usuario ${otherUserId.slice(0, 6)}`) : 'Chat directo';
-    };
-
-    const chatDashboardRows = useMemo(
-        () =>
-            chatConversations
-                .map((conversation) => ({
-                    conversation,
-                    unread: unreadByConversation[conversation.id] || 0,
-                }))
-                .sort((a, b) => {
-                    if ((a.unread > 0) !== (b.unread > 0)) return a.unread > 0 ? -1 : 1;
-                    return 0;
-                })
-                .slice(0, 3),
-        [chatConversations, unreadByConversation],
-    );
 
     const saveTimeRow = async (row: any) => {
         if (!row?.id) return;
@@ -2313,14 +2270,13 @@ function Dashboard() {
         potentialCriticalFromInventory,
         canetCriticalFromInventory,
     ]);
-    const chatBadgeCount = chatUnreadTotal;
     const absencesBadgeCount = isAdmin ? pendingManagedRows.length : weeklyTeamAbsences.length;
     const trainingsBadgeCount = canSeeTrainingsPanel ? weeklyTrainings.length : 0;
     const absencesTileLabel = isAdmin ? 'Gestionar solicitudes' : 'Ausencias';
     const trainingsTileLabel = canSeeTrainingsPanel ? 'Gestionar formaciones' : 'Formaciones';
 
     const compactTiles: Array<{
-        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse' | 'chat';
+        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse';
         label: string;
         Icon: any;
     }> = [
@@ -2333,7 +2289,6 @@ function Dashboard() {
             { key: 'alerts', label: 'Inventario', Icon: Info },
             { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
             { key: 'pulse', label: 'Pulso', Icon: Coffee },
-            { key: 'chat', label: 'Chat', Icon: MessageCircle },
         ];
     const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
     const compactTileBadges: Partial<Record<typeof compactTiles[number]['key'], number>> = {
@@ -2342,7 +2297,6 @@ function Dashboard() {
         absences: absencesBadgeCount,
         trainings: trainingsBadgeCount,
         alerts: inventoryBadgeCount,
-        chat: chatBadgeCount,
     };
 
     const launchpadGroupsEnhanced = useMemo(() => [
@@ -2464,18 +2418,9 @@ function Dashboard() {
             eyebrowClass: 'text-fuchsia-600',
             items: [
                 {
-                    label: 'Chat',
-                    icon: MessageCircle,
-                    tone: 'primary',
-                    buttonClass: 'border-sky-200 bg-sky-50 text-sky-950 hover:bg-sky-100',
-                    iconClass: 'bg-white text-sky-600 border-sky-100',
-                    badges: [{ count: chatBadgeCount, tone: 'sky' }],
-                    onClick: () => navigate('/chat'),
-                },
-                {
                     label: 'Notificaciones',
                     icon: Bell,
-                    tone: 'ghost',
+                    tone: 'primary',
                     buttonClass: 'border-violet-200 bg-white text-violet-950 hover:bg-violet-50',
                     iconClass: 'bg-violet-50 text-violet-600 border-violet-100',
                     badges: [{ count: notificationsBadgeCount, tone: 'rose' }],
@@ -2504,7 +2449,6 @@ function Dashboard() {
         billingBadgeCount,
         calendarBadgeCount,
         calendarEventsSorted,
-        chatBadgeCount,
         checklistPendingCount,
         currentUser,
         inventoryAttentionCount,
@@ -2530,7 +2474,7 @@ function Dashboard() {
                             <div>
                                 <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Home operativa</p>
                                 <h1 className="text-2xl font-black text-violet-950">{greeting}, {currentUser?.name || 'Carlos'}</h1>
-                                <p className="mt-1 text-sm text-gray-700">Acceso directo a lo esencial: chat e inventario.</p>
+                                <p className="mt-1 text-sm text-gray-700">Acceso directo a lo esencial: tareas, avisos e inventario.</p>
                             </div>
                         </div>
                         <div className="rounded-2xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
@@ -2538,13 +2482,6 @@ function Dashboard() {
                         </div>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <Link
-                            to="/chat"
-                            className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-base font-bold text-violet-800 hover:bg-violet-100"
-                        >
-                            <MessageCircle size={16} />
-                            Ir a Chat
-                        </Link>
                         <Link
                             to="/inventory"
                             className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-base font-bold text-violet-800 hover:bg-violet-100"
@@ -3616,15 +3553,6 @@ function Dashboard() {
                                         </div>
                                         {item.user.id !== currentUser?.id && (
                                             <button
-                                                onClick={() => openDirectChat(item.user.id)}
-                                                className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
-                                                title={`Abrir chat con ${item.user.name}`}
-                                            >
-                                                <MessageCircle size={14} />
-                                            </button>
-                                        )}
-                                        {item.user.id !== currentUser?.id && (
-                                            <button
                                                 onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}
                                                 disabled={sendingBoostTo === item.user.id}
                                                 className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl font-bold text-xs transition-all ${sendingBoostTo === item.user.id
@@ -3643,55 +3571,6 @@ function Dashboard() {
                         </div>
                     )}
 
-                    {(!isCompact || compactSection === 'chat') && (
-                        <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm compact-card">
-                            <div className="flex items-center justify-between mb-3">
-                                <h2 className="text-lg font-black text-violet-950">Chat interno</h2>
-                                <Link to="/chat" className="text-xs font-bold text-violet-700">Abrir</Link>
-                            </div>
-                            <div className="space-y-2">
-                                {chatDashboardRows.map(({ conversation, unread }) => (
-                                    <button
-                                        key={conversation.id}
-                                        onClick={() => navigate(`/chat?id=${conversation.id}`)}
-                                        className="w-full group p-3 rounded-2xl border border-gray-100 bg-white hover:border-violet-200 hover:bg-violet-50/30 transition-all text-left"
-                                    >
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div className="flex items-center gap-3 min-w-0">
-                                                <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center text-violet-700 font-bold flex-shrink-0">
-                                                    {chatConversationName(conversation).charAt(0).toUpperCase()}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className="text-sm font-bold text-gray-900 truncate">
-                                                            {chatConversationName(conversation)}
-                                                        </p>
-                                                        {unread > 0 && (
-                                                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                                                        )}
-                                                    </div>
-                                                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
-                                                        {(conversation.participants || []).map((id: string) => USERS.find(u => u.id === id)?.name || id.slice(0, 6)).join(', ')}
-                                                    </p>
-                                                    <p className="text-xs text-gray-500 truncate mt-0.5">
-                                                        {conversation.last_message?.message || 'Sin mensajes aún'}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            {unread > 0 && (
-                                                <div className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full text-[10px] font-black">
-                                                    {unread}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </button>
-                                ))}
-                                {chatConversations.length === 0 && (
-                                    <div className="app-empty-card">No tienes chats activos todavía.</div>
-                                )}
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
             )}
@@ -4666,15 +4545,6 @@ function Dashboard() {
                                                 {item.mood?.custom_emoji || '🙂'} {item.mood?.custom_status || (item.isActive ? 'Activo' : 'Sin estado')}
                                             </p>
                                         </div>
-                                        {item.user.id !== currentUser?.id && (
-                                            <button
-                                                onClick={() => openDirectChat(item.user.id)}
-                                                className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-violet-200 text-violet-700 hover:bg-violet-100 hover:scale-[1.03] active:scale-[0.97] transition-all"
-                                                title={`Abrir chat con ${item.user.name}`}
-                                            >
-                                                <MessageCircle size={14} />
-                                            </button>
-                                        )}
                                         {item.user.id !== currentUser?.id && (
                                             <button
                                                 onClick={() => handleSendCaffeineBoost(item.user.id, item.user.name)}

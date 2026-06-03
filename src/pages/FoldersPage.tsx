@@ -2,9 +2,15 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
-import { Folder, ExternalLink, FileText, Printer, Trash2 } from 'lucide-react';
+import { Download, ExternalLink, FileSpreadsheet, FileText, Folder, Printer, Trash2 } from 'lucide-react';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { supabase } from '../lib/supabase';
+import {
+    INVENTORY_MONTHLY_CLOSURES_KEY,
+    monthlyCloseRowsForExport,
+    type InventoryMonthlyCloseSnapshot,
+} from '../utils/inventoryMonthlyClose';
+import { openTableXlsx } from '../utils/tableExport';
 
 const FACTURACION_ARCHIVE_KEY = 'facturacion_archive_v1';
 const FACTURACION_FILE_BLOB_PREFIX = 'facturacion_file_blob_v1:';
@@ -123,6 +129,21 @@ function formatDate(iso: string) {
     return d.toLocaleDateString('es-ES');
 }
 
+function formatMonthKey(monthKey: string) {
+    const [year, month] = clean(monthKey).split('-').map(Number);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return clean(monthKey) || '-';
+    return new Date(year, month - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+}
+
+const appendTotalRow = (headers: string[], rows: Array<Array<string | number>>) => [
+    ...rows,
+    Array.from({ length: Math.max(headers.length, 1) }, (_, idx) => {
+        if (idx === 0) return 'TOTAL';
+        if (idx === headers.length - 1) return rows.reduce((acc, row) => acc + (Number(row[idx]) || 0), 0);
+        return '';
+    }),
+];
+
 function clean(value: unknown) {
     return String(value ?? '').trim();
 }
@@ -174,6 +195,16 @@ function FoldersPage() {
     const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const [facturacionArchive, setFacturacionArchive, archiveLoading] = useSharedJsonState<BillingArchiveEntry[]>(
         FACTURACION_ARCHIVE_KEY,
+        [],
+        {
+            userId: currentUser?.id,
+            initializeIfMissing: true,
+            pollIntervalMs: 8000,
+            protectFromEmptyOverwrite: true,
+        },
+    );
+    const [monthlyClosures, , monthlyClosuresLoading] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
+        INVENTORY_MONTHLY_CLOSURES_KEY,
         [],
         {
             userId: currentUser?.id,
@@ -357,6 +388,29 @@ function FoldersPage() {
         });
     };
 
+    const sortedMonthlyClosures = (Array.isArray(monthlyClosures) ? monthlyClosures : [])
+        .slice()
+        .sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
+
+    const downloadMonthlyClose = (snapshot: InventoryMonthlyCloseSnapshot) => {
+        const scopeLabel = snapshot.scope === 'huarte' ? 'Huarte' : 'Canet';
+        openTableXlsx({
+            title: `Inventario ${scopeLabel} - Cierre de mes`,
+            subtitle: `Foto congelada · Cierre: ${snapshot.monthLabel || formatMonthKey(snapshot.monthKey)} · Guardado: ${formatDate(snapshot.closedAt)} · Responsable: ${snapshot.closedBy || '-'}`,
+            fileName: `cierre-mes-${snapshot.scope}-${snapshot.monthKey}.xlsx`,
+            headers: ['Producto', 'Lote', 'Bodega', 'Stock cierre'],
+            rows: appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(snapshot)),
+            summaryRows: [
+                ['Stock cierre', snapshot.totalStock],
+                ['Productos', snapshot.productCount],
+                ['Lotes', snapshot.lotCount],
+                ['Bodegas', snapshot.warehouseCount],
+                ['Filas snapshot', snapshot.rowCount ?? snapshot.rows.length],
+                ['Huella snapshot', snapshot.snapshotHash || 'legacy'],
+            ],
+        });
+    };
+
     return (
         <div className="max-w-6xl mx-auto pb-10">
             {/* Header */}
@@ -423,99 +477,166 @@ function FoldersPage() {
             </div>
 
             {!isRestrictedUser && (
-                <section className="mt-8 rounded-3xl border-2 border-gray-100 bg-white p-6 shadow-lg">
-                    <div className="mb-4 flex items-center gap-3">
-                        <div className="rounded-xl bg-primary/10 p-2 text-primary">
-                            <FileText size={20} />
-                        </div>
-                        <div>
-                            <h2 className="text-2xl font-black text-gray-900">Carpeta Despachos (interna)</h2>
-                            <p className="text-sm font-medium text-gray-500">
-                                Pedidos despachados archivados por fecha (cierre diario 21:00).
-                            </p>
-                        </div>
-                    </div>
+                <div className="mt-8 space-y-4">
+                    <details className="rounded-3xl border-2 border-gray-100 bg-white shadow-lg" open={false}>
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-6">
+                            <div className="flex items-center gap-3">
+                                <div className="rounded-xl bg-primary/10 p-2 text-primary">
+                                    <FileText size={20} />
+                                </div>
+                                <div>
+                                    <h2 className="text-2xl font-black text-gray-900">Carpeta Despachos (interna)</h2>
+                                    <p className="text-sm font-medium text-gray-500">
+                                        Pedidos despachados archivados por fecha (cierre diario 21:00).
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-black text-gray-600">
+                                Plegar / desplegar
+                            </span>
+                        </summary>
 
-                    {archiveLoading ? (
-                        <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
-                            Cargando historial de despachos...
-                        </div>
-                    ) : (!facturacionArchive || facturacionArchive.length === 0) ? (
-                        <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
-                            Aún no hay días archivados de despachos.
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {facturacionArchive
-                                .slice()
-                                .sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1))
-                                .map((day) => (
-                                    <details key={day.dateKey} className="rounded-2xl border border-gray-200 bg-white" open={false}>
-                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-                                            <div>
-                                                <p className="text-sm font-black text-gray-900">{formatDate(day.dateKey)}</p>
-                                                <p className="text-xs font-semibold text-gray-500">
-                                                    {day.totalOrders} factura(s) · {day.totalLines} línea(s) · {day.totalQuantity.toLocaleString('es-ES')} uds
-                                                </p>
-                                            </div>
-                                            <span className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-black text-gray-600">
-                                                Ver despachos
-                                            </span>
-                                        </summary>
-
-                                        <div className="border-t border-gray-100 px-4 py-3">
-                                            <div className="space-y-2">
-                                                {(day.orders || []).map((order) => (
-                                                    <div key={order.id} className="rounded-xl border border-gray-200 bg-gray-50/50 p-3">
-                                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                                            <div>
-                                                                <p className="text-sm font-black text-gray-900">
-                                                                    Factura {order.invoiceNumber} · {order.customerName || 'Cliente sin detectar'}
-                                                                </p>
-                                                                <p className="text-xs font-semibold text-gray-500">
-                                                                    {formatDate(order.invoiceDate)} · {order.sourceFileName}
-                                                                </p>
-                                                            </div>
-                                                            <div className="flex gap-2">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void openPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
-                                                                    className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
-                                                                >
-                                                                    <FileText size={12} /> Abrir
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void printPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
-                                                                    className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
-                                                                >
-                                                                    <Printer size={12} /> Imprimir
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => deleteArchivedInvoice(day.dateKey, order.id)}
-                                                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-black text-rose-700 hover:bg-rose-50"
-                                                                    title="Eliminar factura de este día"
-                                                                >
-                                                                    <Trash2 size={12} /> Eliminar
-                                                                </button>
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mt-2 text-xs font-semibold text-gray-600">
-                                                            {(order.lines || [])
-                                                                .map((line) => `${line.productCode || line.productRaw}: ${line.quantity}`)
-                                                                .join(' · ')}
-                                                        </div>
+                        <div className="border-t border-gray-100 p-6 pt-4">
+                            {archiveLoading ? (
+                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                    Cargando historial de despachos...
+                                </div>
+                            ) : (!facturacionArchive || facturacionArchive.length === 0) ? (
+                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                    Aún no hay días archivados de despachos.
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {facturacionArchive
+                                        .slice()
+                                        .sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1))
+                                        .map((day) => (
+                                            <details key={day.dateKey} className="rounded-2xl border border-gray-200 bg-white" open={false}>
+                                                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                                                    <div>
+                                                        <p className="text-sm font-black text-gray-900">{formatDate(day.dateKey)}</p>
+                                                        <p className="text-xs font-semibold text-gray-500">
+                                                            {day.totalOrders} factura(s) · {day.totalLines} línea(s) · {day.totalQuantity.toLocaleString('es-ES')} uds
+                                                        </p>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </details>
-                                ))}
+                                                    <span className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-black text-gray-600">
+                                                        Ver despachos
+                                                    </span>
+                                                </summary>
+
+                                                <div className="border-t border-gray-100 px-4 py-3">
+                                                    <div className="space-y-2">
+                                                        {(day.orders || []).map((order) => (
+                                                            <div key={order.id} className="rounded-xl border border-gray-200 bg-gray-50/50 p-3">
+                                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                                    <div>
+                                                                        <p className="text-sm font-black text-gray-900">
+                                                                            Factura {order.invoiceNumber} · {order.customerName || 'Cliente sin detectar'}
+                                                                        </p>
+                                                                        <p className="text-xs font-semibold text-gray-500">
+                                                                            {formatDate(order.invoiceDate)} · {order.sourceFileName}
+                                                                        </p>
+                                                                    </div>
+                                                                    <div className="flex gap-2">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => void openPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
+                                                                            className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
+                                                                        >
+                                                                            <FileText size={12} /> Abrir
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => void printPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
+                                                                            className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
+                                                                        >
+                                                                            <Printer size={12} /> Imprimir
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => deleteArchivedInvoice(day.dateKey, order.id)}
+                                                                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-black text-rose-700 hover:bg-rose-50"
+                                                                            title="Eliminar factura de este día"
+                                                                        >
+                                                                            <Trash2 size={12} /> Eliminar
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="mt-2 text-xs font-semibold text-gray-600">
+                                                                    {(order.lines || [])
+                                                                        .map((line) => `${line.productCode || line.productRaw}: ${line.quantity}`)
+                                                                        .join(' · ')}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </details>
+                                        ))}
+                                </div>
+                            )}
                         </div>
-                    )}
-                </section>
+                    </details>
+
+                    <details className="rounded-3xl border-2 border-gray-100 bg-white shadow-lg" open={false}>
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-6">
+                            <div className="flex items-center gap-3">
+                                <div className="rounded-xl bg-emerald-50 p-2 text-emerald-700">
+                                    <FileSpreadsheet size={20} />
+                                </div>
+                                <div>
+                                    <h2 className="text-2xl font-black text-gray-900">Carpeta Cierre de mes (interna)</h2>
+                                    <p className="text-sm font-medium text-gray-500">
+                                        Excels de cierre generados desde la foto congelada de Canet y Huarte.
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-black text-gray-600">
+                                Plegar / desplegar
+                            </span>
+                        </summary>
+
+                        <div className="border-t border-gray-100 p-6 pt-4">
+                            {monthlyClosuresLoading ? (
+                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                    Cargando cierres de mes...
+                                </div>
+                            ) : sortedMonthlyClosures.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                    Aún no hay cierres de mes guardados.
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {sortedMonthlyClosures.map((snapshot) => {
+                                        const scopeLabel = snapshot.scope === 'huarte' ? 'Huarte' : 'Canet';
+                                        return (
+                                            <div key={snapshot.id} className="rounded-2xl border border-gray-200 bg-gray-50/50 p-4">
+                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                    <div>
+                                                        <p className="text-sm font-black text-gray-900">
+                                                            Cierre {scopeLabel} · {snapshot.monthLabel || formatMonthKey(snapshot.monthKey)}
+                                                        </p>
+                                                        <p className="text-xs font-semibold text-gray-500">
+                                                            Guardado: {formatDate(snapshot.closedAt)} · {snapshot.totalStock.toLocaleString('es-ES')} uds · {(snapshot.rowCount ?? snapshot.rows.length).toLocaleString('es-ES')} filas
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => downloadMonthlyClose(snapshot)}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                                                    >
+                                                        <Download size={13} /> Descargar Excel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </details>
+                </div>
             )}
 
             {foldersForUser.length === 0 && (

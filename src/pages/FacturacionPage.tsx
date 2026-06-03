@@ -6,6 +6,8 @@ import { InventoryMovementRow, useInventoryMovementsDB } from '../hooks/useInven
 import canetInventorySeed from '../data/inventory_seed.json';
 import huarteInventorySeed from '../data/inventory_facturacion_seed.json';
 import { supabase } from '../lib/supabase';
+import { CANET_MASTER_WAREHOUSES, HUARTE_STOCK_WAREHOUSES, calculateInventoryStockSnapshot, normalizeInventoryWarehouse } from '../utils/inventoryStock';
+import { DEFAULT_KIT_PRODUCTS, isRetiredProductCode, normalizeKitComponents } from '../utils/productCatalog';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -25,8 +27,9 @@ type BillingOrderStatus =
   | 'CANCELADO';
 type BillingMovementType = 'venta' | 'traspaso';
 type BillingDocumentType = 'FACTURA' | 'TRANSFERENCIA';
-type ProductCode = 'AV' | 'ENT' | 'ISO' | 'KL' | 'RG' | 'SV' | '';
+type ProductCode = string;
 type GenericRow = Record<string, any>;
+type InventoryBranch = 'canet' | 'huarte';
 
 type BillingOrderLine = {
   id: string;
@@ -68,6 +71,15 @@ type BillingOrder = {
   status: BillingOrderStatus;
   extractedTextSnippet: string;
   lines: BillingOrderLine[];
+};
+
+type DispatchStockPart = {
+  partKey: string;
+  productCode: string;
+  lote: string;
+  quantity: number;
+  sourceProductCode: string;
+  isKitComponent: boolean;
 };
 
 type BillingLabelAttachment = {
@@ -256,6 +268,7 @@ const TESSERACT_CDN_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tess
 let tesseractLoaderPromise: Promise<TesseractLike | null> | null = null;
 
 const PRODUCT_HINTS: Array<{ code: ProductCode; hints: string[] }> = [
+  { code: 'KIT BELLEZA', hints: ['KIT BELLEZA', 'BELLEZA'] },
   { code: 'AV', hints: ['AVHIRO', 'AVIRO'] },
   { code: 'ENT', hints: ['ENTEROVITAL', 'ENTERO VITAL', 'ENTHEROVITAL', 'ENTHERO'] },
   { code: 'ISO', hints: ['ISOTONIC', 'ISOTONICO', 'ISOTÓNICO'] },
@@ -304,24 +317,23 @@ function normalizeWarehouseAlias(input: string): BillingWarehouse | '' {
   return '';
 }
 
+const CANET_TRANSFER_WAREHOUSE_SET = new Set(CANET_MASTER_WAREHOUSES.map((warehouse) => normalizeInventoryWarehouse(warehouse)));
+const HUARTE_TRANSFER_WAREHOUSE_SET = new Set(HUARTE_STOCK_WAREHOUSES.map((warehouse) => normalizeInventoryWarehouse(warehouse)));
+
 function normalizeTransferNode(input: string): string {
-  const v = clean(input)
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  if (!v) return '';
-  if (v.includes('CANET')) return 'CANET';
-  if (v.includes('HUARTE') || v.includes('GUARTE') || v.includes('WARTE') || v.includes('WUARTE')) return 'HUARTE';
-  if (v.includes('BILBAO')) return 'BILBAO';
-  if (v.includes('PAMPLONA')) return 'PAMPLONA';
-  if (v.includes('LOGRONO')) return 'LOGROÑO';
-  if (v.includes('VALENCIA')) return 'VALENCIA';
-  if (v.includes('MAS BORR')) return 'MAS BORRAS';
-  return clean(input).toUpperCase();
+  const normalized = normalizeInventoryWarehouse(input);
+  return normalized || clean(input).toUpperCase();
 }
 
 function normalizeTransferDestination(input: string): string {
   return normalizeTransferNode(input);
+}
+
+function inventoryBranchForTransferNode(input: string, fallback: InventoryBranch = 'canet'): InventoryBranch {
+  const warehouse = normalizeTransferNode(input);
+  if (CANET_TRANSFER_WAREHOUSE_SET.has(warehouse)) return 'canet';
+  if (HUARTE_TRANSFER_WAREHOUSE_SET.has(warehouse)) return 'huarte';
+  return fallback;
 }
 
 function buildPdfOpenUrl(source: string): { url: string; revoke?: () => void } {
@@ -1048,7 +1060,7 @@ function splitInvoiceTokenByProductAnchors(token: string) {
     return [raw];
   }
   const anchorRegex =
-    /\b(AVHIRO|AVIRO|ENTEROVITAL|ENTHEROVITAL|ENTHERO|ISOTONIC|ISOTONICO|ISOTÓNICO|SOLAR\s*VITAL|SOLARVITAL|REGENERIUM|REGENERYUM|KHALA|KALAH|CALA)\b/gi;
+    /\b(KIT\s*BELLEZA|BELLEZA|AVHIRO|AVIRO|ENTEROVITAL|ENTHEROVITAL|ENTHERO|ISOTONIC|ISOTONICO|ISOTÓNICO|SOLAR\s*VITAL|SOLARVITAL|REGENERIUM|REGENERYUM|KHALA|KALAH|CALA)\b/gi;
   const matches = Array.from(raw.matchAll(anchorRegex));
   if (matches.length <= 1) return [raw];
 
@@ -1717,7 +1729,7 @@ function parseTransferFromText(
     sourceWarehouse,
     transferOrigin,
     transferDestination,
-    inventoryTarget: sourceWarehouse === 'CANET' ? 'canet' : 'huarte',
+    inventoryTarget: inventoryBranchForTransferNode(transferOrigin, sourceWarehouse === 'CANET' ? 'canet' : 'huarte'),
     invoiceNumber: transferNumber,
     invoiceDate,
     customerName,
@@ -1782,8 +1794,8 @@ function statusClass(status: BillingOrderStatus) {
   if (status === 'DESPACHADO') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
   if (status === 'EN_PREPARACION') return 'bg-sky-100 text-sky-800 border-sky-200';
   if (status === 'PENDIENTE_ETIQUETAS') return 'bg-cyan-100 text-cyan-800 border-cyan-200';
-  if (status === 'PENDIENTE_BULTOS') return 'bg-indigo-100 text-indigo-800 border-indigo-200';
-  if (status === 'PENDIENTE_PREPARACION') return 'bg-violet-100 text-violet-800 border-violet-200';
+  if (status === 'PENDIENTE_BULTOS') return 'bg-amber-100 text-amber-800 border-amber-200';
+  if (status === 'PENDIENTE_PREPARACION') return 'bg-slate-100 text-slate-800 border-slate-200';
   if (status === 'PENDIENTE_MANUAL') return 'bg-amber-100 text-amber-800 border-amber-200';
   return 'bg-slate-100 text-slate-700 border-slate-200';
 }
@@ -1970,6 +1982,24 @@ export default function FacturacionPage() {
       mergeIncomingWithLocal: false,
     },
   );
+  const [canetProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_productos_v1',
+    canetInventorySeed.productos as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      mergeIncomingWithLocal: false,
+    },
+  );
+  const [huarteProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_productos_v1',
+    huarteInventorySeed.productos as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      mergeIncomingWithLocal: false,
+    },
+  );
   const ordersRef = useRef<BillingOrder[]>([]);
   const labelQueueRef = useRef<BillingLabelDoc[]>([]);
   const pdfBlobCacheRef = useRef<Map<string, string>>(new Map());
@@ -1978,20 +2008,160 @@ export default function FacturacionPage() {
   const [canetMovements, , , canetMutations] = useInventoryMovementsDB('canet');
   const [huarteMovements, , , huarteMutations] = useInventoryMovementsDB('huarte');
 
+  const productCatalogByInventory = useMemo(() => {
+  const build = (rows: GenericRow[]) => {
+      const map = new Map<string, GenericRow>();
+      DEFAULT_KIT_PRODUCTS.forEach((row) => {
+        const code = clean(row.producto).toUpperCase();
+        if (code) map.set(code, { ...row });
+      });
+      (rows || []).forEach((row) => {
+        const code = clean(row.producto).toUpperCase();
+        if (code && code !== 'PRODUCTO' && !isRetiredProductCode(code)) map.set(code, row);
+      });
+      return map;
+    };
+    return {
+      canet: build(canetProductos),
+      huarte: build(huarteProductos),
+    };
+  }, [canetProductos, huarteProductos]);
+
+  const productOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...PRODUCT_OPTIONS,
+          ...Array.from(productCatalogByInventory.canet.keys()),
+          ...Array.from(productCatalogByInventory.huarte.keys()),
+        ].map((code) => clean(code).toUpperCase()).filter(Boolean)),
+      ).sort(),
+    [productCatalogByInventory],
+  );
+
+  const resolveCatalogProductCodeFromText = useCallback(
+    (inventory: 'canet' | 'huarte', textRaw: unknown) => {
+      const haystack = normalizeSearchValue(textRaw);
+      if (!haystack) return '';
+      const rows = [
+        ...Array.from(productCatalogByInventory[inventory].values()),
+        ...Array.from(productCatalogByInventory.canet.values()),
+        ...Array.from(productCatalogByInventory.huarte.values()),
+      ];
+      const seen = new Set<string>();
+      const candidates = rows
+        .map((row) => {
+          const code = clean(row.producto).toUpperCase();
+          if (!code || seen.has(code)) return null;
+          seen.add(code);
+          const components = normalizeKitComponents(row.kit_componentes || row.componentes_kit);
+          const mode = clean(row.modo_stock || row.tipo_producto).toUpperCase();
+          const isKit = mode === 'KIT' || components.length > 0;
+          if (!isKit) return null;
+          const labels = [
+            code,
+            row.nombre,
+            row.descripcion,
+            row.tipo_producto,
+            row.producto_descripcion,
+            ...(Array.isArray(row.aliases) ? row.aliases : [row.aliases]),
+          ]
+            .map((value) => normalizeSearchValue(value))
+            .filter((value) => value.length >= 3);
+          const score = labels.reduce((best, label) => {
+            if (!label) return best;
+            if (haystack === label) return Math.max(best, 100 + label.length);
+            if (haystack.includes(label)) return Math.max(best, 80 + label.length);
+            if (label.includes(haystack) && haystack.length >= 5) return Math.max(best, 60 + haystack.length);
+            return best;
+          }, 0);
+          return score > 0 ? { code, score } : null;
+        })
+        .filter((item): item is { code: string; score: number } => !!item)
+        .sort((a, b) => b.score - a.score);
+      return candidates[0]?.code || '';
+    },
+    [productCatalogByInventory],
+  );
+
+  const getProductCatalogRow = useCallback(
+    (inventory: 'canet' | 'huarte', codeRaw: unknown) => {
+      const code = clean(codeRaw).toUpperCase();
+      return productCatalogByInventory[inventory].get(code) || productCatalogByInventory.canet.get(code) || productCatalogByInventory.huarte.get(code) || null;
+    },
+    [productCatalogByInventory],
+  );
+
+  const getKitComponentsForProduct = useCallback(
+    (inventory: 'canet' | 'huarte', codeRaw: unknown) => {
+      const row = getProductCatalogRow(inventory, codeRaw);
+      if (!row) return [];
+      const mode = clean(row.modo_stock || row.tipo_producto).toUpperCase();
+      const components = normalizeKitComponents(row.kit_componentes || row.componentes_kit);
+      return mode === 'KIT' || components.length > 0 ? components : [];
+    },
+    [getProductCatalogRow],
+  );
+
+  const isKitProduct = useCallback(
+    (inventory: 'canet' | 'huarte', codeRaw: unknown) => getKitComponentsForProduct(inventory, codeRaw).length > 0,
+    [getKitComponentsForProduct],
+  );
+
+  const normalizeOrderKitLines = useCallback(
+    (order: BillingOrder): BillingOrder => {
+      const inventory: 'canet' | 'huarte' = order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
+      let changed = false;
+      const lines = order.lines.map((line) => {
+        const currentProduct = clean(line.productCode).toUpperCase();
+        const inferredKit = resolveCatalogProductCodeFromText(
+          inventory,
+          `${line.productCode} ${line.productRaw} ${line.notes || ''}`,
+        );
+        const productCode = inferredKit || currentProduct;
+        const lineIsKit = isKitProduct(inventory, productCode);
+        if (!lineIsKit) return line;
+        changed = changed || productCode !== currentProduct || line.lote !== 'AUTO-KIT' || line.lotePending;
+        return {
+          ...line,
+          productCode,
+          lote: 'AUTO-KIT',
+          lotePending: false,
+          notes: clean(line.notes)
+            ? `${clean(line.notes)} · Kit: componentes automáticos`
+            : 'Kit: componentes automáticos',
+        };
+      });
+      if (!changed) return order;
+      const next = { ...order, lines };
+      return {
+        ...next,
+        status: recomputeOrderStatus(next),
+      };
+    },
+    [isKitProduct, resolveCatalogProductCodeFromText],
+  );
+
   const stockByWarehouseProductLot = useMemo(() => {
     const map = new Map<string, number>();
 
-    const push = (inventory: 'canet' | 'huarte', movement: InventoryMovementRow) => {
-      const wh = normalizeWarehouseAlias(clean(movement.bodega));
-      if (!wh) return;
-      if (inventory === 'canet' && wh !== 'CANET') return;
-      if (inventory === 'huarte' && wh !== 'HUARTE') return;
-      const key = `${inventory}|${wh}|${clean(movement.producto).toUpperCase()}|${clean(movement.lote).toUpperCase()}`;
-      map.set(key, (map.get(key) || 0) + signedFromMovement(movement));
+    const pushInventory = (inventory: 'canet' | 'huarte', movements: InventoryMovementRow[]) => {
+      const snapshot = calculateInventoryStockSnapshot(movements, {
+        scope: inventory,
+        normalizeProduct: (value) => clean(value).toUpperCase(),
+        normalizeLot: (value) => clean(value).toUpperCase(),
+        normalizeWarehouse: (value) => normalizeInventoryWarehouse(value),
+        signedQuantity: signedFromMovement,
+        clampNegative: true,
+      });
+      snapshot.positiveRows.forEach((row) => {
+        const key = `${inventory}|${normalizeInventoryWarehouse(row.bodega)}|${clean(row.producto).toUpperCase()}|${clean(row.lote).toUpperCase()}`;
+        map.set(key, Math.max(0, row.stock));
+      });
     };
 
-    for (const m of canetMovements) push('canet', m);
-    for (const m of huarteMovements) push('huarte', m);
+    pushInventory('canet', canetMovements);
+    pushInventory('huarte', huarteMovements);
 
     return map;
   }, [canetMovements, huarteMovements]);
@@ -2018,14 +2188,131 @@ export default function FacturacionPage() {
     return map;
   }, [stockByWarehouseProductLot]);
 
+  const getStockLots = useCallback(
+    (inventory: 'canet' | 'huarte', warehouseRaw: unknown, productRaw: unknown) => {
+      const warehouse = normalizeInventoryWarehouse(warehouseRaw);
+      const product = clean(productRaw).toUpperCase();
+      if (!warehouse || !product) return [] as Array<{ lote: string; stock: number }>;
+      const rows: Array<{ lote: string; stock: number }> = [];
+      for (const [key, stock] of stockByWarehouseProductLot.entries()) {
+        const [rowInventory, rowWarehouse, rowProduct, rowLot] = key.split('|');
+        if (rowInventory !== inventory) continue;
+        if (rowWarehouse !== warehouse) continue;
+        if (rowProduct !== product) continue;
+        const safeStock = Math.max(0, Number(stock) || 0);
+        if (safeStock > 0) rows.push({ lote: rowLot, stock: safeStock });
+      }
+      return rows.sort((a, b) => b.stock - a.stock || a.lote.localeCompare(b.lote));
+    },
+    [stockByWarehouseProductLot],
+  );
+
+  const convertKitComponentQuantity = useCallback(
+    (_inventory: 'canet' | 'huarte', _componentProduct: string, componentQuantity: number, _componentUnit: unknown, kitQuantity: number) => {
+      return Math.max(0, componentQuantity) * Math.max(0, kitQuantity);
+    },
+    [],
+  );
+
+  const allocateStockParts = useCallback(
+    (input: {
+      inventory: 'canet' | 'huarte';
+      warehouse: string;
+      productCode: string;
+      quantity: number;
+      partKeyPrefix: string;
+      sourceProductCode: string;
+      isKitComponent: boolean;
+    }) => {
+      const needed = Math.max(0, input.quantity);
+      const lots = getStockLots(input.inventory, input.warehouse, input.productCode);
+      const parts: DispatchStockPart[] = [];
+      let remaining = needed;
+      lots.forEach((lot, index) => {
+        if (remaining <= 0) return;
+        const take = Math.min(remaining, lot.stock);
+        if (take <= 0) return;
+        parts.push({
+          partKey: `${input.partKeyPrefix}:LOT:${lot.lote}:N:${index + 1}`,
+          productCode: input.productCode,
+          lote: lot.lote,
+          quantity: Number(take.toFixed(6)),
+          sourceProductCode: input.sourceProductCode,
+          isKitComponent: input.isKitComponent,
+        });
+        remaining = Number((remaining - take).toFixed(6));
+      });
+      return {
+        parts,
+        missing: Math.max(0, remaining),
+        available: lots.reduce((acc, lot) => acc + Math.max(0, lot.stock), 0),
+      };
+    },
+    [getStockLots],
+  );
+
+  const expandLineForDispatch = useCallback(
+    (order: BillingOrder, line: BillingOrderLine, sourceInventory: 'canet' | 'huarte', dispatchWarehouse: string) => {
+      const productCode = clean(line.productCode).toUpperCase();
+      const qty = Math.max(0, parseSpanishNumber(String(line.quantity)));
+      const kitComponents = getKitComponentsForProduct(sourceInventory, productCode);
+      const errors: string[] = [];
+
+      if (!productCode) return { parts: [] as DispatchStockPart[], errors: [`${line.productRaw || 'Línea'}: falta producto.`] };
+      if (qty <= 0) return { parts: [] as DispatchStockPart[], errors: [`${productCode}: cantidad inválida (${line.quantity}).`] };
+
+      if (kitComponents.length === 0) {
+        const lote = clean(line.lote).toUpperCase();
+        if (!lote) return { parts: [] as DispatchStockPart[], errors: [`${productCode}: falta lote.`] };
+        return {
+          parts: [{
+            partKey: 'BASE',
+            productCode,
+            lote,
+            quantity: qty,
+            sourceProductCode: productCode,
+            isKitComponent: false,
+          }],
+          errors,
+        };
+      }
+
+      const parts = kitComponents.flatMap((component, index) => {
+        const componentProduct = clean(component.producto).toUpperCase();
+        const componentQty = convertKitComponentQuantity(sourceInventory, componentProduct, component.cantidad, component.unidad, qty);
+        const allocation = allocateStockParts({
+          inventory: sourceInventory,
+          warehouse: dispatchWarehouse,
+          productCode: componentProduct,
+          quantity: componentQty,
+          partKeyPrefix: `KIT:${productCode}:COMP:${componentProduct}:I:${index + 1}`,
+          sourceProductCode: productCode,
+          isKitComponent: true,
+        });
+        if (allocation.missing > 0) {
+          errors.push(
+            `${productCode} -> ${componentProduct}: stock insuficiente en ${normalizeInventoryWarehouse(dispatchWarehouse)} ` +
+            `(necesita ${componentQty.toLocaleString('es-ES')}, disponible ${allocation.available.toLocaleString('es-ES')}).`,
+          );
+        }
+        return allocation.parts;
+      });
+
+      return { parts, errors };
+    },
+    [allocateStockParts, convertKitComponentQuantity, getKitComponentsForProduct],
+  );
+
   const activeLabelQueue = useMemo(
     () => (labelQueue || []).filter((item) => isLabelDocVisibleInQueue(item)),
     [labelQueue],
   );
 
   const transferNodeOptions = useMemo(() => {
+    const blockedTransferWarehouses = new Set(['ENSAMBLAJE ESPAÑA', 'MI MEDICO']);
     const fixed = new Map<string, string>([
       ['CANET', 'Canet'],
+      ['ENSAMBLAJE COLOMBIA', 'Ensamblaje Colombia'],
       ['HUARTE', 'Huarte'],
       ['BARCELONA', 'Barcelona'],
       ['BILBAO', 'Bilbao'],
@@ -2035,8 +2322,9 @@ export default function FacturacionPage() {
       ['VALENCIA', 'Valencia'],
     ]);
     const pushRow = (row: GenericRow) => {
-      const value = clean(row?.bodega).toUpperCase();
+      const value = normalizeInventoryWarehouse(row?.bodega);
       if (!value) return;
+      if (blockedTransferWarehouses.has(value)) return;
       const label = clean(row?.bodega) || value;
       if (!fixed.has(value)) fixed.set(value, label);
     };
@@ -2595,9 +2883,10 @@ export default function FacturacionPage() {
         );
       }
 
+      const normalizedParsedOrders = parsedOrders.map(normalizeOrderKitLines);
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const merged = dedupeOrdersPreservingBest([...parsedOrders, ...next]);
+        const merged = dedupeOrdersPreservingBest([...normalizedParsedOrders, ...next.map(normalizeOrderKitLines)]);
         const attached = tryAttachLabels(merged, labelQueueRef.current || []);
         if (attached.attached > 0) {
           setLabelQueue(attached.labelsNext);
@@ -2606,8 +2895,8 @@ export default function FacturacionPage() {
         return merged;
       });
       setPendingFiles([]);
-      const transferCount = parsedOrders.filter((o) => o.documentType === 'TRANSFERENCIA').length;
-      const invoiceCount = parsedOrders.length - transferCount;
+      const transferCount = normalizedParsedOrders.filter((o) => o.documentType === 'TRANSFERENCIA').length;
+      const invoiceCount = normalizedParsedOrders.length - transferCount;
       alert(`${invoiceCount} factura(s) y ${transferCount} transferencia(s) cargada(s) en cola.`);
     } catch (error) {
       console.error('Error processing invoices:', error);
@@ -2678,18 +2967,19 @@ export default function FacturacionPage() {
         }
       }
 
+      const normalizedParsedOrders = parsedOrders.map(normalizeOrderKitLines);
       const mergedLabels = [...parsedLabels, ...(labelQueueRef.current || [])];
       setOrders((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const mergedOrders = dedupeOrdersPreservingBest([...parsedOrders, ...next]);
+        const mergedOrders = dedupeOrdersPreservingBest([...normalizedParsedOrders, ...next.map(normalizeOrderKitLines)]);
         const attached = tryAttachLabels(mergedOrders, mergedLabels);
         setLabelQueue(attached.labelsNext);
         return attached.ordersNext;
       });
 
       setPendingInboxFiles([]);
-      const transferCount = parsedOrders.filter((o) => o.documentType === 'TRANSFERENCIA').length;
-      const invoiceCount = parsedOrders.filter((o) => o.documentType === 'FACTURA').length;
+      const transferCount = normalizedParsedOrders.filter((o) => o.documentType === 'TRANSFERENCIA').length;
+      const invoiceCount = normalizedParsedOrders.filter((o) => o.documentType === 'FACTURA').length;
       const labelCount = parsedLabels.length;
       const attachedHint =
         parsedLabels.length > 0 ? ' Las etiquetas se intentaron asociar automáticamente por cliente.' : '';
@@ -3258,7 +3548,14 @@ export default function FacturacionPage() {
     if (order.status === 'DESPACHADO' || order.status === 'CANCELADO') return;
     if (dispatchingOrderIds.includes(order.id)) return;
 
-    const pending = order.lines.filter((line) => !clean(line.lote));
+    const isTransfer = order.movementType === 'traspaso';
+    const isMimedicoDispatch = isMimedicoDispatchOrder(order);
+    const transferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
+    const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    const sourceInventory: InventoryBranch = isTransfer
+      ? inventoryBranchForTransferNode(transferOrigin, order.inventoryTarget === 'canet' ? 'canet' : 'huarte')
+      : order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
+    const pending = order.lines.filter((line) => !isKitProduct(sourceInventory, line.productCode) && !clean(line.lote));
     if (pending.length > 0) {
       alert('Este pedido sigue pendiente manual: faltan lotes por completar.');
       return;
@@ -3279,12 +3576,8 @@ export default function FacturacionPage() {
       if (!continueWithoutLabels) return;
     }
 
-    const movementSource = order.inventoryTarget === 'canet' ? canetMovements : huarteMovements;
-    const mutation = order.inventoryTarget === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
-    const isTransfer = order.movementType === 'traspaso';
-    const isMimedicoDispatch = isMimedicoDispatchOrder(order);
-    const transferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
-    const transferDestination = normalizeTransferDestination(order.transferDestination || '');
+    const movementSource = sourceInventory === 'canet' ? canetMovements : huarteMovements;
+    const mutation = sourceInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
     const dispatchWarehouse = isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse).toUpperCase();
     if (isTransfer && !transferOrigin) {
       alert('Este traspaso necesita una bodega origen. Selecciónala antes de despachar.');
@@ -3294,7 +3587,11 @@ export default function FacturacionPage() {
       alert('Este traspaso necesita una bodega destino. Selecciónala antes de despachar.');
       return;
     }
-    const destinationInventory: 'canet' | 'huarte' = clean(transferDestination).toUpperCase() === 'CANET' ? 'canet' : 'huarte';
+    const destinationInventory: InventoryBranch = inventoryBranchForTransferNode(transferDestination, sourceInventory);
+    if (isTransfer && normalizeInventoryWarehouse(transferDestination) === normalizeInventoryWarehouse(dispatchWarehouse)) {
+      alert('El origen y el destino del traspaso no pueden ser la misma bodega.');
+      return;
+    }
     const destinationMovements = destinationInventory === 'canet' ? canetMovements : huarteMovements;
     const destinationMutation = destinationInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
 
@@ -3302,52 +3599,47 @@ export default function FacturacionPage() {
     try {
       const lineOccurrence = new Map<string, number>();
       const lineErrors: string[] = [];
-      const sourceInventory: 'canet' | 'huarte' = order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
-
       for (const line of order.lines) {
-        const marker = `ORDER:${order.id}|LINE:${line.id}`;
-        const qty = Math.max(0, parseSpanishNumber(String(line.quantity)));
-        const productCode = clean(line.productCode).toUpperCase();
-        const lote = clean(line.lote).toUpperCase();
-        const lineKey = `${productCode}|${lote}|${qty}`;
-        const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
-        lineOccurrence.set(lineKey, occurrence);
-        const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${transferOrigin || clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
-        const stableDispatchMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${dispatchWarehouse}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
-
-        if (!productCode || !lote) {
-          lineErrors.push(`${line.productRaw || line.productCode}: faltan datos de producto/lote.`);
-          continue;
-        }
-        if (qty <= 0) {
-          lineErrors.push(`${productCode} ${lote}: cantidad inválida (${line.quantity}).`);
+        const expanded = expandLineForDispatch(order, line, sourceInventory, dispatchWarehouse);
+        if (expanded.errors.length > 0) {
+          lineErrors.push(...expanded.errors);
           continue;
         }
 
-        let existing =
-          movementSource.find((m) => clean(m.notas).includes(marker)) ||
-          movementSource.find((m) => clean(m.notas).includes(stableMarker)) ||
-          movementSource.find((m) => clean(m.notas).includes(stableDispatchMarker)) ||
-          null;
-        if (!existing) {
-          existing = await findMovementByMarkerInDb(sourceInventory, [marker, stableMarker, stableDispatchMarker]);
-        }
-        if (existing) {
-          updateLine(order.id, line.id, { movementId: existing.id, lotePending: false });
-        } else {
-          try {
+        let firstMovementId: number | undefined;
+
+        for (const part of expanded.parts) {
+          const marker = `ORDER:${order.id}|LINE:${line.id}|PART:${part.partKey}`;
+          const legacyMarker = part.partKey === 'BASE' ? `ORDER:${order.id}|LINE:${line.id}` : '';
+          const lineKey = `${part.productCode}|${part.lote}|${part.quantity}|${part.partKey}`;
+          const occurrence = (lineOccurrence.get(lineKey) || 0) + 1;
+          lineOccurrence.set(lineKey, occurrence);
+          const stableMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${transferOrigin || clean(order.sourceWarehouse).toUpperCase()}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
+          const stableDispatchMarker = `DOC:${clean(order.invoiceNumber).toUpperCase()}|TYPE:${order.movementType}|SRC:${dispatchWarehouse}|DST:${transferDestination || '-'}|CUST:${normalizeCustomerKey(order.customerName)}|LINE:${lineKey}|N:${occurrence}`;
+          const markerCandidates = [marker, legacyMarker, stableMarker, stableDispatchMarker].filter(Boolean);
+
+          let existing =
+            markerCandidates.map((candidate) => movementSource.find((m) => clean(m.notas).includes(candidate))).find(Boolean) ||
+            null;
+          if (!existing) {
+            existing = await findMovementByMarkerInDb(sourceInventory, markerCandidates);
+          }
+          if (existing) {
+            firstMovementId = firstMovementId || existing.id;
+          } else {
+            try {
               const payload = {
                 fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
               tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
-              producto: clean(line.productCode),
-              lote: clean(line.lote),
-              cantidad: qty,
-              cantidad_signed: -qty,
+              producto: part.productCode,
+              lote: part.lote,
+              cantidad: part.quantity,
+              cantidad_signed: -part.quantity,
               signo: -1,
               bodega: isTransfer ? (isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || order.sourceWarehouse) : dispatchWarehouse,
               cliente: isMimedicoDispatch ? 'MIMEDICO' : isTransfer ? transferDestination || order.customerName : order.customerName,
               destino: isTransfer ? transferDestination : '',
-              notas: `${marker} | ${stableMarker} | ${stableDispatchMarker} | Factura ${order.invoiceNumber}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
+              notas: `${marker} | ${stableMarker} | ${stableDispatchMarker} | Factura ${order.invoiceNumber}${part.isKitComponent ? ` | Kit ${part.sourceProductCode}` : ''}${order.orderNote ? ` | ${order.orderNote}` : ''}`,
               factura_doc: order.invoiceNumber,
               responsable: currentUser?.name || 'Sistema',
               source: 'facturacion_pdf',
@@ -3356,7 +3648,7 @@ export default function FacturacionPage() {
 
             const created = await createMovementWithBoundedRecovery(
               sourceInventory,
-              [marker, stableMarker],
+              markerCandidates,
               async () => await mutation(payload),
               `dispatchMovement(${sourceInventory})`,
               {
@@ -3370,17 +3662,14 @@ export default function FacturacionPage() {
             if (!created) {
               throw new Error('No se pudo crear/recuperar el movimiento.');
             }
-            updateLine(order.id, line.id, {
-              movementId: created.id,
-              lotePending: false,
-            });
+            firstMovementId = firstMovementId || created.id;
           } catch (err: any) {
-            lineErrors.push(`${productCode} ${lote}: ${err?.message || 'falló creación de movimiento'}`);
+            lineErrors.push(`${part.productCode} ${part.lote}: ${err?.message || 'falló creación de movimiento'}`);
             continue;
           }
-        }
+          }
 
-        if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(transferOrigin || order.sourceWarehouse).toUpperCase()) {
+          if (isTransfer && transferDestination && clean(transferDestination).toUpperCase() !== clean(transferOrigin || order.sourceWarehouse).toUpperCase()) {
           const autoMarker = `${marker}|AUTO_IN`;
           const autoStableMarker = `${stableMarker}|AUTO_IN`;
           const autoStableDispatchMarker = `${stableDispatchMarker}|AUTO_IN`;
@@ -3397,10 +3686,10 @@ export default function FacturacionPage() {
               const autoPayload = {
                 fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
                 tipo_movimiento: 'entrada_traspaso',
-                producto: clean(line.productCode),
-                lote: clean(line.lote),
-                cantidad: qty,
-                cantidad_signed: qty,
+                producto: part.productCode,
+                lote: part.lote,
+                cantidad: part.quantity,
+                cantidad_signed: part.quantity,
                 signo: 1,
                 bodega: transferDestination,
                 cliente: isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse),
@@ -3424,9 +3713,14 @@ export default function FacturacionPage() {
                 },
               );
             } catch (err: any) {
-              lineErrors.push(`${productCode} ${lote}: autoentrada ${transferDestination || destinationInventory.toUpperCase()} falló (${err?.message || 'error desconocido'})`);
+              lineErrors.push(`${part.productCode} ${part.lote}: autoentrada ${transferDestination || destinationInventory.toUpperCase()} falló (${err?.message || 'error desconocido'})`);
             }
           }
+        }
+        }
+
+        if (firstMovementId) {
+          updateLine(order.id, line.id, { movementId: firstMovementId, lotePending: false });
         }
       }
 
@@ -3555,40 +3849,40 @@ export default function FacturacionPage() {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
-        <h1 className="text-3xl font-black text-violet-950">Despachos</h1>
-        <p className="mt-1 text-sm text-violet-700">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h1 className="text-3xl font-black text-slate-950">Despachos</h1>
+        <p className="mt-1 text-sm text-slate-600">
           Carga facturas PDF, revisa líneas, completa lotes pendientes y envía/despacha pedidos para Canet o Huarte.
         </p>
       </section>
 
-      <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-3 md:grid-cols-6">
-          <label className="text-xs font-black uppercase tracking-wide text-violet-700">
+          <label className="text-xs font-black uppercase tracking-wide text-slate-600">
             Origen del pedido
             <select
               value={sourceWarehouse}
               onChange={(e) => setSourceWarehouse(e.target.value as BillingWarehouse)}
-              className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
             >
               <option value="CANET">Canet</option>
               <option value="HUARTE">Huarte</option>
             </select>
           </label>
 
-          <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-violet-700">
+          <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-slate-600">
             PDFs de facturas
             <input
               type="file"
               accept=".pdf,application/pdf"
               multiple
               onChange={(e) => handleFilesSelected(e.target.files)}
-              className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
             />
             {pendingFiles.length > 0 && (
-              <div className="mt-2 space-y-1 rounded-xl border border-violet-200 bg-violet-50/50 p-2">
+              <div className="mt-2 space-y-1 rounded-xl border border-slate-200 bg-slate-50 p-2">
                 {pendingFiles.map((file, idx) => (
-                  <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-violet-800">
+                  <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700">
                     <span className="truncate">{file.name}</span>
                     <button
                       type="button"
@@ -3612,19 +3906,19 @@ export default function FacturacionPage() {
             )}
           </label>
 
-          <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-violet-700">
+          <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-slate-600">
             PDFs de etiquetas
             <input
               type="file"
               accept=".pdf,application/pdf"
               multiple
               onChange={(e) => handleLabelFilesSelected(e.target.files)}
-              className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
             />
             {pendingLabelFiles.length > 0 && (
-              <div className="mt-2 space-y-1 rounded-xl border border-cyan-200 bg-cyan-50/50 p-2">
+              <div className="mt-2 space-y-1 rounded-xl border border-sky-200 bg-sky-50/60 p-2">
                 {pendingLabelFiles.map((file, idx) => (
-                  <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-cyan-900">
+                  <div key={`${file.name}-${idx}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700">
                     <span className="truncate">{file.name}</span>
                     <button
                       type="button"
@@ -3653,7 +3947,7 @@ export default function FacturacionPage() {
               <button
                 onClick={() => void processPendingFiles()}
                 disabled={isProcessing || pendingFiles.length === 0}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-3 py-2 text-sm font-black text-white disabled:opacity-50"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 <FileUp size={16} />
                 {isProcessing ? 'Procesando...' : `Cargar pedidos (${pendingFiles.length})`}
@@ -3661,7 +3955,7 @@ export default function FacturacionPage() {
               <button
                 onClick={() => void processLabelFiles()}
                 disabled={isProcessing || pendingLabelFiles.length === 0}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-black text-cyan-900 disabled:opacity-50"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-800 hover:bg-sky-100 disabled:opacity-50"
               >
                 <FileUp size={16} />
                 {isProcessing ? 'Procesando...' : `Cargar etiquetas (${pendingLabelFiles.length})`}
@@ -3670,23 +3964,23 @@ export default function FacturacionPage() {
           </div>
         </div>
 
-        <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
           <div className="grid gap-3 md:grid-cols-6">
-            <label className="md:col-span-5 text-xs font-black uppercase tracking-wide text-violet-700">
+            <label className="md:col-span-5 text-xs font-black uppercase tracking-wide text-slate-600">
               PDFs mixtos (auto: factura/transferencia/etiqueta)
               <input
                 type="file"
                 accept=".pdf,application/pdf"
                 multiple
                 onChange={(e) => handleInboxFilesSelected(e.target.files)}
-                className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
               />
               {pendingInboxFiles.length > 0 && (
-                <div className="mt-2 space-y-1 rounded-xl border border-violet-200 bg-white p-2">
+                <div className="mt-2 space-y-1 rounded-xl border border-slate-200 bg-white p-2">
                   {pendingInboxFiles.map((file, idx) => (
                     <div
                       key={`${file.name}-${idx}`}
-                      className="flex items-center justify-between gap-2 text-[11px] font-semibold text-violet-800"
+                      className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700"
                     >
                       <span className="truncate">{file.name}</span>
                       <button
@@ -3724,32 +4018,32 @@ export default function FacturacionPage() {
           </div>
         </div>
 
-        <p className="mt-3 text-xs font-semibold text-violet-600">
+        <p className="mt-3 text-xs font-semibold text-slate-500">
           Si el PDF no trae lote, el pedido queda en <span className="font-black">pendiente manual</span> hasta que alguien complete el lote.
           Puedes cargar separado (facturas/etiquetas) o usar carga mixta automática. Para pedidos <span className="font-black">despachados desde Canet</span> define bultos requeridos y asocia etiquetas; en <span className="font-black">Huarte</span> las etiquetas son opcionales.
         </p>
-        <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+        <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-black uppercase tracking-wide text-cyan-900">
+            <p className="text-xs font-black uppercase tracking-wide text-sky-900">
               Etiquetas pendientes de asociar: {activeLabelQueue.length}
             </p>
           </div>
           {activeLabelQueue.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-cyan-200 bg-white px-3 py-2 text-xs font-semibold text-cyan-700">
+            <div className="rounded-lg border border-dashed border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700">
               No hay etiquetas pendientes ahora mismo.
             </div>
           ) : (
             <div className="space-y-1">
               {activeLabelQueue.slice(0, 8).map((label) => (
-                <div key={label.id} className="flex items-center justify-between gap-2 rounded-lg border border-cyan-200 bg-white px-2 py-1">
-                  <div className="truncate text-xs font-semibold text-cyan-900">
+                <div key={label.id} className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-white px-2 py-1">
+                  <div className="truncate text-xs font-semibold text-slate-700">
                     {label.customerName} · {label.sourceFileName}
                   </div>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => void openLabelPdf(label, 'Etiqueta sin PDF adjunto.')}
-                      className="rounded-md border border-cyan-300 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-900 hover:bg-cyan-50"
+                      className="rounded-md border border-sky-200 bg-white px-2 py-0.5 text-[11px] font-black text-sky-800 hover:bg-sky-50"
                     >
                       Abrir
                     </button>
@@ -3768,10 +4062,10 @@ export default function FacturacionPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xl font-black text-violet-950">Cola de pedidos</h2>
-          <span className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700">
+          <h2 className="text-xl font-black text-slate-950">Cola de pedidos</h2>
+          <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-black text-slate-700">
             {ordersLoading && activeOrders.length === 0
               ? 'Cargando...'
               : dispatchSearchText
@@ -3784,50 +4078,57 @@ export default function FacturacionPage() {
             value={dispatchSearchText}
             onChange={(e) => setDispatchSearchText(e.target.value)}
             placeholder="Buscar por cliente, pedido, tipo, estado, producto, lote, cantidad..."
-            className="md:col-span-5 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+            className="md:col-span-5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
           />
           <button
             type="button"
             onClick={() => setDispatchSearchText('')}
-            className="rounded-xl border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-black text-violet-800"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-100"
           >
             Limpiar
           </button>
         </div>
-        <p className="mb-3 text-xs font-semibold text-violet-600">
+        <p className="mb-3 text-xs font-semibold text-slate-500">
           Al despachar, el pedido se convierte en movimientos de <span className="font-black">tipo venta/traspaso</span>, se oculta de esta cola y pasa a la carpeta interna de despachos.
         </p>
 
         {filteredActiveOrders.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/40 p-6 text-center text-sm font-semibold text-violet-700">
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm font-semibold text-slate-600">
             {dispatchSearchText ? 'No hay resultados para ese filtro.' : 'No hay pedidos todavía.'}
           </div>
         ) : (
           <div className="space-y-4">
             {filteredActiveOrders.map((order) => {
-              const lotOptionsForLine = (line: BillingOrderLine) =>
-                lotOptionsByWarehouseProduct.get(
-                  `${order.sourceWarehouse}|${clean(line.productCode).toUpperCase()}`,
+              const orderTransferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
+              const orderInventory: InventoryBranch = order.movementType === 'traspaso'
+                ? inventoryBranchForTransferNode(orderTransferOrigin, order.inventoryTarget === 'canet' ? 'canet' : 'huarte')
+                : order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
+              const orderLotWarehouse = order.movementType === 'traspaso' ? orderTransferOrigin : normalizeInventoryWarehouse(order.sourceWarehouse);
+              const lotOptionsForLine = (line: BillingOrderLine) => {
+                if (isKitProduct(orderInventory, line.productCode)) return [];
+                return lotOptionsByWarehouseProduct.get(
+                  `${orderLotWarehouse}|${clean(line.productCode).toUpperCase()}`,
                 ) || [];
+              };
               const requiredPackages = getOrderRequiredPackages(order);
               const attachedLabels = getOrderLabels(order);
               const requiresLabels = orderRequiresLabels(order);
 
               return (
-                <article key={order.id} className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm">
+                <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-black text-violet-950">
+                    <h3 className="text-sm font-black text-slate-950">
                       {order.documentType === 'TRANSFERENCIA' ? 'Transferencia' : 'Factura'} {order.invoiceNumber} · {order.customerName}
                     </h3>
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] font-black ${statusClass(order.status)}`}>
                       {order.status.replace(/_/g, ' ')}
                     </span>
-                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-700">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-700">
                       {order.sourceWarehouse}
                     </span>
                     {order.documentType === 'TRANSFERENCIA' ? (
                       <div className="flex flex-col gap-1">
-                        <label className="flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-800">
+                        <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-700">
                           <span>Origen</span>
                           <select
                             value={order.transferOrigin || order.sourceWarehouse || ''}
@@ -3837,7 +4138,7 @@ export default function FacturacionPage() {
                                 transferOrigin: normalizeTransferNode(e.target.value),
                               }))
                             }
-                            className="min-w-[150px] rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] font-black text-violet-900 outline-none"
+                            className="min-w-[150px] rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-black text-slate-900 outline-none"
                           >
                             <option value="">Seleccionar origen...</option>
                             {transferNodeOptions.map((option) => (
@@ -3847,7 +4148,7 @@ export default function FacturacionPage() {
                             ))}
                           </select>
                         </label>
-                        <label className="flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
+                        <label className="flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-black text-sky-800">
                           <span>Destino</span>
                           <select
                             value={order.transferDestination || ''}
@@ -3857,7 +4158,7 @@ export default function FacturacionPage() {
                                 transferDestination: normalizeTransferDestination(e.target.value),
                               }))
                             }
-                            className="min-w-[150px] rounded-md border border-cyan-200 bg-white px-2 py-1 text-[11px] font-black text-cyan-900 outline-none"
+                            className="min-w-[150px] rounded-md border border-sky-200 bg-white px-2 py-1 text-[11px] font-black text-slate-900 outline-none"
                           >
                             <option value="">Seleccionar destino...</option>
                             {transferNodeOptions.map((option) => (
@@ -3875,38 +4176,38 @@ export default function FacturacionPage() {
                       </div>
                     ) : (
                       order.transferDestination && (
-                        <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
+                        <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-black text-sky-800">
                           Destino {order.transferDestination}
                         </span>
                       )
                     )}
-                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-black text-indigo-700">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-black text-slate-700">
                       {order.movementType}
                     </span>
-                    <span className="text-xs font-semibold text-violet-600">
+                    <span className="text-xs font-semibold text-slate-500">
                       {formatDate(order.invoiceDate)} · {order.sourceFileName}
                     </span>
                     {order.orderNote && (
-                      <span className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-black text-cyan-800">
+                      <span className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-black text-sky-800">
                         {order.orderNote}
                       </span>
                     )}
                     <button
                       onClick={() => void openOrderPdf(order)}
-                      className="rounded-lg border border-violet-200 bg-white px-2 py-0.5 text-[11px] font-black text-violet-700 hover:bg-violet-50"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-black text-slate-700 hover:bg-slate-50"
                     >
                       Abrir PDF
                     </button>
                     <button
                       onClick={() => void printOrderPdf(order)}
-                      className="rounded-lg border border-violet-200 bg-white px-2 py-0.5 text-[11px] font-black text-violet-700 hover:bg-violet-50"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-black text-slate-700 hover:bg-slate-50"
                     >
                       Imprimir
                     </button>
                   </div>
 
-                  <div className="mt-2 flex flex-wrap items-end gap-2 rounded-xl border border-violet-100 bg-violet-50/40 px-2 py-2">
-                    <label className="text-[11px] font-black uppercase tracking-wide text-violet-700">
+                  <div className="mt-2 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
+                    <label className="text-[11px] font-black uppercase tracking-wide text-slate-600">
                       Bultos requeridos
                       <input
                         type="number"
@@ -3914,10 +4215,10 @@ export default function FacturacionPage() {
                         step={1}
                         value={requiredPackages}
                         onChange={(e) => setRequiredPackages(order.id, Number(e.target.value || 0))}
-                        className="mt-1 w-24 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                        className="mt-1 w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                       />
                     </label>
-                    <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-black text-cyan-800">
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-black text-sky-800">
                       Etiquetas: {attachedLabels.length}/{requiredPackages || 0}
                     </div>
                     {!requiresLabels && (
@@ -3934,7 +4235,7 @@ export default function FacturacionPage() {
                         attachQueuedLabelToOrder(order.id, value);
                         e.currentTarget.value = '';
                       }}
-                      className="min-w-52 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-semibold text-cyan-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="min-w-52 rounded-lg border border-sky-200 bg-white px-2 py-1 text-xs font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <option value="">
                         {activeLabelQueue.length === 0 ? 'Sin etiquetas pendientes' : 'Asociar etiqueta pendiente...'}
@@ -3948,21 +4249,21 @@ export default function FacturacionPage() {
                   </div>
 
                   {attachedLabels.length > 0 && (
-                    <div className="mt-2 space-y-1 rounded-xl border border-cyan-200 bg-cyan-50/50 p-2">
+                    <div className="mt-2 space-y-1 rounded-xl border border-sky-200 bg-sky-50/60 p-2">
                       {attachedLabels.map((label, idx) => (
                         <div key={label.id} className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-black text-cyan-900">
+                          <span className="text-xs font-black text-slate-700">
                             Etiqueta {idx + 1}: {label.sourceFileName}
                           </span>
                           <button
                             onClick={() => void openLabelPdf(label, 'No hay etiqueta asociada.')}
-                            className="rounded-lg border border-cyan-200 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-800 hover:bg-cyan-50"
+                            className="rounded-lg border border-sky-200 bg-white px-2 py-0.5 text-[11px] font-black text-sky-800 hover:bg-sky-50"
                           >
                             Abrir
                           </button>
                           <button
                             onClick={() => void printLabelPdf(label, 'No hay etiqueta asociada.')}
-                            className="rounded-lg border border-cyan-200 bg-white px-2 py-0.5 text-[11px] font-black text-cyan-800 hover:bg-cyan-50"
+                            className="rounded-lg border border-sky-200 bg-white px-2 py-0.5 text-[11px] font-black text-sky-800 hover:bg-sky-50"
                           >
                             Imprimir
                           </button>
@@ -3980,7 +4281,7 @@ export default function FacturacionPage() {
                   <div className="mt-3 overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
-                        <tr className="text-left text-xs font-black uppercase tracking-wide text-violet-700">
+                        <tr className="text-left text-xs font-black uppercase tracking-wide text-slate-600">
                           <th className="px-2 py-1">Producto</th>
                           <th className="px-2 py-1">Descripción</th>
                           <th className="px-2 py-1">Cantidad</th>
@@ -3991,25 +4292,39 @@ export default function FacturacionPage() {
                       <tbody>
                         {order.lines.map((line) => {
                           const options = lotOptionsForLine(line);
+                          const lineIsKit = isKitProduct(orderInventory, line.productCode);
                           return (
-                            <tr key={line.id} className="border-t border-violet-100">
+                            <tr key={line.id} className="border-t border-slate-100">
                               <td className="px-2 py-2">
                                 <select
                                   value={line.productCode}
-                                  onChange={(e) => updateLine(order.id, line.id, { productCode: e.target.value as ProductCode })}
-                                  className="w-28 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                                  onChange={(e) => {
+                                    const nextProduct = e.target.value as ProductCode;
+                                    const nextIsKit = isKitProduct(orderInventory, nextProduct);
+                                    updateLine(order.id, line.id, {
+                                      productCode: nextProduct,
+                                      lote: nextIsKit ? 'AUTO-KIT' : (line.lote === 'AUTO-KIT' ? '' : line.lote),
+                                      lotePending: !nextIsKit && !clean(line.lote === 'AUTO-KIT' ? '' : line.lote),
+                                    });
+                                  }}
+                                  className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                                 >
                                   <option value="">-</option>
-                                  {PRODUCT_OPTIONS.map((p) => (
+                                  {productOptions.map((p) => (
                                     <option key={p} value={p}>{p}</option>
                                   ))}
                                 </select>
+                                {lineIsKit && (
+                                  <div className="mt-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">
+                                    Kit
+                                  </div>
+                                )}
                               </td>
                               <td className="px-2 py-2">
                                 <input
                                   value={line.productRaw}
                                   onChange={(e) => updateLine(order.id, line.id, { productRaw: e.target.value })}
-                                  className="w-full min-w-56 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-semibold text-violet-900"
+                                  className="w-full min-w-56 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-900"
                                   placeholder="Descripción factura"
                                 />
                               </td>
@@ -4020,15 +4335,20 @@ export default function FacturacionPage() {
                                   step="0.01"
                                   value={Number.isFinite(line.quantity) ? line.quantity : 0}
                                   onChange={(e) => updateLine(order.id, line.id, { quantity: toNum(e.target.value) })}
-                                  className="w-24 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                                  className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                                 />
                               </td>
                               <td className="px-2 py-2">
+                                {lineIsKit ? (
+                                  <div className="min-w-48 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800">
+                                    Auto por componentes
+                                  </div>
+                                ) : (
                                 <div className="flex min-w-48 gap-1">
                                   <select
                                     value={line.lote}
                                     onChange={(e) => updateLine(order.id, line.id, { lote: clean(e.target.value), lotePending: !clean(e.target.value) })}
-                                    className="w-full rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                                   >
                                     <option value="">Seleccionar lote</option>
                                     {options.map((opt) => (
@@ -4039,10 +4359,11 @@ export default function FacturacionPage() {
                                     value={line.lote}
                                     onChange={(e) => updateLine(order.id, line.id, { lote: clean(e.target.value), lotePending: !clean(e.target.value) })}
                                     placeholder="manual"
-                                    className="w-24 rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-black text-violet-900"
+                                    className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                                   />
                                 </div>
-                                {!clean(line.lote) && (
+                                )}
+                                {!lineIsKit && !clean(line.lote) && (
                                   <div className="mt-1 text-[11px] font-black text-amber-700">Pendiente manual</div>
                                 )}
                               </td>
@@ -4065,7 +4386,7 @@ export default function FacturacionPage() {
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => addManualLine(order.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-black text-slate-700 hover:bg-slate-100"
                     >
                       <Plus size={12} /> Línea manual
                     </button>

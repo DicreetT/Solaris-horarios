@@ -5,6 +5,14 @@ import { User, Notification as NotificationType } from '../types';
 import { useNotifications as useNotificationsQuery } from '../hooks/useNotifications';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
+function resolveNotificationUrl(message: string) {
+    const text = `${message || ''}`;
+    const taskMatch = text.match(/\[#(\d+)\]/);
+    if (taskMatch?.[1]) return `/tasks?task=${taskMatch[1]}`;
+    if (text.toLowerCase().includes('tarea')) return '/tasks';
+    return '/dashboard';
+}
+
 interface NotificationsContextType {
     notifications: NotificationType[];
     isLoading: boolean;
@@ -48,13 +56,14 @@ export function NotificationsProvider({ children, currentUser }: { children: Rea
 
                     // Show system notification via Service Worker if available (PWA style)
                     if (Notification.permission === 'granted') {
+                        const url = resolveNotificationUrl(payload.new.message);
                         if ('serviceWorker' in navigator) {
                             navigator.serviceWorker.ready.then(registration => {
                                 registration.showNotification('Nueva notificación', {
                                     body: payload.new.message,
                                     icon: '/logo.png', // Ensure this matches your PWA icon path
                                     badge: '/logo.png',
-                                    data: { url: '/dashboard' }, // Action when clicked
+                                    data: { url },
                                 });
                             });
                         } else {

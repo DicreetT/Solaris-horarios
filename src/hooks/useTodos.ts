@@ -157,19 +157,25 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
             return data;
         },
-        onSuccess: async (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
+        onSuccess: async (createdTodo, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea creada con éxito.');
 
             // Notify assigned users
             if (variables.assignedTo && variables.assignedTo.length > 0) {
-                for (const userId of variables.assignedTo) {
-                    if (userId !== currentUser.id) {
-                        await addNotification({
-                            message: `Se te ha asignado una nueva tarea: "${variables.title}"`,
+                const recipients = Array.from(new Set(variables.assignedTo)).filter((userId) => userId && userId !== currentUser.id);
+                const results = await Promise.allSettled(
+                    recipients.map((userId) =>
+                        addNotification({
+                            message: `Se te ha asignado una nueva tarea [#${createdTodo.id}]: "${variables.title}"`,
+                            type: 'action_required',
                             userId
-                        });
-                    }
+                        }),
+                    ),
+                );
+                const failed = results.filter((result) => result.status === 'rejected');
+                if (failed.length > 0) {
+                    console.warn(`No se pudieron crear ${failed.length} notificaciones de tarea.`, failed);
                 }
             }
         },
@@ -199,7 +205,7 @@ export function useTodos(currentUser: User | null) {
             return { nextCompleted, nextShocked, isNowCompleted: !isDone };
         },
         onSuccess: (result) => {
-            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback(result?.isNowCompleted ? 'Tarea finalizada con éxito.' : 'Tarea reabierta con éxito.');
         },
     });
@@ -210,7 +216,7 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea eliminada con éxito.');
         },
     });
@@ -245,19 +251,25 @@ export function useTodos(currentUser: User | null) {
 
             // Notify assigned users (except the commenter)
             const assignedIds: string[] = currentTodo.assigned_to || [];
-            for (const userId of assignedIds) {
-                if (userId !== currentUser.id) {
-                    await addNotification({
+            const recipients = Array.from(new Set(assignedIds)).filter((userId) => userId && userId !== currentUser.id);
+            const results = await Promise.allSettled(
+                recipients.map((userId) =>
+                    addNotification({
                         message: `Nuevo comentario en tarea [#${todoId}] "${currentTodo.title}": ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
+                        type: 'action_required',
                         userId
-                    });
-                }
+                    }),
+                ),
+            );
+            const failed = results.filter((result) => result.status === 'rejected');
+            if (failed.length > 0) {
+                console.warn(`No se pudieron crear ${failed.length} notificaciones de comentario.`, failed);
             }
 
             return nextComments;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Comentario guardado con éxito.');
         },
     });
@@ -284,7 +296,7 @@ export function useTodos(currentUser: User | null) {
             if (error) throw error;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['todos', currentUser?.id] });
+            queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea actualizada con éxito.');
         },
     });

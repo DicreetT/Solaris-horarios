@@ -12,7 +12,8 @@ import {
     ChevronLeft,
     ChevronRight,
     Search,
-    Boxes
+    Boxes,
+    Wrench
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -89,6 +90,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         shortcut?: string;
         badge?: number;
         isAdminItem?: boolean;
+        isActive?: (pathname: string, search: string) => boolean;
     }
 
     const navigationItems: NavigationItem[] = [
@@ -114,15 +116,17 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         },
         {
             path: '/inventory',
-            label: 'Inventario Canet',
+            label: 'Inventario',
             icon: Boxes,
             show: true,
+            isActive: (pathname, search) => pathname === '/inventory' && !new URLSearchParams(search).get('tab'),
         },
         {
-            path: '/inventory-facturacion',
-            label: 'Inventario Huarte',
-            icon: Boxes,
+            path: '/inventory?view=canet&tab=control_stock',
+            label: 'Control stock',
+            icon: Wrench,
             show: true,
+            isActive: (pathname, search) => pathname === '/inventory' && new URLSearchParams(search).get('tab') === 'control_stock',
         },
         {
             path: '/despachos',
@@ -188,7 +192,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
 
                     const hoverBg = isMoodActive
                         ? 'hover:bg-white/40' // Glassy hover for moods
-                        : 'hover:bg-purple-50 dark:hover:bg-purple-900/20';
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800/60';
 
                     const sidebarBg = isMoodActive
                         ? 'bg-white' // Background behind mood (invisible mostly)
@@ -214,7 +218,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                             />
                                         </div>
                                     ) : (
-                                        <div className="p-2 bg-gradient-to-tr from-primary to-purple-600 rounded-xl shadow-lg">
+                                        <div className="p-2 bg-gradient-to-tr from-teal-700 to-slate-700 rounded-xl shadow-lg">
                                             <img
                                                 src="/logo.png"
                                                 alt="L"
@@ -227,7 +231,11 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                 {/* Navigation */}
                                 <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto relative scrollbar-hide">
                                     {navigationItems.filter(item => item.show !== false).map((item) => {
-                                        const isActive = item.path ? location.pathname === item.path : false;
+                                        const isActive = item.isActive
+                                            ? item.isActive(location.pathname, location.search)
+                                            : item.path
+                                                ? location.pathname === item.path
+                                                : false;
                                         return (
                                             <button
                                                 key={item.label}
@@ -241,7 +249,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                 className={`
                                                     w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
                                                     ${isActive
-                                                        ? 'bg-gradient-to-r from-[#4C1D95] via-[#6D28D9] to-[#7C3AED] text-white shadow-md'
+                                                        ? 'bg-gradient-to-r from-teal-700 via-teal-700 to-slate-700 text-white shadow-md'
                                                         : `${textColor} ${hoverBg} hover:shadow-sm`
                                                     }
                                                 `}

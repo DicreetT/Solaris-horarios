@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '../lib/supabase';
+import { describeConnectionError, isBrowserOffline, isTransientConnectionError, rawErrorText } from '../utils/connectionErrors';
 
 export type InventoryMovementRow = {
     id: number;
@@ -43,6 +44,10 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     };
     const [movements, setMovements] = useState<InventoryMovementRow[]>(() => readCachedMovements());
     const [isLoading, setIsLoading] = useState(true);
+    const [isOnline, setIsOnline] = useState(() => !isBrowserOffline());
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [lastError, setLastError] = useState<string | null>(null);
+    const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
@@ -63,11 +68,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [movements]);
 
     const getErrorText = (error: unknown) => {
-        const e = error as any;
-        return [e?.message, e?.details, e?.hint]
-            .map((v) => (v == null ? '' : String(v)))
-            .filter(Boolean)
-            .join(' | ');
+        return rawErrorText(error);
     };
 
     const getMissingColumn = (error: unknown): string | null => {
@@ -90,9 +91,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         if (!text) return false;
         return (
             text.includes('tiempo de espera agotado') ||
-            text.includes('timeout') ||
-            text.includes('timed out') ||
-            text.includes('deadline exceeded')
+            text.includes('deadline exceeded') ||
+            isTransientConnectionError(error)
         );
     };
 
@@ -328,6 +328,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         const run = (async () => {
             const startedAt = Date.now();
             if (!silent) setIsLoading(true);
+            setIsSyncing(true);
             const maxRows = 5000;
             try {
                 const { data, error } = await withTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
@@ -343,6 +344,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 );
                 if (error) {
                     console.error(`Error loading inventory movements for ${inventoryId}:`, error);
+                    setLastError(describeConnectionError(error, `No se pudieron cargar movimientos de ${inventoryId}.`));
                 } else {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
@@ -375,12 +377,16 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     const merged = mergeServerRowsWithPending(rows);
                     setMovements(merged);
                     persistMovementsCache(merged);
+                    setLastError(null);
+                    setLastSyncedAt(new Date().toISOString());
                 }
             } catch (error) {
                 // Never crash UI on background sync read failures.
                 console.error(`Timeout/error loading inventory movements for ${inventoryId}:`, error);
+                setLastError(describeConnectionError(error, `No se pudieron cargar movimientos de ${inventoryId}.`));
             } finally {
                 if (!silent) setIsLoading(false);
+                setIsSyncing(false);
             }
         })();
         loadInFlightRef.current = run;
@@ -390,6 +396,25 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             loadInFlightRef.current = null;
         }
     }, [inventoryId, mergeServerRowsWithPending, persistMovementsCache, withTimeout]);
+
+    useEffect(() => {
+        const updateOnlineStatus = () => {
+            const nextOnline = !isBrowserOffline();
+            setIsOnline(nextOnline);
+            if (nextOnline) {
+                void loadMovements(true);
+            } else {
+                setLastError('Sin conexión. Se muestra la última información guardada localmente.');
+            }
+        };
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        updateOnlineStatus();
+        return () => {
+            window.removeEventListener('online', updateOnlineStatus);
+            window.removeEventListener('offline', updateOnlineStatus);
+        };
+    }, [loadMovements]);
 
     useEffect(() => {
         void loadMovements();
@@ -449,6 +474,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     throw new Error(`addMovement(${inventoryId}): no se recibió la fila insertada.`);
                 }
                 lastMutationAtRef.current = Date.now();
+                setLastError(null);
+                setLastSyncedAt(new Date().toISOString());
                 markPendingUpsert(created);
                 setMovements((prev) => {
                     const next = prev.filter((m) => Number(m.id) !== Number(created.id));
@@ -464,6 +491,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     const recovered = await recoverInsertedAfterTimeout(payload);
                     if (recovered) {
                         lastMutationAtRef.current = Date.now();
+                        setLastError(null);
+                        setLastSyncedAt(new Date().toISOString());
                         markPendingUpsert(recovered);
                         setMovements((prev) => {
                             const next = prev.filter((m) => Number(m.id) !== Number(recovered.id));
@@ -486,6 +515,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
 
         console.error('Error adding movement:', lastError);
+        setLastError(describeConnectionError(lastError, `No se pudo guardar movimiento en ${inventoryId}.`));
         throw lastError;
     }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverInsertedAfterTimeout, unwrapMaybeData, withTimeout]);
 
@@ -519,6 +549,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     throw new Error(`updateMovement(${inventoryId}): no se recibió la fila actualizada.`);
                 }
                 lastMutationAtRef.current = Date.now();
+                setLastError(null);
+                setLastSyncedAt(new Date().toISOString());
                 markPendingUpsert(updated);
                 setMovements((prev) => {
                     const idx = prev.findIndex((m) => Number(m.id) === Number(updated.id));
@@ -540,6 +572,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     const recovered = await recoverUpdatedAfterTimeout(id, payload);
                     if (recovered) {
                         lastMutationAtRef.current = Date.now();
+                        setLastError(null);
+                        setLastSyncedAt(new Date().toISOString());
                         markPendingUpsert(recovered);
                         setMovements((prev) => {
                             const idx = prev.findIndex((m) => Number(m.id) === Number(recovered.id));
@@ -568,12 +602,15 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
 
         console.error('Error updating movement:', lastError);
+        setLastError(describeConnectionError(lastError, `No se pudo actualizar movimiento en ${inventoryId}.`));
         throw lastError;
     }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverUpdatedAfterTimeout, unwrapMaybeData, withTimeout]);
 
     const deleteMovement = useCallback(async (id: number) => {
         const commitLocalDelete = () => {
             lastMutationAtRef.current = Date.now();
+            setLastError(null);
+            setLastSyncedAt(new Date().toISOString());
             markPendingDelete(id);
             setMovements((prev) => {
                 const next = prev.filter((m) => Number(m.id) !== Number(id));
@@ -616,6 +653,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 }
             }
             console.error('Error deleting movement:', error);
+            setLastError(describeConnectionError(error, `No se pudo eliminar movimiento en ${inventoryId}.`));
             throw error;
         }
     }, [inventoryId, isTimeoutLikeError, loadMovements, markPendingDelete, persistMovementsCache, recoverDeletedAfterTimeout, unwrapMaybeData, withTimeout]);
@@ -690,5 +728,21 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         });
     }, [addMovement, deleteMovement, inventoryId, loadMovements, updateMovement]);
 
-    return [movements, setSharedValueCompat, isLoading, { addMovement, updateMovement, deleteMovement }] as const;
+    return [
+        movements,
+        setSharedValueCompat,
+        isLoading,
+        {
+            addMovement,
+            updateMovement,
+            deleteMovement,
+            reload: (): void => {
+                void loadMovements(false);
+            },
+            isOnline,
+            isSyncing,
+            lastError,
+            lastSyncedAt,
+        },
+    ] as const;
 }

@@ -60,14 +60,9 @@ function Layout() {
 
 
     React.useEffect(() => {
-        document.documentElement.setAttribute('data-time', timeOfDay);
-
-        // Automatically activate dark mode at night
-        if (timeOfDay === 'night') {
-            document.documentElement.classList.add('dark');
-        } else {
-            document.documentElement.classList.remove('dark');
-        }
+        const visualTimeOfDay = timeOfDay === 'night' ? 'day' : timeOfDay;
+        document.documentElement.setAttribute('data-time', visualTimeOfDay);
+        document.documentElement.classList.remove('dark');
     }, [timeOfDay]);
 
     React.useEffect(() => {
@@ -178,7 +173,7 @@ function Layout() {
             shockedTasks={shockedTasks}
             onTaskClick={handleTaskClick}
         >
-            <div className="h-screen flex relative overflow-hidden bg-bg dark:text-gray-100 transition-colors duration-500">
+            <div className="lunaris-elegant h-screen flex relative overflow-hidden bg-bg dark:text-gray-100 transition-colors duration-500">
                 {/* Sidebar */}
                 <Sidebar
                     isOpen={sidebarOpen}
