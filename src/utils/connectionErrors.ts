@@ -32,7 +32,7 @@ export function describeConnectionError(error: unknown, fallback = 'No se pudo c
     return 'Sin conexión a internet. Se mantiene la última información local y se puede reintentar cuando vuelva la conexión.';
   }
   if (isTransientConnectionError(error)) {
-    return 'No se pudo conectar con la base de datos a tiempo. Revisa la conexión y vuelve a intentar; la app conserva la última información local.';
+    return 'La web está abierta, pero la base de datos no respondió a tiempo. Vuelve a intentar; la app conserva la última información local.';
   }
   if (low.includes('row-level security') || low.includes('permission') || low.includes('not authorized')) {
     return 'La base de datos rechazó el cambio por permisos de seguridad. Revisa la sesión o las políticas de Supabase.';
