@@ -30,6 +30,11 @@ type BillingDocumentType = 'FACTURA' | 'TRANSFERENCIA';
 type ProductCode = string;
 type GenericRow = Record<string, any>;
 type InventoryBranch = 'canet' | 'huarte';
+const DISPATCH_CREATE_TIMEOUT_MS = 50000;
+const DISPATCH_RECOVER_ATTEMPTS = 7;
+const DISPATCH_RECOVER_DELAY_MS = 1200;
+const DISPATCH_RECOVER_LOOKUP_TIMEOUT_MS = 8000;
+const PDF_BLOB_TIMEOUT_MS = 30000;
 
 type BillingOrderLine = {
   id: string;
@@ -2359,7 +2364,7 @@ export default function FacturacionPage() {
                 { onConflict: 'key' },
               ),
           `persistPdfBlob(${safeRef})`,
-          15000,
+          PDF_BLOB_TIMEOUT_MS,
         );
       } catch (error) {
         console.warn(`No se pudo persistir blob PDF ${safeRef}`, error);
@@ -2385,7 +2390,7 @@ export default function FacturacionPage() {
               .eq('key', buildFileBlobKey(ref))
               .maybeSingle(),
           `resolvePdfDataUrl(${ref})`,
-          12000,
+          PDF_BLOB_TIMEOUT_MS,
         );
         if (error) return '';
         const url = clean((data as any)?.payload?.dataUrl);
@@ -3416,7 +3421,12 @@ export default function FacturacionPage() {
   const openOrderPdf = useCallback(
     async (order: BillingOrder) => {
       const dataUrl = await resolvePdfDataUrl(order.sourcePdfRef, order.sourcePdfDataUrl);
-      openPdfDataUrl(dataUrl, 'No hay PDF adjunto en este pedido.');
+      openPdfDataUrl(
+        dataUrl,
+        clean(order.sourcePdfRef)
+          ? 'No se pudo cargar el PDF adjunto. Vuelve a intentarlo en unos segundos.'
+          : 'No hay PDF adjunto en este pedido.',
+      );
     },
     [resolvePdfDataUrl],
   );
@@ -3424,7 +3434,12 @@ export default function FacturacionPage() {
   const printOrderPdf = useCallback(
     async (order: BillingOrder) => {
       const dataUrl = await resolvePdfDataUrl(order.sourcePdfRef, order.sourcePdfDataUrl);
-      printPdfDataUrl(dataUrl, 'No hay PDF adjunto en este pedido.');
+      printPdfDataUrl(
+        dataUrl,
+        clean(order.sourcePdfRef)
+          ? 'No se pudo cargar el PDF adjunto. Vuelve a intentarlo en unos segundos.'
+          : 'No hay PDF adjunto en este pedido.',
+      );
     },
     [resolvePdfDataUrl],
   );
@@ -3511,7 +3526,7 @@ export default function FacturacionPage() {
         recoverLookupTimeoutMs?: number;
       },
     ): Promise<InventoryMovementRow | null> => {
-      const createTimeoutMs = Math.max(5000, Number(opts?.createTimeoutMs || 15000));
+      const createTimeoutMs = Math.max(5000, Number(opts?.createTimeoutMs || DISPATCH_CREATE_TIMEOUT_MS));
       const recoverAttempts = Math.max(1, Number(opts?.recoverAttempts || 4));
       const recoverDelayMs = Math.max(200, Number(opts?.recoverDelayMs || 700));
       const recoverLookupTimeoutMs = Math.max(1200, Number(opts?.recoverLookupTimeoutMs || 2500));
@@ -3652,10 +3667,10 @@ export default function FacturacionPage() {
               async () => await mutation(payload),
               `dispatchMovement(${sourceInventory})`,
               {
-                createTimeoutMs: 15000,
-                recoverAttempts: 4,
-                recoverDelayMs: 700,
-                recoverLookupTimeoutMs: 2500,
+                createTimeoutMs: DISPATCH_CREATE_TIMEOUT_MS,
+                recoverAttempts: DISPATCH_RECOVER_ATTEMPTS,
+                recoverDelayMs: DISPATCH_RECOVER_DELAY_MS,
+                recoverLookupTimeoutMs: DISPATCH_RECOVER_LOOKUP_TIMEOUT_MS,
               },
             );
 
@@ -3706,10 +3721,10 @@ export default function FacturacionPage() {
                 async () => await destinationMutation(autoPayload),
                 `dispatchAutoEntrada(${destinationInventory})`,
                 {
-                  createTimeoutMs: 12000,
-                  recoverAttempts: 4,
-                  recoverDelayMs: 700,
-                  recoverLookupTimeoutMs: 2500,
+                  createTimeoutMs: DISPATCH_CREATE_TIMEOUT_MS,
+                  recoverAttempts: DISPATCH_RECOVER_ATTEMPTS,
+                  recoverDelayMs: DISPATCH_RECOVER_DELAY_MS,
+                  recoverLookupTimeoutMs: DISPATCH_RECOVER_LOOKUP_TIMEOUT_MS,
                 },
               );
             } catch (err: any) {

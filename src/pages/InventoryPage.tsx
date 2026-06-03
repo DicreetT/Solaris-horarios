@@ -139,6 +139,18 @@ const normalizeLotToken = (v: any) => clean(v).toUpperCase().replace(/[^A-Z0-9]/
 const normalizeLotCompareToken = (v: any) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: any, lote: any) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
+const isShortLegacyLotAlias = (lote: any) => {
+  const token = normalizeLotCompareToken(lote);
+  return token.length > 0 && token.length <= 4;
+};
+const hasLongerLotAlias = (candidates: string[], lote: any) => {
+  const token = normalizeLotCompareToken(lote);
+  if (!token || !isShortLegacyLotAlias(lote)) return false;
+  return candidates.some((candidate) => {
+    const candidateToken = normalizeLotCompareToken(candidate);
+    return candidateToken.length > token.length && candidateToken.endsWith(token);
+  });
+};
 const FORCED_AGOTADO_LOTS = new Set<string>();
 // Correcciones puntuales validadas con inventario real para evitar que una caché vieja
 // siga mostrando cantidades desactualizadas en el potencial.
@@ -355,10 +367,10 @@ const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, lot
   const pickBest = (candidates: string[]) =>
     [...candidates]
       .sort((a, b) => normalizeLotCompareToken(b).length - normalizeLotCompareToken(a).length || clean(b).length - clean(a).length)[0];
-  const exact = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate) === token));
-  if (exact) return exact;
   const matches = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token)));
   if (matches) return matches;
+  const exact = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate) === token));
+  if (exact) return exact;
   const inverseMatches = pickBest(productLots.filter((candidate) => token.endsWith(normalizeLotCompareToken(candidate))));
   if (inverseMatches) return inverseMatches;
   return lote;
@@ -3922,7 +3934,25 @@ function InventoryPage() {
       })
       .map((row) => ({ producto: clean(row.producto), lote: clean(row.lote), bodega: normalizeWarehouseAlias(row.bodega) }));
     const rows = isStockOutput ? stockRows : activeMasterRows;
-    return Array.from(new Set(rows.map((r) => r.lote))).sort();
+    return Array.from(
+      new Set(
+        rows
+          .map((r) => ({
+            ...r,
+            lote: sourceIsHuarte ? clean(r.lote) : canonicalLotForProduct(canonicalKnownCanetLotRows, r.producto, r.lote),
+          }))
+          .filter((r) => {
+            if (sourceIsHuarte) return true;
+            const candidates = canonicalKnownCanetLotRows
+              .filter((lotRow) => clean(lotRow.producto) === clean(r.producto))
+              .map((lotRow) => clean(lotRow.lote))
+              .filter(Boolean);
+            return !hasLongerLotAlias(candidates, r.lote);
+          })
+          .map((r) => r.lote)
+          .filter(Boolean),
+      ),
+    ).sort();
   }, [
     visibleLotes,
     movementForm.producto,
@@ -3985,7 +4015,25 @@ function InventoryPage() {
       })
       .map((row) => ({ producto: clean(row.producto), lote: clean(row.lote), bodega: normalizeWarehouseAlias(row.bodega) }));
     const rows = isStockOutput ? stockRows : activeMasterRows;
-    return Array.from(new Set(rows.map((r) => r.lote))).sort();
+    return Array.from(
+      new Set(
+        rows
+          .map((r) => ({
+            ...r,
+            lote: sourceIsHuarte ? clean(r.lote) : canonicalLotForProduct(canonicalKnownCanetLotRows, r.producto, r.lote),
+          }))
+          .filter((r) => {
+            if (sourceIsHuarte) return true;
+            const candidates = canonicalKnownCanetLotRows
+              .filter((lotRow) => clean(lotRow.producto) === clean(r.producto))
+              .map((lotRow) => clean(lotRow.lote))
+              .filter(Boolean);
+            return !hasLongerLotAlias(candidates, r.lote);
+          })
+          .map((r) => r.lote)
+          .filter(Boolean),
+      ),
+    ).sort();
   }, [
     canonicalKnownCanetLotRows,
     editingId,

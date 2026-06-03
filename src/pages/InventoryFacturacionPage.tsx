@@ -252,6 +252,18 @@ const normalizeLotToken = (v: unknown) => clean(v).toUpperCase().replace(/[^A-Z0
 const normalizeLotCompareToken = (v: unknown) => normalizeLotToken(v).replace(/O/g, '0');
 const isInvalidLegacyLot = (producto: unknown, lote: unknown) =>
   clean(producto).toUpperCase() === 'KL' && normalizeLotToken(lote) === 'O30';
+const isShortLegacyLotAlias = (lote: unknown) => {
+  const token = normalizeLotCompareToken(lote);
+  return token.length > 0 && token.length <= 4;
+};
+const hasLongerLotAlias = (candidates: string[], lote: unknown) => {
+  const token = normalizeLotCompareToken(lote);
+  if (!token || !isShortLegacyLotAlias(lote)) return false;
+  return candidates.some((candidate) => {
+    const candidateToken = normalizeLotCompareToken(candidate);
+    return candidateToken.length > token.length && candidateToken.endsWith(token);
+  });
+};
 const normalizeWarehouseAlias = (v: unknown) => normalizeInventoryWarehouse(v);
 const CANET_TRANSFER_WAREHOUSES = new Set(CANET_MASTER_WAREHOUSES.map((warehouse) => normalizeWarehouseAlias(warehouse)));
 const ALL_TRANSFER_WAREHOUSE_ORDER = Array.from(new Set([...HUARTE_STOCK_WAREHOUSES, ...CANET_MASTER_WAREHOUSES].map((warehouse) => normalizeWarehouseAlias(warehouse)).filter(Boolean)));
@@ -359,10 +371,13 @@ const canonicalLotForProduct = (loteRows: GenericRow[], productoRaw: string, lot
         .filter(Boolean),
     ),
   );
-  const exact = productLots.find((candidate) => normalizeLotCompareToken(candidate) === token);
+  const pickBest = (candidates: string[]) =>
+    [...candidates]
+      .sort((a, b) => normalizeLotCompareToken(b).length - normalizeLotCompareToken(a).length || clean(b).length - clean(a).length)[0];
+  const matches = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token)));
+  if (matches) return matches;
+  const exact = pickBest(productLots.filter((candidate) => normalizeLotCompareToken(candidate) === token));
   if (exact) return exact;
-  const matches = productLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(token));
-  if (matches.length === 1) return matches[0];
   return lote;
 };
 const inferSignedQuantity = (movement: Pick<Movement, 'cantidad' | 'cantidad_signed' | 'signo' | 'tipo_movimiento'>) => {
@@ -1266,6 +1281,17 @@ export default function InventoryFacturacionPage() {
             if (keepKey && key === keepKey) return true;
             return normalizeLotState((l as any).estado) !== 'AGOTADO';
           })
+          .map((l) => ({
+            producto: clean(l.producto).toUpperCase(),
+            lote: canonicalLotForProduct(allKnownLotes, clean(l.producto).toUpperCase(), clean(l.lote)),
+          }))
+          .filter((l) => {
+            const candidates = allKnownLotes
+              .filter((lotRow) => clean(lotRow.producto).toUpperCase() === l.producto)
+              .map((lotRow) => clean(lotRow.lote))
+              .filter(Boolean);
+            return !hasLongerLotAlias(candidates, l.lote);
+          })
           .map((l) => clean(l.lote))
           .filter(Boolean),
       ),
@@ -1304,6 +1330,17 @@ export default function InventoryFacturacionPage() {
             const key = `${clean(l.producto)}|${clean(l.lote)}`;
             if (keepKey && key === keepKey) return true;
             return normalizeLotState((l as any).estado) !== 'AGOTADO';
+          })
+          .map((l) => ({
+            producto: clean(l.producto).toUpperCase(),
+            lote: canonicalLotForProduct(allKnownLotes, clean(l.producto).toUpperCase(), clean(l.lote)),
+          }))
+          .filter((l) => {
+            const candidates = allKnownLotes
+              .filter((lotRow) => clean(lotRow.producto).toUpperCase() === l.producto)
+              .map((lotRow) => clean(lotRow.lote))
+              .filter(Boolean);
+            return !hasLongerLotAlias(candidates, l.lote);
           })
           .map((l) => clean(l.lote))
           .filter(Boolean),
