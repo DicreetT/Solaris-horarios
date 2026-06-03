@@ -28,6 +28,41 @@ export type InventoryMovementRow = {
     motivo?: string;
 };
 
+const INVENTORY_MOVEMENT_COLUMNS = [
+    'id',
+    'inventory_id',
+    'fecha',
+    'tipo_movimiento',
+    'producto',
+    'lote',
+    'cantidad',
+    'bodega',
+    'cliente',
+    'destino',
+    'notas',
+    'afecta_stock',
+    'signo',
+    'cantidad_signed',
+    'source',
+    'origin_canet_id',
+    'origin_huarte_id',
+    'created_at',
+    'updated_at',
+    'updated_by',
+    'factura_doc',
+    'responsable',
+    'motivo',
+].join(',');
+
+const sortMovementsByNewest = (rows: InventoryMovementRow[]) =>
+    [...rows].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+
+const cleanInventoryId = (value: unknown): 'canet' | 'huarte' | '' => {
+    const text = String(value ?? '').trim().toLowerCase();
+    if (text === 'canet' || text === 'huarte') return text;
+    return '';
+};
+
 export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const cacheKey = `inventory_movements_cache_${inventoryId}_v1`;
     const readCachedMovements = (): InventoryMovementRow[] => {
@@ -51,6 +86,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const movementsRef = useRef<InventoryMovementRow[]>([]);
     const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
     const loadInFlightRef = useRef<Promise<void> | null>(null);
+    const lastLoadStartedAtRef = useRef(0);
     const lastMutationAtRef = useRef<number>(0);
     const lastTrustedServerSnapshotRef = useRef<InventoryMovementRow[] | null>(null);
     const lastTrustedServerMutationAtRef = useRef<number>(0);
@@ -59,6 +95,8 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const consecutiveEmptyReadsRef = useRef<number>(0);
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
+    const SILENT_RELOAD_MIN_GAP_MS = 30000;
+    const FALLBACK_REFRESH_MS = 600000;
     const PENDING_GUARD_WINDOW_MS = 120000;
     const RECOVERY_ATTEMPTS = 4;
     const RECOVERY_WAIT_MS = 900;
@@ -146,7 +184,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             }
         }
 
-        return Array.from(mergedById.values()).sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+        return sortMovementsByNewest(Array.from(mergedById.values()));
     }, [sweepPendingGuards]);
 
     const markPendingUpsert = useCallback((row: InventoryMovementRow) => {
@@ -243,7 +281,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     () =>
                         supabase
                             .from('inventory_movements')
-                            .select('*')
+                            .select(INVENTORY_MOVEMENT_COLUMNS)
                             .eq('inventory_id', inventoryId)
                             .eq('tipo_movimiento', String(payload.tipo_movimiento ?? ''))
                             .eq('producto', String(payload.producto ?? ''))
@@ -278,7 +316,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     () =>
                         supabase
                             .from('inventory_movements')
-                            .select('*')
+                            .select(INVENTORY_MOVEMENT_COLUMNS)
                             .eq('id', id)
                             .eq('inventory_id', inventoryId)
                             .maybeSingle(),
@@ -325,6 +363,11 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         if (loadInFlightRef.current) {
             return loadInFlightRef.current;
         }
+        const now = Date.now();
+        if (silent && now - lastLoadStartedAtRef.current < SILENT_RELOAD_MIN_GAP_MS) {
+            return;
+        }
+        lastLoadStartedAtRef.current = now;
         const run = (async () => {
             const startedAt = Date.now();
             if (!silent) setIsLoading(true);
@@ -335,7 +378,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     () =>
                         supabase
                             .from('inventory_movements')
-                            .select('*')
+                            .select(INVENTORY_MOVEMENT_COLUMNS)
                             .eq('inventory_id', inventoryId)
                             .order('id', { ascending: false })
                             .range(0, maxRows - 1),
@@ -397,22 +440,59 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         }
     }, [inventoryId, mergeServerRowsWithPending, persistMovementsCache, withTimeout]);
 
+    const applyRemoteMovementChange = useCallback((payload: any) => {
+        const eventType = String(payload?.eventType || '').toUpperCase();
+        const nextRow = payload?.new as InventoryMovementRow | undefined;
+        const oldRow = payload?.old as Partial<InventoryMovementRow> | undefined;
+        const affectedInventory = cleanInventoryId(nextRow?.inventory_id || oldRow?.inventory_id || inventoryId);
+        if (affectedInventory !== inventoryId) return;
+
+        if (eventType === 'DELETE') {
+            const id = Number(oldRow?.id);
+            if (!Number.isFinite(id)) return;
+            pendingDeletesRef.current.delete(id);
+            pendingUpsertsRef.current.delete(id);
+            setMovements((prev) => {
+                const next = prev.filter((m) => Number(m.id) !== id);
+                persistMovementsCache(next);
+                return next;
+            });
+            setLastError(null);
+            setLastSyncedAt(new Date().toISOString());
+            return;
+        }
+
+        if (!nextRow || !Number.isFinite(Number((nextRow as any).id))) return;
+        const row = { ...nextRow, inventory_id: inventoryId } as InventoryMovementRow;
+        pendingUpsertsRef.current.delete(Number(row.id));
+        pendingDeletesRef.current.delete(Number(row.id));
+        setMovements((prev) => {
+            const merged = sortMovementsByNewest([row, ...prev.filter((m) => Number(m.id) !== Number(row.id))]);
+            persistMovementsCache(merged);
+            return merged;
+        });
+        setLastError(null);
+        setLastSyncedAt(new Date().toISOString());
+    }, [inventoryId, persistMovementsCache]);
+
     useEffect(() => {
-        const updateOnlineStatus = () => {
+        const updateOnlineStatus = (refreshWhenOnline = false) => {
             const nextOnline = !isBrowserOffline();
             setIsOnline(nextOnline);
-            if (nextOnline) {
+            if (nextOnline && refreshWhenOnline) {
                 void loadMovements(true);
-            } else {
+            } else if (!nextOnline) {
                 setLastError('Sin conexión. Se muestra la última información guardada localmente.');
             }
         };
-        window.addEventListener('online', updateOnlineStatus);
-        window.addEventListener('offline', updateOnlineStatus);
-        updateOnlineStatus();
+        const onOnline = () => updateOnlineStatus(true);
+        const onOffline = () => updateOnlineStatus(false);
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        updateOnlineStatus(false);
         return () => {
-            window.removeEventListener('online', updateOnlineStatus);
-            window.removeEventListener('offline', updateOnlineStatus);
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
         };
     }, [loadMovements]);
 
@@ -432,25 +512,20 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     table: 'inventory_movements',
                     filter: `inventory_id=eq.${inventoryId}`
                 },
-                () => {
-                    // On any change, intelligently reload to keep the exact ordering
-                    refresh();
-                }
+                applyRemoteMovementChange
             )
-            .subscribe((status) => {
-                if (status === 'SUBSCRIBED') {
-                    refresh();
-                }
-            });
+            .subscribe();
 
         // Fallback sync for clients where realtime can be interrupted (sleep, network, background tabs).
-        const intervalId = window.setInterval(refresh, 120000);
+        const intervalId = window.setInterval(() => {
+            if (document.visibilityState === 'visible') refresh();
+        }, FALLBACK_REFRESH_MS);
 
         return () => {
             window.clearInterval(intervalId);
             void supabase.removeChannel(channel);
         };
-    }, [inventoryId, loadMovements]);
+    }, [applyRemoteMovementChange, inventoryId, loadMovements]);
 
     const addMovement = useCallback(async (movement: Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>) => {
         const payload: Record<string, unknown> = { ...(movement as any), inventory_id: inventoryId };
@@ -479,11 +554,10 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 markPendingUpsert(created);
                 setMovements((prev) => {
                     const next = prev.filter((m) => Number(m.id) !== Number(created.id));
-                    const merged = [created, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                    const merged = sortMovementsByNewest([created, ...next]);
                     persistMovementsCache(merged);
                     return merged;
                 });
-                void loadMovements(true);
                 return created;
             } catch (error) {
                 lastError = error;
@@ -496,11 +570,10 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                         markPendingUpsert(recovered);
                         setMovements((prev) => {
                             const next = prev.filter((m) => Number(m.id) !== Number(recovered.id));
-                            const merged = [recovered, ...next].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                            const merged = sortMovementsByNewest([recovered, ...next]);
                             persistMovementsCache(merged);
                             return merged;
                         });
-                        void loadMovements(true);
                         return recovered;
                     }
                 }
@@ -555,7 +628,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 setMovements((prev) => {
                     const idx = prev.findIndex((m) => Number(m.id) === Number(updated.id));
                     if (idx === -1) {
-                        const merged = [updated, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                        const merged = sortMovementsByNewest([updated, ...prev]);
                         persistMovementsCache(merged);
                         return merged;
                     }
@@ -564,7 +637,6 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                     persistMovementsCache(next);
                     return next;
                 });
-                void loadMovements(true);
                 return updated;
             } catch (error) {
                 lastError = error;
@@ -578,7 +650,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                         setMovements((prev) => {
                             const idx = prev.findIndex((m) => Number(m.id) === Number(recovered.id));
                             if (idx === -1) {
-                                const merged = [recovered, ...prev].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
+                                const merged = sortMovementsByNewest([recovered, ...prev]);
                                 persistMovementsCache(merged);
                                 return merged;
                             }
@@ -587,7 +659,6 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                             persistMovementsCache(next);
                             return next;
                         });
-                        void loadMovements(true);
                         return recovered;
                     }
                 }
@@ -617,7 +688,6 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
                 persistMovementsCache(next);
                 return next;
             });
-            void loadMovements(true);
         };
 
         try {

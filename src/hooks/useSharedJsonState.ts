@@ -13,6 +13,8 @@ type Options = {
 };
 
 const pendingSharedJsonWrites = new Set<Promise<unknown>>();
+const DEFAULT_SHARED_JSON_POLL_MS = 600000;
+const MIN_SHARED_JSON_REFRESH_GAP_MS = 30000;
 
 function trackSharedJsonWrite<T>(promise: Promise<T>): Promise<T> {
   pendingSharedJsonWrites.add(promise);
@@ -346,7 +348,7 @@ export function useSharedJsonState<T>(
   const {
     userId,
     initializeIfMissing = true,
-    pollIntervalMs = 120000,
+    pollIntervalMs = DEFAULT_SHARED_JSON_POLL_MS,
     protectFromEmptyOverwrite = false,
     preferRemoteSnapshot = false,
     mergeBeforePersist = false,
@@ -366,6 +368,7 @@ export function useSharedJsonState<T>(
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptRef = useRef(0);
   const retryVersionRef = useRef(0);
+  const lastRefreshAtRef = useRef(0);
 
   useEffect(() => {
     valueRef.current = value;
@@ -584,6 +587,11 @@ export function useSharedJsonState<T>(
     };
 
     const load = async (silent = false) => {
+      const now = Date.now();
+      if (silent && now - lastRefreshAtRef.current < MIN_SHARED_JSON_REFRESH_GAP_MS) {
+        return;
+      }
+      lastRefreshAtRef.current = now;
       if (loadInFlight) {
         // Evita lecturas concurrentes que acaban pisando estado nuevo con respuesta vieja.
         queuedSilentRefresh = true;
@@ -608,7 +616,11 @@ export function useSharedJsonState<T>(
       void load(true);
     };
 
-    const intervalId = window.setInterval(refresh, pollIntervalMs);
+    const intervalId = pollIntervalMs > 0
+      ? window.setInterval(() => {
+          if (document.visibilityState === 'visible') refresh();
+        }, pollIntervalMs)
+      : null;
     const onVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') refresh();
     };
@@ -644,15 +656,11 @@ export function useSharedJsonState<T>(
           }
         },
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          refresh();
-        }
-      });
+      .subscribe();
 
     return () => {
       active = false;
-      window.clearInterval(intervalId);
+      if (intervalId != null) window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityOrFocus);
       window.removeEventListener('focus', onVisibilityOrFocus);
       if (retryTimerRef.current != null) {

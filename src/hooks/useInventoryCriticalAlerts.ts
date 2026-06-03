@@ -2,18 +2,9 @@ import { useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { User } from '../types';
 import { USERS } from '../constants';
-import huarteSeed from '../data/inventory_facturacion_seed.json';
-import canetSeed from '../data/inventory_seed.json';
 
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
-const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-
-const clean = (v: unknown) => (v == null ? '' : String(v).trim());
-const toNum = (v: unknown) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-};
+const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const getDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
 
@@ -28,44 +19,6 @@ type AlertSummary = {
     canet: Array<{ producto: string; stockTotal: number; coberturaMeses: number }>;
 };
 
-async function buildMountedCriticalFromHuarte(): Promise<Array<{ producto: string; stockTotal: number; coberturaMeses: number }>> {
-    const { data } = await supabase
-        .from('inventory_movements')
-        .select('*')
-        .eq('inventory_id', 'huarte');
-    const source = data && Array.isArray(data) && data.length > 0 ? data : (huarteSeed.movimientos || []);
-
-    const productos = (canetSeed.productos as any[]) || [];
-    const consumoByProduct = new Map<string, number>();
-    productos.forEach((p: any) => {
-        const code = clean(p.producto).toUpperCase();
-        if (!code || code === 'PRODUCTO') return;
-        consumoByProduct.set(code, toNum(p.consumo_mensual_cajas));
-    });
-
-    const stockByProduct = new Map<string, number>();
-    (source || []).forEach((m: any) => {
-        const producto = clean(m?.producto).toUpperCase();
-        const lote = clean(m?.lote);
-        const bodega = clean(m?.bodega);
-        if (!producto || producto === 'PRODUCTO' || !lote || !bodega) return;
-        const signed = Number(m?.cantidad_signed);
-        const qty = Number.isFinite(signed) ? signed : toNum(m?.cantidad) * (toNum(m?.signo) || 1);
-        stockByProduct.set(producto, (stockByProduct.get(producto) || 0) + qty);
-    });
-
-    return Array.from(stockByProduct.entries())
-        .map(([producto, stockTotal]) => {
-            const consumo = consumoByProduct.get(producto) || 0;
-            const total = Math.max(0, toNum(stockTotal));
-            const coberturaMeses = consumo > 0 ? total / consumo : 0;
-            return { producto, stockTotal: total, coberturaMeses };
-        })
-        .filter((row) => row.stockTotal > 0 && row.coberturaMeses > 0 && row.coberturaMeses < 3)
-        .sort((a, b) => a.coberturaMeses - b.coberturaMeses)
-        .slice(0, 12);
-}
-
 async function buildSummaryFromStorage(): Promise<AlertSummary> {
     try {
         const { data } = await supabase
@@ -77,17 +30,9 @@ async function buildSummaryFromStorage(): Promise<AlertSummary> {
         const mounted = (parsed?.mountedCritical || []) as AlertSummary['mounted'];
         const potential = (parsed?.potentialCritical || []) as AlertSummary['potential'];
         const canet = (parsed?.criticalProducts || []) as AlertSummary['canet'];
-        return {
-            mounted: mounted.length > 0 ? mounted : await buildMountedCriticalFromHuarte(),
-            potential,
-            canet,
-        };
+        return { mounted, potential, canet };
     } catch {
-        return {
-            mounted: await buildMountedCriticalFromHuarte(),
-            potential: [],
-            canet: [],
-        };
+        return { mounted: [], potential: [], canet: [] };
     }
 }
 
