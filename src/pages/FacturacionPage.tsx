@@ -35,6 +35,27 @@ const DISPATCH_RECOVER_ATTEMPTS = 7;
 const DISPATCH_RECOVER_DELAY_MS = 1200;
 const DISPATCH_RECOVER_LOOKUP_TIMEOUT_MS = 8000;
 const PDF_BLOB_TIMEOUT_MS = 30000;
+const INVENTORY_MOVEMENT_LOOKUP_COLUMNS = [
+  'id',
+  'inventory_id',
+  'fecha',
+  'tipo_movimiento',
+  'producto',
+  'lote',
+  'cantidad',
+  'bodega',
+  'cliente',
+  'destino',
+  'notas',
+  'afecta_stock',
+  'signo',
+  'cantidad_signed',
+  'source',
+  'origin_canet_id',
+  'created_at',
+  'updated_at',
+  'updated_by',
+].join(',');
 
 type BillingOrderLine = {
   id: string;
@@ -1939,7 +1960,7 @@ export default function FacturacionPage() {
     {
       userId: currentUser?.id,
       initializeIfMissing: true,
-      pollIntervalMs: 3000,
+      pollIntervalMs: 15000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
       mergeIncomingWithLocal: true,
@@ -1951,7 +1972,7 @@ export default function FacturacionPage() {
     {
       userId: currentUser?.id,
       initializeIfMissing: true,
-      pollIntervalMs: 8000,
+      pollIntervalMs: 30000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
       mergeIncomingWithLocal: true,
@@ -1963,7 +1984,7 @@ export default function FacturacionPage() {
     {
       userId: currentUser?.id,
       initializeIfMissing: true,
-      pollIntervalMs: 3000,
+      pollIntervalMs: 15000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
       mergeIncomingWithLocal: true,
@@ -3473,9 +3494,8 @@ export default function FacturacionPage() {
         try {
           const { data, error } = await withUiTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
             async () =>
-              supabase
-                .from('inventory_movements')
-                .select('*')
+              (supabase.from('inventory_movements') as any)
+                .select(INVENTORY_MOVEMENT_LOOKUP_COLUMNS)
                 .eq('inventory_id', inventoryId)
                 .ilike('notas', pattern)
                 .order('id', { ascending: false })

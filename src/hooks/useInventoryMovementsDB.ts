@@ -50,6 +50,22 @@ const INVENTORY_MOVEMENT_COLUMNS = [
     'updated_by',
 ].join(',');
 
+const INVENTORY_MOVEMENT_LOCAL_ONLY_COLUMNS = new Set([
+    'origin_huarte_id',
+    'factura_doc',
+    'responsable',
+    'motivo',
+]);
+
+const sanitizeMovementPayload = (row: Record<string, unknown>) => {
+    const payload: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row || {})) {
+        if (INVENTORY_MOVEMENT_LOCAL_ONLY_COLUMNS.has(key)) continue;
+        payload[key] = value;
+    }
+    return payload;
+};
+
 const sortMovementsByNewest = (rows: InventoryMovementRow[]) =>
     [...rows].sort((a, b) => Number((b as any)?.id || 0) - Number((a as any)?.id || 0));
 
@@ -524,7 +540,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [applyRemoteMovementChange, inventoryId, loadMovements]);
 
     const addMovement = useCallback(async (movement: Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>) => {
-        const payload: Record<string, unknown> = { ...(movement as any), inventory_id: inventoryId };
+        const payload: Record<string, unknown> = sanitizeMovementPayload({ ...(movement as any), inventory_id: inventoryId });
         let lastError: unknown = null;
 
         for (let i = 0; i < 6; i++) {
@@ -589,7 +605,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverInsertedAfterTimeout, unwrapMaybeData, withTimeout]);
 
     const updateMovement = useCallback(async (id: number, updates: Partial<Omit<InventoryMovementRow, 'id' | 'inventory_id' | 'created_at' | 'updated_at'>>) => {
-        const payload: Record<string, unknown> = { ...(updates as any) };
+        const payload: Record<string, unknown> = sanitizeMovementPayload({ ...(updates as any) });
         let lastError: unknown = null;
 
         for (let i = 0; i < 6; i++) {
@@ -726,12 +742,12 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
 
     const toUpdatePayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, created_at, ...rest } = row as any;
-        return rest;
+        return sanitizeMovementPayload(rest);
     };
 
     const toInsertPayload = (row: Partial<InventoryMovementRow>) => {
         const { id, inventory_id, ...rest } = row as any;
-        return rest;
+        return sanitizeMovementPayload(rest);
     };
 
     const payloadSignature = (row: Partial<InventoryMovementRow>) => {
