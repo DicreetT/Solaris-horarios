@@ -1,41 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import seed from '../data/inventory_seed.json';
-import { AlertTriangle, Archive, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, RotateCcw, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
+import { AlertTriangle, Archive, ArrowDownCircle, BarChart3, Building2, ClipboardList, Download, Layers3, Package, Pencil, Plus, RotateCcw, Save, Tags, Trash2, Users, Wrench, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
+import InventoryConnectionBanner from '../components/inventory/InventoryConnectionBanner';
+import ProductKitComposer from '../components/inventory/ProductKitComposer';
 import { CARLOS_EMAIL, USERS } from '../constants';
 import { openPrintablePdfReport } from '../utils/pdfReport';
+import {
+  CANET_MASTER_WAREHOUSES,
+  CANET_STOCK_WAREHOUSES,
+  HUARTE_STOCK_WAREHOUSES,
+  buildMissingTransferEntryMovements,
+  calculateInventoryStockSnapshot,
+  normalizeInventoryWarehouse,
+  sortInventoryWarehouses,
+} from '../utils/inventoryStock';
+import {
+  buildInventoryMonthlyCloseSnapshot,
+  getInventoryMonthlyCloseDrift,
+  getInventoryMonthlyCloseSnapshot,
+  getPreviousMonthKey,
+  INVENTORY_MONTHLY_CLOSURES_KEY,
+  monthlyCloseRowsForExport,
+  upsertInventoryMonthlyCloseSnapshot,
+  type InventoryMonthlyCloseSnapshot,
+} from '../utils/inventoryMonthlyClose';
+import { formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
 import { openTableXlsx } from '../utils/tableExport';
+import { describeConnectionError } from '../utils/connectionErrors';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
-type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'movimientos_cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
+type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'ensamblajes' | 'maestros';
+type CanetMasterKey = 'cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
-type EditRequestStatus = 'pending' | 'approved' | 'denied';
 type HypotheticalScope = 'potential' | 'canet_huarte' | 'canet';
-
-type InventoryEditRequest = {
-  id: string;
-  requesterId: string;
-  requesterName: string;
-  requestedAt: string;
-  status: EditRequestStatus;
-  resolvedAt?: string;
-  resolvedById?: string;
-  resolvedByName?: string;
-};
-
-type InventoryEditGrant = {
-  userId: string;
-  approvedById: string;
-  approvedByName: string;
-  approvedAt: string;
-  expiresAt: string;
-};
 
 type InventoryAuditEntry = {
   id: string;
@@ -66,6 +70,15 @@ type Movement = {
   source?: string;
   origin_canet_id?: number;
   origin_huarte_id?: number;
+};
+
+type MovementDraftLine = {
+  id: string;
+  producto: string;
+  lote: string;
+  cantidad: string;
+  bodega?: string;
+  destino?: string;
 };
 
 type GenericRow = Record<string, any>;
@@ -140,6 +153,11 @@ const HuarteMirrorStockCorrections = new Map<string, number>([
   ['KL|241030|MAS BORRAS', 23],
   ['ISO|250932|MAS BORRAS', 2],
   ['ISO|250932|VALENCIA', 2],
+  ['SV|2511A34|CANET', 216],
+  ['SV|2511A34|MAS BORRAS', 0],
+  ['SV|2601A35|CANET', 2460],
+  ['SV|2602A36|CANET', 0],
+  ['SV|2602A36|ENSAMBLAJE COLOMBIA', 3200],
 ]);
 const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
 const INVENTORY_LOT_ARCHIVES_KEY = 'inventory_canet_lot_archives_v1';
@@ -396,44 +414,28 @@ const toVialesNum = (value: unknown) => {
 };
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
-const TRANSFER_NODE_OPTIONS = [
-  'CANET',
-  'HUARTE',
-  'BARCELONA',
-  'BILBAO',
-  'LOGROÑO',
-  'MAS BORRAS',
-  'PAMPLONA',
-  'VALENCIA',
-];
-const normalizeWarehouseAlias = (v: any) => {
-  const value = clean(v)
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  if (value === 'CAN') return 'CANET';
-  if (value === 'HUARTE' || value === 'GUARTE' || value === 'WARTE' || value === 'WUARTE') return 'HUARTE';
-  if (value.includes('BARCELONA')) return 'BARCELONA';
-  if (value.includes('BILBAO')) return 'BILBAO';
-  if (value.includes('LOGRONO')) return 'LOGROÑO';
-  if (value.includes('MAS BORRAS') || value.includes('MASBORRAS') || value.includes('MAS BORRAS')) return 'MAS BORRAS';
-  if (value.includes('PAMPLONA')) return 'PAMPLONA';
-  if (value.includes('VALENCIA')) return 'VALENCIA';
-  if (TRANSFER_NODE_OPTIONS.includes(value)) return value;
-  return value;
+const TRANSFER_NODE_OPTIONS = Array.from(new Set([...CANET_STOCK_WAREHOUSES, ...HUARTE_STOCK_WAREHOUSES]));
+const NON_TRANSFER_WAREHOUSE_OPTIONS = new Set(['ENSAMBLAJE ESPAÑA', 'MI MEDICO']);
+const TRANSFER_PAIR_PREFIX = 'TRANSFER_PAIR:';
+const SELLABLE_STOCK_WAREHOUSES = ['CANET', 'HUARTE', 'MAS BORRAS'];
+const SELLABLE_STOCK_WAREHOUSE_SET = new Set(SELLABLE_STOCK_WAREHOUSES);
+const CANET_OWN_WAREHOUSE_ORDER = CANET_STOCK_WAREHOUSES;
+const CANET_MASTER_WAREHOUSE_ORDER = CANET_MASTER_WAREHOUSES;
+const CANET_OWN_WAREHOUSES = new Set(CANET_OWN_WAREHOUSE_ORDER);
+const CANET_MASTER_WAREHOUSE_SET = new Set(CANET_MASTER_WAREHOUSE_ORDER);
+const HUARTE_OWN_WAREHOUSES = new Set(HUARTE_STOCK_WAREHOUSES);
+const normalizeWarehouseAlias = (v: any) => normalizeInventoryWarehouse(v);
+const isSelectableTransferWarehouse = (value: unknown) => {
+  const warehouse = normalizeWarehouseAlias(value);
+  return !!warehouse && !NON_TRANSFER_WAREHOUSE_OPTIONS.has(warehouse);
+};
+const makeTransferPairId = () => `${TRANSFER_PAIR_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+const normalizeCanetMasterWarehouseInput = (value: unknown) => {
+  const normalized = normalizeWarehouseAlias(value);
+  return CANET_MASTER_WAREHOUSE_SET.has(normalized) ? normalized : '';
 };
 const describeDbError = (error: unknown) => {
-  const e = error as any;
-  const text = [e?.message, e?.details, e?.hint].map((v) => clean(v)).filter(Boolean).join(' · ');
-  const low = text.toLowerCase();
-  if (low.includes('row-level security') || low.includes('permission') || low.includes('not authorized')) {
-    return 'Sin permisos para guardar cambios en base de datos.';
-  }
-  if (low.includes('jwt') || low.includes('token') || low.includes('session') || low.includes('auth')) {
-    return 'La sesión parece caducada. Cierra sesión y vuelve a entrar.';
-  }
-  if (!text) return 'Error desconocido de base de datos.';
-  return text;
+  return describeConnectionError(error, 'No se pudo guardar cambios en base de datos.');
 };
 const getCurrentMonthKey = () => {
   const n = new Date();
@@ -821,6 +823,38 @@ const monthLabel = (key: string) => {
   const [year, month] = key.split('-').map(Number);
   return new Date(year, (month || 1) - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 };
+type DateFilterMode = 'day' | 'range' | 'month' | 'year' | 'all';
+const dateInputValue = (date = new Date()) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+const monthStartInputValue = (monthKey: string) => `${monthKey || getCurrentMonthKey()}-01`;
+const monthEndDateFromKey = (key: string) => {
+  if (!key) return null;
+  const [yy, mm] = key.split('-').map(Number);
+  if (!Number.isFinite(yy) || !Number.isFinite(mm) || mm < 1 || mm > 12) return null;
+  return new Date(yy, mm, 0, 23, 59, 59, 999);
+};
+const dateStartFromInput = (value: string) => {
+  const d = dateFromAny(value);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+};
+const dateEndFromInput = (value: string) => {
+  const d = dateFromAny(value);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+};
+const describeDatePeriod = (mode: DateFilterMode, start: Date | null, end: Date | null, monthKey: string, year: string) => {
+  if (mode === 'all') return 'Todos';
+  if (mode === 'month') return monthKey ? monthLabel(monthKey) : 'Mes';
+  if (mode === 'year') return year || 'Año';
+  const fmt = (date: Date | null) => date ? date.toLocaleDateString('es-ES') : '';
+  if (mode === 'day') return fmt(start);
+  return `${fmt(start)} - ${fmt(end)}`;
+};
 const movementDateMs = (fecha: string) => {
   const d = dateFromAny(clean(fecha));
   return d ? d.getTime() : 0;
@@ -918,8 +952,6 @@ const openTableExcel = (title: string, fileName: string, headers: string[], rows
 const takeRows = <T,>(rows: T[], showAll: boolean) => (showAll ? rows : rows.slice(0, 5));
 
 const MONTH_DAYS = 30;
-const INVENTORY_EDIT_REQUESTS_KEY = 'inventory_edit_requests_v1';
-const INVENTORY_EDIT_GRANTS_KEY = 'inventory_edit_grants_v1';
 const INVENTORY_AUDIT_KEY = 'inventory_audit_v1';
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
@@ -927,7 +959,6 @@ const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v2';
 const CANET_MOVEMENT_SYNC_START = '2026-02-23';
-const EDIT_GRANT_HOURS = 6;
 const INVENTORY_PRODUCT_COLORS: Record<string, string> = {
   SV: '#83b06f',
   ENT: '#76a5af',
@@ -1021,6 +1052,15 @@ const EMPTY_FORM = {
   destino: '',
   notas: '',
 };
+const MAX_MOVEMENT_DRAFT_LINES = 10;
+const createEmptyMovementDraftLine = (): MovementDraftLine => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+  producto: '',
+  lote: '',
+  cantidad: '',
+  bodega: '',
+  destino: '',
+});
 const EMPTY_PRODUCT_FORM = {
   producto: '',
   tipo_producto: 'COMPLEMENTO ALIMENTICIO',
@@ -1029,6 +1069,7 @@ const EMPTY_PRODUCT_FORM = {
   consumo_mensual_cajas: '',
   modo_stock: 'ENSAMBLAJE',
   activo_si_no: 'SI',
+  kit_componentes_text: '',
 };
 
 function InventoryPage() {
@@ -1043,39 +1084,25 @@ function InventoryPage() {
   const actorName = currentUser?.name || 'Usuario';
   const actorId = currentUser?.id || '';
   const actorEmail = clean(currentUser?.email).toLowerCase();
-  const actorNameLower = clean(currentUser?.name).toLowerCase();
   const isRestrictedUser = !!currentUser?.isRestricted || actorEmail === CARLOS_EMAIL;
   const actorIsAdmin = !!currentUser?.isAdmin;
-  const actorIsAnabela = !!(
-    (currentUser && anabela && currentUser.id === anabela.id) ||
-    actorNameLower.includes('anab') ||
-    actorEmail.includes('anab')
-  );
-  const actorIsFernando = !!(
-    (currentUser && fernando && currentUser.id === fernando.id) ||
-    actorNameLower.includes('fernando') ||
-    actorNameLower === 'fer' ||
-    actorNameLower.startsWith('fer ') ||
-    actorEmail.includes('fer')
-  );
-
-  const [tab, setTab] = useState<InventoryTab>('dashboard');
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const initialRequestedTab = clean(searchParams.get('tab')).toLowerCase();
+  const [tab, setTab] = useState<InventoryTab>(
+    initialRequestedTab === 'control_stock' ? 'control_stock' : 'dashboard',
+  );
+  const [masterSection, setMasterSection] = useState<CanetMasterKey>('productos');
   const [accessMode, setAccessMode] = useState<InventoryAccessMode>('unset');
-  const [editRequests, setEditRequests] = useSharedJsonState<InventoryEditRequest[]>(
-    INVENTORY_EDIT_REQUESTS_KEY,
-    [],
-    { userId: actorId },
-  );
-  const [editGrants, setEditGrants] = useSharedJsonState<InventoryEditGrant[]>(
-    INVENTORY_EDIT_GRANTS_KEY,
-    [],
-    { userId: actorId },
-  );
   const [auditLog, setAuditLog] = useSharedJsonState<InventoryAuditEntry[]>(
     INVENTORY_AUDIT_KEY,
     [],
     { userId: actorId },
+  );
+  const [monthlyClosures, setMonthlyClosures] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
+    INVENTORY_MONTHLY_CLOSURES_KEY,
+    [],
+    { userId: actorId, mergeBeforePersist: true },
   );
 
   const [
@@ -1088,6 +1115,11 @@ function InventoryPage() {
     'inventory_canet_productos_v1',
     seed.productos as GenericRow[],
     { userId: actorId, mergeStrategy: mergeProductsPayload },
+  );
+  const [, setHuarteProductosCatalog] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_productos_v1',
+    huarteSeed.productos as GenericRow[],
+    { userId: actorId },
   );
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
@@ -1145,7 +1177,20 @@ function InventoryPage() {
     { userId: actorId },
   );
   const activeBodegas = useMemo(
-    () => bodegas.filter((b) => !clean((b as any).deletedAt) && !clean((b as any).deleted_at)),
+    () => {
+      const byName = new Map<string, GenericRow>();
+      bodegas
+        .filter((b) => !clean((b as any).deletedAt) && !clean((b as any).deleted_at))
+        .forEach((b) => {
+          const bodega = normalizeWarehouseAlias(b.bodega);
+          if (!bodega || !CANET_MASTER_WAREHOUSE_SET.has(bodega)) return;
+          byName.set(bodega, { ...b, bodega, activo_si_no: clean(b.activo_si_no) || 'SI' });
+        });
+      CANET_MASTER_WAREHOUSE_ORDER.forEach((bodega) => {
+        if (!byName.has(bodega)) byName.set(bodega, { bodega, activo_si_no: 'SI' });
+      });
+      return sortInventoryWarehouses(Array.from(byName.values()), 'canet', 'master');
+    },
     [bodegas],
   );
   const activeClientes = useMemo(
@@ -1166,13 +1211,10 @@ function InventoryPage() {
   useEffect(() => {
     const requestedTab = clean(searchParams.get('tab')).toLowerCase() as InventoryTab;
     if (!requestedTab) return;
-    if (requestedTab === 'dashboard' || requestedTab === 'control_stock') {
+    if (requestedTab === 'dashboard' || requestedTab === 'control_stock' || requestedTab === 'movimientos' || requestedTab === 'ensamblajes' || requestedTab === 'maestros') {
       setTab(requestedTab);
-      const next = new URLSearchParams(searchParams);
-      next.delete('tab');
-      setSearchParams(next, { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams]);
 
   const [, setInventoryStockControlSnapshotShared] = useSharedJsonState<any | null>(
     INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY,
@@ -1194,7 +1236,11 @@ function InventoryPage() {
     huarteDB,
   ] = useInventoryMovementsDB('huarte');
 
+  const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('month');
   const [monthFilter, setMonthFilter] = useState<string>(() => getCurrentMonthKey());
+  const [dateFilterStart, setDateFilterStart] = useState<string>(() => dateInputValue());
+  const [dateFilterEnd, setDateFilterEnd] = useState<string>(() => dateInputValue());
+  const [yearFilter, setYearFilter] = useState<string>(() => String(new Date().getFullYear()));
   const [productFilterInput, setProductFilterInput] = useState<string>('');
   const [productFilters, setProductFilters] = useState<string[]>([]);
   const [lotFilter, setLotFilter] = useState<string>('');
@@ -1203,7 +1249,6 @@ function InventoryPage() {
   const [clientFilter, setClientFilter] = useState<string>('');
   const [quickSearch, setQuickSearch] = useState<string>('');
   const [controlSemaforoFilter, setControlSemaforoFilter] = useState<string>('');
-  const [potentialStatusFilter, setPotentialStatusFilter] = useState<string>('');
   const [showMainFilters, setShowMainFilters] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
@@ -1260,9 +1305,15 @@ function InventoryPage() {
   const [movementModalOpen, setMovementModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [movementForm, setMovementForm] = useState({ ...EMPTY_FORM });
+  const [movementLines, setMovementLines] = useState<MovementDraftLine[]>(() => [createEmptyMovementDraftLine()]);
+  const [movementKitLots, setMovementKitLots] = useState<Record<string, string>>({});
   const [savingMovement, setSavingMovement] = useState(false);
   const [deletingMovementId, setDeletingMovementId] = useState<number | null>(null);
 
+  const canetMovementSyncStartDate = useMemo(
+    () => dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
+    [],
+  );
   const [lotModalOpen, setLotModalOpen] = useState(false);
   const [editingLotKey, setEditingLotKey] = useState<string | null>(null);
   const [deletingLotKey, setDeletingLotKey] = useState<string | null>(null);
@@ -1282,12 +1333,27 @@ function InventoryPage() {
   const [textEditDialog, setTextEditDialog] = useState<TextEditDialogPayload | null>(null);
   const mimedicoClientMigrationDoneRef = useRef(false);
   const mimedicoClientMigrationRunningRef = useRef(false);
-  const canetMovementSyncStartDate = useMemo(
-    () => dateFromAny(CANET_MOVEMENT_SYNC_START) || new Date('2026-02-23T00:00:00'),
-    [],
-  );
-  const isLocalRuntime = typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname);
-  const canWriteHuarteMirrorFromCanet = !isLocalRuntime || import.meta.env.VITE_ALLOW_LOCAL_MIRROR_SYNC === 'true';
+  const canWriteHuarteMirrorFromCanet = false;
+  useEffect(() => {
+    if (editingId) return;
+    const firstLine = movementLines[0];
+    if (!firstLine) return;
+    setMovementForm((prev) => {
+      if (
+        prev.producto === firstLine.producto &&
+        prev.lote === firstLine.lote &&
+        prev.cantidad === firstLine.cantidad
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        producto: firstLine.producto,
+        lote: firstLine.lote,
+        cantidad: firstLine.cantidad,
+      };
+    });
+  }, [editingId, movementLines]);
   const deletedLotKeySet = useMemo(
     () => new Set((deletedLotKeys || []).map((key) => clean(key)).filter(Boolean)),
     [deletedLotKeys],
@@ -1333,15 +1399,28 @@ function InventoryPage() {
       ),
     [archivedLotEntryByKey],
   );
+  const exhaustedLotKeySet = useMemo(
+    () =>
+      new Set(
+        dedupeCanonicalCanetLots(lotes)
+          .filter((row) => !isLotDeleted(row) && effectiveLotState(row.producto, row.lote, row.estado) === 'AGOTADO')
+          .map((row) => lotKeyOf(row.producto, row.lote)),
+      ),
+    [lotes],
+  );
+  const hiddenLotKeySet = useMemo(
+    () => new Set([...Array.from(archivedLotKeySet), ...Array.from(exhaustedLotKeySet)]),
+    [archivedLotKeySet, exhaustedLotKeySet],
+  );
   const visibleLotes = useMemo(
     () =>
       dedupeCanonicalCanetLots(lotes).filter(
         (row) =>
           !isLotDeleted(row) &&
           !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)) &&
-          !archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+          !hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote)),
       ),
-    [archivedLotKeySet, deletedLotKeySet, lotes],
+    [deletedLotKeySet, hiddenLotKeySet, lotes],
   );
   const archivedLotes = useMemo(
     () =>
@@ -1349,9 +1428,9 @@ function InventoryPage() {
         (row) =>
           !isLotDeleted(row) &&
           !deletedLotKeySet.has(lotKeyOf(row.producto, row.lote)) &&
-          archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)),
+          hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote)),
       ),
-    [archivedLotKeySet, deletedLotKeySet, lotes],
+    [deletedLotKeySet, hiddenLotKeySet, lotes],
   );
   const [lotViewMode, setLotViewMode] = useState<'active' | 'archived'>('active');
 
@@ -1359,11 +1438,11 @@ function InventoryPage() {
   const isMasBorrasWarehouse = (v: string) => normalizeWarehouseAlias(v).toUpperCase() === 'MAS BORRAS';
   const isHuarteMirrorWarehouse = (v: string) => {
     const value = normalizeWarehouseAlias(v).toUpperCase();
-    return value === 'MAS BORRAS' || value === 'VALENCIA';
+    return HUARTE_OWN_WAREHOUSES.has(value);
   };
   const isCanetSharedWarehouse = (v: string) => {
     const value = normalizeWarehouseAlias(v).toUpperCase();
-    return value === 'CANET' || value === 'MAS BORRAS' || value === 'VALENCIA';
+    return CANET_OWN_WAREHOUSES.has(value);
   };
   const isCanetMirrorSource = (src: unknown) => {
     const value = clean(src).toLowerCase();
@@ -1381,9 +1460,7 @@ function InventoryPage() {
       x.includes('bilbao') ||
       x.includes('pamplona') ||
       x.includes('logrono') ||
-      x.includes('valencia') ||
-      x.includes('mas borr') ||
-      x.includes('masborr')
+      x.includes('barcelona')
     );
   };
   const isHuarteAlias = (v: string) => {
@@ -1424,43 +1501,9 @@ function InventoryPage() {
       ? `${clean(m.notas)} · Auto entrada por traspaso Canet→${destination}`
       : `Auto entrada por traspaso Canet→${destination}`,
   });
-  const huarteMirrorMovements = useMemo(
-    () =>
-      (huarteMovimientosShared || [])
-        .filter((m) => !isCanetMirrorSource(m.source))
-        .map((m) => {
-          const bodega = normalizeWarehouseAlias(m.bodega);
-          if (!isHuarteMirrorWarehouse(bodega)) return null;
-          const producto = clean(m.producto);
-          const lote = canonicalLotForProduct(CANET_LOT_REFERENCE_ROWS, producto, clean(m.lote));
-          if (!producto || !lote) return null;
-          const tipo = clean(m.tipo_movimiento);
-          const qty = Math.abs(toNum(m.cantidad));
-          const sign = toNum(m.signo) || inferMovementSignByType(tipo, qty);
-          const signedQty = inferSignedQuantityLoose({
-            cantidad: m.cantidad,
-            cantidad_signed: m.cantidad_signed,
-            signo: m.signo,
-            tipo_movimiento: tipo,
-          });
-          return {
-            ...m,
-            id: 4000000000 + toNum(m.id),
-            producto,
-            lote,
-            cantidad: qty,
-            cantidad_signed: signedQty,
-            signo: sign,
-            afecta_stock: clean(m.afecta_stock) || 'SI',
-            bodega,
-            source: 'huarte_mirror',
-            origin_huarte_id: toNum(m.id),
-          } as Movement;
-        })
-        .filter(Boolean) as Movement[],
-    [huarteMovimientosShared],
-  );
+  const huarteMirrorMovements = useMemo(() => [] as Movement[], []);
   const syncMirrorUpsert = async (m: Movement) => {
+    void m;
     if (!canWriteHuarteMirrorFromCanet) return;
     const tipo = normalizeSearch(clean(m.tipo_movimiento));
     if (tipo.includes('traspaso')) return;
@@ -1557,6 +1600,7 @@ function InventoryPage() {
   }, [actorName, canetDB, movimientos, movimientosLoading, syncMirrorUpsert]);
 
   const syncMirrorDelete = async (canetId: number) => {
+    void canetId;
     if (!canWriteHuarteMirrorFromCanet) return;
     const toDelete = huarteMovimientosShared.filter((row: any) => {
       const src = clean(row.source).toLowerCase();
@@ -1596,26 +1640,7 @@ function InventoryPage() {
     setProductFilters((prev) => prev.filter((p) => p !== value));
   };
 
-  const canApproveRequests = actorIsAdmin || actorIsAnabela;
-  const canEditByDefault = !isRestrictedUser && (actorIsAdmin || actorIsAnabela || actorIsFernando);
-
-  const normalizedActiveGrants = useMemo(() => {
-    const nowMs = Date.now();
-    return editGrants.filter((g) => new Date(g.expiresAt).getTime() > nowMs);
-  }, [editGrants]);
-
-  useEffect(() => {
-    if (normalizedActiveGrants.length !== editGrants.length) {
-      setEditGrants(normalizedActiveGrants);
-    }
-  }, [normalizedActiveGrants, editGrants.length]);
-
-  const actorGrant = useMemo(
-    () => normalizedActiveGrants.find((g) => g.userId === actorId),
-    [normalizedActiveGrants, actorId],
-  );
-
-  const canEditNow = canEditByDefault || !!actorGrant;
+  const canEditNow = !isRestrictedUser;
 
   const appendAudit = (action: string, details?: string) => {
     if (!actorId) return;
@@ -1698,14 +1723,30 @@ function InventoryPage() {
           afecta_stock: clean(m.afecta_stock) || 'SI',
         };
       })
-      .filter((m) => !isInvalidLegacyLot(m.producto, m.lote))
-      .filter((m) => !isMasBorrasWarehouse(m.bodega));
-    return [...canetBaseMovements, ...huarteMirrorMovements];
-  }, [movimientos, signByType, visibleLotes, huarteMirrorMovements]);
+      .filter((m) => !isInvalidLegacyLot(m.producto, m.lote));
+    const legacyTransferEntries = buildMissingTransferEntryMovements(canetBaseMovements, {
+      existingMovements: canetBaseMovements,
+      allowedDestinations: CANET_MASTER_WAREHOUSE_ORDER,
+      idOffset: 1700000000,
+      source: 'legacy_transfer_auto_in',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value, movement) => canonicalLot(clean((movement as any).producto), clean(value)),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+    }) as Movement[];
+    const huarteTransferEntries = buildMissingTransferEntryMovements(huarteMovimientosShared as Movement[], {
+      existingMovements: [...canetBaseMovements, ...legacyTransferEntries],
+      allowedDestinations: CANET_MASTER_WAREHOUSE_ORDER,
+      idOffset: 1800000000,
+      source: 'huarte_transfer_auto_in',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value, movement) => canonicalLot(clean((movement as any).producto), clean(value)),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+    }) as Movement[];
+    return [...canetBaseMovements, ...legacyTransferEntries, ...huarteTransferEntries];
+  }, [huarteMovimientosShared, movimientos, signByType, visibleLotes]);
 
-  // IMPORTANT: Never run full-array replacement of Huarte movements from Canet.
-  // We only sync by per-movement upsert/delete (syncMirrorUpsert/syncMirrorDelete),
-  // so manual Huarte rows cannot be dropped by a reconciliation race.
+  // Canet and Huarte are independent inventories. Transfers are represented
+  // by explicit paired movements, not by live mirrored rows.
 
   const validDates = useMemo(() => normalizedMovements.map((m) => dateFromAny(clean(m.fecha))).filter(Boolean) as Date[], [normalizedMovements]);
   const currentMonth = useMemo(() => getCurrentMonthKey(), []);
@@ -1724,19 +1765,50 @@ function InventoryPage() {
   useEffect(() => {
     if (!isRestrictedUser) return;
     if (accessMode !== 'consult') setAccessMode('consult');
+    if (dateFilterMode !== 'month') setDateFilterMode('month');
     if (monthFilter !== currentMonth) setMonthFilter(currentMonth);
-  }, [isRestrictedUser, accessMode, monthFilter, currentMonth]);
+  }, [isRestrictedUser, accessMode, dateFilterMode, monthFilter, currentMonth]);
 
-  const monthEnd = useMemo(() => {
-    if (!monthFilter) return null;
-    const [yy, mm] = monthFilter.split('-').map(Number);
-    return new Date(yy, mm, 0, 23, 59, 59, 999);
-  }, [monthFilter]);
+  const selectedDatePeriod = useMemo(() => {
+    if (dateFilterMode === 'all') {
+      return { start: null as Date | null, end: null as Date | null, label: 'Todos', fileKey: 'todos' };
+    }
+    if (dateFilterMode === 'month') {
+      const start = dateStartFromInput(monthStartInputValue(monthFilter));
+      const end = monthEndDateFromKey(monthFilter);
+      return { start, end, label: describeDatePeriod(dateFilterMode, start, end, monthFilter, yearFilter), fileKey: monthFilter || 'mes' };
+    }
+    if (dateFilterMode === 'year') {
+      const year = Number(yearFilter);
+      if (!Number.isFinite(year)) return { start: null, end: null, label: 'Año', fileKey: 'anio' };
+      return {
+        start: new Date(year, 0, 1, 0, 0, 0, 0),
+        end: new Date(year, 11, 31, 23, 59, 59, 999),
+        label: describeDatePeriod(dateFilterMode, null, null, monthFilter, yearFilter),
+        fileKey: String(year),
+      };
+    }
+    const start = dateStartFromInput(dateFilterStart);
+    const end = dateFilterMode === 'day' ? dateEndFromInput(dateFilterStart) : dateEndFromInput(dateFilterEnd);
+    if (start && end && start.getTime() > end.getTime()) {
+      return { start: dateStartFromInput(dateFilterEnd), end: dateEndFromInput(dateFilterStart), label: describeDatePeriod(dateFilterMode, dateStartFromInput(dateFilterEnd), dateEndFromInput(dateFilterStart), monthFilter, yearFilter), fileKey: `${dateFilterEnd}_${dateFilterStart}` };
+    }
+    return { start, end, label: describeDatePeriod(dateFilterMode, start, end, monthFilter, yearFilter), fileKey: dateFilterMode === 'day' ? dateFilterStart : `${dateFilterStart}_${dateFilterEnd}` };
+  }, [dateFilterEnd, dateFilterMode, dateFilterStart, monthFilter, yearFilter]);
+
+  const periodEnd = selectedDatePeriod.end;
+  const periodHasDateFilter = dateFilterMode !== 'all';
+  const closeMonthKey = dateFilterMode === 'month' ? monthFilter : '';
+  const periodFileKey = selectedDatePeriod.fileKey;
+  const periodLabel = selectedDatePeriod.label;
 
   const movementMatchesFilters = (m: Movement, monthExact: boolean) => {
+    if (hiddenLotKeySet.has(lotKeyOf(m.producto, m.lote))) return false;
     const d = dateFromAny(clean(m.fecha));
-    if (monthFilter && monthExact) {
-      if (!d || monthKeyFromDate(d) !== monthFilter) return false;
+    if (monthExact && periodHasDateFilter) {
+      if (!d) return false;
+      if (selectedDatePeriod.start && d < selectedDatePeriod.start) return false;
+      if (selectedDatePeriod.end && d > selectedDatePeriod.end) return false;
     }
     if (productFilters.length > 0 && !productFilters.includes(clean(m.producto))) return false;
     if (lotFilter && clean(m.lote) !== lotFilter) return false;
@@ -1764,112 +1836,39 @@ function InventoryPage() {
     return normalizedMovements.filter((m) => {
       if (clean(m.afecta_stock).toUpperCase() !== 'SI') return false;
       if (!movementMatchesFilters(m, false)) return false;
-      if (!monthEnd) return true;
+      if (!periodEnd) return true;
       const d = dateFromAny(clean(m.fecha));
       // Rows without ISO date act as opening/base balances and should be included in stock.
       if (!d) return true;
-      return d <= monthEnd;
+      return d <= periodEnd;
     });
-  }, [normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, monthEnd, quickSearch]);
+  }, [hiddenLotKeySet, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, periodEnd, quickSearch]);
 
   const stockBaseVisible = useMemo(
     () =>
       stockBase.filter((m) => {
         const key = lotKeyOf(m.producto, m.lote);
-        return !archivedLotKeySet.has(key);
+        return !hiddenLotKeySet.has(key);
       }),
-    [archivedLotKeySet, stockBase],
+    [hiddenLotKeySet, stockBase],
   );
 
-  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [normalizedMovements, monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
-
-  const huarteMirrorStockByLotBodega = useMemo(() => {
-    const fromCache = new Map<string, number>();
-    const cacheBreakdown =
-      huarteVisualStockByLotCache &&
-      clean(huarteVisualStockByLotCache.monthKey) === clean(monthFilter) &&
-      huarteVisualStockByLotCache.byLotBodega &&
-      Object.keys(huarteVisualStockByLotCache.byLotBodega).length > 0
-        ? huarteVisualStockByLotCache.byLotBodega
-        : null;
-
-    if (cacheBreakdown) {
-      for (const [rawKey, value] of Object.entries(cacheBreakdown)) {
-        const [productoRaw, loteRaw, bodegaRaw] = rawKey.split('|');
-        const producto = clean(productoRaw);
-        const lote = clean(loteRaw);
-        if (!producto || !lote) continue;
-        if (isInvalidLegacyLot(producto, lote)) continue;
-        const bodega = normalizeWarehouseAlias(bodegaRaw).toUpperCase();
-        if (!isHuarteMirrorWarehouse(bodega)) continue;
-        fromCache.set(`${producto}|${lote}|${bodega}`, Math.max(0, toNum(value)));
-      }
-      return fromCache;
-    }
-
-    const map = new Map<string, number>();
-    const ordered = [...huarteMovimientosShared].sort((a, b) => {
-      const da = dateFromAny(clean(a.fecha))?.getTime() || 0;
-      const db = dateFromAny(clean(b.fecha))?.getTime() || 0;
-      if (da !== db) return da - db;
-      return toNum(a.id) - toNum(b.id);
-    });
-    for (const m of ordered) {
-      if (clean((m as any).afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
-      const d = dateFromAny(clean(m.fecha));
-      if (monthEnd && d && d > monthEnd) continue;
-      const producto = clean(m.producto);
-      if (isInvalidLegacyLot(producto, clean(m.lote))) continue;
-      const lote = clean(m.lote);
-      if (!producto || !lote) continue;
-      const bodega = normalizeWarehouseAlias(clean(m.bodega)).toUpperCase();
-      if (!isHuarteMirrorWarehouse(bodega)) continue;
-      const src = clean((m as any).source).toLowerCase();
-      if (src === 'canet' || src === 'canet_live' || src === 'canet_auto_in') continue;
-      if (toNum((m as any).origin_canet_id) > 0) continue;
-      const key = `${producto}|${lote}|${bodega}`;
-      const signed = inferSignedQuantityLoose({
-        cantidad: toNum(m.cantidad),
-        cantidad_signed: m.cantidad_signed,
-        signo: toNum(m.signo),
-        tipo_movimiento: clean(m.tipo_movimiento),
-      });
-      map.set(key, (map.get(key) || 0) + signed);
-    }
-    return map;
-  }, [huarteMovimientosShared, huarteVisualStockByLotCache, monthEnd, monthFilter]);
+  const monthMovements = useMemo(() => normalizedMovements.filter((m) => movementMatchesFilters(m, true)), [hiddenLotKeySet, normalizedMovements, selectedDatePeriod, periodHasDateFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
 
   const stockByPLB = useMemo(() => {
-    const map = new Map<string, { producto: string; lote: string; bodega: string; stock: number }>();
     const selectedWarehouse = warehouseFilter ? normalizeWarehouseAlias(warehouseFilter).toUpperCase() : '';
-    for (const m of stockBaseVisible) {
-      const bodega = normalizeWarehouseAlias(clean(m.bodega));
-      if (selectedWarehouse && bodega.toUpperCase() !== selectedWarehouse) continue;
-      const key = `${clean(m.producto)}|${clean(m.lote)}|${bodega}`;
-      const row = { producto: clean(m.producto), lote: clean(m.lote), bodega, stock: 0 };
-      if (isHuarteMirrorWarehouse(bodega)) {
-        continue;
-      }
-      if (!map.has(key)) map.set(key, row);
-      map.get(key)!.stock += toNum(m.cantidad_signed);
-    }
-
-    for (const [entryKey, stock] of huarteMirrorStockByLotBodega.entries()) {
-      const [producto, lote, bodega] = entryKey.split('|');
-      if (selectedWarehouse && normalizeWarehouseAlias(bodega).toUpperCase() !== selectedWarehouse) continue;
-      const row = {
-        producto: clean(producto),
-        lote: clean(lote),
-        bodega: clean(bodega || 'MAS BORRAS'),
-        stock: toNum(stock),
-      };
-      const rowKey = `${row.producto}|${row.lote}|${row.bodega}`;
-      if (!map.has(rowKey)) map.set(rowKey, { ...row, stock: 0 });
-      map.get(rowKey)!.stock += toNum(row.stock);
-    }
-    return Array.from(map.values())
-      .filter((row) => !archivedLotKeySet.has(lotKeyOf(row.producto, row.lote)))
-      .map((row) => {
+    return calculateInventoryStockSnapshot(stockBaseVisible, {
+      scope: 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: (movement) => {
+        const bodega = normalizeWarehouseAlias(clean(movement.bodega));
+        if (selectedWarehouse && bodega.toUpperCase() !== selectedWarehouse) return false;
+        return !isHuarteMirrorWarehouse(bodega);
+        return true;
+      },
+      rowTransform: (row) => {
         const correctionKey = `${clean(row.producto).toUpperCase()}|${normalizeLotCompareToken(row.lote)}|${normalizeWarehouseAlias(row.bodega).toUpperCase()}`;
         const correctedStock =
           HuarteMirrorStockCorrections.get(correctionKey) ??
@@ -1879,9 +1878,51 @@ function InventoryPage() {
           return { ...row, stock: 0 };
         }
         return { ...row, stock: safeStock };
-      })
+      },
+      rowFilter: (row) => !hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote)) && toNum(row.stock) > 0,
+    }).rows
+      .filter((row) => toNum(row.stock) > 0)
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega));
-  }, [archivedLotKeySet, huarteMirrorStockByLotBodega, stockBaseVisible, warehouseFilter]);
+  }, [hiddenLotKeySet, stockBaseVisible, warehouseFilter]);
+
+  const monthlyCloseRows = useMemo(() => {
+    if (!closeMonthKey) return [];
+    const closeEnd = monthEndDateFromKey(closeMonthKey);
+    if (!closeEnd) return [];
+    const rows = normalizedMovements.filter((movement) => {
+      if (clean(movement.afecta_stock).toUpperCase() !== 'SI') return false;
+      const movementDate = dateFromAny(clean(movement.fecha));
+      if (movementDate && movementDate > closeEnd) return false;
+      const lotKey = lotKeyOf(movement.producto, movement.lote);
+      return !hiddenLotKeySet.has(lotKey);
+    });
+    return calculateInventoryStockSnapshot(rows, {
+      scope: 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+      rowTransform: (row) => {
+      const safeStock = Math.max(0, toNum(row.stock));
+      if (isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+      return { ...row, stock: safeStock };
+      },
+      rowFilter: (row) => toNum(row.stock) > 0,
+    }).rows;
+  }, [closeMonthKey, hiddenLotKeySet, normalizedMovements]);
+
+  const currentMonthlyClose = useMemo(
+    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', closeMonthKey) : null,
+    [monthlyClosures, closeMonthKey],
+  );
+  const previousMonthlyClose = useMemo(
+    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', getPreviousMonthKey(closeMonthKey)) : null,
+    [monthlyClosures, closeMonthKey],
+  );
+  const currentMonthlyCloseDrift = useMemo(
+    () => getInventoryMonthlyCloseDrift(currentMonthlyClose, monthlyCloseRows),
+    [currentMonthlyClose, monthlyCloseRows],
+  );
 
   const stockTotalCanet = useMemo(
     () =>
@@ -2018,7 +2059,90 @@ function InventoryPage() {
     return adjustmentControl.reduce((acc, row) => acc + Math.abs(toNum(row.cantidad)), 0);
   }, [adjustmentControl]);
 
-  const productOptions = useMemo(() => Array.from(new Set(productos.map((p) => clean(p.producto)).filter(Boolean))).sort(), [productos]);
+  const productOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productos
+            .map((p) => clean(p.producto))
+            .filter((code) => code && !isRetiredProductCode(code)),
+        ),
+      ).sort(),
+    [productos],
+  );
+  const movementKitComponents = useMemo(() => {
+    if (editingId) return [];
+    const productCode = clean(movementForm.producto).toUpperCase();
+    if (!productCode) return [];
+    const row = productos.find((p) => clean(p.producto).toUpperCase() === productCode);
+    if (!row) return [];
+    const components = normalizeKitComponents((row as any).kit_componentes || (row as any).componentes_kit);
+    const mode = clean((row as any).modo_stock || (row as any).tipo_producto).toUpperCase();
+    return mode === 'KIT' || components.length > 0 ? components : [];
+  }, [editingId, movementForm.producto, productos]);
+  const movementIsKit = movementKitComponents.length > 0;
+  const movementKitComponentKey = (component: { producto: string }, index: number) => `${index}:${clean(component.producto).toUpperCase()}`;
+
+  const movementKitLotOptionsByProduct = useMemo(() => {
+    const selectedWarehouse = normalizeWarehouseAlias(movementForm.bodega);
+    const rawQty = toNum(movementForm.cantidad);
+    const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
+    const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
+    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
+    const componentProducts = Array.from(new Set(movementKitComponents.map((component) => clean(component.producto)).filter(Boolean)));
+    const map = new Map<string, string[]>();
+    if (componentProducts.length === 0) return map;
+    const localLotStateByProductLot = buildLotStateMap(visibleLotes);
+
+    const activeMasterRows = visibleLotes
+      .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
+      .filter((l) => !!l.producto && !!l.lote)
+      .filter((l) => componentProducts.includes(l.producto))
+      .filter((l) => {
+        const key = lotKeyOf(l.producto, l.lote);
+        return (localLotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
+      });
+
+    const stockRows = calculateInventoryStockSnapshot(sourceIsHuarte ? (huarteMovimientosShared as Movement[]) : stockBaseVisible, {
+      scope: sourceIsHuarte ? 'huarte' : 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: sourceIsHuarte
+        ? undefined
+        : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      rowTransform: (row) => {
+        const safeStock = Math.max(0, toNum(row.stock));
+        if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+        return { ...row, stock: safeStock };
+      },
+      rowFilter: (row) => (sourceIsHuarte || !hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote))) && toNum(row.stock) > 0,
+    }).rows
+      .filter((row) => componentProducts.includes(clean(row.producto)))
+      .filter((row) => (selectedWarehouse ? normalizeWarehouseAlias(row.bodega) === selectedWarehouse : true))
+      .filter((row) => {
+        const key = lotKeyOf(row.producto, row.lote);
+        return (localLotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO' && toNum(row.stock) > 0;
+      })
+      .map((row) => ({ producto: clean(row.producto), lote: clean(row.lote), bodega: normalizeWarehouseAlias(row.bodega) }));
+
+    const rows = isStockOutput ? stockRows : activeMasterRows;
+    componentProducts.forEach((product) => {
+      map.set(product, Array.from(new Set(rows.filter((row) => row.producto === product).map((row) => row.lote))).sort());
+    });
+    return map;
+  }, [
+    movementForm.bodega,
+    movementForm.cantidad,
+    movementForm.tipo_movimiento,
+    movementKitComponents,
+    visibleLotes,
+    signByType,
+    stockBaseVisible,
+    huarteMovimientosShared,
+    hiddenLotKeySet,
+  ]);
   const productByLotMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const l of visibleLotes) {
@@ -2062,7 +2186,17 @@ function InventoryPage() {
   }, [visibleLotes, dashOutProduct, productByLotMap]);
 
   const warehouseOptions = useMemo(() => Array.from(new Set(activeBodegas.map((b) => clean(b.bodega)).filter(Boolean))).sort(), [activeBodegas]);
-  const typeOptions = useMemo(() => Array.from(new Set(tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean))).sort(), [tipos]);
+  const typeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          'venta',
+          'traspaso',
+          ...tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean),
+        ]),
+      ).sort(),
+    [tipos],
+  );
   const clientOptions = useMemo(() => Array.from(new Set(activeClientes.map((c) => clean(c.cliente)).filter(Boolean))).sort(), [activeClientes]);
   const transferNodeOptions = useMemo(
     () =>
@@ -2070,12 +2204,12 @@ function InventoryPage() {
         new Set([
           ...TRANSFER_NODE_OPTIONS,
           ...warehouseOptions.map((v) => normalizeWarehouseAlias(v)),
-          ...clientOptions.map((v) => normalizeWarehouseAlias(v)),
         ]),
       )
         .filter(Boolean)
+        .filter(isSelectableTransferWarehouse)
         .sort(),
-    [warehouseOptions, clientOptions],
+    [warehouseOptions],
   );
 
   useEffect(() => {
@@ -2409,33 +2543,38 @@ function InventoryPage() {
       if (globalMatches.length === 1) return globalMatches[0];
       return lote;
     };
-    const signedFromMovement = (m: any) => {
-      const hasSigned = m?.cantidad_signed !== undefined && m?.cantidad_signed !== null && clean(m?.cantidad_signed) !== '';
-      if (hasSigned) return toNum(m?.cantidad_signed);
-      const qty = Math.abs(toNum(m?.cantidad));
-      const sign = toNum(m?.signo) || (toNum(m?.cantidad) < 0 ? -1 : 1);
-      return qty * sign;
-    };
     const canetStockByLot = new Map<string, number>();
-    for (const m of normalizedMovements) {
-      if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
-      const d = dateFromAny(clean(m?.fecha));
-      if (monthEnd && d && d > monthEnd) continue;
-      const producto = clean(m?.producto);
-      if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
-      const lote = canonicalCanetLot(producto, clean(m?.lote));
-      if (!producto || !lote || !matchesScope(producto, lote)) continue;
-      const bodega = normalizeWarehouseAlias(clean(m?.bodega)).toUpperCase();
-      if (bodega !== 'CANET') continue;
+    const sellableStockByLot = new Map<string, number>();
+    const sellableStockBreakdownByLot = new Map<string, Map<string, number>>();
+    const addSellableStock = (producto: string, lote: string, bodega: string, stock: number) => {
+      const safeStock = Math.max(0, toNum(stock));
+      if (safeStock <= 0) return;
+      if (!SELLABLE_STOCK_WAREHOUSE_SET.has(bodega)) return;
       const key = `${producto}|${lote}`;
-      canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + signedFromMovement(m));
+      sellableStockByLot.set(key, (sellableStockByLot.get(key) || 0) + safeStock);
+      if (!sellableStockBreakdownByLot.has(key)) sellableStockBreakdownByLot.set(key, new Map<string, number>());
+      const byWarehouse = sellableStockBreakdownByLot.get(key)!;
+      byWarehouse.set(bodega, (byWarehouse.get(bodega) || 0) + safeStock);
+    };
+    for (const row of stockByPLB) {
+      const producto = clean(row.producto);
+      if (isInvalidLegacyLot(producto, clean(row.lote))) continue;
+      const lote = canonicalCanetLot(producto, clean(row.lote));
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      const bodega = normalizeWarehouseAlias(clean(row.bodega)).toUpperCase();
+      const stock = Math.max(0, toNum(row.stock));
+      if (bodega === 'CANET') {
+        const key = `${producto}|${lote}`;
+        canetStockByLot.set(key, (canetStockByLot.get(key) || 0) + stock);
+      }
+      addSellableStock(producto, lote, bodega, stock);
     }
 
     const huarteRawStockByPLB = new Map<string, number>();
     for (const m of huarteMovimientosShared) {
       if (clean(m?.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
       const d = dateFromAny(clean(m?.fecha));
-      if (monthEnd && d && d > monthEnd) continue;
+      if (periodEnd && d && d > periodEnd) continue;
       const producto = clean(m?.producto);
       if (isInvalidLegacyLot(producto, clean(m?.lote))) continue;
       const lote = canonicalCanetLot(producto, clean(m?.lote));
@@ -2456,6 +2595,7 @@ function InventoryPage() {
     const huarteVisualTotalByLot = new Map<string, number>();
     const huarteVisualCanetByLot = new Map<string, number>();
     const huarteVisualHuarteOnlyByLot = new Map<string, number>();
+    const huarteVisualSellableByLot = new Map<string, number>();
     for (const [key, raw] of huarteRawStockByPLB.entries()) {
       const [producto, lote, bodega] = key.split('|');
       const safeStock = Math.max(0, Math.round(toNum(raw)));
@@ -2468,17 +2608,21 @@ function InventoryPage() {
       if (isHuarteAlias(bodega)) {
         huarteVisualHuarteOnlyByLot.set(lotKey, (huarteVisualHuarteOnlyByLot.get(lotKey) || 0) + safeStock);
       }
+      if (bodega === 'HUARTE') {
+        huarteVisualSellableByLot.set(lotKey, (huarteVisualSellableByLot.get(lotKey) || 0) + safeStock);
+      }
     }
     const huarteVisualCacheByLot = new Map<string, number>();
     const huarteVisualCacheCanetByLot = new Map<string, number>();
     const huarteVisualCacheHuarteByLot = new Map<string, number>();
+    const huarteVisualCacheSellableByLot = new Map<string, number>();
     const hasCacheBreakdown = !!(
       huarteVisualStockByLotCache &&
-      clean(huarteVisualStockByLotCache.monthKey) === clean(monthFilter) &&
+      clean(huarteVisualStockByLotCache.monthKey) === clean(periodFileKey) &&
       huarteVisualStockByLotCache.byLotBodega &&
       Object.keys(huarteVisualStockByLotCache.byLotBodega).length > 0
     );
-    if (huarteVisualStockByLotCache && clean(huarteVisualStockByLotCache.monthKey) === clean(monthFilter)) {
+    if (huarteVisualStockByLotCache && clean(huarteVisualStockByLotCache.monthKey) === clean(periodFileKey)) {
       Object.entries(huarteVisualStockByLotCache.byLot || {}).forEach(([key, value]) => {
         const [producto, lote] = key.split('|');
         if (!producto || !lote || !matchesScope(producto, lote)) return;
@@ -2496,7 +2640,16 @@ function InventoryPage() {
         if (isHuarteAlias(bodega)) {
           huarteVisualCacheHuarteByLot.set(lotKey, (huarteVisualCacheHuarteByLot.get(lotKey) || 0) + safe);
         }
+        if (bodega === 'HUARTE') {
+          huarteVisualCacheSellableByLot.set(lotKey, (huarteVisualCacheSellableByLot.get(lotKey) || 0) + safe);
+        }
       });
+    }
+    const huarteSellableSource = hasCacheBreakdown ? huarteVisualCacheSellableByLot : huarteVisualSellableByLot;
+    for (const [key, stock] of huarteSellableSource.entries()) {
+      const [producto, lote] = key.split('|');
+      if (!producto || !lote || !matchesScope(producto, lote)) continue;
+      addSellableStock(producto, lote, 'HUARTE', stock);
     }
 
     const productMeta = new Map<
@@ -2539,6 +2692,7 @@ function InventoryPage() {
     }
     for (const key of new Set<string>([
       ...Array.from(canetStockByLot.keys()),
+      ...Array.from(sellableStockByLot.keys()),
       ...Array.from(huarteVisualTotalByLot.keys()),
       ...Array.from(huarteVisualCacheByLot.keys()),
     ])) {
@@ -2555,6 +2709,7 @@ function InventoryPage() {
       viales: number;
       salidas: number;
       potencialCajas: number;
+      stockVendible: number;
       stockCHP: number;
       stockOptimo: number;
       consumoMes: number;
@@ -2569,6 +2724,10 @@ function InventoryPage() {
       ensambladasCol: number;
       salidas: number;
       potencialCajas: number;
+      stockVendible: number;
+      stockCanet: number;
+      stockHuarte: number;
+      stockMasBorras: number;
       stockCHP: number;
       stockOptimo: number;
       consumoMes: number;
@@ -2604,7 +2763,7 @@ function InventoryPage() {
         viales: number;
         salidas: number;
         potencialCajas: number;
-        stockCanetHuarte: number;
+        stockVendible: number;
         stockOptimo: number;
         consumoMes: number;
         activeLotes: number;
@@ -2629,6 +2788,11 @@ function InventoryPage() {
         ? Math.max(0, toNum(huarteVisualCacheHuarteByLot.get(key) || 0))
         : Math.max(0, toNum(huarteVisualHuarteOnlyByLot.get(key) || 0));
       const stockCanetHuarte = stockCanetFromHuarte + stockHuarteOnly;
+      const stockVendible = Math.max(0, toNum(sellableStockByLot.get(key) || 0));
+      const sellableBreakdown = sellableStockBreakdownByLot.get(key) || new Map<string, number>();
+      const stockCanetVendible = Math.max(0, toNum(sellableBreakdown.get('CANET') || 0));
+      const stockHuarteVendible = Math.max(0, toNum(sellableBreakdown.get('HUARTE') || 0));
+      const stockMasBorrasVendible = Math.max(0, toNum(sellableBreakdown.get('MAS BORRAS') || 0));
       // 1) Convertir ingreso a cajas (compuestos) o mantener directo.
       const ingresoEnCajas =
         meta.modo === 'ENSAMBLAJE' && meta.vialesPorCaja > 0
@@ -2653,7 +2817,7 @@ function InventoryPage() {
           : Math.max(0, ingresoEnCajas - cajasEnsambladasMovidas);
       const stockOptimo = Math.max(0, meta.stockOptimo);
       const consumoMes = Math.max(0, meta.consumoMensual);
-      const stockDisponibleTotalLot = Math.max(0, stockCanetHuarte + potencialCajas);
+      const stockDisponibleTotalLot = Math.max(0, stockVendible + potencialCajas);
       const coberturaMesesLot = consumoMes > 0 ? stockDisponibleTotalLot / consumoMes : 0;
       let lotEstadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
       if (lotState === 'AGOTADO') {
@@ -2674,6 +2838,10 @@ function InventoryPage() {
         ensambladasCol,
         salidas,
         potencialCajas,
+        stockVendible,
+        stockCanet: stockCanetVendible,
+        stockHuarte: stockHuarteVendible,
+        stockMasBorras: stockMasBorrasVendible,
         stockCHP: stockDisponibleTotalLot,
         stockOptimo,
         consumoMes,
@@ -2687,20 +2855,20 @@ function InventoryPage() {
           viales: 0,
           salidas: 0,
           potencialCajas: 0,
-          stockCanetHuarte: 0,
+          stockVendible: 0,
           stockOptimo,
           consumoMes,
           activeLotes: 0,
         });
       }
       const productAgg = potentialByProduct.get(base.producto)!;
-      productAgg.lotesSet.add(base.lote);
       if (lotState !== 'AGOTADO') {
         productAgg.viales += base.viales;
         productAgg.salidas += salidas;
         productAgg.potencialCajas += potencialCajas;
-        productAgg.stockCanetHuarte += stockCanetHuarte;
+        productAgg.stockVendible += stockVendible;
         productAgg.activeLotes += 1;
+        if (stockDisponibleTotalLot > 0) productAgg.lotesSet.add(base.lote);
       }
       productAgg.stockOptimo = Math.max(productAgg.stockOptimo, stockOptimo);
       productAgg.consumoMes = Math.max(productAgg.consumoMes, consumoMes);
@@ -2741,8 +2909,8 @@ function InventoryPage() {
     for (const row of potentialByProduct.values()) {
       const stockOptimo = Math.max(0, row.stockOptimo);
       const potencial = Math.max(0, row.potencialCajas);
-      const stockCanetHuarte = Math.max(0, row.stockCanetHuarte);
-      const stockDisponibleTotal = Math.max(0, stockCanetHuarte + potencial);
+      const stockVendible = Math.max(0, row.stockVendible);
+      const stockDisponibleTotal = Math.max(0, stockVendible + potencial);
       const consumoMes = Math.max(0, row.consumoMes);
       const coberturaMeses = consumoMes > 0 ? stockDisponibleTotal / consumoMes : 0;
       let estadoStock: 'AGOTADO' | 'OPTIMO' | 'ATENCION' | 'CRITICO' = 'OPTIMO';
@@ -2756,13 +2924,13 @@ function InventoryPage() {
       } else if (stockDisponibleTotal <= 0) {
         estadoStock = 'CRITICO';
       }
-      if (potentialStatusFilter && potentialStatusFilter !== estadoStock) continue;
       potentialRows.push({
         producto: row.producto,
         lotes: row.lotesSet.size,
         viales: row.viales,
         salidas: row.salidas,
         potencialCajas: potencial,
+        stockVendible,
         stockCHP: stockDisponibleTotal,
         stockOptimo: stockOptimo,
         consumoMes,
@@ -2784,30 +2952,199 @@ function InventoryPage() {
     const sortByProduct = <T extends { producto: string }>(rows: T[]) =>
       rows.sort((a, b) => a.producto.localeCompare(b.producto));
     return {
-      potentialRows: sortByProduct(potentialRows),
-      potentialLotRows: sortByProductLot(potentialLotRows),
+      potentialRows: sortByProduct(potentialRows.filter((row) => row.estadoStock !== 'AGOTADO')),
+      potentialLotRows: sortByProductLot(potentialLotRows.filter((row) => row.estadoStock !== 'AGOTADO' && toNum(row.stockCHP) > 0)),
       canetHuarteRows: sortByProductLot(canetHuarteRows),
       canetRows: sortByProductLot(canetRows),
     };
   }, [
-    normalizedMovements,
     huarteMovimientosShared,
     huarteVisualStockByLotCache,
-    monthFilter,
-    monthEnd,
+    periodFileKey,
+    periodEnd,
     effectiveLotVialesByKey,
     lotAssemblyFinalizations,
     visibleLotes,
+    stockByPLB,
     productos,
     productFilters,
     lotFilter,
     quickSearch,
-    potentialStatusFilter,
     controlSemaforoFilter,
     isHuarteAlias,
     assemblyBoxesSpainByProductLotToken,
     assemblyBoxesColombiaByProductLotToken,
   ]);
+
+  const stockControlDecisionRows = useMemo(() => {
+    const rowsByProduct = new Map<
+      string,
+      {
+        producto: string;
+        lotes: Set<string>;
+        lotesCount: number;
+        stockVendible: number;
+        potencialCajas: number;
+        stockDisponible: number;
+        stockMin: number;
+        stockOptimo: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estado: string;
+        accion: string;
+      }
+    >();
+
+    const ensureRow = (producto: string) => {
+      if (!rowsByProduct.has(producto)) {
+        rowsByProduct.set(producto, {
+          producto,
+          lotes: new Set<string>(),
+          lotesCount: 0,
+          stockVendible: 0,
+          potencialCajas: 0,
+          stockDisponible: 0,
+          stockMin: 0,
+          stockOptimo: 0,
+          consumoMes: 0,
+          coberturaMeses: 0,
+          estado: 'AGOTADO',
+          accion: 'Sin stock visible. Revisar si falta entrada o ajuste.',
+        });
+      }
+      return rowsByProduct.get(producto)!;
+    };
+
+    for (const row of stockControlTables.potentialLotRows) {
+      const producto = clean(row.producto);
+      if (!producto) continue;
+      const current = ensureRow(producto);
+      current.lotes.add(clean(row.lote));
+      current.stockVendible += Math.max(0, toNum(row.stockVendible));
+      current.consumoMes = Math.max(current.consumoMes, toNum(row.consumoMes));
+    }
+
+    for (const row of stockControlTables.potentialRows) {
+      const producto = clean(row.producto);
+      if (!producto) continue;
+      const current = ensureRow(producto);
+      current.potencialCajas = Math.max(current.potencialCajas, toNum(row.potencialCajas));
+      current.stockVendible = Math.max(current.stockVendible, toNum(row.stockVendible));
+      current.lotesCount = Math.max(current.lotesCount, toNum(row.lotes));
+      current.stockOptimo = Math.max(current.stockOptimo, toNum(row.stockOptimo));
+      current.consumoMes = Math.max(current.consumoMes, toNum(row.consumoMes));
+    }
+
+    return Array.from(rowsByProduct.values())
+      .map((row) => {
+        const stockDisponible = Math.max(0, row.stockVendible + row.potencialCajas);
+        const coberturaMeses = row.consumoMes > 0 ? stockDisponible / row.consumoMes : 0;
+        const estado = getCoverageSemaforo(coberturaMeses, stockDisponible);
+        const accion =
+          estado === 'AGOTADO'
+            ? 'Crear entrada o ajuste si existe stock físico.'
+            : estado === 'CRITICO'
+              ? 'Reponer o ensamblar de forma urgente.'
+              : estado === 'ATENCION'
+                ? 'Planificar reposición antes del próximo cierre.'
+                : 'Sin acción inmediata.';
+        return {
+          ...row,
+          lotesCount: Math.max(row.lotesCount, Array.from(row.lotes).filter(Boolean).length),
+          stockDisponible,
+          coberturaMeses,
+          estado,
+          accion,
+        };
+      })
+      .filter((row) => (controlSemaforoFilter ? row.estado === controlSemaforoFilter : true))
+      .sort((a, b) => {
+        const rank: Record<string, number> = { AGOTADO: 0, CRITICO: 1, ATENCION: 2, OPTIMO: 3 };
+        return (rank[a.estado] ?? 9) - (rank[b.estado] ?? 9) || a.producto.localeCompare(b.producto);
+      });
+  }, [controlSemaforoFilter, stockControlTables.potentialLotRows, stockControlTables.potentialRows]);
+
+  const stockControlSummary = useMemo(() => {
+    const summary = {
+      agotado: 0,
+      critico: 0,
+      atencion: 0,
+      optimo: 0,
+      potencialTotal: 0,
+      stockDisponibleTotal: 0,
+    };
+    for (const row of stockControlDecisionRows) {
+      if (row.estado === 'AGOTADO') summary.agotado += 1;
+      else if (row.estado === 'CRITICO') summary.critico += 1;
+      else if (row.estado === 'ATENCION') summary.atencion += 1;
+      else summary.optimo += 1;
+      summary.potencialTotal += Math.max(0, toNum(row.potencialCajas));
+      summary.stockDisponibleTotal += Math.max(0, toNum(row.stockDisponible));
+    }
+    return summary;
+  }, [stockControlDecisionRows]);
+
+  const stockControlDetailRows = useMemo(() => {
+    if (!potentialDetailProduct) return [];
+    const byLot = new Map<
+      string,
+      {
+        producto: string;
+        lote: string;
+        stockVendible: number;
+        stockCanet: number;
+        stockHuarte: number;
+        stockMasBorras: number;
+        potencialCajas: number;
+        disponible: number;
+        consumoMes: number;
+        coberturaMeses: number;
+        estado: string;
+      }
+    >();
+    const ensureLot = (producto: string, lote: string) => {
+      const key = lotKeyOf(producto, lote);
+      if (!byLot.has(key)) {
+        byLot.set(key, {
+          producto,
+          lote,
+          stockVendible: 0,
+          stockCanet: 0,
+          stockHuarte: 0,
+          stockMasBorras: 0,
+          potencialCajas: 0,
+          disponible: 0,
+          consumoMes: 0,
+          coberturaMeses: 0,
+          estado: 'AGOTADO',
+        });
+      }
+      return byLot.get(key)!;
+    };
+    for (const row of stockControlTables.potentialLotRows) {
+      if (row.producto !== potentialDetailProduct) continue;
+      const current = ensureLot(row.producto, row.lote);
+      current.stockVendible = Math.max(0, toNum(row.stockVendible));
+      current.stockCanet = Math.max(0, toNum(row.stockCanet));
+      current.stockHuarte = Math.max(0, toNum(row.stockHuarte));
+      current.stockMasBorras = Math.max(0, toNum(row.stockMasBorras));
+      current.potencialCajas = Math.max(0, toNum(row.potencialCajas));
+      current.consumoMes = Math.max(current.consumoMes, toNum(row.consumoMes));
+    }
+    return Array.from(byLot.values())
+      .map((row) => {
+        const disponible = Math.max(0, row.stockVendible + row.potencialCajas);
+        const coberturaMeses = row.consumoMes > 0 ? disponible / row.consumoMes : 0;
+        return {
+          ...row,
+          disponible,
+          coberturaMeses,
+          estado: getCoverageSemaforo(coberturaMeses, disponible),
+        };
+      })
+      .filter((row) => row.disponible > 0)
+      .sort((a, b) => a.lote.localeCompare(b.lote));
+  }, [potentialDetailProduct, stockControlTables.potentialLotRows]);
 
   const riskyProductsSummary = useMemo(() => {
     const acc = new Map<string, { producto: string; stockTotal: number; coberturaMeses: number }>();
@@ -2839,10 +3176,10 @@ function InventoryPage() {
         ? stockControlTables.potentialLotRows.filter(
             (r) =>
               r.producto === potentialDetailProduct &&
-              !archivedLotKeySet.has(lotKeyOf(r.producto, r.lote)),
+              !hiddenLotKeySet.has(lotKeyOf(r.producto, r.lote)),
           )
         : [],
-    [archivedLotKeySet, potentialDetailProduct, stockControlTables.potentialLotRows],
+    [hiddenLotKeySet, potentialDetailProduct, stockControlTables.potentialLotRows],
   );
   const hypotheticalRows = useMemo(() => {
     if (!hypotheticalScope) return [] as Array<{
@@ -2854,7 +3191,7 @@ function InventoryPage() {
     }>;
     if (hypotheticalScope === 'potential') {
       return stockControlTables.potentialLotRows
-        .filter((r) => !archivedLotKeySet.has(lotKeyOf(r.producto, r.lote)))
+        .filter((r) => !hiddenLotKeySet.has(lotKeyOf(r.producto, r.lote)))
         .map((r) => ({
         producto: r.producto,
         lote: r.lote,
@@ -3002,22 +3339,23 @@ function InventoryPage() {
       allMovs.push(m);
     }
 
-    const stockByPLB = new Map<string, number>();
-    for (const m of allMovs) {
-      const producto = clean(m?.producto);
-      const lote = clean(m?.lote);
-      const bodega = normalizeWarehouseAlias(clean(m?.bodega));
-      if (!producto || !lote || !bodega) continue;
-      const key = `${producto}|${lote}|${bodega}`;
-      stockByPLB.set(key, (stockByPLB.get(key) || 0) + signedFromMovement(m));
-    }
+    const stockRowsForAlerts = calculateInventoryStockSnapshot(allMovs, {
+      scope: 'general',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      signedQuantity: signedFromMovement,
+    }).rows;
 
     const mountedByProduct = new Map<string, number>();
     const mountedByProductCanetHuarte = new Map<string, number>();
     const mountedByProductBodega = new Map<string, Map<string, number>>();
     const mountedByProductLote = new Map<string, Map<string, number>>();
-    for (const [key, qty] of stockByPLB.entries()) {
-      const [producto, lote, bodega] = key.split('|');
+    for (const row of stockRowsForAlerts) {
+      const producto = clean(row.producto);
+      const lote = clean(row.lote);
+      const bodega = normalizeWarehouseAlias(row.bodega);
+      const qty = toNum(row.stock);
       const safeQty = Math.max(0, qty);
       mountedByProduct.set(producto, (mountedByProduct.get(producto) || 0) + safeQty);
       if (bodega.toUpperCase() === 'CANET' || bodega.toUpperCase() === 'HUARTE' || isHuarteMirrorWarehouse(bodega)) {
@@ -3154,16 +3492,13 @@ function InventoryPage() {
       .filter((row) => row.stockTotal > 0)
       .sort((a, b) => b.stockTotal - a.stockTotal);
 
-    const globalStockByProductLotBodega = Array.from(stockByPLB.entries())
-      .map(([key, stockTotal]) => {
-        const [producto, lote, bodega] = key.split('|');
-        return {
-          producto,
-          lote,
-          bodega,
-          stockTotal: toNum(Math.max(0, stockTotal)),
-        };
-      })
+    const globalStockByProductLotBodega = stockRowsForAlerts
+      .map((row) => ({
+        producto: row.producto,
+        lote: row.lote,
+        bodega: row.bodega,
+        stockTotal: toNum(Math.max(0, row.stock)),
+      }))
       .filter((row) => row.stockTotal > 0)
       .sort((a, b) => b.stockTotal - a.stockTotal);
 
@@ -3306,7 +3641,7 @@ function InventoryPage() {
       if (!producto || !lote) continue;
       existingKeys.add(lotKeyOf(producto, lote));
     }
-    for (const key of archivedLotKeySet) existingKeys.add(key);
+    for (const key of hiddenLotKeySet) existingKeys.add(key);
     for (const row of lotes) {
       if (!isLotDeleted(row)) continue;
       const producto = clean(row.producto);
@@ -3352,7 +3687,7 @@ function InventoryPage() {
     assemblyBoxesByProductLotToken,
     canonicalKnownCanetLotRows,
     deletedLotKeySet,
-    archivedLotKeySet,
+    hiddenLotKeySet,
     inferredLotVialesByKey,
     lotes,
     lotAssemblyFinalizations,
@@ -3544,32 +3879,135 @@ function InventoryPage() {
   const lotOptionsForForm = useMemo(() => {
     const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
     const keepKey = editingMovement ? lotKeyOf(editingMovement.producto, editingMovement.lote) : '';
-    const rows = visibleLotes
-      .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote) }))
+    const selectedProduct = clean(movementForm.producto);
+    const selectedWarehouse = normalizeWarehouseAlias(movementForm.bodega);
+    const rawQty = toNum(movementForm.cantidad);
+    const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
+    const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
+    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
+    const activeMasterRows = visibleLotes
+      .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
       .filter((l) => !!l.producto && !!l.lote)
-      .filter((l) => (movementForm.producto ? l.producto === movementForm.producto : true))
+      .filter((l) => (selectedProduct ? l.producto === selectedProduct : true))
       .filter((l) => {
         const key = lotKeyOf(l.producto, l.lote);
         if (keepKey && key === keepKey) return true;
         return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
       });
+    const stockRows = calculateInventoryStockSnapshot(sourceIsHuarte ? (huarteMovimientosShared as Movement[]) : stockBaseVisible, {
+      scope: sourceIsHuarte ? 'huarte' : 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value, movement) =>
+        sourceIsHuarte
+          ? clean(value)
+          : canonicalLotForProduct(canonicalKnownCanetLotRows, clean((movement as any).producto), clean(value)),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: sourceIsHuarte
+        ? undefined
+        : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      rowTransform: (row) => {
+        const safeStock = Math.max(0, toNum(row.stock));
+        if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+        return { ...row, stock: safeStock };
+      },
+      rowFilter: (row) => (sourceIsHuarte || !hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote))) && toNum(row.stock) > 0,
+    }).rows
+      .filter((row) => (selectedProduct ? clean(row.producto) === selectedProduct : true))
+      .filter((row) => (selectedWarehouse ? normalizeWarehouseAlias(row.bodega) === selectedWarehouse : true))
+      .filter((row) => {
+        const key = lotKeyOf(row.producto, row.lote);
+        if (keepKey && key === keepKey) return true;
+        return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO' && toNum(row.stock) > 0;
+      })
+      .map((row) => ({ producto: clean(row.producto), lote: clean(row.lote), bodega: normalizeWarehouseAlias(row.bodega) }));
+    const rows = isStockOutput ? stockRows : activeMasterRows;
     return Array.from(new Set(rows.map((r) => r.lote))).sort();
   }, [
     visibleLotes,
     movementForm.producto,
+    movementForm.bodega,
+    movementForm.cantidad,
+    movementForm.tipo_movimiento,
     lotStateByProductLot,
     editingId,
     normalizedMovements,
+    signByType,
+    stockBaseVisible,
+    huarteMovimientosShared,
+    canonicalKnownCanetLotRows,
+    hiddenLotKeySet,
+  ]);
+
+  const getLotOptionsForMovementLine = useCallback((line: MovementDraftLine) => {
+    const editingMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
+    const keepKey = editingMovement ? lotKeyOf(editingMovement.producto, editingMovement.lote) : '';
+    const selectedProduct = clean(line.producto);
+    const selectedWarehouse = normalizeWarehouseAlias(clean(line.bodega) || movementForm.bodega);
+    const rawQty = toNum(line.cantidad);
+    const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
+    const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
+    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
+    const activeMasterRows = visibleLotes
+      .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
+      .filter((l) => !!l.producto && !!l.lote)
+      .filter((l) => (selectedProduct ? l.producto === selectedProduct : true))
+      .filter((l) => {
+        const key = lotKeyOf(l.producto, l.lote);
+        if (keepKey && key === keepKey) return true;
+        return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO';
+      });
+    const stockRows = calculateInventoryStockSnapshot(sourceIsHuarte ? (huarteMovimientosShared as Movement[]) : stockBaseVisible, {
+      scope: sourceIsHuarte ? 'huarte' : 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value, movement) =>
+        sourceIsHuarte
+          ? clean(value)
+          : canonicalLotForProduct(canonicalKnownCanetLotRows, clean((movement as any).producto), clean(value)),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: sourceIsHuarte
+        ? undefined
+        : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      rowTransform: (row) => {
+        const safeStock = Math.max(0, toNum(row.stock));
+        if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+        return { ...row, stock: safeStock };
+      },
+      rowFilter: (row) => (sourceIsHuarte || !hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote))) && toNum(row.stock) > 0,
+    }).rows
+      .filter((row) => (selectedProduct ? clean(row.producto) === selectedProduct : true))
+      .filter((row) => (selectedWarehouse ? normalizeWarehouseAlias(row.bodega) === selectedWarehouse : true))
+      .filter((row) => {
+        const key = lotKeyOf(row.producto, row.lote);
+        if (keepKey && key === keepKey) return true;
+        return (lotStateByProductLot.get(key) || 'ACTIVO') !== 'AGOTADO' && toNum(row.stock) > 0;
+      })
+      .map((row) => ({ producto: clean(row.producto), lote: clean(row.lote), bodega: normalizeWarehouseAlias(row.bodega) }));
+    const rows = isStockOutput ? stockRows : activeMasterRows;
+    return Array.from(new Set(rows.map((r) => r.lote))).sort();
+  }, [
+    canonicalKnownCanetLotRows,
+    editingId,
+    hiddenLotKeySet,
+    huarteMovimientosShared,
+    lotStateByProductLot,
+    movementForm.bodega,
+    movementForm.tipo_movimiento,
+    normalizedMovements,
+    signByType,
+    stockBaseVisible,
+    visibleLotes,
   ]);
 
   const visibleMovements = useMemo(() => {
-    const base = monthFilter ? monthMovements : normalizedMovements.filter((m) => movementMatchesFilters(m, false));
+    const base = periodHasDateFilter ? monthMovements : normalizedMovements.filter((m) => movementMatchesFilters(m, false));
     return [...base].sort((a, b) => {
       const byDate = movementDateMs(clean(b.fecha)) - movementDateMs(clean(a.fecha));
       if (byDate !== 0) return byDate;
       return b.id - a.id;
     });
-  }, [monthFilter, monthMovements, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
+  }, [periodHasDateFilter, monthMovements, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch]);
 
   const visibleMovementsLast7Days = useMemo(() => {
     if (showMovementsAll) return visibleMovements;
@@ -3589,118 +4027,27 @@ function InventoryPage() {
 
   useEffect(() => {
     setShowMovementsAll(false);
-  }, [monthFilter, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
+  }, [periodFileKey, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter]);
 
   const notifyAnabela = async (message: string) => {
-    if (!anabela?.id) return;
-    try {
-      await addNotification({ message, userId: anabela.id, type: 'info' });
-    } catch {
-      // noop
-    }
-  };
-
-  const notifyInventoryApprovers = async (message: string) => {
-    const targetIds = Array.from(
-      new Set([anabela?.id, ...admins.map((a) => a.id)].filter(Boolean) as string[]),
-    );
-    if (targetIds.length === 0) return;
-    await Promise.all(
-      targetIds.map(async (id) => {
-        try {
-          await addNotification({ message, userId: id, type: 'action_required' });
-        } catch {
-          // noop
-        }
-      }),
+    const responsibleIds = Array.from(
+      new Set([anabela?.id, fernando?.id].filter(Boolean) as string[]),
+    ).filter((id) => id !== actorId);
+    const targetIds = responsibleIds.length > 0
+      ? responsibleIds
+      : admins.map((admin) => admin.id).filter((id) => id !== actorId);
+    await Promise.allSettled(
+      targetIds.map((userId) =>
+        addNotification({
+          message,
+          userId,
+          type: 'info',
+        }),
+      ),
     );
   };
 
   const getUserName = (id: string) => USERS.find((u) => u.id === id)?.name || id;
-
-  const actorPendingRequest = useMemo(
-    () => editRequests.find((r) => r.requesterId === actorId && r.status === 'pending'),
-    [editRequests, actorId],
-  );
-
-  const pendingRequestsForApprover = useMemo(
-    () => editRequests.filter((r) => r.status === 'pending'),
-    [editRequests],
-  );
-
-  const requestEditAccess = async () => {
-    if (!actorId || !currentUser) return;
-    if (actorPendingRequest) return;
-    const request: InventoryEditRequest = {
-      id: `${Date.now()}-${actorId}`,
-      requesterId: actorId,
-      requesterName: actorName,
-      requestedAt: new Date().toISOString(),
-      status: 'pending',
-    };
-    const next = [request, ...editRequests];
-    setEditRequests(next);
-    appendAudit('Solicitud de edición', 'Solicitó permiso temporal para editar inventario');
-    await notifyInventoryApprovers(`${actorName} solicitó permiso para editar Inventario.`);
-  };
-
-  const approveEditRequest = async (requestId: string) => {
-    if (!canApproveRequests || !actorId || !currentUser) return;
-    const req = editRequests.find((r) => r.id === requestId);
-    if (!req || req.status !== 'pending') return;
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + EDIT_GRANT_HOURS * 60 * 60 * 1000).toISOString();
-    const grant: InventoryEditGrant = {
-      userId: req.requesterId,
-      approvedById: actorId,
-      approvedByName: actorName,
-      approvedAt: now.toISOString(),
-      expiresAt,
-    };
-    const nextGrants = [grant, ...normalizedActiveGrants.filter((g) => g.userId !== req.requesterId)];
-    setEditGrants(nextGrants);
-
-    const nextReqs = editRequests.map((r) =>
-      r.id === requestId
-        ? { ...r, status: 'approved' as EditRequestStatus, resolvedAt: now.toISOString(), resolvedById: actorId, resolvedByName: actorName }
-        : r,
-    );
-    setEditRequests(nextReqs);
-    appendAudit('Aprobación de edición', `Aprobó a ${req.requesterName} por ${EDIT_GRANT_HOURS} horas`);
-
-    try {
-      await addNotification({
-        userId: req.requesterId,
-        type: 'success',
-        message: `Tu permiso para editar Inventario fue aprobado por ${actorName} hasta ${new Date(expiresAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.`,
-      });
-    } catch {
-      // noop
-    }
-  };
-
-  const denyEditRequest = async (requestId: string) => {
-    if (!canApproveRequests || !actorId || !currentUser) return;
-    const req = editRequests.find((r) => r.id === requestId);
-    if (!req || req.status !== 'pending') return;
-    const now = new Date().toISOString();
-    const nextReqs = editRequests.map((r) =>
-      r.id === requestId
-        ? { ...r, status: 'denied' as EditRequestStatus, resolvedAt: now, resolvedById: actorId, resolvedByName: actorName }
-        : r,
-    );
-    setEditRequests(nextReqs);
-    appendAudit('Denegación de edición', `Denegó la solicitud de ${req.requesterName}`);
-    try {
-      await addNotification({
-        userId: req.requesterId,
-        type: 'error',
-        message: `Tu solicitud para editar Inventario fue denegada por ${actorName}.`,
-      });
-    } catch {
-      // noop
-    }
-  };
 
   const openCreateModal = () => {
     if (!canEditNow) return;
@@ -3715,6 +4062,25 @@ function InventoryPage() {
       tipo_movimiento: preferredType,
       bodega: 'CANET',
     });
+    setMovementLines([createEmptyMovementDraftLine()]);
+    setMovementKitLots({});
+    setMovementModalOpen(true);
+  };
+  const openCreateAssemblyModal = () => {
+    if (!canEditNow) return;
+    const preferredType =
+      tipos.find((t) => clean(t.tipo_movimiento).toLowerCase().includes('ensam'))?.tipo_movimiento ||
+      tipos.find((t) => clean(t.tipo_movimiento).toLowerCase().includes('entrada'))?.tipo_movimiento ||
+      tipos.find((t) => clean(t.tipo_movimiento))?.tipo_movimiento ||
+      '';
+    setEditingId(null);
+    setMovementForm({
+      ...EMPTY_FORM,
+      tipo_movimiento: preferredType,
+      bodega: 'CANET',
+    });
+    setMovementLines([createEmptyMovementDraftLine()]);
+    setMovementKitLots({});
     setMovementModalOpen(true);
   };
 
@@ -3732,127 +4098,493 @@ function InventoryPage() {
       destino: m.destino || '',
       notas: m.notas || '',
     });
+    setMovementLines([{ id: `edit-${m.id}`, producto: m.producto, lote: m.lote, cantidad: String(m.cantidad) }]);
+    setMovementKitLots({});
     setMovementModalOpen(true);
+  };
+
+  const updateMovementDraftLine = (lineId: string, patch: Partial<MovementDraftLine>) => {
+    setMovementLines((prev) =>
+      prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+    );
+    if (patch.producto !== undefined) {
+      setMovementKitLots({});
+    }
+  };
+
+  const addMovementDraftLine = () => {
+    setMovementLines((prev) => {
+      if (prev.length >= MAX_MOVEMENT_DRAFT_LINES) return prev;
+      return [...prev, createEmptyMovementDraftLine()];
+    });
+  };
+
+  const removeMovementDraftLine = (lineId: string) => {
+    setMovementLines((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.id !== lineId)));
   };
 
   const saveMovement = async () => {
     if (!canEditNow) {
-      window.alert('No tienes permisos de edición activos en este momento.');
+      window.alert('Tu usuario no tiene edición habilitada en este inventario.');
       return;
     }
     if (savingMovement) return;
-    const qty = Math.abs(toNum(movementForm.cantidad));
+    const draftLinesForSave = !editingId
+      ? movementLines
+        .map((line, index) => ({
+          ...line,
+          index,
+          producto: clean(line.producto),
+          lote: clean(line.lote),
+          cantidad: clean(line.cantidad),
+          bodega: normalizeWarehouseAlias(clean(line.bodega) || movementForm.bodega),
+          destino: normalizeWarehouseAlias(clean(line.destino) || clean(movementForm.destino || movementForm.cliente)),
+        }))
+        .filter((line) => !!line.producto || !!line.lote || !!line.cantidad)
+      : [];
+    const primaryDraftLine = draftLinesForSave[0] || {
+      producto: clean(movementForm.producto),
+      lote: clean(movementForm.lote),
+      cantidad: clean(movementForm.cantidad),
+      bodega: normalizeWarehouseAlias(movementForm.bodega),
+      destino: normalizeWarehouseAlias(movementForm.destino || movementForm.cliente),
+      index: 0,
+      id: 'single',
+    };
+    const qty = Math.abs(toNum(!editingId ? primaryDraftLine.cantidad : movementForm.cantidad));
     const isTransfer = normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const isKitMovement = !editingId && movementIsKit;
+    const isMultiLineCreate = !editingId && !isKitMovement;
     const transferDestination = clean(movementForm.destino || movementForm.cliente);
     const transferOrigin = clean(movementForm.bodega);
     const missingFields: string[] = [];
     if (!clean(movementForm.tipo_movimiento)) missingFields.push('Tipo');
-    if (!clean(movementForm.producto)) missingFields.push('Producto');
-    if (!clean(movementForm.lote)) missingFields.push('Lote');
-    if (!transferOrigin) missingFields.push(isTransfer ? 'Origen' : 'Bodega');
-    if (isTransfer && !transferDestination) missingFields.push('Destino');
-    if (!qty) missingFields.push('Cantidad');
+    if (!isMultiLineCreate && !transferOrigin) missingFields.push(isTransfer ? 'Origen' : 'Bodega');
+    if (!isMultiLineCreate && isTransfer && !transferDestination) missingFields.push('Destino');
+    if (isMultiLineCreate) {
+      if (draftLinesForSave.length === 0) missingFields.push('Al menos una línea');
+      draftLinesForSave.forEach((line) => {
+        const prefix = `Línea ${line.index + 1}`;
+        if (!line.bodega) missingFields.push(`${prefix}: ${isTransfer ? 'origen' : 'bodega'}`);
+        if (isTransfer && !line.destino) missingFields.push(`${prefix}: destino`);
+        if (!line.producto) missingFields.push(`${prefix}: producto`);
+        if (!line.lote) missingFields.push(`${prefix}: lote`);
+        if (!toNum(line.cantidad)) missingFields.push(`${prefix}: cantidad`);
+      });
+    } else {
+      if (!clean(movementForm.producto)) missingFields.push('Producto');
+      if (!isKitMovement && !clean(movementForm.lote)) missingFields.push('Lote');
+      if (!qty) missingFields.push('Cantidad');
+    }
+    if (isKitMovement) {
+      movementKitComponents.forEach((component, index) => {
+        const key = movementKitComponentKey(component, index);
+        if (!clean(movementKitLots[key])) missingFields.push(`Lote ${clean(component.producto).toUpperCase()}`);
+      });
+    }
     if (missingFields.length > 0) {
       window.alert(`Completa estos campos para guardar:\n- ${missingFields.join('\n- ')}`);
       return;
     }
-    const producto = clean(movementForm.producto);
-    const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
+    const producto = clean(!editingId ? primaryDraftLine.producto : movementForm.producto);
     const bodega = normalizeWarehouseAlias(transferOrigin);
     const destinoNormalizado = isTransfer ? normalizeWarehouseAlias(transferDestination) || transferDestination : clean(movementForm.destino);
-    const loteValido = visibleLotes.some((l) => {
-      if (clean(l.producto) !== producto) return false;
-      return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(lote);
-    });
-    if (!loteValido) {
-      window.alert(`El lote ${lote} no corresponde al producto ${producto}.`);
+    const transferOriginIsHuarte = HUARTE_OWN_WAREHOUSES.has(bodega);
+    const transferOriginIsCanet = CANET_OWN_WAREHOUSES.has(bodega);
+    if (!isMultiLineCreate && !transferOriginIsCanet && !transferOriginIsHuarte) {
+      window.alert('Selecciona una bodega real de Canet o Huarte.');
       return;
     }
-    if (isTransfer && !destinoNormalizado) {
+    if (!isMultiLineCreate && isTransfer && !destinoNormalizado) {
       window.alert('Selecciona una bodega o cliente destino válido.');
       return;
     }
-    const lotState = lotStateByProductLot.get(lotKeyOf(producto, lote)) || 'ACTIVO';
-    if (lotState === 'AGOTADO') {
-      const originalMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
-      const isEditingSameLot = !!(
-        originalMovement &&
-        clean(originalMovement.producto) === producto &&
-        clean(originalMovement.lote) === lote
-      );
-      if (!isEditingSameLot) {
-        window.alert(`El lote ${lote} está marcado como AGOTADO. Reactívalo en Maestros > Lotes para usarlo.`);
+    if (!isMultiLineCreate && isTransfer) {
+      const destinationWarehouse = normalizeWarehouseAlias(destinoNormalizado);
+      if (!CANET_OWN_WAREHOUSES.has(destinationWarehouse) && !HUARTE_OWN_WAREHOUSES.has(destinationWarehouse)) {
+        window.alert('El destino del traspaso debe ser una bodega real de Canet o Huarte.');
+        return;
+      }
+      if (destinationWarehouse === bodega) {
+        window.alert('El origen y el destino del traspaso no pueden ser la misma bodega.');
         return;
       }
     }
-    const rawQty = toNum(movementForm.cantidad);
+    const rawQty = toNum(!editingId ? primaryDraftLine.cantidad : movementForm.cantidad);
     const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
     const signedQty = qty * sign;
-    const key = `${producto}|${lote}|${bodega}`;
-    const baseStock = normalizedMovements
-      .filter((m) => (editingId ? m.id !== editingId : true))
-      .reduce((acc, m) => {
-        const mk = `${clean(m.producto)}|${canonicalLotForProduct(canonicalKnownCanetLotRows, clean(m.producto), clean(m.lote))}|${normalizeWarehouseAlias(clean(m.bodega))}`;
-        if (mk !== key) return acc;
-        return acc + toNum(m.cantidad_signed);
-      }, 0);
-    if (baseStock + signedQty < 0) {
-      window.alert(`Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.`);
-      return;
+    const validationContextCache = new Map<string, {
+      origin: string;
+      originIsHuarte: boolean;
+      originIsCanet: boolean;
+      stockRows: Array<{ producto: string; lote: string; bodega: string; stock: number }>;
+    }>();
+    const getValidationContext = (originRaw: string) => {
+      const origin = normalizeWarehouseAlias(originRaw);
+      const cached = validationContextCache.get(origin);
+      if (cached) return cached;
+      const originIsHuarte = HUARTE_OWN_WAREHOUSES.has(origin);
+      const originIsCanet = CANET_OWN_WAREHOUSES.has(origin);
+      const stockRows = calculateInventoryStockSnapshot(
+        (originIsHuarte ? (huarteMovimientosShared as Movement[]) : stockBaseVisible).filter((m) => (editingId ? m.id !== editingId : true)),
+        {
+          scope: originIsHuarte ? 'huarte' : 'canet',
+          normalizeProduct: (value) => clean(value),
+          normalizeLot: (value, movement) =>
+            originIsHuarte
+              ? clean(value)
+              : canonicalLotForProduct(canonicalKnownCanetLotRows, clean((movement as any).producto), clean(value)),
+          normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+          includeMovement: originIsHuarte
+            ? undefined
+            : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+          rowTransform: (row) => {
+            if (!originIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+            return { ...row, stock: toNum(row.stock) };
+          },
+        },
+      ).rows;
+      const context = { origin, originIsHuarte, originIsCanet, stockRows };
+      validationContextCache.set(origin, context);
+      return context;
+    };
+    const defaultValidationContext = getValidationContext(bodega);
+
+    const validateProductLot = (targetProduct: string, targetLot: string) => {
+      const context = defaultValidationContext;
+      const loteValido = context.originIsHuarte
+        ? context.stockRows.some(
+            (row) =>
+              clean(row.producto) === targetProduct &&
+              normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot),
+          )
+        : visibleLotes.some((l) => {
+            if (clean(l.producto) !== targetProduct) return false;
+            return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(targetLot);
+          });
+      if (!loteValido) {
+        return `El lote ${targetLot} no corresponde al producto ${targetProduct}.`;
+      }
+      const lotState = context.originIsHuarte ? 'ACTIVO' : lotStateByProductLot.get(lotKeyOf(targetProduct, targetLot)) || 'ACTIVO';
+      if (lotState === 'AGOTADO') {
+        const originalMovement = editingId ? normalizedMovements.find((m) => m.id === editingId) : null;
+        const isEditingSameLot = !!(
+          originalMovement &&
+          clean(originalMovement.producto) === targetProduct &&
+          clean(originalMovement.lote) === targetLot
+        );
+        if (!isEditingSameLot) {
+          return `El lote ${targetLot} está marcado como AGOTADO. Reactívalo en Maestros > Lotes para usarlo.`;
+        }
+      }
+      return '';
+    };
+
+    const stockFor = (targetProduct: string, targetLot: string) =>
+      toNum(
+        defaultValidationContext.stockRows.find(
+          (row) =>
+            clean(row.producto) === targetProduct &&
+            normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot) &&
+            normalizeWarehouseAlias(row.bodega) === bodega,
+        )?.stock,
+      );
+    const validateProductLotForContext = (
+      context: ReturnType<typeof getValidationContext>,
+      targetProduct: string,
+      targetLot: string,
+    ) => {
+      const loteValido = context.originIsHuarte
+        ? context.stockRows.some(
+            (row) =>
+              clean(row.producto) === targetProduct &&
+              normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot),
+          )
+        : visibleLotes.some((l) => {
+            if (clean(l.producto) !== targetProduct) return false;
+            return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(targetLot);
+          });
+      if (!loteValido) {
+        return `El lote ${targetLot} no corresponde al producto ${targetProduct}.`;
+      }
+      const lotState = context.originIsHuarte ? 'ACTIVO' : lotStateByProductLot.get(lotKeyOf(targetProduct, targetLot)) || 'ACTIVO';
+      if (lotState === 'AGOTADO') {
+        return `El lote ${targetLot} está marcado como AGOTADO. Reactívalo en Maestros > Lotes para usarlo.`;
+      }
+      return '';
+    };
+    const stockForContext = (context: ReturnType<typeof getValidationContext>, targetProduct: string, targetLot: string) =>
+      toNum(
+        context.stockRows.find(
+          (row) =>
+            clean(row.producto) === targetProduct &&
+            normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot) &&
+            normalizeWarehouseAlias(row.bodega) === context.origin,
+        )?.stock,
+      );
+
+    const preparedBulkLines: Array<{
+      producto: string;
+      lote: string;
+      qty: number;
+      signedQty: number;
+      sourceIndex: number;
+      bodega: string;
+      destino: string;
+      originIsCanet: boolean;
+      originIsHuarte: boolean;
+    }> = [];
+
+    const kitParts = isKitMovement
+      ? movementKitComponents.map((component, index) => {
+          const componentProduct = clean(component.producto).toUpperCase();
+          const rawComponentLot = clean(movementKitLots[movementKitComponentKey(component, index)]);
+          const componentLot = transferOriginIsHuarte
+            ? rawComponentLot
+            : canonicalLotForProduct(canonicalKnownCanetLotRows, componentProduct, rawComponentLot);
+          const componentQty = qty * Math.max(0, toNum(component.cantidad));
+          return {
+            componentProduct,
+            componentLot,
+            componentQty,
+            componentSignedQty: componentQty * sign,
+          };
+        })
+      : [];
+
+    if (isKitMovement) {
+      for (const part of kitParts) {
+        if (!part.componentProduct || !part.componentLot || part.componentQty <= 0) {
+          window.alert(`Revisa la receta del kit ${producto}: hay un componente incompleto.`);
+          return;
+        }
+        const validationError = validateProductLot(part.componentProduct, part.componentLot);
+        if (validationError) {
+          window.alert(validationError);
+          return;
+        }
+        const baseStock = stockFor(part.componentProduct, part.componentLot);
+        if (baseStock + part.componentSignedQty < 0) {
+          window.alert(
+            `Movimiento inválido: el kit ${producto} dejaría stock negativo en ${part.componentProduct} · ${part.componentLot} · ${bodega}.\n\n` +
+            `Stock disponible calculado: ${baseStock.toLocaleString('es-ES')}.`,
+          );
+          return;
+        }
+      }
+    } else if (isMultiLineCreate) {
+      const runningDeltaByStockKey = new Map<string, number>();
+      for (const line of draftLinesForSave) {
+        const targetProduct = clean(line.producto);
+        const lineContext = getValidationContext(line.bodega);
+        if (!lineContext.originIsCanet && !lineContext.originIsHuarte) {
+          window.alert(`Línea ${line.index + 1}: selecciona una bodega real de Canet o Huarte.`);
+          return;
+        }
+        const lineDestination = isTransfer ? normalizeWarehouseAlias(line.destino) : clean(line.destino || movementForm.destino);
+        if (isTransfer) {
+          if (!CANET_OWN_WAREHOUSES.has(lineDestination) && !HUARTE_OWN_WAREHOUSES.has(lineDestination)) {
+            window.alert(`Línea ${line.index + 1}: el destino del traspaso debe ser una bodega real de Canet o Huarte.`);
+            return;
+          }
+          if (lineDestination === lineContext.origin) {
+            window.alert(`Línea ${line.index + 1}: el origen y el destino no pueden ser la misma bodega.`);
+            return;
+          }
+        }
+        const rawLineLot = clean(line.lote);
+        const targetLot = lineContext.originIsHuarte
+          ? rawLineLot
+          : canonicalLotForProduct(canonicalKnownCanetLotRows, targetProduct, rawLineLot);
+        const lineQty = Math.abs(toNum(line.cantidad));
+        const lineRawQty = toNum(line.cantidad);
+        const lineConfiguredSign = toNum(signByType.get(movementForm.tipo_movimiento));
+        const lineSign = lineConfiguredSign !== 0 ? lineConfiguredSign : inferMovementSignByType(movementForm.tipo_movimiento, lineRawQty);
+        const lineSignedQty = lineQty * lineSign;
+
+        const productRow = productos.find((p) => clean(p.producto).toUpperCase() === targetProduct.toUpperCase());
+        const lineKitComponents = productRow
+          ? normalizeKitComponents((productRow as any).kit_componentes || (productRow as any).componentes_kit)
+          : [];
+        const lineMode = clean((productRow as any)?.modo_stock || (productRow as any)?.tipo_producto).toUpperCase();
+        if (lineMode === 'KIT' || lineKitComponents.length > 0) {
+          window.alert(`La línea ${line.index + 1} contiene un kit (${targetProduct}). Los kits se crean de uno en uno para poder elegir lotes por componente.`);
+          return;
+        }
+
+        const validationError = validateProductLotForContext(lineContext, targetProduct, targetLot);
+        if (validationError) {
+          window.alert(`Línea ${line.index + 1}: ${validationError}`);
+          return;
+        }
+        const stockKey = `${targetProduct}|${normalizeLotCompareToken(targetLot)}|${lineContext.origin}`;
+        const baseStock = stockForContext(lineContext, targetProduct, targetLot) + (runningDeltaByStockKey.get(stockKey) || 0);
+        if (baseStock + lineSignedQty < 0) {
+          window.alert(
+            `Movimiento inválido en línea ${line.index + 1}: dejaría stock negativo en ${targetProduct} · ${targetLot} · ${lineContext.origin}.\n\n` +
+            `Stock disponible calculado: ${baseStock.toLocaleString('es-ES')}.`,
+          );
+          return;
+        }
+        runningDeltaByStockKey.set(stockKey, (runningDeltaByStockKey.get(stockKey) || 0) + lineSignedQty);
+        preparedBulkLines.push({
+          producto: targetProduct,
+          lote: targetLot,
+          qty: lineQty,
+          signedQty: lineSignedQty,
+          sourceIndex: line.index,
+          bodega: lineContext.origin,
+          destino: lineDestination,
+          originIsCanet: lineContext.originIsCanet,
+          originIsHuarte: lineContext.originIsHuarte,
+        });
+      }
+    } else {
+      const lote = transferOriginIsHuarte
+        ? clean(movementForm.lote)
+        : canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
+      const validationError = validateProductLot(producto, lote);
+      if (validationError) {
+        window.alert(validationError);
+        return;
+      }
+      const baseStock = stockFor(producto, lote);
+      if (baseStock + signedQty < 0) {
+        window.alert(`Movimiento inválido: dejaría stock negativo en ${producto} · ${lote} · ${bodega}.\n\nStock disponible calculado: ${baseStock.toLocaleString('es-ES')}.`);
+        return;
+      }
     }
+
     const nowIso = new Date().toISOString();
     setSavingMovement(true);
-    const isSharedMasBorras = isMasBorrasWarehouse(bodega);
-    const targetDb = isSharedMasBorras ? huarteDB : canetDB;
-    const targetInventoryLabel = isSharedMasBorras ? 'Inventario Huarte' : 'Inventario Canet';
+    const isSharedMasBorras = false;
+    const targetDb = transferOriginIsHuarte ? huarteDB : canetDB;
+    const targetInventoryLabel = transferOriginIsHuarte ? 'Inventario Huarte' : 'Inventario Canet';
+    const shouldSyncCanetMirror = transferOriginIsCanet;
     let primaryWriteCommitted = false;
+    const addTransferAutoEntry = async (
+      payload: any,
+      quantity: number,
+      pairMarker: string,
+      originWarehouseRaw = bodega,
+      destinationWarehouseRaw = destinoNormalizado,
+    ) => {
+      if (!isTransfer) return;
+      const originWarehouse = normalizeWarehouseAlias(originWarehouseRaw);
+      const destinationWarehouse = normalizeWarehouseAlias(destinationWarehouseRaw);
+      if (!destinationWarehouse || destinationWarehouse === originWarehouse) return;
+      const autoDb = CANET_OWN_WAREHOUSES.has(destinationWarehouse)
+        ? canetDB
+        : HUARTE_OWN_WAREHOUSES.has(destinationWarehouse)
+          ? huarteDB
+          : null;
+      if (!autoDb) return;
+      await autoDb.addMovement({
+        ...payload,
+        tipo_movimiento: 'entrada_traspaso',
+        bodega: destinationWarehouse,
+        cliente: originWarehouse,
+        destino: destinationWarehouse,
+        cantidad: quantity,
+        signo: 1,
+        cantidad_signed: quantity,
+        source: payload.source === 'manual_kit' ? 'manual_kit_auto_in' : 'manual_transfer_auto_in',
+        notas: `${clean(payload.notas)} | ${pairMarker} | Auto entrada por traspaso desde ${originWarehouse}`,
+      } as any);
+    };
     try {
-      if (editingId) {
-        const originalMovement = normalizedMovements.find((m) => Number(m.id) === Number(editingId)) || null;
-        const originalIsMasBorrasMirror = isHuarteMasBorrasMirrorMovement(originalMovement || ({} as Movement));
-        const editUsesSharedMasBorras =
-          isSharedMasBorras ||
-          originalIsMasBorrasMirror ||
-          isMasBorrasWarehouse(clean(originalMovement?.bodega));
-        const editTargetDb = editUsesSharedMasBorras ? huarteDB : canetDB;
-        const targetId =
-          originalIsMasBorrasMirror && toNum((originalMovement as any)?.origin_huarte_id) > 0
-            ? toNum((originalMovement as any).origin_huarte_id)
-            : editingId;
-        const edited = {
-          fecha: movementForm.fecha,
-          tipo_movimiento: movementForm.tipo_movimiento,
-          producto,
-          lote,
-          cantidad: qty,
-          bodega,
-          cliente: isTransfer ? destinoNormalizado : movementForm.cliente,
-          destino: isTransfer ? destinoNormalizado : movementForm.destino,
-          notas: movementForm.notas,
-          signo: sign,
-          cantidad_signed: qty * sign,
-          updated_at: nowIso,
-          updated_by: actorName,
-        };
-
-        const nextMovement = await editTargetDb.updateMovement(targetId, edited);
-        primaryWriteCommitted = true;
-
-        if (!isSharedMasBorras) {
-          const editedMirrorCandidate: Movement = {
-            ...nextMovement,
+      if (isMultiLineCreate) {
+        const createdMovements: Movement[] = [];
+        for (const line of preparedBulkLines) {
+          const pairMarker = makeTransferPairId();
+          const lineTargetDb = line.originIsHuarte ? huarteDB : canetDB;
+          const nextPayload = {
+            fecha: movementForm.fecha,
+            tipo_movimiento: movementForm.tipo_movimiento,
+            producto: line.producto,
+            lote: line.lote,
+            cantidad: line.qty,
+            bodega: line.bodega,
+            cliente: isTransfer ? line.destino : movementForm.cliente,
+            destino: isTransfer ? line.destino : movementForm.destino,
+            notas: [clean(movementForm.notas), isTransfer ? pairMarker : ''].filter(Boolean).join(' | '),
             afecta_stock: 'SI',
+            signo: line.signedQty < 0 ? -1 : 1,
+            cantidad_signed: line.signedQty,
+            created_at: nowIso,
+            updated_at: nowIso,
+            updated_by: actorName,
+            source: 'manual_batch',
           };
-          await syncMirrorUpsertStrict(editedMirrorCandidate);
+          const nextMovement = await lineTargetDb.addMovement(nextPayload as any);
+          primaryWriteCommitted = true;
+          createdMovements.push(nextMovement as Movement);
+          if (line.originIsCanet && !isSharedMasBorras) {
+            await syncMirrorUpsertStrict(nextMovement);
+          }
+          await addTransferAutoEntry(nextPayload, line.qty, pairMarker, line.bodega, line.destino);
         }
-        void notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
-        appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
-        emitSuccessFeedback('Movimiento actualizado con éxito.');
+        void notifyAnabela(`${actorName} creó ${createdMovements.length} movimiento(s) en Inventario: ${movementForm.tipo_movimiento}.`);
+        appendAudit(
+          'Creación de movimientos múltiples',
+          `${movementForm.tipo_movimiento} · ${createdMovements.map((m) => `${m.producto} ${m.lote} ${m.cantidad_signed}`).join(', ')}`,
+        );
+        emitSuccessFeedback(`${createdMovements.length} movimiento(s) creados con éxito.`);
         setMovementModalOpen(false);
         setEditingId(null);
-      } else {
-        const nextPayload = {
+        setMovementLines([createEmptyMovementDraftLine()]);
+        setMovementKitLots({});
+      } else if (isKitMovement) {
+        const createdMovements: Movement[] = [];
+        for (const part of kitParts) {
+          const pairMarker = makeTransferPairId();
+          const notes = [
+            clean(movementForm.notas),
+            `Kit ${producto} · ${qty.toLocaleString('es-ES')} unidad(es)`,
+            isTransfer ? pairMarker : '',
+          ].filter(Boolean).join(' | ');
+          const nextPayload = {
+            fecha: movementForm.fecha,
+            tipo_movimiento: movementForm.tipo_movimiento,
+            producto: part.componentProduct,
+            lote: part.componentLot,
+            cantidad: part.componentQty,
+            bodega,
+            cliente: isTransfer ? destinoNormalizado : movementForm.cliente,
+            destino: isTransfer ? destinoNormalizado : movementForm.destino,
+            notas: notes,
+            afecta_stock: 'SI',
+            signo: sign,
+            cantidad_signed: part.componentSignedQty,
+            created_at: nowIso,
+            updated_at: nowIso,
+            updated_by: actorName,
+            source: 'manual_kit',
+          };
+          const nextMovement = await targetDb.addMovement(nextPayload as any);
+          primaryWriteCommitted = true;
+          createdMovements.push(nextMovement as Movement);
+          if (shouldSyncCanetMirror && !isSharedMasBorras) {
+            await syncMirrorUpsertStrict(nextMovement);
+          }
+          await addTransferAutoEntry(nextPayload, part.componentQty, pairMarker);
+        }
+        void notifyAnabela(`${actorName} creó una venta/movimiento de kit en Inventario: ${producto} · ${qty.toLocaleString('es-ES')}.`);
+        appendAudit(
+          'Creación de movimiento kit',
+          `${movementForm.tipo_movimiento} · ${producto} · ${qty.toLocaleString('es-ES')} · ${createdMovements.map((m) => `${m.producto} ${m.lote}`).join(', ')}`,
+        );
+        emitSuccessFeedback('Movimiento de kit creado con éxito.');
+        setMovementModalOpen(false);
+        setEditingId(null);
+        setMovementKitLots({});
+      } else if (editingId) {
+        const lote = canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
+        const originalMovement = normalizedMovements.find((m) => Number(m.id) === Number(editingId)) || null;
+        const editTargetDb = canetDB;
+        const targetId = editingId;
+        const edited = {
           fecha: movementForm.fecha,
           tipo_movimiento: movementForm.tipo_movimiento,
           producto,
@@ -3865,6 +4597,43 @@ function InventoryPage() {
           afecta_stock: 'SI',
           signo: sign,
           cantidad_signed: qty * sign,
+          updated_at: nowIso,
+          updated_by: actorName,
+        };
+
+        const nextMovement = await editTargetDb.updateMovement(targetId, edited);
+        primaryWriteCommitted = true;
+
+          if (shouldSyncCanetMirror && !isSharedMasBorras) {
+            const editedMirrorCandidate: Movement = {
+              ...nextMovement,
+              afecta_stock: 'SI',
+          };
+          await syncMirrorUpsertStrict(editedMirrorCandidate);
+        }
+        void notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
+        appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
+        emitSuccessFeedback('Movimiento actualizado con éxito.');
+        setMovementModalOpen(false);
+        setEditingId(null);
+      } else {
+        const lote = transferOriginIsHuarte
+          ? clean(movementForm.lote)
+          : canonicalLotForProduct(canonicalKnownCanetLotRows, producto, clean(movementForm.lote));
+        const pairMarker = makeTransferPairId();
+        const nextPayload = {
+          fecha: movementForm.fecha,
+          tipo_movimiento: movementForm.tipo_movimiento,
+          producto,
+          lote,
+          cantidad: qty,
+          bodega,
+          cliente: isTransfer ? destinoNormalizado : movementForm.cliente,
+          destino: isTransfer ? destinoNormalizado : movementForm.destino,
+          notas: [clean(movementForm.notas), isTransfer ? pairMarker : ''].filter(Boolean).join(' | '),
+          afecta_stock: 'SI',
+          signo: sign,
+          cantidad_signed: qty * sign,
           created_at: nowIso,
           updated_at: nowIso,
           updated_by: actorName,
@@ -3872,9 +4641,10 @@ function InventoryPage() {
         };
         const nextMovement = await targetDb.addMovement(nextPayload as any);
         primaryWriteCommitted = true;
-        if (!isSharedMasBorras) {
+        if (shouldSyncCanetMirror && !isSharedMasBorras) {
           await syncMirrorUpsertStrict(nextMovement);
         }
+        await addTransferAutoEntry(nextPayload, qty, pairMarker);
         void notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
         appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
         emitSuccessFeedback('Movimiento creado con éxito.');
@@ -3884,7 +4654,7 @@ function InventoryPage() {
     } catch (error) {
       console.error('Error guardando movimiento de inventario:', error);
       if (primaryWriteCommitted && !isSharedMasBorras) {
-        window.alert(`Movimiento guardado en Inventario Canet, pero NO se pudo confirmar la sincronización con Inventario Huarte.\n\nDetalle: ${describeDbError(error)}\n\nNo se mostrará "éxito" hasta que ambos queden sincronizados.`);
+        window.alert(`Movimiento guardado en ${targetInventoryLabel}, pero NO se pudo confirmar el movimiento automático relacionado.\n\nDetalle: ${describeDbError(error)}\n\nNo se mostrará "éxito" hasta que ambos queden sincronizados.`);
       } else if (primaryWriteCommitted && isSharedMasBorras) {
         window.alert(`Movimiento guardado en ${targetInventoryLabel}, pero hubo un error posterior.\n\nDetalle: ${describeDbError(error)}`);
       } else {
@@ -3897,7 +4667,7 @@ function InventoryPage() {
 
   const deleteMovement = async (id: number) => {
     if (!canEditNow) {
-      window.alert('No tienes permisos de edición activos en este momento.');
+      window.alert('Tu usuario no tiene edición habilitada en este inventario.');
       return;
     }
     const safeId = toNum(id);
@@ -3910,15 +4680,8 @@ function InventoryPage() {
     if (!ok) return;
     setDeletingMovementId(safeId);
     const originalMovement = normalizedMovements.find((m) => Number(m.id) === Number(safeId)) || null;
-    const originalIsMasBorrasMirror = isHuarteMasBorrasMirrorMovement(originalMovement || ({} as Movement));
-    const targetDb =
-      originalIsMasBorrasMirror || isMasBorrasWarehouse(clean(originalMovement?.bodega))
-        ? huarteDB
-        : canetDB;
-    const targetId =
-      originalIsMasBorrasMirror && toNum((originalMovement as any)?.origin_huarte_id) > 0
-        ? toNum((originalMovement as any).origin_huarte_id)
-        : safeId;
+    const targetDb = canetDB;
+    const targetId = safeId;
     let primaryDeleteCommitted = false;
     try {
       await targetDb.deleteMovement(targetId);
@@ -4158,6 +4921,13 @@ function InventoryPage() {
       });
       return entries;
     });
+    setLotes((prev) =>
+      prev.map((row) =>
+        lotKeyOf(row.producto, row.lote) === key
+          ? stampLotRow({ ...row, estado: 'ACTIVO' })
+          : row,
+      ),
+    );
     await notifyAnabela(`${actorName} restauró el lote ${producto} ${lote}.`);
     appendAudit('Restauración de lote', `${producto} ${lote}`);
     emitSuccessFeedback(`Lote ${lote} restaurado con éxito.`);
@@ -4211,10 +4981,18 @@ function InventoryPage() {
 
   const saveBodega = async () => {
     if (!canEditNow) return;
-    if (!bodegaForm.bodega.trim()) return;
-    setBodegas((prev) => [{ bodega: bodegaForm.bodega.trim(), activo_si_no: bodegaForm.activo_si_no }, ...prev]);
-    await notifyAnabela(`${actorName} creó una bodega en Inventario: ${bodegaForm.bodega.trim()}.`);
-    appendAudit('Creación de bodega', bodegaForm.bodega.trim());
+    const bodega = normalizeCanetMasterWarehouseInput(bodegaForm.bodega);
+    if (!bodega) {
+      alert(`Canet solo permite estas bodegas: ${CANET_MASTER_WAREHOUSE_ORDER.join(', ')}.`);
+      return;
+    }
+    if (activeBodegas.some((b) => normalizeWarehouseAlias(b.bodega) === bodega)) {
+      alert(`La bodega ${bodega} ya existe en Canet.`);
+      return;
+    }
+    setBodegas((prev) => [{ bodega, activo_si_no: bodegaForm.activo_si_no }, ...prev]);
+    await notifyAnabela(`${actorName} creó una bodega en Inventario: ${bodega}.`);
+    appendAudit('Creación de bodega', bodega);
     emitSuccessFeedback('Bodega creada con éxito.');
     setBodegaForm({ bodega: '', activo_si_no: 'SI' });
     setBodegaModalOpen(false);
@@ -4222,16 +5000,24 @@ function InventoryPage() {
 
   const editBodega = async (oldBodegaRaw: string) => {
     if (!canEditNow) return;
-    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    const oldBodega = normalizeWarehouseAlias(oldBodegaRaw);
     if (!oldBodega) return;
     setTextEditDialog({
       title: 'Editar bodega',
       value: oldBodegaRaw,
       confirmLabel: 'Guardar bodega',
       onConfirm: async (nextValue) => {
-        const nextBodega = clean(nextValue).toUpperCase();
+        const nextBodega = normalizeCanetMasterWarehouseInput(nextValue);
+        if (!nextBodega) {
+          alert(`Canet solo permite estas bodegas: ${CANET_MASTER_WAREHOUSE_ORDER.join(', ')}.`);
+          return;
+        }
         if (!nextBodega || nextBodega === oldBodega) return;
-        setBodegas((prev) => prev.map((b) => (clean(b.bodega).toUpperCase() === oldBodega ? { ...b, bodega: nextBodega } : b)));
+        if (activeBodegas.some((b) => normalizeWarehouseAlias(b.bodega) === nextBodega && normalizeWarehouseAlias(b.bodega) !== oldBodega)) {
+          alert(`La bodega ${nextBodega} ya existe en Canet.`);
+          return;
+        }
+        setBodegas((prev) => prev.map((b) => (normalizeWarehouseAlias(b.bodega) === oldBodega ? { ...b, bodega: nextBodega } : b)));
         emitSuccessFeedback('Bodega actualizada con éxito.');
       },
     });
@@ -4239,14 +5025,18 @@ function InventoryPage() {
 
   const deleteBodega = async (oldBodegaRaw: string) => {
     if (!canEditNow) return;
-    const oldBodega = clean(oldBodegaRaw).toUpperCase();
+    const oldBodega = normalizeWarehouseAlias(oldBodegaRaw);
     if (!oldBodega) return;
+    if (CANET_MASTER_WAREHOUSE_SET.has(normalizeWarehouseAlias(oldBodegaRaw))) {
+      alert('Esta bodega forma parte de la estructura base de Canet y no puede borrarse.');
+      return;
+    }
     const ok = window.confirm(`¿Borrar la bodega "${oldBodegaRaw}"?`);
     if (!ok) return;
     const ts = nowIso();
     setBodegas((prev) =>
       prev.map((b) =>
-        clean(b.bodega).toUpperCase() === oldBodega
+        normalizeWarehouseAlias(b.bodega) === oldBodega
           ? { ...b, deletedAt: ts, deleted_at: ts, deletedBy: actorName, deleted_by: actorName, updatedAt: ts, updated_at: ts, updatedBy: actorName, updated_by: actorName }
           : b,
       ),
@@ -4398,6 +5188,7 @@ function InventoryPage() {
       consumo_mensual_cajas: clean((row as any).consumo_mensual_cajas),
       modo_stock: clean(row.modo_stock) || 'ENSAMBLAJE',
       activo_si_no: clean(row.activo_si_no) || 'SI',
+      kit_componentes_text: formatKitComponents((row as any).kit_componentes || (row as any).componentes_kit),
     });
     setProductModalOpen(true);
   };
@@ -4405,7 +5196,30 @@ function InventoryPage() {
   const createProducto = async () => {
     const code = clean(newProductForm.producto).toUpperCase();
     if (!code) return;
+    if (isRetiredProductCode(code)) {
+      window.alert('Ese producto está retirado del catálogo de trabajo.');
+      return;
+    }
+    const mode = clean(newProductForm.modo_stock).toUpperCase();
+    const kitComponents = parseKitComponentsText(newProductForm.kit_componentes_text);
+    if (mode === 'KIT' && kitComponents.length === 0) {
+      window.alert('Un kit necesita al menos un componente. Ejemplo: SV:1:caja');
+      return;
+    }
     const now = nowIso();
+    const { kit_componentes_text, ...productBaseFields } = newProductForm;
+    void kit_componentes_text;
+    const productPayload = {
+      ...productBaseFields,
+      producto: code,
+      tipo_producto: mode === 'KIT' ? 'KIT' : clean(newProductForm.tipo_producto),
+      modo_stock: mode,
+      stock_optimo: clean(newProductForm.stock_optimo),
+      stock_opt: clean(newProductForm.stock_optimo),
+      consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
+      kit_componentes: mode === 'KIT' ? kitComponents : [],
+      componentes_kit: mode === 'KIT' ? kitComponents : [],
+    };
     if (editingProductCode) {
       const target = editingProductCode.toUpperCase();
       setProductos((prev) =>
@@ -4413,11 +5227,8 @@ function InventoryPage() {
           clean(p.producto).toUpperCase() === target
             ? {
               ...p,
-              ...newProductForm,
+              ...productPayload,
               producto: target,
-              stock_optimo: clean(newProductForm.stock_optimo),
-              stock_opt: clean(newProductForm.stock_optimo),
-              consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
               updatedAt: now,
               updated_at: now,
               updatedBy: actorName,
@@ -4426,6 +5237,7 @@ function InventoryPage() {
             : p,
         ),
       );
+      setHuarteProductosCatalog((prev) => upsertProductCatalogRow(prev, { ...productPayload, producto: target, updatedAt: now, updated_at: now, updatedBy: actorName, updated_by: actorName }));
       await notifyAnabela(`${actorName} editó producto en Inventario: ${target}.`);
       appendAudit('Edición de producto', target);
       closeProductModal();
@@ -4436,17 +5248,14 @@ function InventoryPage() {
     setProductos((prev) => [
       ...prev,
       {
-        ...newProductForm,
-        producto: code,
-        stock_optimo: clean(newProductForm.stock_optimo),
-        stock_opt: clean(newProductForm.stock_optimo),
-        consumo_mensual_cajas: clean(newProductForm.consumo_mensual_cajas),
+        ...productPayload,
         updatedAt: now,
         updated_at: now,
         updatedBy: actorName,
         updated_by: actorName,
       },
     ]);
+    setHuarteProductosCatalog((prev) => upsertProductCatalogRow(prev, { ...productPayload, updatedAt: now, updated_at: now, updatedBy: actorName, updated_by: actorName }));
     closeProductModal();
     emitSuccessFeedback('Producto creado con éxito.');
   };
@@ -4482,17 +5291,17 @@ function InventoryPage() {
   const downloadMovements = async () => {
     const headers = ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Destino', 'Notas'];
     const rows = visibleMovements.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed ?? m.cantidad, m.bodega, m.cliente || '', m.destino || '', m.notas || '']);
-    openTablePdf('Inventario - Movimientos', `inventario-movimientos-${monthFilter || 'todos'}.pdf`, headers, rows);
-    await notifyAnabela(`${actorName} descargó movimientos de Inventario (${monthFilter || 'todos'}).`);
-    appendAudit('Descarga PDF', `Movimientos (${monthFilter || 'todos'})`);
+    openTablePdf('Inventario - Movimientos', `inventario-movimientos-${periodFileKey}.pdf`, headers, rows);
+    await notifyAnabela(`${actorName} descargó movimientos de Inventario (${periodFileKey}).`);
+    appendAudit('Descarga PDF', `Movimientos (${periodFileKey})`);
     emitSuccessFeedback('PDF generado con éxito.');
   };
   const downloadMovementsExcel = async () => {
     const headers = ['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Cliente', 'Destino', 'Notas'];
     const rows = visibleMovements.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.cantidad_signed ?? m.cantidad, m.bodega, m.cliente || '', m.destino || '', m.notas || '']);
-    openTableExcel('Inventario - Movimientos', `inventario-movimientos-${monthFilter || 'todos'}.xlsx`, headers, rows);
-    await notifyAnabela(`${actorName} descargó Excel de movimientos de Inventario (${monthFilter || 'todos'}).`);
-    appendAudit('Descarga Excel', `Movimientos (${monthFilter || 'todos'})`);
+    openTableExcel('Inventario - Movimientos', `inventario-movimientos-${periodFileKey}.xlsx`, headers, rows);
+    await notifyAnabela(`${actorName} descargó Excel de movimientos de Inventario (${periodFileKey}).`);
+    appendAudit('Descarga Excel', `Movimientos (${periodFileKey})`);
     emitSuccessFeedback('Excel generado con éxito.');
   };
   const downloadExecutiveReport = async () => {
@@ -4504,14 +5313,14 @@ function InventoryPage() {
     ];
     openPrintablePdfReport({
       title: 'Inventario Canet - Reporte gerencial',
-      subtitle: `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
-      fileName: `inventario-canet-gerencial-${monthFilter || 'todos'}.pdf`,
+      subtitle: `Periodo: ${periodLabel} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      fileName: `inventario-canet-gerencial-${periodFileKey}.pdf`,
       headers: ['Indicador', 'Valor'],
       rows: appendTotalRow(['Indicador', 'Valor'], summaryRows),
       signatures: ['Responsable', 'Revisión'],
     });
-    await notifyAnabela(`${actorName} descargó reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
-    appendAudit('Descarga PDF', `Gerencial (${monthFilter || 'todos'})`);
+    await notifyAnabela(`${actorName} descargó reporte gerencial de Inventario (${periodFileKey}).`);
+    appendAudit('Descarga PDF', `Gerencial (${periodFileKey})`);
     emitSuccessFeedback('PDF gerencial generado con éxito.');
   };
   const downloadExecutiveReportExcel = async () => {
@@ -4523,28 +5332,69 @@ function InventoryPage() {
     ];
     openTableExcel(
       'Inventario Canet - Reporte gerencial',
-      `inventario-canet-gerencial-${monthFilter || 'todos'}.xlsx`,
+      `inventario-canet-gerencial-${periodFileKey}.xlsx`,
       ['Indicador', 'Valor'],
       appendTotalRow(['Indicador', 'Valor'], summaryRows),
-      `Mes: ${monthFilter ? monthLabel(monthFilter) : 'Todos'} · Generado: ${new Date().toLocaleString('es-ES')}`,
+      `Periodo: ${periodLabel} · Generado: ${new Date().toLocaleString('es-ES')}`,
       summaryRows,
     );
-    await notifyAnabela(`${actorName} descargó Excel de reporte gerencial de Inventario (${monthFilter || 'todos'}).`);
-    appendAudit('Descarga Excel', `Gerencial (${monthFilter || 'todos'})`);
+    await notifyAnabela(`${actorName} descargó Excel de reporte gerencial de Inventario (${periodFileKey}).`);
+    appendAudit('Descarga Excel', `Gerencial (${periodFileKey})`);
     emitSuccessFeedback('Excel gerencial generado con éxito.');
+  };
+  const saveMonthlyClose = async () => {
+    if (!closeMonthKey) {
+      alert('Selecciona el modo Mes para guardar el cierre mensual.');
+      return;
+    }
+    if (!isEditModeActive) {
+      alert('Para guardar un cierre debes entrar en modo edición.');
+      return;
+    }
+    if (currentMonthlyClose && !window.confirm(`Ya existe un cierre de ${monthLabel(closeMonthKey)}. ¿Deseas reemplazarlo?`)) {
+      return;
+    }
+    const snapshot = buildInventoryMonthlyCloseSnapshot({
+      scope: 'canet',
+      monthKey: closeMonthKey,
+      monthLabel: monthLabel(closeMonthKey),
+      closedBy: actorName,
+      rows: monthlyCloseRows,
+    });
+    setMonthlyClosures((prev) => upsertInventoryMonthlyCloseSnapshot(prev, snapshot));
+    await notifyAnabela(`${actorName} guardó el cierre mensual de Inventario Canet (${monthLabel(closeMonthKey)}).`);
+    appendAudit('Cierre mensual', `Canet (${closeMonthKey})`);
+    emitSuccessFeedback('Cierre de mes congelado y guardado.');
+  };
+  const downloadMonthlyCloseExcel = () => {
+    if (!currentMonthlyClose) {
+      alert('Todavía no hay cierre guardado para este mes.');
+      return;
+    }
+    openTableExcel(
+      'Inventario Canet - Cierre de mes',
+      `cierre-mes-canet-${currentMonthlyClose.monthKey}.xlsx`,
+      ['Producto', 'Lote', 'Bodega', 'Stock cierre'],
+      appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(currentMonthlyClose)),
+      `Foto congelada · Cierre: ${currentMonthlyClose.monthLabel} · Guardado: ${new Date(currentMonthlyClose.closedAt).toLocaleString('es-ES')} · Responsable: ${currentMonthlyClose.closedBy}`,
+      [
+        ['Stock cierre', currentMonthlyClose.totalStock],
+        ['Productos', currentMonthlyClose.productCount],
+        ['Lotes', currentMonthlyClose.lotCount],
+        ['Bodegas', currentMonthlyClose.warehouseCount],
+        ['Filas snapshot', currentMonthlyClose.rowCount ?? currentMonthlyClose.rows.length],
+        ['Huella snapshot', currentMonthlyClose.snapshotHash || 'legacy'],
+      ],
+    );
+    appendAudit('Descarga Excel', `Cierre mensual Canet (${currentMonthlyClose.monthKey})`);
+    emitSuccessFeedback('Excel de cierre generado.');
   };
 
   const tabs: Array<{ key: InventoryTab; label: string; icon: React.ElementType; compact?: boolean }> = [
     { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { key: 'control_stock', label: 'Control stock', icon: Wrench },
     { key: 'movimientos', label: 'Movimientos', icon: ClipboardList },
-    { key: 'movimientos_cartonaje', label: 'Mov. Cartonaje', icon: Package, compact: true },
-    { key: 'bitacora', label: 'Bitácora', icon: AlertTriangle, compact: true },
-    { key: 'productos', label: 'Productos', icon: Package, compact: true },
-    { key: 'lotes', label: 'Lotes', icon: Layers3, compact: true },
-    { key: 'bodegas', label: 'Bodegas', icon: Building2, compact: true },
-    { key: 'clientes', label: 'Clientes', icon: Users, compact: true },
-    { key: 'tipos', label: 'Tipos', icon: Tags, compact: true },
+    { key: 'ensamblajes', label: 'Ensamblajes', icon: Layers3 },
+    { key: 'maestros', label: 'Maestros', icon: Tags },
   ];
   const visibleTabs = isRestrictedUser
     ? tabs.filter((item) => item.key === 'dashboard' || item.key === 'control_stock')
@@ -4554,11 +5404,26 @@ function InventoryPage() {
     const node = document.getElementById(id);
     if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+  const selectInventoryTab = (nextTab: InventoryTab) => {
+    setTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === 'control_stock') next.set('tab', nextTab);
+    else next.delete('tab');
+    setSearchParams(next, { replace: true });
+  };
 
+  const isStandaloneControlStock = tab === 'control_stock';
   const showAccessSelector = !isRestrictedUser;
-  const effectiveAccessMode: InventoryAccessMode = showAccessSelector ? accessMode : 'consult';
+  const effectiveAccessMode: InventoryAccessMode = isStandaloneControlStock || !showAccessSelector ? 'consult' : accessMode;
   const accessReady = effectiveAccessMode !== 'unset';
   const isEditModeActive = effectiveAccessMode === 'edit' && canEditNow;
+  const monthlyCloseSaveDisabledReason = !closeMonthKey
+    ? 'Selecciona el modo Mes para cerrar.'
+    : !accessReady
+      ? 'Elige consultar o editar para activar el panel.'
+      : !isEditModeActive
+        ? 'Entra en modo edición para guardar el cierre.'
+        : '';
   const activeMainFiltersCount = [productFilters.length > 0, lotFilter, warehouseFilter, typeFilter, clientFilter, quickSearch].filter(Boolean).length;
   const compactInventoryTiles: Array<{ key: 'stock' | 'moves' | 'clients' | 'adjust' | 'outputs'; label: string; Icon: any }> = [
     { key: 'stock', label: 'Stock', Icon: Package },
@@ -4578,11 +5443,31 @@ function InventoryPage() {
     clientFilter ? { key: 'cliente', label: `Cliente: ${clientFilter}`, onClear: () => setClientFilter('') } : null,
     quickSearch ? { key: 'quick', label: `Buscar: ${quickSearch}`, onClear: () => setQuickSearch('') } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; onClear: () => void }>;
+  const stockWarehouseSummary = useMemo(() => {
+    const map = new Map<string, number>();
+    CANET_OWN_WAREHOUSE_ORDER.forEach((bodega) => map.set(bodega, 0));
+    stockByPLB.forEach((row) => {
+      const bodega = normalizeWarehouseAlias(row.bodega) || 'Sin bodega';
+      if (!CANET_OWN_WAREHOUSES.has(bodega)) return;
+      map.set(bodega, (map.get(bodega) || 0) + Math.max(0, toNum(row.stock)));
+    });
+    return Array.from(map.entries())
+      .map(([bodega, stock]) => ({ bodega, stock }))
+      .sort((a, b) => {
+        const ai = CANET_OWN_WAREHOUSE_ORDER.indexOf(a.bodega);
+        const bi = CANET_OWN_WAREHOUSE_ORDER.indexOf(b.bodega);
+        if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+        return b.stock - a.stock;
+      });
+  }, [stockByPLB]);
+  const inventorySummaryTones = ['violet', 'amber', 'indigo'] as const;
   const inventorySummaryChips = [
-    { label: 'Potencial en riesgo', value: stockControlTables.potentialRows.filter((r) => r.estadoStock !== 'OPTIMO').length, tone: 'rose' as const },
-    { label: 'Canet + Huarte en riesgo', value: stockControlTables.canetHuarteRows.filter((r) => r.semaforo !== 'VERDE').length, tone: 'amber' as const },
-    { label: 'Canet en riesgo', value: stockControlTables.canetRows.filter((r) => r.semaforo !== 'VERDE').length, tone: 'violet' as const },
-    { label: 'Caducidades', value: caducityAlerts.length, tone: 'indigo' as const },
+    ...stockWarehouseSummary.map((row, idx) => ({
+      label: row.bodega,
+      value: row.stock,
+      tone: inventorySummaryTones[idx % inventorySummaryTones.length],
+    })),
+    { label: 'Caducidades', value: caducityAlerts.length, tone: 'rose' as const },
   ];
 
   useEffect(() => {
@@ -4611,6 +5496,7 @@ function InventoryPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5 app-page-shell inventory-readable">
+      {!isStandaloneControlStock && (
       <div className="rounded-2xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -4618,18 +5504,119 @@ function InventoryPage() {
             <h1 className="text-2xl font-black text-violet-950">Control de stock Canet</h1>
             <p className="text-sm text-violet-700/80">Lo importante primero: stock, lotes y trazabilidad.</p>
           </div>
-          <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
-            Mes de análisis
-            <select
-              value={monthFilter}
-              onChange={(e) => setMonthFilter(e.target.value)}
-              disabled={isRestrictedUser}
-              className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none min-w-[220px] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-            >
-              {!isRestrictedUser && <option value="">Todos</option>}
-              {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
-            </select>
-          </label>
+          <div className="flex flex-col items-start gap-2 md:items-end">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
+                Periodo
+                <select
+                  value={dateFilterMode}
+                  onChange={(e) => setDateFilterMode(e.target.value as DateFilterMode)}
+                  disabled={isRestrictedUser}
+                  className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  <option value="day">Día</option>
+                  <option value="range">Rango</option>
+                  <option value="month">Mes</option>
+                  <option value="year">Año</option>
+                  {!isRestrictedUser && <option value="all">Todo</option>}
+                </select>
+              </label>
+              {dateFilterMode === 'month' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
+                  Mes
+                  <select
+                    value={monthFilter}
+                    onChange={(e) => setMonthFilter(e.target.value)}
+                    disabled={isRestrictedUser}
+                    className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none min-w-[180px] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                  </select>
+                </label>
+              )}
+              {dateFilterMode === 'year' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
+                  Año
+                  <input
+                    type="number"
+                    value={yearFilter}
+                    onChange={(e) => setYearFilter(e.target.value)}
+                    className="mt-1 block w-28 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none"
+                  />
+                </label>
+              )}
+              {(dateFilterMode === 'day' || dateFilterMode === 'range') && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
+                  {dateFilterMode === 'day' ? 'Día' : 'Desde'}
+                  <input
+                    type="date"
+                    value={dateFilterStart}
+                    onChange={(e) => setDateFilterStart(e.target.value)}
+                    className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none"
+                  />
+                </label>
+              )}
+              {dateFilterMode === 'range' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-violet-600">
+                  Hasta
+                  <input
+                    type="date"
+                    value={dateFilterEnd}
+                    onChange={(e) => setDateFilterEnd(e.target.value)}
+                    className="mt-1 block rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 outline-none"
+                  />
+                </label>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span>Periodo activo: {periodLabel}</span>
+              {!closeMonthKey ? (
+                <span>El cierre mensual solo está disponible en modo Mes</span>
+              ) : !accessReady ? (
+                <span>Elige consultar o editar</span>
+              ) : currentMonthlyClose ? (
+                  <span className="font-semibold text-emerald-700">
+                    Cierre congelado: {new Date(currentMonthlyClose.closedAt).toLocaleDateString('es-ES')} · {currentMonthlyClose.totalStock.toLocaleString('es-ES')}
+                  </span>
+                ) : (
+                  <span>Sin cierre guardado</span>
+                )}
+              {currentMonthlyCloseDrift?.changed && (
+                <span className="font-semibold text-amber-700">
+                  Vista actual cambió: Δ stock {currentMonthlyCloseDrift.stockDelta.toLocaleString('es-ES')} · Δ filas {currentMonthlyCloseDrift.rowDelta.toLocaleString('es-ES')}
+                </span>
+              )}
+              {previousMonthlyClose && (
+                <span>Inicio: {previousMonthlyClose.totalStock.toLocaleString('es-ES')}</span>
+              )}
+              <button
+                onClick={() => void saveMonthlyClose()}
+                disabled={!!monthlyCloseSaveDisabledReason}
+                title={monthlyCloseSaveDisabledReason || 'Guardar cierre congelado'}
+                className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 font-bold ${
+                  monthlyCloseSaveDisabledReason
+                    ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                    : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Save size={14} />
+                Guardar cierre
+              </button>
+              <button
+                onClick={currentMonthlyClose ? downloadMonthlyCloseExcel : undefined}
+                disabled={!currentMonthlyClose}
+                title={currentMonthlyClose ? 'Descargar cierre congelado' : 'Todavía no hay cierre guardado para este mes.'}
+                className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 font-bold ${
+                  currentMonthlyClose
+                    ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                    : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                }`}
+              >
+                <Download size={14} />
+                Excel cierre
+              </button>
+            </div>
+          </div>
         </div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {inventorySummaryChips.map((chip) => (
@@ -4662,8 +5649,9 @@ function InventoryPage() {
             </div>
           )}
       </div>
+      )}
 
-      {showAccessSelector && accessMode === 'unset' ? (
+      {!isStandaloneControlStock && (showAccessSelector && accessMode === 'unset' ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <h2 className="text-base font-black text-violet-950">Acceso a Inventario</h2>
@@ -4678,52 +5666,15 @@ function InventoryPage() {
               </button>
               <button
                 onClick={() => {
-                  if (canEditNow) {
-                    setAccessMode('edit');
-                    return;
-                  }
-                  void requestEditAccess();
-                  setAccessMode('consult');
+                  setAccessMode('edit');
                 }}
                 className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-left hover:bg-amber-100"
               >
                 <p className="text-sm font-black text-amber-900">Editar</p>
-                <p className="text-xs text-amber-800">Requiere autorización de Anabela o administradora (vigencia de 6 horas).</p>
+                <p className="text-xs text-amber-800">Permite modificar inventario. Los responsables recibirán notificación y quedará registro en bitácora.</p>
               </button>
             </div>
-            {!canEditNow && actorPendingRequest && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                Solicitud enviada el {new Date(actorPendingRequest.requestedAt).toLocaleString('es-ES')}. Esperando aprobación.
-              </div>
-            )}
-            {canEditNow && actorGrant && (
-              <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
-                Tienes permiso de edición activo hasta {new Date(actorGrant.expiresAt).toLocaleString('es-ES')}.
-              </div>
-            )}
           </div>
-
-          {canApproveRequests && (
-            <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-black text-violet-950">Solicitudes de edición pendientes</h3>
-              {pendingRequestsForApprover.length === 0 ? (
-                <p className="mt-2 text-sm text-violet-600">No hay solicitudes pendientes.</p>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {pendingRequestsForApprover.map((r) => (
-                    <div key={r.id} className="rounded-xl border border-violet-100 bg-violet-50 p-3">
-                      <p className="text-sm font-semibold text-violet-900">{r.requesterName} solicita editar inventario</p>
-                      <p className="text-xs text-violet-600">Enviado: {new Date(r.requestedAt).toLocaleString('es-ES')}</p>
-                      <div className="mt-2 flex gap-2">
-                        <button onClick={() => void approveEditRequest(r.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">Aprobar 6 horas</button>
-                        <button onClick={() => void denyEditRequest(r.id)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700">Denegar</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       ) : (
         <>
@@ -4739,11 +5690,7 @@ function InventoryPage() {
                   </button>
                   <button
                     onClick={() => {
-                      if (canEditNow) {
-                        setAccessMode('edit');
-                        return;
-                      }
-                      void requestEditAccess();
+                      setAccessMode('edit');
                     }}
                     className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isEditModeActive ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
                   >
@@ -4755,45 +5702,65 @@ function InventoryPage() {
                 {isEditModeActive ? 'Modo edición activo' : 'Modo consulta'}
               </span>
             </div>
-            {isEditModeActive && actorGrant && (
+            {isEditModeActive && (
               <p className="mt-2 text-xs text-violet-700">
-                Permiso temporal aprobado por {actorGrant.approvedByName} hasta {new Date(actorGrant.expiresAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.
+                Cada cambio notificará a los responsables de Canet y quedará guardado en bitácora.
               </p>
             )}
           </div>
 
-          {showAccessSelector && canApproveRequests && pendingRequestsForApprover.length > 0 && (
-            <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm">
-              <p className="text-sm font-black text-violet-950">Tienes {pendingRequestsForApprover.length} solicitud(es) de edición pendiente(s)</p>
-              <div className="mt-2 space-y-2">
-                {pendingRequestsForApprover.map((r) => (
-                  <div key={r.id} className="rounded-xl border border-violet-100 bg-violet-50 p-2.5">
-                    <p className="text-sm font-semibold text-violet-900">{r.requesterName}</p>
-                    <p className="text-xs text-violet-600">Solicitó acceso el {new Date(r.requestedAt).toLocaleString('es-ES')}</p>
-                    <div className="mt-2 flex gap-2">
-                      <button onClick={() => void approveEditRequest(r.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">Aprobar 6 horas</button>
-                      <button onClick={() => void denyEditRequest(r.id)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700">Denegar</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <InventoryConnectionBanner
+            label="Canet"
+            isOnline={canetDB.isOnline}
+            isSyncing={canetDB.isSyncing}
+            lastError={canetDB.lastError}
+            lastSyncedAt={canetDB.lastSyncedAt}
+            onRetry={canetDB.reload}
+          />
 
           <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
             <div className="flex flex-wrap gap-2">
               {visibleTabs.map((item) => {
                 const isActive = item.key === tab;
                 return (
-                  <button key={item.key} onClick={() => setTab(item.key)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-semibold transition ${item.compact ? 'text-xs' : 'text-sm'} ${isActive ? 'border-violet-500 bg-violet-600 text-white shadow-sm' : 'border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100'}`}>
+                  <button key={item.key} onClick={() => selectInventoryTab(item.key)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-semibold transition ${item.compact ? 'text-xs' : 'text-sm'} ${isActive ? 'border-violet-500 bg-violet-600 text-white shadow-sm' : 'border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100'}`}>
                     <item.icon size={15} /> {item.label}
                   </button>
                 );
               })}
             </div>
           </div>
+          {tab === 'maestros' && (
+            <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+                {[
+                  { key: 'cartonaje' as const, label: 'Cartonaje', Icon: Package },
+                  { key: 'productos' as const, label: 'Productos', Icon: Package },
+                  { key: 'lotes' as const, label: 'Lotes', Icon: Layers3 },
+                  { key: 'bodegas' as const, label: 'Bodegas', Icon: Building2 },
+                  { key: 'clientes' as const, label: 'Clientes', Icon: Users },
+                  { key: 'tipos' as const, label: 'Tipos', Icon: Tags },
+                  { key: 'bitacora' as const, label: 'Bitácora', Icon: AlertTriangle },
+                ].map(({ key, label, Icon }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setMasterSection(key)}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
+                      masterSection === key
+                        ? 'border-violet-500 bg-violet-600 text-white shadow-sm'
+                        : 'border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100'
+                    }`}
+                  >
+                    <Icon size={14} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </>
-      )}
+      ))}
 
       {accessReady && (tab === 'dashboard' || tab === 'movimientos') && (
         <div className="rounded-2xl border border-violet-100 bg-white p-3 shadow-sm compact-card">
@@ -4912,21 +5879,21 @@ function InventoryPage() {
             <DataSection title="Stock Cartonaje Canet" subtitle="Stock acumulado por producto (CARTONAJE) y lote" tone="violet" onDownload={async () => {
               openTablePdf(
                 'Inventario Canet - Stock Cartonaje',
-                `dashboard-stock-cartonaje-${monthFilter || 'todos'}.pdf`,
+                `dashboard-stock-cartonaje-${periodFileKey}.pdf`,
                 ['Producto', 'Lote', 'Stock'],
                 stockCartonaje.map((r) => [r.producto, r.lote, r.stock]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Stock Cartonaje (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard stock cartonaje (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Stock Cartonaje (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard stock cartonaje (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario Canet - Stock Cartonaje',
-                `dashboard-stock-cartonaje-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-stock-cartonaje-${periodFileKey}.xlsx`,
                 ['Producto', 'Lote', 'Stock'],
                 stockCartonaje.map((r) => [r.producto, r.lote, r.stock]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Stock Cartonaje (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard stock cartonaje (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock Cartonaje (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard stock cartonaje (${periodFileKey})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Stock']} rows={stockCartonaje.map((r) => [
                 <ProductPill key={`${r.producto}-${r.lote}-cart`} code={r.producto} colorMap={productColorMap} />,
@@ -4941,21 +5908,21 @@ function InventoryPage() {
             <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
               openTablePdf(
                 'Inventario - Stock por producto/lote/bodega',
-                `dashboard-stock-${monthFilter || 'todos'}.pdf`,
+                `dashboard-stock-${periodFileKey}.pdf`,
                 ['Producto', 'Lote', 'Bodega', 'Stock'],
                 stockByPLB.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard stock (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Stock por producto/lote/bodega (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard stock (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario - Stock por producto/lote/bodega',
-                `dashboard-stock-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-stock-${periodFileKey}.xlsx`,
                 ['Producto', 'Lote', 'Bodega', 'Stock'],
                 stockByPLB.map((r) => [r.producto, r.lote, r.bodega, r.stock]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Stock por producto/lote/bodega (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard stock (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock por producto/lote/bodega (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard stock (${periodFileKey})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Stock', 'Estado']} rows={stockByPLB.map((r) => {
                 const stockVal = toNum(r.stock);
@@ -5009,21 +5976,21 @@ function InventoryPage() {
             <DataSection title="Movimientos por lote del mes" subtitle="Detalle filtrable de movimientos mensuales." tone="indigo" onDownload={async () => {
               openTablePdf(
                 'Inventario - Movimientos por lote del mes',
-                `dashboard-mov-lote-${monthFilter || 'todos'}.pdf`,
+                `dashboard-mov-lote-${periodFileKey}.pdf`,
                 ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad'],
                 movementByLotDetail.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || 0]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Movimientos por lote (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard movimientos por lote (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario - Movimientos por lote del mes',
-                `dashboard-mov-lote-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-mov-lote-${periodFileKey}.xlsx`,
                 ['Fecha', 'Tipo', 'Producto', 'Lote', 'Bodega', 'Cantidad'],
                 movementByLotDetail.map((m) => [m.fecha, m.tipo_movimiento, m.producto, m.lote, m.bodega, m.cantidad_signed || 0]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Movimientos por lote (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard movimientos por lote (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Movimientos por lote (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard movimientos por lote (${periodFileKey})`);
             }}>
               <div className="grid gap-2 md:grid-cols-3 mb-3">
                 <SelectFilter label="Producto" value={dashMoveProduct} onChange={setDashMoveProduct} options={productOptions} />
@@ -5041,21 +6008,21 @@ function InventoryPage() {
             <DataSection title="Stock por cliente o bodega por producto y lote" subtitle="Solo ventas." tone="emerald" onDownload={async () => {
               openTablePdf(
                 'Inventario - Stock por cliente o bodega',
-                `dashboard-clientes-${monthFilter || 'todos'}.pdf`,
+                `dashboard-clientes-${periodFileKey}.pdf`,
                 ['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad'],
                 stockByClient.map((r) => [r.destino_cliente, r.producto, r.lote, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Stock por cliente/bodega (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Stock por cliente/bodega (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard stock cliente/bodega (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario - Stock por cliente o bodega',
-                `dashboard-clientes-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-clientes-${periodFileKey}.xlsx`,
                 ['Cliente/Bodega', 'Producto', 'Lote', 'Cantidad'],
                 stockByClient.map((r) => [r.destino_cliente, r.producto, r.lote, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Stock cliente/bodega (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard stock cliente/bodega (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock cliente/bodega (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard stock cliente/bodega (${periodFileKey})`);
             }}>
               <div className="mb-3">
                 <SelectFilter label="Cliente/Bodega" value={dashClientTarget} onChange={setDashClientTarget} options={clientTargetOptions} />
@@ -5071,21 +6038,21 @@ function InventoryPage() {
             <DataSection id="inventory-adjustments-section" title="Control de ajustes" subtitle="Ajustes positivos y negativos." tone="amber" onDownload={async () => {
               openTablePdf(
                 'Inventario - Control de ajustes',
-                `dashboard-ajustes-${monthFilter || 'todos'}.pdf`,
+                `dashboard-ajustes-${periodFileKey}.pdf`,
                 ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
                 adjustmentControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Control de ajustes (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard ajustes (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Control de ajustes (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard ajustes (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario - Control de ajustes',
-                `dashboard-ajustes-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-ajustes-${periodFileKey}.xlsx`,
                 ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
                 adjustmentControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Control de ajustes (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard ajustes (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control de ajustes (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard ajustes (${periodFileKey})`);
             }}>
               <SimpleDataTable headers={['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad']} rows={takeRows(adjustmentControl, showAdjustAll).map((r) => [<ProductPill key={`${r.producto}-${r.lote}-${r.tipo}`} code={r.producto} colorMap={productColorMap} />, r.lote, r.bodega, r.tipo, r.cantidad])} />
               {adjustmentControl.length > 5 && (
@@ -5098,21 +6065,21 @@ function InventoryPage() {
             <DataSection id="inventory-output-section" title="Control de salidas por lote" subtitle="Traspaso, venta y envio." tone="rose" onDownload={async () => {
               openTablePdf(
                 'Inventario - Control de salidas por lote',
-                `dashboard-salidas-${monthFilter || 'todos'}.pdf`,
+                `dashboard-salidas-${periodFileKey}.pdf`,
                 ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
                 outputControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Control de salidas (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Dashboard salidas (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Control de salidas (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard salidas (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
                 'Inventario - Control de salidas por lote',
-                `dashboard-salidas-${monthFilter || 'todos'}.xlsx`,
+                `dashboard-salidas-${periodFileKey}.xlsx`,
                 ['Producto', 'Lote', 'Bodega', 'Tipo', 'Cantidad'],
                 outputControl.map((r) => [r.producto, r.lote, r.bodega, r.tipo, r.cantidad]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Control de salidas (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Dashboard salidas (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control de salidas (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard salidas (${periodFileKey})`);
             }}>
               <div className="grid gap-2 md:grid-cols-2 mb-3">
                 <SelectFilter label="Producto" value={dashOutProduct} onChange={setDashOutProduct} options={productOptions} />
@@ -5129,253 +6096,233 @@ function InventoryPage() {
 
       {accessReady && tab === 'control_stock' && (
         <div className="space-y-4">
-          <div className="grid gap-2 md:grid-cols-2">
-            <SelectFilter
-              label="Estado potencial"
-              value={potentialStatusFilter}
-              onChange={setPotentialStatusFilter}
-              options={['AGOTADO', 'OPTIMO', 'ATENCION', 'CRITICO']}
-            />
-            <SelectFilter
-              label="Semáforo cobertura"
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-950">Control de stock vendible</h2>
+                <p className="mt-1 max-w-3xl text-sm font-medium text-slate-600">
+                  Esta vista responde una sola pregunta: cuánto producto tiene Solaris disponible para vender. Cuenta solo Canet, Huarte y Mas Borrás, más el potencial pendiente de ensamblar.
+                </p>
+              </div>
+              <button
+                onClick={() => openHypotheticalModal('potential')}
+                className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Simular venta
+              </button>
+            </div>
+            <div className="mt-4 flex flex-wrap items-end gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                Periodo
+                <select
+                  value={dateFilterMode}
+                  onChange={(e) => setDateFilterMode(e.target.value as DateFilterMode)}
+                  disabled={isRestrictedUser}
+                  className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  <option value="day">Día</option>
+                  <option value="range">Rango</option>
+                  <option value="month">Mes</option>
+                  <option value="year">Año</option>
+                  {!isRestrictedUser && <option value="all">Todo</option>}
+                </select>
+              </label>
+              {dateFilterMode === 'month' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Mes
+                  <select
+                    value={monthFilter}
+                    onChange={(e) => setMonthFilter(e.target.value)}
+                    disabled={isRestrictedUser}
+                    className="mt-1 block min-w-[180px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                  </select>
+                </label>
+              )}
+              {dateFilterMode === 'year' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Año
+                  <input
+                    type="number"
+                    value={yearFilter}
+                    onChange={(e) => setYearFilter(e.target.value)}
+                    className="mt-1 block w-28 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </label>
+              )}
+              {(dateFilterMode === 'day' || dateFilterMode === 'range') && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  {dateFilterMode === 'day' ? 'Día' : 'Desde'}
+                  <input
+                    type="date"
+                    value={dateFilterStart}
+                    onChange={(e) => setDateFilterStart(e.target.value)}
+                    className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </label>
+              )}
+              {dateFilterMode === 'range' && (
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Hasta
+                  <input
+                    type="date"
+                    value={dateFilterEnd}
+                    onChange={(e) => setDateFilterEnd(e.target.value)}
+                    className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none"
+                  />
+                </label>
+              )}
+              <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+                Periodo activo: {periodLabel}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+                <p className="text-[11px] font-black uppercase text-rose-700">Críticos</p>
+                <p className="mt-1 text-2xl font-black text-rose-900">{stockControlSummary.critico}</p>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-[11px] font-black uppercase text-amber-700">Atención</p>
+                <p className="mt-1 text-2xl font-black text-amber-900">{stockControlSummary.atencion}</p>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <p className="text-[11px] font-black uppercase text-emerald-700">Óptimos</p>
+                <p className="mt-1 text-2xl font-black text-emerald-900">{stockControlSummary.optimo}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-black uppercase text-slate-600">Disponible total</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{Number(stockControlSummary.stockDisponibleTotal.toFixed(2))}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-black uppercase text-slate-600">Potencial</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{Number(stockControlSummary.potencialTotal.toFixed(2))}</p>
+              </div>
+            </div>
+          </div>
+
+            <div className="grid gap-2 md:grid-cols-3">
+              <SelectFilter
+                label="Estado"
               value={controlSemaforoFilter}
               onChange={setControlSemaforoFilter}
               options={['AGOTADO', 'CRITICO', 'ATENCION', 'OPTIMO']}
             />
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-semibold text-slate-600 md:col-span-2">
+              <p className="font-black uppercase tracking-wide text-slate-700">Cómo leerlo</p>
+              <p className="mt-1">Crítico: menos de 3 meses de cobertura. Atención: entre 3 y 4 meses. Óptimo: 4 meses o más. No cuentan Valencia, Pamplona, Bilbao, Barcelona, Logroño ni Ensamblaje Colombia.</p>
+            </div>
           </div>
           <DataSection
-            title="Control de stock potencial"
-    subtitle="Potencial consolidado por producto (ingreso menos cajas ensambladas registradas en Canet para ese lote)."
-            tone="indigo"
+            title="Productos y acción sugerida"
+            subtitle={`Periodo activo: ${periodLabel}. Haz clic en un producto para ver sus lotes.`}
+            tone="emerald"
             onDownload={async () => {
               openTablePdf(
-                'Inventario - Control stock potencial',
-                `control-stock-potencial-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
-                stockControlTables.potentialRows.map((r) => [
+                'Inventario - Control stock',
+                `control-stock-${periodFileKey}.pdf`,
+                ['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible estimado', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
+                stockControlDecisionRows.map((r) => [
                   r.producto,
-                  r.lotes,
-                  Number(r.viales.toFixed(2)),
-                  Number(r.salidas.toFixed(2)),
+                  r.lotesCount,
+                  Number(r.stockVendible.toFixed(2)),
                   Number(r.potencialCajas.toFixed(2)),
-                  Number(r.stockCHP.toFixed(2)),
+                  Number(r.stockDisponible.toFixed(2)),
+                  r.stockMin || '-',
                   r.stockOptimo || '-',
                   r.consumoMes,
                   formatCoverage(r.coberturaMeses),
-                  r.estadoStock,
+                  r.estado,
+                  r.accion,
                 ]),
               );
-              await notifyAnabela(`${actorName} descargó tablero: Control stock potencial (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Control stock potencial (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó tablero: Control stock (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Control stock (${periodFileKey})`);
             }} onDownloadExcel={async () => {
               openTableExcel(
-                'Inventario - Control stock potencial',
-                `control-stock-potencial-${monthFilter || 'todos'}.xlsx`,
-                ['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock'],
-                stockControlTables.potentialRows.map((r) => [
+                'Inventario - Control stock',
+                `control-stock-${periodFileKey}.xlsx`,
+                ['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible estimado', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
+                stockControlDecisionRows.map((r) => [
                   r.producto,
-                  r.lotes,
-                  Number(r.viales.toFixed(2)),
-                  Number(r.salidas.toFixed(2)),
+                  r.lotesCount,
+                  Number(r.stockVendible.toFixed(2)),
                   Number(r.potencialCajas.toFixed(2)),
-                  Number(r.stockCHP.toFixed(2)),
+                  Number(r.stockDisponible.toFixed(2)),
+                  r.stockMin || '-',
                   r.stockOptimo || '-',
                   r.consumoMes,
                   formatCoverage(r.coberturaMeses),
-                  r.estadoStock,
+                  r.estado,
+                  r.accion,
                 ]),
               );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock potencial (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Control stock potencial (${monthFilter || 'todos'})`);
+              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Control stock (${periodFileKey})`);
             }}
           >
-            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <p>
-                  <span className="font-bold">Cajas ensambladas</span> suma las cajas ya registradas en movimientos de ensamblaje de Canet para ese lote.
-                  <span className="font-bold">Potencial cajas</span> es lo que queda por ensamblar de ese lote.
-                </p>
-              </div>
-            </div>
-            <div className="mb-2 flex justify-end">
-              <button
-                onClick={() => openHypotheticalModal('potential')}
-                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
-              >
-                Ventas hipotéticas
-              </button>
-            </div>
             <SimpleDataTable
-              headers={['Producto', 'Lotes', 'Viales', 'Cajas ensambladas', 'Potencial cajas', 'Stock C + H + P', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado stock']}
-              rows={stockControlTables.potentialRows.map((r) => [
-                <ProductPill key={`${r.producto}-pot`} code={r.producto} colorMap={productColorMap} />,
-                r.lotes,
-                Number(r.viales.toFixed(2)),
-                Number(r.salidas.toFixed(2)),
+              headers={['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida']}
+              rows={stockControlDecisionRows.map((r) => [
+                <ProductPill key={`${r.producto}-decision`} code={r.producto} colorMap={productColorMap} />,
+                r.lotesCount,
+                Number(r.stockVendible.toFixed(2)),
                 Number(r.potencialCajas.toFixed(2)),
-                Number(r.stockCHP.toFixed(2)),
-                r.stockOptimo || '-',
+                Number(r.stockDisponible.toFixed(2)),
                 r.consumoMes,
                 formatCoverage(r.coberturaMeses),
                 <span
-                  key={`${r.producto}-estado`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getPotentialStatusClass(r.estadoStock)}`}
+                  key={`${r.producto}-decision-estado`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.estado)}`}
                 >
-                  {r.estadoStock}
+                  {r.estado}
                 </span>,
+                <span key={`${r.producto}-decision-action`} className="text-xs font-semibold text-slate-700">{r.accion}</span>,
               ])}
               onRowClick={(_, idx) => {
-                const row = stockControlTables.potentialRows[idx];
+                const row = stockControlDecisionRows[idx];
                 if (!row) return;
                 setPotentialDetailProduct(row.producto);
               }}
             />
-            <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un producto para ver el detalle por lote.</p>
           </DataSection>
 
-          <DataSection
-            title="Control stock cajas Canet + Huarte"
-            subtitle="Stock madre (Canet) + sub-bodega Huarte, con cobertura mensual."
-            tone="emerald"
-            onDownload={async () => {
-              openTablePdf(
-                'Inventario - Control stock cajas Canet + Huarte',
-                `control-stock-canet-huarte-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo'],
-                stockControlTables.canetHuarteRows.map((r) => [
-                  r.producto,
-                  r.lote,
-                  Number(r.stockCanetHuarte.toFixed(2)),
-                  r.stockMinCH || '-',
-                  r.consumoMes,
-                  formatCoverage(r.coberturaMeses),
-                  r.semaforo,
-                ]),
-              );
-              await notifyAnabela(`${actorName} descargó tablero: Control stock Canet + Huarte (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Control stock Canet + Huarte (${monthFilter || 'todos'})`);
-            }} onDownloadExcel={async () => {
-              openTableExcel(
-                'Inventario - Control stock cajas Canet + Huarte',
-                `control-stock-canet-huarte-${monthFilter || 'todos'}.xlsx`,
-                ['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo'],
-                stockControlTables.canetHuarteRows.map((r) => [
-                  r.producto,
-                  r.lote,
-                  Number(r.stockCanetHuarte.toFixed(2)),
-                  r.stockMinCH || '-',
-                  r.consumoMes,
-                  formatCoverage(r.coberturaMeses),
-                  r.semaforo,
-                ]),
-              );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock Canet + Huarte (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Control stock Canet + Huarte (${monthFilter || 'todos'})`);
-            }}
-          >
-            <div className="mb-2 flex justify-end">
-              <button
-                onClick={() => openHypotheticalModal('canet_huarte')}
-                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
-              >
-                Ventas hipotéticas
-              </button>
-            </div>
-            <SimpleDataTable
-              headers={['Producto', 'Lote', 'Stock Canet + Huarte', 'Stock mínimo (C+H)', 'Consumo mes', 'Cobertura', 'Semáforo']}
-              rows={stockControlTables.canetHuarteRows.map((r) => [
-                <ProductPill key={`${r.producto}-${r.lote}-ch`} code={r.producto} colorMap={productColorMap} />,
-                r.lote,
-                Number(r.stockCanetHuarte.toFixed(2)),
-                r.stockMinCH || '-',
-                r.consumoMes,
-                formatCoverage(r.coberturaMeses),
-                <span
-                  key={`${r.producto}-${r.lote}-ch-sem`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.semaforo)}`}
+          {potentialDetailProduct && (
+            <DataSection
+              title={`Detalle por lote · ${potentialDetailProduct}`}
+              subtitle="Desglose por lote en bodegas vendibles: Canet, Huarte y Mas Borrás."
+              tone="amber"
+            >
+              <div className="mb-2 flex justify-end">
+                <button
+                  onClick={() => setPotentialDetailProduct(null)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  {r.semaforo}
-                </span>,
-              ])}
-              onRowClick={(_, idx) => {
-                const row = stockControlTables.canetHuarteRows[idx];
-                if (!row) return;
-                setCanetHuarteDetailRow(row);
-              }}
-            />
-            <p className="mt-2 text-[10px] font-semibold text-violet-600">Haz clic en un lote para ver el desglose por bodega (Canet/Huarte).</p>
-          </DataSection>
-
-          <DataSection
-            title="Control stock Canet"
-            subtitle="Stock de bodega Canet (madre) en lectura directa desde Inventario Canet."
-            tone="violet"
-            onDownload={async () => {
-              openTablePdf(
-                'Inventario - Control stock Canet',
-                `control-stock-canet-${monthFilter || 'todos'}.pdf`,
-                ['Producto', 'Lote', 'Stock Canet', 'Potenciales + C', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo'],
-                stockControlTables.canetRows.map((r) => [
-                  r.producto,
+                  Cerrar detalle
+                </button>
+              </div>
+              <SimpleDataTable
+                headers={['Lote', 'Canet', 'Huarte', 'Mas Borrás', 'Stock vendible', 'Potencial', 'Disponible', 'Consumo mes', 'Cobertura', 'Estado']}
+                rows={stockControlDetailRows.map((r) => [
                   r.lote,
                   Number(r.stockCanet.toFixed(2)),
-                  Number(r.potencialesMasC.toFixed(2)),
-                  r.stockMin || '-',
+                  Number(r.stockHuarte.toFixed(2)),
+                  Number(r.stockMasBorras.toFixed(2)),
+                  Number(r.stockVendible.toFixed(2)),
+                  Number(r.potencialCajas.toFixed(2)),
+                  Number(r.disponible.toFixed(2)),
                   r.consumoMes,
                   formatCoverage(r.coberturaMeses),
-                  r.semaforo,
-                ]),
-              );
-              await notifyAnabela(`${actorName} descargó tablero: Control stock Canet (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga PDF', `Control stock Canet (${monthFilter || 'todos'})`);
-            }} onDownloadExcel={async () => {
-              openTableExcel(
-                'Inventario - Control stock Canet',
-                `control-stock-canet-${monthFilter || 'todos'}.xlsx`,
-                ['Producto', 'Lote', 'Stock Canet', 'Potenciales + C', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo'],
-                stockControlTables.canetRows.map((r) => [
-                  r.producto,
-                  r.lote,
-                  Number(r.stockCanet.toFixed(2)),
-                  Number(r.potencialesMasC.toFixed(2)),
-                  r.stockMin || '-',
-                  r.consumoMes,
-                  formatCoverage(r.coberturaMeses),
-                  r.semaforo,
-                ]),
-              );
-              await notifyAnabela(`${actorName} descargó Excel tablero: Control stock Canet (${monthFilter || 'todos'}).`);
-              appendAudit('Descarga Excel', `Control stock Canet (${monthFilter || 'todos'})`);
-            }}
-          >
-            <div className="mb-2 flex justify-end">
-              <button
-                onClick={() => openHypotheticalModal('canet')}
-                className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50"
-              >
-                Ventas hipotéticas
-              </button>
-            </div>
-            <SimpleDataTable
-              headers={['Producto', 'Lote', 'Stock Canet', 'Potenciales + C', 'Stock mínimo', 'Consumo mes', 'Cobertura', 'Semáforo']}
-              rows={stockControlTables.canetRows.map((r) => [
-                <ProductPill key={`${r.producto}-${r.lote}-canet`} code={r.producto} colorMap={productColorMap} />,
-                r.lote,
-                Number(r.stockCanet.toFixed(2)),
-                Number(r.potencialesMasC.toFixed(2)),
-                r.stockMin || '-',
-                r.consumoMes,
-                formatCoverage(r.coberturaMeses),
-                <span
-                  key={`${r.producto}-${r.lote}-canet-sem`}
-                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.semaforo)}`}
-                >
-                  {r.semaforo}
-                </span>,
-              ])}
-            />
-          </DataSection>
+                  <span
+                    key={`${r.producto}-${r.lote}-detail-status`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${getCoverageSemaforoClass(r.estado)}`}
+                  >
+                    {r.estado}
+                  </span>,
+                ])}
+              />
+            </DataSection>
+          )}
         </div>
       )}
 
@@ -5434,7 +6381,41 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'movimientos_cartonaje' && (
+      {accessReady && tab === 'ensamblajes' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-violet-950">Ensamblajes</h3>
+                <p className="text-sm text-violet-700">Movimientos de ensamblaje y preparación de producto.</p>
+              </div>
+              <button onClick={openCreateAssemblyModal} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}>
+                <Plus size={14} /> Nuevo ensamblaje
+              </button>
+            </div>
+          </div>
+          <SimpleDataTable
+            headers={['Fecha', 'Tipo', 'Producto', 'Lote', 'Cantidad', 'Bodega', 'Notas', 'Acciones']}
+            rows={visibleMovements.filter((m) => normalizeSearch(m.tipo_movimiento).includes('ensam')).map((m) => [
+              formatDateForDisplay(m.fecha),
+              clean(m.tipo_movimiento),
+              <ProductPill key={`ens-${m.id}-${m.producto}`} code={clean(m.producto)} colorMap={productColorMap} />,
+              clean(m.lote),
+              m.cantidad_signed ?? m.cantidad,
+              clean(m.bodega),
+              clean(m.notas) || '-',
+              <div key={`ens-actions-${m.id}`} className="flex items-center gap-1">
+                <button disabled={!isEditModeActive} onClick={() => startEdit(m)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
+                <button onClick={() => void deleteMovement(m.id)} disabled={!isEditModeActive || deletingMovementId === toNum(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive && deletingMovementId !== toNum(m.id) ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`} title="Eliminar">
+                  <Trash2 size={13} />
+                </button>
+              </div>,
+            ])}
+          />
+        </div>
+      )}
+
+      {accessReady && tab === 'maestros' && masterSection === 'cartonaje' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -5464,7 +6445,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'bitacora' && (
+      {accessReady && tab === 'maestros' && masterSection === 'bitacora' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <h3 className="text-lg font-black text-violet-950">Bitácora de cambios</h3>
@@ -5482,7 +6463,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'productos' && (
+      {accessReady && tab === 'maestros' && masterSection === 'productos' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -5495,8 +6476,8 @@ function InventoryPage() {
             </div>
           </div>
           <SimpleDataTable
-            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Consumo mes', 'Modo', 'Activo', 'Acciones']}
-            rows={productos.map((p) => [
+            headers={['Producto', 'Tipo', 'Color', 'Stock min', 'Stock optimo', 'Consumo mes', 'Modo', 'Receta', 'Activo', 'Acciones']}
+            rows={productos.filter((p) => !isRetiredProductCode(p.producto)).map((p) => [
               <ProductPill key={clean(p.producto)} code={clean(p.producto)} colorMap={productColorMap} />,
               clean(p.tipo_producto) || 'COMPLEMENTO ALIMENTICIO',
               <span key={`${clean(p.producto)}-sw`} className="inline-flex h-5 w-5 rounded-full border border-violet-200" style={{ backgroundColor: productColorMap.get(clean(p.producto)) || '#7c3aed' }} />,
@@ -5504,6 +6485,7 @@ function InventoryPage() {
               p.stock_opt || p.stock_optimo || '-',
               p.consumo_mensual_cajas || '-',
               p.modo_stock || '-',
+              formatKitComponentsInline((p as any).kit_componentes || (p as any).componentes_kit),
               p.activo_si_no || 'SI',
               <button
                 key={`product-edit-${clean(p.producto)}`}
@@ -5518,7 +6500,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'lotes' && (
+      {accessReady && tab === 'maestros' && masterSection === 'lotes' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -5539,7 +6521,7 @@ function InventoryPage() {
                       lotViewMode === 'archived' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-100'
                     }`}
                   >
-                    Archivados ({archivedLotes.length})
+                    Archivados / agotados ({archivedLotes.length})
                   </button>
                 </div>
                 <button onClick={openLotCreateModal} disabled={!isEditModeActive} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${isEditModeActive ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}><Plus size={14} /> Añadir lote</button>
@@ -5591,7 +6573,7 @@ function InventoryPage() {
                     >
                       <span className="inline-flex items-center gap-1">
                         <RotateCcw size={12} />
-                        Restaurar
+                        Restaurar / activar
                       </span>
                     </button>
                   </div>,
@@ -5684,7 +6666,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'bodegas' && (
+      {accessReady && tab === 'maestros' && masterSection === 'bodegas' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -5720,7 +6702,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'clientes' && (
+      {accessReady && tab === 'maestros' && masterSection === 'clientes' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm space-y-2">
             <h3 className="text-lg font-black text-violet-950">Crear cliente</h3>
@@ -5756,7 +6738,7 @@ function InventoryPage() {
         </div>
       )}
 
-      {accessReady && tab === 'tipos' && (
+      {accessReady && tab === 'maestros' && masterSection === 'tipos' && (
         <div className="space-y-4">
           <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -5789,60 +6771,205 @@ function InventoryPage() {
 
       {movementModalOpen && (
         <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
-          <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl max-h-[88vh] overflow-y-auto rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between">
+          <div className="movement-modal-panel flex flex-col rounded-2xl border border-violet-200 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
               <h3 className="text-lg font-black text-violet-950">{editingId ? 'Editar movimiento' : 'Crear movimiento'}</h3>
               <button disabled={savingMovement} onClick={() => setMovementModalOpen(false)} className={`rounded-lg p-1.5 ${savingMovement ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'}`}><X size={14} /></button>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="movement-modal-body grid gap-2 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
               <Input label="Fecha" type="date" value={movementForm.fecha} onChange={(v) => setMovementForm({ ...movementForm, fecha: v })} />
-              <InputDatalist label="Tipo" value={movementForm.tipo_movimiento} onChange={(v) => setMovementForm({ ...movementForm, tipo_movimiento: v })} listId="inventory-types" options={typeOptions} placeholder="venta, traspaso..." />
-              {normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
-                <InputDatalist
-                  label="Origen"
-              value={movementForm.bodega}
-              onChange={(v) => setMovementForm({ ...movementForm, bodega: v })}
-              listId="inventory-transfer-origin"
-              options={transferNodeOptions}
-              placeholder="Bodega o cliente origen"
-            />
-          ) : (
-            <InputDatalist
-              label="Bodega"
-              value={movementForm.bodega}
-                  onChange={(v) => setMovementForm({ ...movementForm, bodega: v })}
-                  listId="inventory-bodegas"
-                  options={warehouseOptions}
-                  placeholder="Bodega"
-                />
-              )}
-              <ProductColorSelect
-                label="Producto"
-                value={movementForm.producto}
-                onChange={(v) => setMovementForm({ ...movementForm, producto: v, lote: '' })}
-                options={productOptions}
-                colorMap={productColorMap}
+              <SelectInput
+                label="Tipo"
+                value={movementForm.tipo_movimiento}
+                onChange={(v) => {
+                  setMovementForm({ ...movementForm, tipo_movimiento: v });
+                  setMovementKitLots({});
+                }}
+                options={typeOptions}
+                placeholder="Selecciona tipo"
               />
-              <InputDatalist label="Lote" value={movementForm.lote} onChange={(v) => setMovementForm({ ...movementForm, lote: v })} listId="inventory-lotes" options={lotOptionsForForm} placeholder="Lote" />
-              <Input label="Cantidad" type="number" value={movementForm.cantidad} onChange={(v) => setMovementForm({ ...movementForm, cantidad: v })} />
-              {normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
-                <InputDatalist
+              {(editingId || movementIsKit) && (normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+                <SelectInput
+                  label="Origen"
+                  value={movementForm.bodega}
+                  onChange={(v) => {
+                    setMovementForm({ ...movementForm, bodega: v });
+                    setMovementKitLots({});
+                  }}
+                  options={transferNodeOptions}
+                  placeholder="Selecciona origen"
+                />
+              ) : (
+                <SelectInput
+                  label="Bodega"
+                  value={movementForm.bodega}
+                  onChange={(v) => {
+                    setMovementForm({ ...movementForm, bodega: v });
+                    setMovementKitLots({});
+                  }}
+                  options={transferNodeOptions}
+                  placeholder="Selecciona bodega"
+                />
+              ))}
+              {editingId ? (
+                <>
+                  <ProductColorSelect
+                    label="Producto"
+                    value={movementForm.producto}
+                    onChange={(v) => {
+                      setMovementForm({ ...movementForm, producto: v, lote: '' });
+                      setMovementKitLots({});
+                    }}
+                    options={productOptions}
+                    colorMap={productColorMap}
+                  />
+                  <Input label="Cantidad" type="number" value={movementForm.cantidad} onChange={(v) => setMovementForm({ ...movementForm, cantidad: v })} />
+                  <AutocompleteInput
+                    label="Lote"
+                    value={movementForm.lote}
+                    onChange={(v) => setMovementForm({ ...movementForm, lote: v.toUpperCase() })}
+                    options={lotOptionsForForm}
+                    placeholder="Selecciona lote"
+                    emptyMessage="Sin lotes activos con stock para este producto/bodega."
+                  />
+                </>
+              ) : (
+                <div className="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-xs font-black uppercase tracking-wider text-slate-600">Líneas del movimiento</p>
+                    <button
+                      type="button"
+                      disabled={savingMovement || movementLines.length >= MAX_MOVEMENT_DRAFT_LINES || movementIsKit}
+                      onClick={addMovementDraftLine}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black ${
+                        savingMovement || movementLines.length >= MAX_MOVEMENT_DRAFT_LINES || movementIsKit
+                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                          : 'bg-teal-600 text-white hover:bg-teal-700'
+                      }`}
+                    >
+                      <Plus size={13} /> Añadir línea
+                    </button>
+                  </div>
+                  <div className="grid gap-1.5">
+                    {movementLines.map((line, index) => {
+                      const isFirstKitLine = movementIsKit && index === 0;
+                      const lineIsTransfer = normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+                      return (
+                        <div
+                          key={line.id}
+                          className={`movement-line-compact grid gap-1.5 rounded-md border border-slate-200 bg-white p-1.5 ${
+                            lineIsTransfer
+                              ? 'md:grid-cols-[0.9fr_0.9fr_1.15fr_1fr_0.65fr_34px]'
+                              : 'md:grid-cols-[0.95fr_1.15fr_1fr_0.65fr_34px]'
+                          }`}
+                        >
+                          <SelectInput
+                            label={lineIsTransfer ? 'Origen' : `Bodega ${index + 1}`}
+                            value={line.bodega || movementForm.bodega}
+                            onChange={(v) => updateMovementDraftLine(line.id, { bodega: v, lote: '' })}
+                            options={transferNodeOptions}
+                            placeholder={lineIsTransfer ? 'Origen' : 'Bodega'}
+                          />
+                          {lineIsTransfer && (
+                            <SelectInput
+                              label="Destino"
+                              value={line.destino || movementForm.destino || movementForm.cliente}
+                              onChange={(v) => updateMovementDraftLine(line.id, { destino: v })}
+                              options={transferNodeOptions}
+                              placeholder="Destino"
+                            />
+                          )}
+                          <ProductColorSelect
+                            label={`Producto ${index + 1}`}
+                            value={line.producto}
+                            onChange={(v) => updateMovementDraftLine(line.id, { producto: v, lote: '' })}
+                            options={productOptions}
+                            colorMap={productColorMap}
+                          />
+                          {isFirstKitLine ? (
+                            <div className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1.5 text-[11px] font-bold text-violet-700">
+                              Kit: selecciona lotes por componente abajo.
+                            </div>
+                          ) : (
+                            <AutocompleteInput
+                              label="Lote"
+                              value={line.lote}
+                              onChange={(v) => updateMovementDraftLine(line.id, { lote: v.toUpperCase() })}
+                              options={getLotOptionsForMovementLine(line)}
+                              placeholder="Selecciona lote"
+                              emptyMessage="Sin lotes activos con stock para este producto/bodega."
+                            />
+                          )}
+                          <Input label="Cantidad" type="number" value={line.cantidad} onChange={(v) => updateMovementDraftLine(line.id, { cantidad: v })} />
+                          <div className="flex items-end">
+                            <button
+                              type="button"
+                              disabled={savingMovement || movementLines.length <= 1}
+                              onClick={() => removeMovementDraftLine(line.id)}
+                              className={`h-8 w-8 rounded-md ${
+                                savingMovement || movementLines.length <= 1
+                                  ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                                  : 'bg-rose-50 text-rose-600 hover:bg-rose-100'
+                              }`}
+                              title="Quitar línea"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {movementIsKit && (
+                    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+                      <p className="text-xs font-black uppercase tracking-wider text-violet-700">
+                        Lotes de componentes del kit
+                      </p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {movementKitComponents.map((component, index) => {
+                          const product = clean(component.producto).toUpperCase();
+                          const key = movementKitComponentKey(component, index);
+                          const unitQty = Math.max(0, toNum(component.cantidad));
+                          const totalQty = unitQty * Math.abs(toNum(movementForm.cantidad));
+                          return (
+                            <AutocompleteInput
+                              key={key}
+                              label={`Lote ${product}`}
+                              value={movementKitLots[key] || ''}
+                              onChange={(v) => setMovementKitLots((prev) => ({ ...prev, [key]: v.toUpperCase() }))}
+                              options={movementKitLotOptionsByProduct.get(product) || []}
+                              placeholder="Selecciona lote"
+                              emptyMessage={`Sin lotes activos con stock para ${product} en esta bodega.`}
+                              helperText={
+                                totalQty > 0
+                                  ? `Descontará ${totalQty.toLocaleString('es-ES')} caja(s)`
+                                  : `${unitQty.toLocaleString('es-ES')} caja(s) por kit`
+                              }
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {(editingId || movementIsKit) && normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+                <SelectInput
                   label="Destino"
-              value={movementForm.destino || movementForm.cliente}
-              onChange={(v) => setMovementForm({ ...movementForm, destino: v, cliente: v })}
-              listId="inventory-transfer-destination"
-              options={transferNodeOptions}
-              placeholder="Bodega o cliente destino"
-            />
-          ) : (
+                  value={movementForm.destino || movementForm.cliente}
+                  onChange={(v) => setMovementForm({ ...movementForm, destino: v, cliente: v })}
+                  options={transferNodeOptions}
+                  placeholder="Selecciona destino"
+                />
+              ) : !normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
                 <>
                   <InputDatalist label="Cliente" value={movementForm.cliente} onChange={(v) => setMovementForm({ ...movementForm, cliente: v })} listId="inventory-clientes" options={clientOptions} placeholder="Opcional" />
                   <Input label="Destino" value={movementForm.destino} onChange={(v) => setMovementForm({ ...movementForm, destino: v })} />
                 </>
-              )}
+              ) : null}
               <Input label="Notas" value={movementForm.notas} onChange={(v) => setMovementForm({ ...movementForm, notas: v })} />
             </div>
-            <div className="mt-4 flex gap-2">
+            <div className="flex shrink-0 gap-2 border-t border-slate-200 bg-white px-4 py-3">
               <button disabled={savingMovement} onClick={() => void saveMovement()} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white ${savingMovement ? 'bg-violet-300 cursor-wait' : 'bg-violet-600 hover:bg-violet-700'}`}>{editingId ? <Pencil size={14} /> : <Plus size={14} />} {savingMovement ? 'Guardando...' : (editingId ? 'Guardar cambios' : 'Crear movimiento')}</button>
               <button disabled={savingMovement} onClick={() => setMovementModalOpen(false)} className={`rounded-xl border px-4 py-2 text-sm font-semibold ${savingMovement ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-violet-200 bg-violet-50 text-violet-700'}`}>Cancelar</button>
             </div>
@@ -5932,6 +7059,7 @@ function InventoryPage() {
                 <select value={newProductForm.tipo_producto} onChange={(e) => setNewProductForm({ ...newProductForm, tipo_producto: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
                   <option value="COMPLEMENTO ALIMENTICIO">COMPLEMENTO ALIMENTICIO</option>
                   <option value="CARTONAJE">CARTONAJE</option>
+                  <option value="KIT">KIT</option>
                 </select>
               </label>
             </div>
@@ -5941,9 +7069,21 @@ function InventoryPage() {
               <Input label="Consumo mes" type="number" value={newProductForm.consumo_mensual_cajas} onChange={(v) => setNewProductForm({ ...newProductForm, consumo_mensual_cajas: v })} />
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
                 Modo
-                <select value={newProductForm.modo_stock} onChange={(e) => setNewProductForm({ ...newProductForm, modo_stock: e.target.value })} className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none">
+                <select
+                  value={newProductForm.modo_stock}
+                  onChange={(e) => {
+                    const nextMode = e.target.value;
+                    setNewProductForm({
+                      ...newProductForm,
+                      modo_stock: nextMode,
+                      tipo_producto: nextMode === 'KIT' ? 'KIT' : newProductForm.tipo_producto,
+                    });
+                  }}
+                  className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+                >
                   <option value="ENSAMBLAJE">ENSAMBLAJE</option>
                   <option value="DIRECTO">DIRECTO</option>
+                  <option value="KIT">KIT</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
@@ -5954,6 +7094,15 @@ function InventoryPage() {
                 </select>
               </label>
             </div>
+            {clean(newProductForm.modo_stock).toUpperCase() === 'KIT' && (
+              <div className="mt-2">
+                <ProductKitComposer
+                  value={newProductForm.kit_componentes_text}
+                  onChange={(nextValue) => setNewProductForm({ ...newProductForm, kit_componentes_text: nextValue })}
+                  productOptions={productOptions.filter((option) => option !== clean(newProductForm.producto).toUpperCase())}
+                />
+              </div>
+            )}
             {editingProductCode && (
               <p className="mt-2 text-xs text-violet-600">El código de producto se mantiene fijo para no romper movimientos históricos.</p>
             )}
@@ -6059,7 +7208,7 @@ function InventoryPage() {
           </div>
         </div>
       )}
-      {potentialDetailProduct && (
+      {potentialDetailProduct && tab !== 'control_stock' && (
         <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/60 p-2 sm:p-3 md:pl-64">
           <div className="w-full max-w-4xl rounded-2xl border border-violet-200 bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
@@ -6436,6 +7585,38 @@ function Input({
   );
 }
 
+function SelectInput({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder = 'Selecciona...',
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm font-semibold text-violet-900 outline-none"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={`${label}-${option}`} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function InputDatalist({ label, value, onChange, listId, options, placeholder }: { label: string; value: string; onChange: (v: string) => void; listId: string; options: string[]; placeholder?: string }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
@@ -6488,6 +7669,82 @@ function InputDatalistTag({
         />
         <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
       </>
+    </label>
+  );
+}
+
+function AutocompleteInput({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  emptyMessage = 'Sin opciones disponibles.',
+  helperText,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+  emptyMessage?: string;
+  helperText?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const query = normalizeSearch(value);
+  const filtered = options
+    .filter((option) => {
+      if (!query) return true;
+      return normalizeSearch(option).includes(query);
+    })
+    .sort((a, b) => {
+      const aText = normalizeSearch(a);
+      const bText = normalizeSearch(b);
+      const aRank = !query ? 0 : aText === query ? 0 : aText.startsWith(query) ? 1 : 2;
+      const bRank = !query ? 0 : bText === query ? 0 : bText.startsWith(query) ? 1 : 2;
+      return aRank - bRank || clean(a).localeCompare(clean(b));
+    })
+    .slice(0, 12);
+
+  return (
+    <label className="relative flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+      {label}
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        placeholder={placeholder}
+        className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+      />
+      {helperText && <span className="text-[11px] font-semibold normal-case tracking-normal text-violet-500">{helperText}</span>}
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-[260] mt-1 max-h-48 overflow-auto rounded-xl border border-violet-200 bg-white shadow-xl">
+          {filtered.length > 0 ? (
+            filtered.map((option) => (
+              <button
+                key={`${label}-${option}`}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm font-semibold text-violet-900 hover:bg-violet-50"
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-left text-xs font-semibold normal-case tracking-normal text-slate-500">
+              {emptyMessage}
+            </div>
+          )}
+        </div>
+      )}
     </label>
   );
 }

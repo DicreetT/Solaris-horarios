@@ -17,6 +17,13 @@ webpush.setVapidDetails(
     vapidPrivateKey
 )
 
+function resolveNotificationUrl(message: string) {
+    const match = `${message || ''}`.match(/\[#(\d+)\]/)
+    if (match?.[1]) return `/tasks?task=${match[1]}`
+    if (`${message || ''}`.toLowerCase().includes('tarea')) return '/tasks'
+    return '/'
+}
+
 Deno.serve(async (req) => {
     try {
         const payload = await req.json()
@@ -49,7 +56,7 @@ Deno.serve(async (req) => {
         const notificationPayload = JSON.stringify({
             title: 'Lunaris',
             body: record.message,
-            url: '/', // Or specific URL based on notification type
+            url: resolveNotificationUrl(record.message),
         })
 
         const promises = subscriptions.map(async (sub) => {

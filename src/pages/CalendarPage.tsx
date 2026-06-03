@@ -262,22 +262,22 @@ function CalendarPage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto h-[calc(100vh-5rem)] flex flex-col">
+        <div className="calendar-page max-w-7xl mx-auto h-[calc(100vh-5rem)] flex flex-col">
             <div className="mb-6 flex items-center gap-4">
-                <div className="p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-primary">
+                <div className="calendar-surface p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-primary">
                     <CalendarIcon size={32} />
                 </div>
                 <div>
-                    <h1 className="text-4xl font-black text-gray-900 tracking-tight">
+                    <h1 className="calendar-hero-title text-4xl font-black text-gray-900 tracking-tight">
                         Calendario Semanal
                     </h1>
-                    <p className="text-gray-500 font-medium">
+                    <p className="calendar-hero-subtitle text-gray-500 font-medium">
                         {getGreeting()}, {currentUser?.name}. Centro diario de trabajo con enfoque operativo.
                     </p>
                 </div>
             </div>
 
-            <div className="mb-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4 shadow-sm">
+            <div className="calendar-surface mb-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4 shadow-sm">
                 <div className="flex flex-wrap items-center gap-4 text-sm">
                     <span className="inline-flex items-center gap-2 font-bold text-sky-900">
                         <Sun size={16} />
@@ -298,7 +298,7 @@ function CalendarPage() {
                 </div>
             </div>
 
-            <div className="mb-4 bg-white border border-gray-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+            <div className="calendar-surface mb-4 bg-white border border-gray-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
                 <button
                     onClick={() => setWeekStart(prev => addDays(prev, -7))}
                     className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"
@@ -350,7 +350,7 @@ function CalendarPage() {
                             <div
                                 key={dayKey}
                                 className={`
-                                    rounded-3xl border p-4 shadow-sm flex flex-col gap-4 min-h-[340px] transition-all
+                                    calendar-soft-surface rounded-3xl border p-4 shadow-sm flex flex-col gap-4 min-h-[340px] transition-all
                                     ${isToday ? 'border-primary/60 ring-2 ring-primary/25 bg-white' : toneClass}
                                     ${isPast ? 'opacity-70 saturate-75' : ''}
                                     ${isFuture ? 'opacity-90' : ''}

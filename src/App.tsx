@@ -23,9 +23,7 @@ const FoldersPage = React.lazy(() => import('./pages/FoldersPage'));
 const AlbaranesPage = React.lazy(() => import('./pages/AlbaranesPage'));
 const ShoppingListPage = React.lazy(() => import('./pages/ShoppingListPage'));
 const DailyChecklistPage = React.lazy(() => import('./pages/DailyChecklistPage'));
-const ChatPage = React.lazy(() => import('./pages/ChatPage'));
-const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
-const InventoryFacturacionPage = React.lazy(() => import('./pages/InventoryFacturacionPage'));
+const InventoryUnifiedPage = React.lazy(() => import('./pages/InventoryUnifiedPage'));
 const FacturacionPage = React.lazy(() => import('./pages/FacturacionPage'));
 const BillingPaymentsPage = React.lazy(() => import('./pages/BillingPaymentsPage'));
 
@@ -114,9 +112,9 @@ function App() {
             <Route path="/albaranes" element={withLazyPage(<AlbaranesPage />)} />
             <Route path="/shopping" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<ShoppingListPage />)} />
             <Route path="/checklist" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<DailyChecklistPage />)} />
-            <Route path="/chat" element={withLazyPage(<ChatPage />)} />
-            <Route path="/inventory" element={withLazyPage(<InventoryPage />)} />
-            <Route path="/inventory-facturacion" element={withLazyPage(<InventoryFacturacionPage />)} />
+            <Route path="/chat" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/inventory" element={withLazyPage(<InventoryUnifiedPage />)} />
+            <Route path="/inventory-facturacion" element={withLazyPage(<InventoryUnifiedPage />)} />
             <Route path="/despachos" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FacturacionPage />)} />
             <Route path="/facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<BillingPaymentsPage />)} />
           </Route>
