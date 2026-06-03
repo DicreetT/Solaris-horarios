@@ -26,6 +26,7 @@ import {
     CheckSquare,
     FileText,
     Folder,
+    Trash2,
     Users,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -286,7 +287,7 @@ function Dashboard() {
     const { timeData, createTimeEntry, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
-    const { calendarEvents, createEvent } = useCalendarEvents();
+    const { calendarEvents, createEvent, deleteEvent } = useCalendarEvents();
     const { overrides: calendarOverrides } = useCalendarOverrides();
     const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
     const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
@@ -1072,6 +1073,26 @@ function Dashboard() {
             setEventFormDescription('');
         } catch {
             // Silent fallback: the hook already handles persistence feedback.
+        }
+    };
+
+    const canDeleteCalendarEvent = (event: any) =>
+        !!currentUser && (isAdmin || event?.created_by === currentUser.id);
+
+    const handleDeleteDashboardEvent = async (event: any) => {
+        if (!event?.id || !canDeleteCalendarEvent(event)) return;
+        const ok = window.confirm('¿Eliminar este evento?');
+        if (!ok) return;
+        try {
+            await deleteEvent(Number(event.id));
+            setSummaryModal((prev) =>
+                prev && (prev.kind === 'events' || prev.kind === 'calendar')
+                    ? { ...prev, items: prev.items.filter((item) => Number(item.id) !== Number(event.id)) }
+                    : prev,
+            );
+            emitSuccessFeedback('Evento eliminado correctamente.');
+        } catch {
+            window.alert('No se pudo eliminar el evento. Inténtalo de nuevo.');
         }
     };
 
@@ -2871,8 +2892,19 @@ function Dashboard() {
                             </form>
                             <div className="space-y-2">
                                 {todayEvents.length > 0 ? todayEvents.map((event) => (
-                                    <div key={event.id} className="p-3 rounded-xl border border-violet-100 bg-violet-50 text-sm font-medium text-violet-900 whitespace-pre-line">
-                                        {event.title}
+                                    <div key={event.id} className="group flex items-start justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50 p-3 text-sm font-medium text-violet-900">
+                                        <span className="whitespace-pre-line">{event.title}</span>
+                                        {canDeleteCalendarEvent(event) && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteDashboardEvent(event)}
+                                                className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
+                                                title="Eliminar evento"
+                                                aria-label="Eliminar evento"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
                                     </div>
                                 )) : <div className="app-empty-card">Aún no hay eventos para hoy.</div>}
                             </div>
@@ -4390,9 +4422,22 @@ function Dashboard() {
                                             calendarEvents
                                                 .filter((event) => event.date_key === toDateKey(calendarSelectedDate))
                                                 .map((event) => (
-                                                    <div key={`calendar-modal-${event.id}`} className="rounded-xl border border-violet-100 bg-violet-50/60 p-3">
-                                                        <p className="text-sm font-black text-violet-900">{event.title}</p>
-                                                        <p className="text-xs text-violet-700">{event.description || 'Sin descripción'}</p>
+                                                    <div key={`calendar-modal-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+                                                        <div>
+                                                            <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                                            <p className="text-xs text-violet-700">{event.description || 'Sin descripción'}</p>
+                                                        </div>
+                                                        {canDeleteCalendarEvent(event) && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleDeleteDashboardEvent(event)}
+                                                                className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
+                                                                title="Eliminar evento"
+                                                                aria-label="Eliminar evento"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 ))
                                         ) : (
@@ -4615,24 +4660,50 @@ function Dashboard() {
                                 <div className="app-empty-card">No hay elementos para mostrar.</div>
                             )}
                             {summaryModal.kind === 'calendar' && summaryModal.items.map((event: any) => (
-                                <div key={`summary-calendar-${event.id}`} className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
-                                    <p className="text-sm font-black text-violet-900">{event.title}</p>
-                                    <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
+                                <div key={`summary-calendar-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                                    <div>
+                                        <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                        <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
+                                    </div>
+                                    {canDeleteCalendarEvent(event) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteDashboardEvent(event)}
+                                            className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
+                                            title="Eliminar evento"
+                                            aria-label="Eliminar evento"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                             {summaryModal.kind === 'events' && summaryModal.items.map((event: any) => (
-                                <div key={`summary-event-${event.id}`} className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
-                                    <p className="text-sm font-black text-violet-900">{event.title}</p>
-                                    <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
-                                    <p className="text-xs text-violet-700">
-                                        {event.description ? (
-                                            <LinkifiedText
-                                                as="span"
-                                                text={event.description}
-                                                linkClassName="underline decoration-dotted underline-offset-2 text-violet-700 hover:text-violet-800"
-                                            />
-                                        ) : 'Sin descripción'}
-                                    </p>
+                                <div key={`summary-event-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                                    <div>
+                                        <p className="text-sm font-black text-violet-900">{event.title}</p>
+                                        <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
+                                        <p className="text-xs text-violet-700">
+                                            {event.description ? (
+                                                <LinkifiedText
+                                                    as="span"
+                                                    text={event.description}
+                                                    linkClassName="underline decoration-dotted underline-offset-2 text-violet-700 hover:text-violet-800"
+                                                />
+                                            ) : 'Sin descripción'}
+                                        </p>
+                                    </div>
+                                    {canDeleteCalendarEvent(event) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteDashboardEvent(event)}
+                                            className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
+                                            title="Eliminar evento"
+                                            aria-label="Eliminar evento"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                             {summaryModal.kind === 'tasks' && summaryModal.items.map((task: any) => (
