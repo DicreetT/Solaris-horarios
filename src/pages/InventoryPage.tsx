@@ -1434,6 +1434,17 @@ function InventoryPage() {
       ),
     [deletedLotKeySet, hiddenLotKeySet, lotes],
   );
+  const canetKnownActiveLotRows = useMemo(
+    () =>
+      dedupeCanonicalCanetLots([...visibleLotes, ...CANET_LOT_REFERENCE_ROWS]).filter((row) => {
+        const producto = clean(row.producto);
+        const lote = clean(row.lote);
+        if (!producto || !lote) return false;
+        const key = lotKeyOf(producto, lote);
+        return !deletedLotKeySet.has(key) && !hiddenLotKeySet.has(key);
+      }),
+    [deletedLotKeySet, hiddenLotKeySet, visibleLotes],
+  );
   const archivedLotes = useMemo(
     () =>
       dedupeCanonicalCanetLots(lotes).filter(
@@ -1697,7 +1708,7 @@ function InventoryPage() {
       const lote = clean(loteRaw);
       if (!producto || !lote) return lote;
       const lotToken = normalizeLotCompareToken(lote);
-      const allLots = visibleLotes
+      const allLots = canetKnownActiveLotRows
         .filter((l) => clean(l.producto) === producto)
         .map((l) => clean(l.lote))
         .filter(Boolean);
@@ -1709,7 +1720,7 @@ function InventoryPage() {
         const preferred = [...suffixMatches].sort((a, b) => clean(b).length - clean(a).length)[0];
         if (preferred) return preferred;
       }
-      const globalLots = visibleLotes.map((l) => clean(l.lote)).filter(Boolean);
+      const globalLots = canetKnownActiveLotRows.map((l) => clean(l.lote)).filter(Boolean);
       const globalSuffix = globalLots.filter((candidate) => normalizeLotCompareToken(candidate).endsWith(lotToken));
       if (globalSuffix.length === 1) return globalSuffix[0];
       return lote;
@@ -1719,9 +1730,17 @@ function InventoryPage() {
         const tipo = clean(m.tipo_movimiento);
         const qty = Math.abs(toNum(m.cantidad));
         const rowSign = toNum(m.signo);
-        const sign = rowSign !== 0 ? rowSign : (signByType.get(tipo) ?? (toNum(m.cantidad_signed) < 0 ? -1 : 1));
         const hasSigned = m.cantidad_signed !== undefined && m.cantidad_signed !== null && clean(m.cantidad_signed) !== '';
         const signedFromRow = toNum(m.cantidad_signed);
+        const configuredSign = toNum(signByType.get(tipo));
+        const sign =
+          rowSign !== 0
+            ? rowSign
+            : configuredSign !== 0
+              ? configuredSign
+              : hasSigned && signedFromRow !== 0
+                ? signedFromRow < 0 ? -1 : 1
+                : inferMovementSignByType(tipo, qty);
         const producto = clean(m.producto);
         const lote = canonicalLot(producto, clean(m.lote));
         return {
@@ -1755,7 +1774,7 @@ function InventoryPage() {
       normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
     }) as Movement[];
     return [...canetBaseMovements, ...legacyTransferEntries, ...huarteTransferEntries];
-  }, [huarteMovimientosShared, movimientos, signByType, visibleLotes]);
+  }, [canetKnownActiveLotRows, huarteMovimientosShared, movimientos, signByType]);
 
   // Canet and Huarte are independent inventories. Transfers are represented
   // by explicit paired movements, not by live mirrored rows.
@@ -2107,7 +2126,7 @@ function InventoryPage() {
     if (componentProducts.length === 0) return map;
     const localLotStateByProductLot = buildLotStateMap(visibleLotes);
 
-    const activeMasterRows = visibleLotes
+    const activeMasterRows = canetKnownActiveLotRows
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => componentProducts.includes(l.producto))
@@ -2149,6 +2168,7 @@ function InventoryPage() {
     movementForm.cantidad,
     movementForm.tipo_movimiento,
     movementKitComponents,
+    canetKnownActiveLotRows,
     visibleLotes,
     signByType,
     stockBaseVisible,
@@ -2282,8 +2302,8 @@ function InventoryPage() {
   }, [dashOutProduct, dashOutLot, dashOutLotOptions]);
 
   const canonicalKnownCanetLotRows = useMemo(
-    () => [...visibleLotes, ...(seed.lotes as GenericRow[])],
-    [visibleLotes],
+    () => [...canetKnownActiveLotRows, ...CANET_LOT_REFERENCE_ROWS],
+    [canetKnownActiveLotRows],
   );
 
   const inventoryProductMetaByCode = useMemo(() => {
@@ -3898,7 +3918,7 @@ function InventoryPage() {
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
     const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
     const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
-    const activeMasterRows = visibleLotes
+    const activeMasterRows = canetKnownActiveLotRows
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => (selectedProduct ? l.producto === selectedProduct : true))
@@ -3954,7 +3974,7 @@ function InventoryPage() {
       ),
     ).sort();
   }, [
-    visibleLotes,
+    canetKnownActiveLotRows,
     movementForm.producto,
     movementForm.bodega,
     movementForm.cantidad,
@@ -3979,7 +3999,7 @@ function InventoryPage() {
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
     const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
     const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
-    const activeMasterRows = visibleLotes
+    const activeMasterRows = canetKnownActiveLotRows
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
       .filter((l) => !!l.producto && !!l.lote)
       .filter((l) => (selectedProduct ? l.producto === selectedProduct : true))
@@ -4045,7 +4065,7 @@ function InventoryPage() {
     normalizedMovements,
     signByType,
     stockBaseVisible,
-    visibleLotes,
+    canetKnownActiveLotRows,
   ]);
 
   const visibleMovements = useMemo(() => {
@@ -4307,7 +4327,7 @@ function InventoryPage() {
               clean(row.producto) === targetProduct &&
               normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot),
           )
-        : visibleLotes.some((l) => {
+        : canetKnownActiveLotRows.some((l) => {
             if (clean(l.producto) !== targetProduct) return false;
             return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(targetLot);
           });
@@ -4349,7 +4369,7 @@ function InventoryPage() {
               clean(row.producto) === targetProduct &&
               normalizeLotCompareToken(row.lote) === normalizeLotCompareToken(targetLot),
           )
-        : visibleLotes.some((l) => {
+        : canetKnownActiveLotRows.some((l) => {
             if (clean(l.producto) !== targetProduct) return false;
             return normalizeLotCompareToken(clean(l.lote)) === normalizeLotCompareToken(targetLot);
           });
