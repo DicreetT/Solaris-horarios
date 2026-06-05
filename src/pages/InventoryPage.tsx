@@ -158,19 +158,6 @@ const LOT_VIALES_CORRECTIONS = new Map<string, number>([
   ['ENT|2507A19', 95075],
   ['ENT|2511A20', 100730],
 ]);
-const HuarteMirrorStockCorrections = new Map<string, number>([
-  ['AV|2507A07|MAS BORRAS', 8],
-  ['ENT|2507A19|MAS BORRAS', 10],
-  ['ENT|2507A19|VALENCIA', 4],
-  ['KL|241030|MAS BORRAS', 23],
-  ['ISO|250932|MAS BORRAS', 2],
-  ['ISO|250932|VALENCIA', 2],
-  ['SV|2511A34|CANET', 216],
-  ['SV|2511A34|MAS BORRAS', 0],
-  ['SV|2601A35|CANET', 2460],
-  ['SV|2602A36|CANET', 0],
-  ['SV|2602A36|ENSAMBLAJE COLOMBIA', 3200],
-]);
 const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
 const INVENTORY_LOT_ARCHIVES_KEY = 'inventory_canet_lot_archives_v1';
 const lotKeyOf = (producto: any, lote: any) =>
@@ -1897,14 +1884,9 @@ function InventoryPage() {
         const bodega = normalizeWarehouseAlias(clean(movement.bodega));
         if (selectedWarehouse && bodega.toUpperCase() !== selectedWarehouse) return false;
         return !isHuarteMirrorWarehouse(bodega);
-        return true;
       },
       rowTransform: (row) => {
-        const correctionKey = `${clean(row.producto).toUpperCase()}|${normalizeLotCompareToken(row.lote)}|${normalizeWarehouseAlias(row.bodega).toUpperCase()}`;
-        const correctedStock =
-          HuarteMirrorStockCorrections.get(correctionKey) ??
-          toNum(row.stock);
-        const safeStock = Math.max(0, correctedStock);
+        const safeStock = Math.max(0, toNum(row.stock));
         if (isForcedAgotadoLot(row.producto, row.lote)) {
           return { ...row, stock: 0 };
         }
