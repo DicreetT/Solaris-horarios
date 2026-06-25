@@ -26,6 +26,8 @@ export type InventoryMonthlyCloseSnapshot = {
   productCount: number;
   lotCount: number;
   warehouseCount: number;
+  deletedAt?: string;
+  deletedBy?: string;
 };
 
 const clean = (value: unknown) => (value == null ? '' : String(value).trim());
@@ -111,7 +113,7 @@ export function getInventoryMonthlyCloseSnapshot(
   monthKey: string,
 ) {
   return (Array.isArray(snapshots) ? snapshots : []).find(
-    (snapshot) => snapshot.scope === scope && clean(snapshot.monthKey) === clean(monthKey),
+    (snapshot) => !snapshot.deletedAt && snapshot.scope === scope && clean(snapshot.monthKey) === clean(monthKey),
   );
 }
 

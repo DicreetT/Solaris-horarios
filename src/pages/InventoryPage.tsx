@@ -1839,7 +1839,7 @@ function InventoryPage() {
   const canetMonthlyClosures = useMemo(
     () =>
       (monthlyClosures || [])
-        .filter((snapshot) => snapshot.scope === 'canet')
+        .filter((snapshot) => snapshot.scope === 'canet' && !snapshot.deletedAt)
         .sort((a, b) => clean(a.monthKey).localeCompare(clean(b.monthKey))),
     [monthlyClosures],
   );
@@ -5756,9 +5756,17 @@ function InventoryPage() {
       id: `${snapshot.scope}:${nextMonthKey}`,
       monthKey: nextMonthKey,
       monthLabel: nextLabel,
+      deletedAt: undefined,
+      deletedBy: undefined,
+    };
+    const deletedOriginal: InventoryMonthlyCloseSnapshot = {
+      ...snapshot,
+      deletedAt: new Date().toISOString(),
+      deletedBy: actorName,
     };
     setMonthlyClosures((prev) => [
       movedSnapshot,
+      deletedOriginal,
       ...(Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id && item.id !== movedSnapshot.id),
     ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope))));
     await notifyAnabela(`${actorName} movió el cierre mensual de Inventario Canet de ${snapshot.monthLabel} a ${nextLabel}.`);
@@ -5772,7 +5780,14 @@ function InventoryPage() {
       '¿Deseas eliminarlo?',
     );
     if (!ok) return;
-    setMonthlyClosures((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id));
+    const deletedAt = new Date().toISOString();
+    setMonthlyClosures((prev) => {
+      const existing = (Array.isArray(prev) ? prev : []).find((item) => item.id === snapshot.id) || snapshot;
+      return [
+        { ...existing, deletedAt, deletedBy: actorName },
+        ...(Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id),
+      ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
+    });
     await notifyAnabela(`${actorName} eliminó el cierre mensual de Inventario Canet (${snapshot.monthLabel}).`);
     appendAudit('Eliminación de cierre mensual', `Canet (${snapshot.monthKey})`);
     emitSuccessFeedback('Cierre mensual eliminado.');

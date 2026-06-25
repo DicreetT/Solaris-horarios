@@ -35,7 +35,7 @@ import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 
-type TabKey = 'dashboard' | 'movimientos' | 'rectificativas' | 'ensamblajes' | 'maestros';
+type TabKey = 'dashboard' | 'movimientos' | 'rectificativas' | 'ensamblajes' | 'maestros' | 'cierres';
 type DashboardKey = 'stock' | 'control' | 'rect' | 'ventas_anual' | 'envios_mes' | 'ensam_anual';
 type MasterKey = 'productos' | 'lotes' | 'bodegas' | 'tipos' | 'clientes' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
@@ -780,6 +780,7 @@ export default function InventoryFacturacionPage() {
       movimientos: 'movimientos',
       ensamblajes: 'ensamblajes',
       maestros: 'maestros',
+      cierres: 'cierres',
     };
     if (t && allowed[t]) {
       setTab(allowed[t]);
@@ -1441,6 +1442,13 @@ export default function InventoryFacturacionPage() {
       .filter((row) => toNum(row.stock) > 0)
       .map((row) => ({ ...row, stock: Math.max(0, Math.round(toNum(row.stock))) })),
     [hiddenLotKeySet, globalSafeControlByLot],
+  );
+  const huarteMonthlyClosures = useMemo(
+    () =>
+      (monthlyClosures || [])
+        .filter((snapshot) => snapshot.scope === 'huarte' && !snapshot.deletedAt)
+        .sort((a, b) => clean(a.monthKey).localeCompare(clean(b.monthKey))),
+    [monthlyClosures],
   );
   const currentMonthlyClose = useMemo(
     () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'huarte', closeMonthKey) : null,
@@ -2822,22 +2830,86 @@ export default function InventoryFacturacionPage() {
       alert('Todavía no hay cierre guardado para este mes.');
       return;
     }
+    downloadMonthlyCloseSnapshotExcel(currentMonthlyClose);
+  };
+  const downloadMonthlyCloseSnapshotExcel = (snapshot: InventoryMonthlyCloseSnapshot) => {
     openTableXlsx({
       title: 'Inventario Huarte - Cierre de mes',
-      subtitle: `Foto congelada · Cierre: ${currentMonthlyClose.monthLabel} · Guardado: ${new Date(currentMonthlyClose.closedAt).toLocaleString('es-ES')} · Responsable: ${currentMonthlyClose.closedBy}`,
-      fileName: `cierre-mes-huarte-${currentMonthlyClose.monthKey}.xlsx`,
+      subtitle: `Foto congelada · Cierre: ${snapshot.monthLabel} · Guardado: ${new Date(snapshot.closedAt).toLocaleString('es-ES')} · Responsable: ${snapshot.closedBy}`,
+      fileName: `cierre-mes-huarte-${snapshot.monthKey}.xlsx`,
       headers: ['Producto', 'Lote', 'Bodega', 'Stock cierre'],
-      rows: appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(currentMonthlyClose)),
+      rows: appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(snapshot)),
       summaryRows: [
-        ['Stock cierre', currentMonthlyClose.totalStock],
-        ['Productos', currentMonthlyClose.productCount],
-        ['Lotes', currentMonthlyClose.lotCount],
-        ['Bodegas', currentMonthlyClose.warehouseCount],
-        ['Filas snapshot', currentMonthlyClose.rowCount ?? currentMonthlyClose.rows.length],
-        ['Huella snapshot', currentMonthlyClose.snapshotHash || 'legacy'],
+        ['Stock cierre', snapshot.totalStock],
+        ['Productos', snapshot.productCount],
+        ['Lotes', snapshot.lotCount],
+        ['Bodegas', snapshot.warehouseCount],
+        ['Filas snapshot', snapshot.rowCount ?? snapshot.rows.length],
+        ['Huella snapshot', snapshot.snapshotHash || 'legacy'],
       ],
     });
     emitSuccessFeedback('Excel de cierre generado.');
+  };
+  const moveMonthlyCloseToMonth = async (snapshot: InventoryMonthlyCloseSnapshot, nextMonthKeyRaw: string) => {
+    const nextMonthKey = clean(nextMonthKeyRaw);
+    if (!/^\d{4}-\d{2}$/.test(nextMonthKey)) {
+      alert('Selecciona un mes válido para el cierre.');
+      return;
+    }
+    if (nextMonthKey === snapshot.monthKey) return;
+    const nextLabel = monthLabel(nextMonthKey);
+    const existingTarget = getInventoryMonthlyCloseSnapshot(monthlyClosures, snapshot.scope, nextMonthKey);
+    const replaceText = existingTarget && existingTarget.id !== snapshot.id
+      ? `\n\nYa existe un cierre para ${nextLabel}; si continúas, se reemplazará por este cierre.`
+      : '';
+    const ok = window.confirm(
+      `Vas a mover el cierre congelado de ${snapshot.monthLabel} a ${nextLabel}.\n\n` +
+      'No se recalculará el stock: solo se corrige el mes al que pertenece la foto congelada.' +
+      replaceText +
+      '\n\n¿Deseas continuar?',
+    );
+    if (!ok) return;
+
+    const movedSnapshot: InventoryMonthlyCloseSnapshot = {
+      ...snapshot,
+      id: `${snapshot.scope}:${nextMonthKey}`,
+      monthKey: nextMonthKey,
+      monthLabel: nextLabel,
+      deletedAt: undefined,
+      deletedBy: undefined,
+    };
+    const deletedOriginal: InventoryMonthlyCloseSnapshot = {
+      ...snapshot,
+      deletedAt: new Date().toISOString(),
+      deletedBy: actorName,
+    };
+    setMonthlyClosures((prev) => [
+      movedSnapshot,
+      deletedOriginal,
+      ...(Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id && item.id !== movedSnapshot.id),
+    ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope))));
+    appendAudit('Edición de cierre mensual', `Huarte: ${snapshot.monthKey} -> ${nextMonthKey}`);
+    await notifyHuarteResponsible(`${actorName} movió el cierre mensual de Inventario Huarte de ${snapshot.monthLabel} a ${nextLabel}.`);
+    emitSuccessFeedback('Cierre mensual actualizado.');
+  };
+  const deleteMonthlyCloseSnapshot = async (snapshot: InventoryMonthlyCloseSnapshot) => {
+    const ok = window.confirm(
+      `Vas a eliminar el cierre congelado de ${snapshot.monthLabel}.\n\n` +
+      'Ese mes volverá a calcularse con movimientos y dejará de estar bloqueado por esta foto.\n\n' +
+      '¿Deseas eliminarlo?',
+    );
+    if (!ok) return;
+    const deletedAt = new Date().toISOString();
+    setMonthlyClosures((prev) => {
+      const existing = (Array.isArray(prev) ? prev : []).find((item) => item.id === snapshot.id) || snapshot;
+      return [
+        { ...existing, deletedAt, deletedBy: actorName },
+        ...(Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id),
+      ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
+    });
+    appendAudit('Eliminación de cierre mensual', `Huarte (${snapshot.monthKey})`);
+    await notifyHuarteResponsible(`${actorName} eliminó el cierre mensual de Inventario Huarte (${snapshot.monthLabel}).`);
+    emitSuccessFeedback('Cierre mensual eliminado.');
   };
 
   const limitRows = <T,>(key: string, rows: T[]) => (showAllRows[key] ? rows : rows.slice(0, 6));
@@ -2868,7 +2940,7 @@ export default function InventoryFacturacionPage() {
     </button>
   );
   const visibleTabKeys = useMemo<TabKey[]>(
-    () => (isRestrictedUser ? ['dashboard'] : ['dashboard', 'movimientos', 'ensamblajes', 'maestros']),
+    () => (isRestrictedUser ? ['dashboard'] : ['dashboard', 'movimientos', 'ensamblajes', 'maestros', 'cierres']),
     [isRestrictedUser],
   );
   const visibleDashboardSections = useMemo<DashboardKey[]>(
@@ -3112,6 +3184,7 @@ export default function InventoryFacturacionPage() {
               {visibleTabKeys.includes('movimientos') && tabButton('movimientos', 'Movimientos', Plus)}
               {visibleTabKeys.includes('ensamblajes') && tabButton('ensamblajes', 'Ensamblajes', Boxes, unseenCanetAssemblies)}
               {visibleTabKeys.includes('maestros') && tabButton('maestros', 'Maestros', FolderTree)}
+              {visibleTabKeys.includes('cierres') && tabButton('cierres', 'Cierres', Archive)}
             </div>
           </section>
         </>
@@ -3519,6 +3592,69 @@ export default function InventoryFacturacionPage() {
           <Panel title="Archivos de ensamblaje importados (fase 0)">
             <DataTable headers={['Archivo', 'Tipo', 'Total hojas', 'Hojas detectadas']} rows={ensamblajesArchivos.map((a) => [clean(a.archivo), clean(a.tipo), clean(a.total_hojas), Array.isArray(a.hojas) ? a.hojas.join(', ') : ''])} />
           </Panel>
+        </section>
+      )}
+
+      {accessReady && tab === 'cierres' && (
+        <section className="space-y-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-500">Cierres congelados</p>
+                <h3 className="text-lg font-black text-slate-950">Cierres de mes Huarte</h3>
+                <p className="text-sm text-slate-600">
+                  Aquí puedes revisar qué meses están cerrados. Si un cierre quedó guardado en el mes equivocado, muévelo al mes correcto o elimínalo.
+                </p>
+              </div>
+              <span className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                {huarteMonthlyClosures.length} cierres
+              </span>
+            </div>
+            {!canEdit && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                Entra en modo edición para mover o eliminar cierres. En modo consulta solo puedes revisarlos y descargar Excel.
+              </div>
+            )}
+          </div>
+
+          <DataTable
+            headers={['Mes cerrado', 'Guardado', 'Responsable', 'Stock', 'Lotes', 'Bodegas', 'Mover a', 'Acciones']}
+            rows={[...huarteMonthlyClosures].reverse().map((snapshot) => [
+              <span key={`${snapshot.id}-period`} className="font-black capitalize text-slate-950">{snapshot.monthLabel}</span>,
+              new Date(snapshot.closedAt).toLocaleString('es-ES'),
+              snapshot.closedBy || '-',
+              snapshot.totalStock.toLocaleString('es-ES'),
+              snapshot.lotCount.toLocaleString('es-ES'),
+              snapshot.warehouseCount.toLocaleString('es-ES'),
+              <input
+                key={`${snapshot.id}-month`}
+                type="month"
+                value={snapshot.monthKey}
+                disabled={!canEdit}
+                onChange={(event) => void moveMonthlyCloseToMonth(snapshot, event.target.value)}
+                className="w-36 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-bold text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              />,
+              <div key={`${snapshot.id}-actions`} className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadMonthlyCloseSnapshotExcel(snapshot)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+                >
+                  <FileSpreadsheet size={13} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => void deleteMonthlyCloseSnapshot(snapshot)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  <Trash2 size={13} />
+                  Eliminar
+                </button>
+              </div>,
+            ])}
+          />
         </section>
       )}
 
