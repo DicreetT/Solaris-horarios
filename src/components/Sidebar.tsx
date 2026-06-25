@@ -13,7 +13,8 @@ import {
     ChevronRight,
     Search,
     Boxes,
-    Wrench
+    Wrench,
+    ClipboardCheck
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
@@ -127,6 +128,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             icon: Wrench,
             show: true,
             isActive: (pathname, search) => pathname === '/inventory' && new URLSearchParams(search).get('tab') === 'control_stock',
+        },
+        {
+            path: '/control-operativo',
+            label: 'Control operativo',
+            icon: ClipboardCheck,
+            show: true,
         },
         {
             path: '/despachos',

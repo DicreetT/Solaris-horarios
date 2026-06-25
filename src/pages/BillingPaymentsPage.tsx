@@ -195,6 +195,27 @@ function statusClass(status: PaymentStatus) {
   return 'bg-amber-100 text-amber-800 border-amber-200';
 }
 
+function monthKeyFromDate(value?: string) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(monthKey: string) {
+  const [yearRaw, monthRaw] = monthKey.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!year || !month) return monthKey;
+  return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
+}
+
+function formatCurrency(value: number) {
+  return `${(Number(value) || 0).toLocaleString('es-ES', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} €`;
+}
+
 const PROVIDER_ALIASES = [
   'nombre',
   'proveedor',
@@ -323,6 +344,7 @@ export default function BillingPaymentsPage() {
   const [manualComments, setManualComments] = useState('');
   const [manualRequestFile, setManualRequestFile] = useState<File | null>(null);
   const [searchText, setSearchText] = useState('');
+  const [monthFilter, setMonthFilter] = useState('all');
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [editProvider, setEditProvider] = useState('');
@@ -354,10 +376,20 @@ export default function BillingPaymentsPage() {
     });
   }, [requests, canViewAll, currentUser?.id]);
 
+  const monthOptions = useMemo(() => {
+    const keys = Array.from(new Set(visibleRequests.map((item) => monthKeyFromDate(item.createdAt)).filter(Boolean)));
+    return keys.sort((a, b) => b.localeCompare(a));
+  }, [visibleRequests]);
+
+  const monthFilteredRequests = useMemo(() => {
+    if (monthFilter === 'all') return visibleRequests;
+    return visibleRequests.filter((item) => monthKeyFromDate(item.createdAt) === monthFilter);
+  }, [visibleRequests, monthFilter]);
+
   const filteredRequests = useMemo(() => {
     const q = normalizeKey(searchText);
-    if (!q) return visibleRequests;
-    return visibleRequests.filter((item) => {
+    if (!q) return monthFilteredRequests;
+    return monthFilteredRequests.filter((item) => {
       const amountEs = item.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const haystack = [
         item.providerName,
@@ -375,10 +407,16 @@ export default function BillingPaymentsPage() {
       ];
       return haystack.some((value) => normalizeKey(value || '').includes(q));
     });
-  }, [visibleRequests, searchText]);
+  }, [monthFilteredRequests, searchText]);
 
   const pendingCount = filteredRequests.filter((r) => r.status === 'PENDIENTE').length;
   const paidCount = filteredRequests.filter((r) => r.status === 'PAGADO').length;
+  const pendingAmount = filteredRequests
+    .filter((r) => r.status === 'PENDIENTE')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const paidAmount = filteredRequests
+    .filter((r) => r.status === 'PAGADO')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
   const resetManualForm = () => {
     setManualProvider('');
@@ -634,7 +672,28 @@ export default function BillingPaymentsPage() {
       </section>
 
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="mb-4 flex flex-col gap-3 border-b border-violet-100 pb-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-lg font-black text-violet-950">Resumen de pagos</h2>
+            <p className="mt-1 text-xs font-semibold text-violet-600">
+              Las cifras se recalculan con el mes y búsqueda seleccionados.
+            </p>
+          </div>
+          <label className="text-xs font-black uppercase tracking-wide text-violet-700">
+            Mes
+            <select
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+              className="mt-1 h-11 min-w-56 rounded-xl border border-violet-200 bg-white px-3 text-sm font-bold normal-case text-violet-900"
+            >
+              <option value="all">Todos los meses</option>
+              {monthOptions.map((option) => (
+                <option key={option} value={option}>{formatMonthLabel(option)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="grid gap-4 md:grid-cols-4">
           <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
             <p className="text-xs font-black uppercase tracking-wide text-violet-700">Solicitudes visibles</p>
             <p className="mt-1 text-2xl font-black text-violet-950">{filteredRequests.length}</p>
@@ -642,10 +701,21 @@ export default function BillingPaymentsPage() {
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-xs font-black uppercase tracking-wide text-amber-700">Pendientes</p>
             <p className="mt-1 text-2xl font-black text-amber-900">{pendingCount}</p>
+            <p className="mt-1 text-sm font-black text-amber-800">{formatCurrency(pendingAmount)}</p>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
             <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Pagadas</p>
             <p className="mt-1 text-2xl font-black text-emerald-900">{paidCount}</p>
+            <p className="mt-1 text-sm font-black text-emerald-800">{formatCurrency(paidAmount)}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-600">Periodo</p>
+            <p className="mt-1 text-lg font-black capitalize text-slate-900">
+              {monthFilter === 'all' ? 'Todos' : formatMonthLabel(monthFilter)}
+            </p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              {monthFilter === 'all' ? `${visibleRequests.length} visibles` : `${monthFilteredRequests.length} en el mes`}
+            </p>
           </div>
         </div>
       </section>
@@ -787,11 +857,24 @@ export default function BillingPaymentsPage() {
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             placeholder="Buscar..."
-            className="md:col-span-4 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+            className="md:col-span-3 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
           />
+          <select
+            value={monthFilter}
+            onChange={(event) => setMonthFilter(event.target.value)}
+            className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-bold text-violet-900"
+          >
+            <option value="all">Todos los meses</option>
+            {monthOptions.map((option) => (
+              <option key={option} value={option}>{formatMonthLabel(option)}</option>
+            ))}
+          </select>
           <button
             type="button"
-            onClick={() => setSearchText('')}
+            onClick={() => {
+              setSearchText('');
+              setMonthFilter('all');
+            }}
             className="inline-flex items-center justify-center rounded-xl border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-black text-violet-800"
           >
             Limpiar
@@ -805,7 +888,7 @@ export default function BillingPaymentsPage() {
           <span className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-black text-violet-700">
             {requestsLoading
               ? 'Cargando...'
-              : searchText
+              : searchText || monthFilter !== 'all'
                 ? `${filteredRequests.length} de ${visibleRequests.length} registro(s)`
                 : `${filteredRequests.length} registro(s)`}
           </span>

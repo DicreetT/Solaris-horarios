@@ -384,26 +384,32 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
             const startedAt = Date.now();
             if (!silent) setIsLoading(true);
             setIsSyncing(true);
-            const maxRows = 5000;
+            const pageSize = 1000;
+            const maxRows = 50000;
             try {
-                const { data, error } = await withTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
-                    () =>
-                        supabase
-                            .from('inventory_movements')
-                            .select(INVENTORY_MOVEMENT_COLUMNS)
-                            .eq('inventory_id', inventoryId)
-                            .order('id', { ascending: false })
-                            .range(0, maxRows - 1),
-                    READ_TIMEOUT_MS,
-                    `loadMovements(${inventoryId})`,
-                );
-                if (error) {
-                    console.error(`Error loading inventory movements for ${inventoryId}:`, error);
-                    setLastError(describeConnectionError(error, `No se pudieron cargar movimientos de ${inventoryId}.`));
-                } else {
+                const rows: InventoryMovementRow[] = [];
+                for (let offset = 0; offset < maxRows; offset += pageSize) {
+                    const { data, error } = await withTimeout<{ data: InventoryMovementRow[] | null; error: any }>(
+                        () =>
+                            supabase
+                                .from('inventory_movements')
+                                .select(INVENTORY_MOVEMENT_COLUMNS)
+                                .eq('inventory_id', inventoryId)
+                                .order('id', { ascending: false })
+                                .range(offset, offset + pageSize - 1),
+                        READ_TIMEOUT_MS,
+                        `loadMovements(${inventoryId}:${offset}-${offset + pageSize - 1})`,
+                    );
+                    if (error) throw error;
+
+                    const batch = ((data || []) as InventoryMovementRow[]);
+                    rows.push(...batch);
+                    if (batch.length < pageSize) break;
+                }
+
+                {
                     // Ignore stale reads that started before a successful local mutation.
                     if (startedAt < lastMutationAtRef.current) return;
-                    const rows = ((data || []) as InventoryMovementRow[]);
                     const hasPendingWrites = pendingUpsertsRef.current.size > 0 || pendingDeletesRef.current.size > 0;
                     const hasTrustedServerSnapshot = (lastTrustedServerSnapshotRef.current?.length || 0) > 0;
                     const serverSnapshotIsStale = lastTrustedServerMutationAtRef.current !== lastMutationAtRef.current;

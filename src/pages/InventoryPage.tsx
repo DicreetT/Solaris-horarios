@@ -14,6 +14,8 @@ import {
   HUARTE_STOCK_WAREHOUSES,
   buildMissingTransferEntryMovements,
   calculateInventoryStockSnapshot,
+  isInventoryTransferInType,
+  isInventoryTransferOutType,
   normalizeInventoryWarehouse,
   sortInventoryWarehouses,
 } from '../utils/inventoryStock';
@@ -36,7 +38,7 @@ import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
-type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'ensamblajes' | 'maestros';
+type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'ensamblajes' | 'maestros' | 'auditoria';
 type CanetMasterKey = 'cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
 type HypotheticalScope = 'potential' | 'canet_huarte' | 'canet';
@@ -48,6 +50,16 @@ type InventoryAuditEntry = {
   userName: string;
   action: string;
   details?: string;
+};
+
+type InventoryAuditFinding = {
+  severity: 'crítico' | 'revisar' | 'info';
+  category: string;
+  period: string;
+  product: string;
+  lot: string;
+  warehouse: string;
+  detail: string;
 };
 
 type Movement = {
@@ -835,6 +847,10 @@ const monthEndDateFromKey = (key: string) => {
   const [yy, mm] = key.split('-').map(Number);
   if (!Number.isFinite(yy) || !Number.isFinite(mm) || mm < 1 || mm > 12) return null;
   return new Date(yy, mm, 0, 23, 59, 59, 999);
+};
+const monthEndInputValue = (key: string) => {
+  const end = monthEndDateFromKey(key);
+  return end ? dateInputValue(end) : monthStartInputValue(key);
 };
 const dateStartFromInput = (value: string) => {
   const d = dateFromAny(value);
@@ -1640,7 +1656,7 @@ function InventoryPage() {
   };
 
   const addProductFilter = (value: string) => {
-    const v = clean(value);
+    const v = clean(value).toUpperCase();
     if (!v) return;
     if (!productOptions.includes(v)) return;
     setProductFilters((prev) => (prev.includes(v) ? prev : [...prev, v]));
@@ -1820,6 +1836,83 @@ function InventoryPage() {
   const periodFileKey = selectedDatePeriod.fileKey;
   const periodLabel = selectedDatePeriod.label;
 
+  const canetMonthlyClosures = useMemo(
+    () =>
+      (monthlyClosures || [])
+        .filter((snapshot) => snapshot.scope === 'canet')
+        .sort((a, b) => clean(a.monthKey).localeCompare(clean(b.monthKey))),
+    [monthlyClosures],
+  );
+  const currentMonthlyClose = useMemo(
+    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', closeMonthKey) : null,
+    [monthlyClosures, closeMonthKey],
+  );
+  const previousMonthlyClose = useMemo(
+    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', getPreviousMonthKey(closeMonthKey)) : null,
+    [monthlyClosures, closeMonthKey],
+  );
+  const getLatestCanetCloseAtOrBefore = useCallback((end: Date | null | undefined) => {
+    if (!end) return null;
+    let latest: InventoryMonthlyCloseSnapshot | null = null;
+    for (const snapshot of canetMonthlyClosures) {
+      const closeEnd = monthEndDateFromKey(snapshot.monthKey);
+      if (!closeEnd || closeEnd.getTime() > end.getTime()) continue;
+      latest = snapshot;
+    }
+    return latest;
+  }, [canetMonthlyClosures]);
+  const getLatestCanetCloseBeforeMonth = useCallback((monthKey: string) => {
+    let latest: InventoryMonthlyCloseSnapshot | null = null;
+    for (const snapshot of canetMonthlyClosures) {
+      if (clean(snapshot.monthKey) >= clean(monthKey)) continue;
+      latest = snapshot;
+    }
+    return latest;
+  }, [canetMonthlyClosures]);
+  const monthlyCloseRowsAsBaseMovements = useCallback((snapshot: InventoryMonthlyCloseSnapshot | null | undefined) => {
+    if (!snapshot) return [] as Movement[];
+    return snapshot.rows.map((row, index) => ({
+      id: `monthly-close-${snapshot.id}-${index}` as any,
+      fecha: monthEndInputValue(snapshot.monthKey),
+      tipo_movimiento: 'cierre_base',
+      producto: clean(row.producto),
+      lote: clean(row.lote),
+      cantidad: Math.max(0, toNum(row.stock)),
+      bodega: normalizeWarehouseAlias(row.bodega),
+      cliente: '',
+      destino: '',
+      notas: `Base congelada ${snapshot.monthLabel}`,
+      afecta_stock: 'SI',
+      signo: 1,
+      cantidad_signed: Math.max(0, toNum(row.stock)),
+      created_at: snapshot.closedAt,
+      updated_at: snapshot.closedAt,
+      updated_by: snapshot.closedBy,
+      source: 'monthly_close_base',
+    })) as Movement[];
+  }, []);
+  const buildStockBaseFromSnapshot = useCallback((snapshot: InventoryMonthlyCloseSnapshot | null | undefined, end: Date | null | undefined) => {
+    if (!end) return null;
+    if (!snapshot) return null;
+    const baselineEnd = monthEndDateFromKey(snapshot.monthKey);
+    if (!baselineEnd) return null;
+    const movementsAfterBaseline = normalizedMovements.filter((movement) => {
+      if (clean(movement.afecta_stock).toUpperCase() !== 'SI') return false;
+      const movementDate = dateFromAny(clean(movement.fecha));
+      if (!movementDate) return false;
+      return movementDate.getTime() > baselineEnd.getTime() && movementDate.getTime() <= end.getTime();
+    });
+    return [...monthlyCloseRowsAsBaseMovements(snapshot), ...movementsAfterBaseline];
+  }, [monthlyCloseRowsAsBaseMovements, normalizedMovements]);
+  const buildStockBaseFromMonthlyClose = useCallback((end: Date | null | undefined, options: { forceFrozenMonth?: boolean } = {}) => {
+    if (!end) return null;
+    const selectedClosedMonth = options.forceFrozenMonth && closeMonthKey
+      ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', closeMonthKey)
+      : null;
+    if (selectedClosedMonth) return monthlyCloseRowsAsBaseMovements(selectedClosedMonth);
+    return buildStockBaseFromSnapshot(getLatestCanetCloseAtOrBefore(end), end);
+  }, [buildStockBaseFromSnapshot, closeMonthKey, getLatestCanetCloseAtOrBefore, monthlyCloseRowsAsBaseMovements, monthlyClosures]);
+
   const movementMatchesFilters = (m: Movement, monthExact: boolean) => {
     if (hiddenLotKeySet.has(lotKeyOf(m.producto, m.lote))) return false;
     const d = dateFromAny(clean(m.fecha));
@@ -1828,11 +1921,11 @@ function InventoryPage() {
       if (selectedDatePeriod.start && d < selectedDatePeriod.start) return false;
       if (selectedDatePeriod.end && d > selectedDatePeriod.end) return false;
     }
-    if (productFilters.length > 0 && !productFilters.includes(clean(m.producto))) return false;
-    if (lotFilter && clean(m.lote) !== lotFilter) return false;
-    if (warehouseFilter && clean(m.bodega) !== warehouseFilter) return false;
-    if (typeFilter && clean(m.tipo_movimiento) !== typeFilter) return false;
-    if (clientFilter && clean(m.cliente) !== clientFilter) return false;
+    if (productFilters.length > 0 && !productFilters.includes(clean(m.producto).toUpperCase())) return false;
+    if (lotFilter && normalizeLotCompareToken(clean(m.lote)) !== normalizeLotCompareToken(lotFilter)) return false;
+    if (warehouseFilter && normalizeWarehouseAlias(clean(m.bodega)) !== normalizeWarehouseAlias(warehouseFilter)) return false;
+    if (typeFilter && clean(m.tipo_movimiento).toLowerCase() !== clean(typeFilter).toLowerCase()) return false;
+    if (clientFilter && clean(m.cliente).toLowerCase() !== clean(clientFilter).toLowerCase()) return false;
     if (quickSearch) {
       const haystack = clean([
         m.fecha,
@@ -1851,7 +1944,11 @@ function InventoryPage() {
   };
 
   const stockBase = useMemo(() => {
-    return normalizedMovements.filter((m) => {
+    const closedBase = buildStockBaseFromMonthlyClose(periodEnd, {
+      forceFrozenMonth: dateFilterMode === 'month' && !!currentMonthlyClose,
+    });
+    const source = closedBase || normalizedMovements;
+    return source.filter((m) => {
       if (clean(m.afecta_stock).toUpperCase() !== 'SI') return false;
       if (!movementMatchesFilters(m, false)) return false;
       if (!periodEnd) return true;
@@ -1860,7 +1957,7 @@ function InventoryPage() {
       if (!d) return true;
       return d <= periodEnd;
     });
-  }, [hiddenLotKeySet, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, periodEnd, quickSearch]);
+  }, [buildStockBaseFromMonthlyClose, currentMonthlyClose, dateFilterMode, hiddenLotKeySet, normalizedMovements, productFilters, lotFilter, warehouseFilter, typeFilter, clientFilter, periodEnd, quickSearch]);
 
   const stockBaseVisible = useMemo(
     () =>
@@ -1902,7 +1999,10 @@ function InventoryPage() {
     if (!closeMonthKey) return [];
     const closeEnd = monthEndDateFromKey(closeMonthKey);
     if (!closeEnd) return [];
-    const rows = normalizedMovements.filter((movement) => {
+    const previousCloseBase = buildStockBaseFromSnapshot(getLatestCanetCloseBeforeMonth(closeMonthKey), closeEnd);
+    const baseRows = previousCloseBase || null;
+    const source = baseRows || normalizedMovements;
+    const rows = source.filter((movement) => {
       if (clean(movement.afecta_stock).toUpperCase() !== 'SI') return false;
       const movementDate = dateFromAny(clean(movement.fecha));
       if (movementDate && movementDate > closeEnd) return false;
@@ -1922,16 +2022,7 @@ function InventoryPage() {
       },
       rowFilter: (row) => toNum(row.stock) > 0,
     }).rows;
-  }, [closeMonthKey, hiddenLotKeySet, normalizedMovements]);
-
-  const currentMonthlyClose = useMemo(
-    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', closeMonthKey) : null,
-    [monthlyClosures, closeMonthKey],
-  );
-  const previousMonthlyClose = useMemo(
-    () => closeMonthKey ? getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', getPreviousMonthKey(closeMonthKey)) : null,
-    [monthlyClosures, closeMonthKey],
-  );
+  }, [buildStockBaseFromSnapshot, closeMonthKey, getLatestCanetCloseBeforeMonth, hiddenLotKeySet, normalizedMovements]);
   const currentMonthlyCloseDrift = useMemo(
     () => getInventoryMonthlyCloseDrift(currentMonthlyClose, monthlyCloseRows),
     [currentMonthlyClose, monthlyCloseRows],
@@ -1979,10 +2070,11 @@ function InventoryPage() {
   }, [stockByPLB]);
 
   const movementByLotDetail = useMemo(() => {
+    const selectedWarehouse = normalizeWarehouseAlias(dashMoveBodega);
     return monthMovements
-      .filter((m) => (dashMoveProduct ? clean(m.producto) === dashMoveProduct : true))
-      .filter((m) => (dashMoveLot ? clean(m.lote) === dashMoveLot : true))
-      .filter((m) => (dashMoveBodega ? clean(m.bodega) === dashMoveBodega : true))
+      .filter((m) => (dashMoveProduct ? clean(m.producto).toUpperCase() === clean(dashMoveProduct).toUpperCase() : true))
+      .filter((m) => (dashMoveLot ? normalizeLotCompareToken(clean(m.lote)) === normalizeLotCompareToken(dashMoveLot) : true))
+      .filter((m) => (selectedWarehouse ? normalizeWarehouseAlias(clean(m.bodega)) === selectedWarehouse : true))
       .sort((a, b) => movementDateMs(clean(b.fecha)) - movementDateMs(clean(a.fecha)));
   }, [monthMovements, dashMoveProduct, dashMoveLot, dashMoveBodega]);
 
@@ -2012,8 +2104,8 @@ function InventoryPage() {
   const outputControl = useMemo(() => {
     return monthMovements
       .filter((m) => ['traspaso', 'venta', 'envio'].some((t) => contains(m.tipo_movimiento, t)))
-      .filter((m) => (dashOutProduct ? clean(m.producto) === dashOutProduct : true))
-      .filter((m) => (dashOutLot ? clean(m.lote) === dashOutLot : true))
+      .filter((m) => (dashOutProduct ? clean(m.producto).toUpperCase() === clean(dashOutProduct).toUpperCase() : true))
+      .filter((m) => (dashOutLot ? normalizeLotCompareToken(clean(m.lote)) === normalizeLotCompareToken(dashOutLot) : true))
       .map((m) => ({ producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), tipo: clean(m.tipo_movimiento), cantidad: toNum(m.cantidad_signed) }));
   }, [monthMovements, dashOutProduct, dashOutLot]);
 
@@ -2287,6 +2379,176 @@ function InventoryPage() {
     () => [...canetKnownActiveLotRows, ...CANET_LOT_REFERENCE_ROWS],
     [canetKnownActiveLotRows],
   );
+
+  const inventoryAuditFindings = useMemo<InventoryAuditFinding[]>(() => {
+    const findings: InventoryAuditFinding[] = [];
+    const addFinding = (finding: InventoryAuditFinding) => findings.push(finding);
+    const closedByMonth = new Map(
+      (monthlyClosures || [])
+        .filter((snapshot) => snapshot.scope === 'canet')
+        .map((snapshot) => [snapshot.monthKey, snapshot]),
+    );
+    const actualMovements = [...movimientos, ...(huarteMovimientosShared as Movement[])];
+
+    for (const snapshot of closedByMonth.values()) {
+      const closeEnd = monthEndDateFromKey(snapshot.monthKey);
+      if (!closeEnd) continue;
+      const recalculationBase = buildStockBaseFromSnapshot(getLatestCanetCloseBeforeMonth(snapshot.monthKey), closeEnd);
+      const source = recalculationBase || normalizedMovements;
+      const rows = source.filter((movement) => {
+        if (clean(movement.afecta_stock).toUpperCase() !== 'SI') return false;
+        const movementDate = dateFromAny(clean(movement.fecha));
+        if (movementDate && movementDate > closeEnd) return false;
+        return !hiddenLotKeySet.has(lotKeyOf(movement.producto, movement.lote));
+      });
+      const currentRows = calculateInventoryStockSnapshot(rows, {
+        scope: 'canet',
+        normalizeProduct: (value) => clean(value),
+        normalizeLot: (value) => clean(value),
+        normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+        includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+        rowTransform: (row) => {
+          const safeStock = Math.max(0, toNum(row.stock));
+          if (isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
+          return { ...row, stock: safeStock };
+        },
+        rowFilter: (row) => toNum(row.stock) > 0,
+      }).rows;
+      const drift = getInventoryMonthlyCloseDrift(snapshot, currentRows);
+      if (drift.changed) {
+        addFinding({
+          severity: 'crítico',
+          category: 'Cierre cambió',
+          period: snapshot.monthLabel || monthLabel(snapshot.monthKey),
+          product: '-',
+          lot: '-',
+          warehouse: '-',
+          detail: `La vista recalculada ya no coincide con el cierre congelado: Δ stock ${drift.stockDelta.toLocaleString('es-ES')} · Δ filas ${drift.rowDelta.toLocaleString('es-ES')}.`,
+        });
+      }
+    }
+
+    for (const movement of normalizedMovements) {
+      const movementDate = dateFromAny(clean(movement.fecha));
+      if (!movementDate) continue;
+      const movementMonth = monthKeyFromDate(movementDate);
+      const touchedDate = dateFromAny(clean(movement.updated_at || movement.created_at));
+      if (!touchedDate) continue;
+      const closed = closedByMonth.get(movementMonth);
+      if (closed && touchedDate.getTime() > new Date(closed.closedAt).getTime()) {
+        addFinding({
+          severity: 'revisar',
+          category: 'Movimiento posterior al cierre',
+          period: monthLabel(movementMonth),
+          product: clean(movement.producto) || '-',
+          lot: clean(movement.lote) || '-',
+          warehouse: normalizeWarehouseAlias(movement.bodega) || '-',
+          detail: `Movimiento ${movement.id} fechado el ${clean(movement.fecha)} fue creado/editado el ${touchedDate.toLocaleString('es-ES')} después del cierre.`,
+        });
+      } else if (touchedDate.getFullYear() > movementDate.getFullYear() || touchedDate.getMonth() > movementDate.getMonth()) {
+        addFinding({
+          severity: 'info',
+          category: 'Movimiento antiguo tocado después',
+          period: monthLabel(movementMonth),
+          product: clean(movement.producto) || '-',
+          lot: clean(movement.lote) || '-',
+          warehouse: normalizeWarehouseAlias(movement.bodega) || '-',
+          detail: `Movimiento ${movement.id} fechado el ${clean(movement.fecha)} fue creado/editado el ${touchedDate.toLocaleString('es-ES')}.`,
+        });
+      }
+    }
+
+    for (const movement of movimientos) {
+      const product = clean(movement.producto);
+      const lot = clean(movement.lote);
+      if (!product || !lot || !isShortLegacyLotAlias(lot)) continue;
+      const canonical = canonicalLotForProduct(canonicalKnownCanetLotRows, product, lot);
+      addFinding({
+        severity: canonical !== lot ? 'revisar' : 'crítico',
+        category: 'Lote corto',
+        period: clean(movement.fecha) || '-',
+        product,
+        lot,
+        warehouse: normalizeWarehouseAlias(movement.bodega) || '-',
+        detail: canonical !== lot
+          ? `Movimiento ${movement.id} usa lote corto; candidato normalizado: ${canonical}.`
+          : `Movimiento ${movement.id} usa lote corto y no se encontró un lote largo inequívoco.`,
+      });
+    }
+
+    const allStockRows = calculateInventoryStockSnapshot(normalizedMovements.filter((movement) => clean(movement.afecta_stock).toUpperCase() === 'SI'), {
+      scope: 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
+      includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+      rowTransform: (row) => ({ ...row, stock: Math.max(0, toNum(row.stock)) }),
+      rowFilter: (row) => toNum(row.stock) > 0,
+    }).rows;
+    for (const row of allStockRows) {
+      if (!hiddenLotKeySet.has(lotKeyOf(row.producto, row.lote))) continue;
+      addFinding({
+        severity: 'crítico',
+        category: 'Lote oculto con stock',
+        period: 'Actual',
+        product: row.producto,
+        lot: row.lote,
+        warehouse: row.bodega,
+        detail: `El lote está agotado/archivado pero el cálculo encuentra ${toNum(row.stock).toLocaleString('es-ES')} uds. Puede impedir seleccionar el lote o esconder stock real.`,
+      });
+    }
+
+    const actualTransferEntries = actualMovements.filter((movement) => isInventoryTransferInType(clean(movement.tipo_movimiento)));
+    for (const movement of actualMovements) {
+      if (!isInventoryTransferOutType(clean(movement.tipo_movimiento))) continue;
+      const origin = normalizeWarehouseAlias(movement.bodega);
+      const destination = normalizeWarehouseAlias(clean(movement.destino || movement.cliente));
+      const product = clean(movement.producto);
+      const lot = canonicalLotForProduct(canonicalKnownCanetLotRows, product, clean(movement.lote));
+      const qty = Math.abs(toNum((movement as any).cantidad_signed || movement.cantidad));
+      if (!origin || !destination || origin === destination || !product || !lot || qty <= 0) continue;
+      const hasEntry = actualTransferEntries.some((candidate) => {
+        const candidateQty = Math.abs(toNum((candidate as any).cantidad_signed || candidate.cantidad));
+        return (
+          normalizeWarehouseAlias(candidate.bodega) === destination &&
+          clean(candidate.producto) === product &&
+          normalizeLotCompareToken(candidate.lote) === normalizeLotCompareToken(lot) &&
+          Math.abs(candidateQty - qty) < 0.000001
+        );
+      });
+      if (!hasEntry) {
+        addFinding({
+          severity: 'revisar',
+          category: 'Traspaso sin entrada real',
+          period: clean(movement.fecha) || '-',
+          product,
+          lot,
+          warehouse: `${origin} -> ${destination}`,
+          detail: `Movimiento ${movement.id} descuenta ${qty.toLocaleString('es-ES')} uds, pero no se encontró entrada real equivalente. Puede existir entrada calculada en pantalla, no guardada en base.`,
+        });
+      }
+    }
+
+    const severityRank = { crítico: 0, revisar: 1, info: 2 } as const;
+    return findings
+      .sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || a.category.localeCompare(b.category))
+      .slice(0, 250);
+  }, [
+    buildStockBaseFromSnapshot,
+    canonicalKnownCanetLotRows,
+    getLatestCanetCloseBeforeMonth,
+    hiddenLotKeySet,
+    huarteMovimientosShared,
+    monthlyClosures,
+    movimientos,
+    normalizedMovements,
+  ]);
+
+  const inventoryAuditSummary = useMemo(() => ({
+    critical: inventoryAuditFindings.filter((item) => item.severity === 'crítico').length,
+    review: inventoryAuditFindings.filter((item) => item.severity === 'revisar').length,
+    info: inventoryAuditFindings.filter((item) => item.severity === 'info').length,
+  }), [inventoryAuditFindings]);
 
   const inventoryProductMetaByCode = useMemo(() => {
     const map = new Map<string, { modo: string; vialesPorCaja: number }>();
@@ -4173,6 +4435,23 @@ function InventoryPage() {
     setMovementLines((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.id !== lineId)));
   };
 
+  const closedMonthForDate = (dateRaw: unknown) => {
+    const date = dateFromAny(clean(dateRaw));
+    if (!date) return null;
+    return getInventoryMonthlyCloseSnapshot(monthlyClosures, 'canet', monthKeyFromDate(date)) || null;
+  };
+
+  const confirmClosedMonthWrite = (dateRaw: unknown, action: string) => {
+    const closed = closedMonthForDate(dateRaw);
+    if (!closed) return null;
+    const ok = window.confirm(
+      `${action} está fechado dentro de ${closed.monthLabel}, un mes que ya tiene cierre congelado.\n\n` +
+      'El stock del cierre no se recalculará automáticamente; esta acción quedará registrada en bitácora/auditoría como corrección sobre mes cerrado.\n\n' +
+      '¿Deseas continuar?',
+    );
+    return ok ? closed : false;
+  };
+
   const saveMovement = async () => {
     if (!canEditNow) {
       window.alert('Tu usuario no tiene edición habilitada en este inventario.');
@@ -4260,6 +4539,12 @@ function InventoryPage() {
         return;
       }
     }
+    const closedMonthWrite = confirmClosedMonthWrite(
+      movementForm.fecha,
+      editingId ? 'La edición del movimiento' : 'La creación del movimiento',
+    );
+    if (closedMonthWrite === false) return;
+    const closedMonthAuditSuffix = closedMonthWrite ? ` · Corrección mes cerrado: ${closedMonthWrite.monthLabel}` : '';
     const rawQty = toNum(!editingId ? primaryDraftLine.cantidad : movementForm.cantidad);
     const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
@@ -4578,7 +4863,7 @@ function InventoryPage() {
         void notifyAnabela(`${actorName} creó ${createdMovements.length} movimiento(s) en Inventario: ${movementForm.tipo_movimiento}.`);
         appendAudit(
           'Creación de movimientos múltiples',
-          `${movementForm.tipo_movimiento} · ${createdMovements.map((m) => `${m.producto} ${m.lote} ${m.cantidad_signed}`).join(', ')}`,
+          `${movementForm.tipo_movimiento} · ${createdMovements.map((m) => `${m.producto} ${m.lote} ${m.cantidad_signed}`).join(', ')}${closedMonthAuditSuffix}`,
         );
         emitSuccessFeedback(`${createdMovements.length} movimiento(s) creados con éxito.`);
         setMovementModalOpen(false);
@@ -4623,7 +4908,7 @@ function InventoryPage() {
         void notifyAnabela(`${actorName} creó una venta/movimiento de kit en Inventario: ${producto} · ${qty.toLocaleString('es-ES')}.`);
         appendAudit(
           'Creación de movimiento kit',
-          `${movementForm.tipo_movimiento} · ${producto} · ${qty.toLocaleString('es-ES')} · ${createdMovements.map((m) => `${m.producto} ${m.lote}`).join(', ')}`,
+          `${movementForm.tipo_movimiento} · ${producto} · ${qty.toLocaleString('es-ES')} · ${createdMovements.map((m) => `${m.producto} ${m.lote}`).join(', ')}${closedMonthAuditSuffix}`,
         );
         emitSuccessFeedback('Movimiento de kit creado con éxito.');
         setMovementModalOpen(false);
@@ -4662,7 +4947,7 @@ function InventoryPage() {
           await syncMirrorUpsertStrict(editedMirrorCandidate);
         }
         void notifyAnabela(`${actorName} editó un movimiento en Inventario (ID ${editingId}).`);
-        appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}`);
+        appendAudit('Edición de movimiento', `ID ${editingId} · ${movementForm.tipo_movimiento} · ${movementForm.producto} ${movementForm.lote}${closedMonthAuditSuffix}`);
         emitSuccessFeedback('Movimiento actualizado con éxito.');
         setMovementModalOpen(false);
         setEditingId(null);
@@ -4696,7 +4981,7 @@ function InventoryPage() {
         }
         await addTransferAutoEntry(nextPayload, qty, pairMarker);
         void notifyAnabela(`${actorName} creó un movimiento en Inventario: ${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote}.`);
-        appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}`);
+        appendAudit('Creación de movimiento', `${nextMovement.tipo_movimiento} · ${nextMovement.producto} ${nextMovement.lote} · ${nextMovement.cantidad_signed}${closedMonthAuditSuffix}`);
         emitSuccessFeedback('Movimiento creado con éxito.');
         setMovementModalOpen(false);
         setEditingId(null);
@@ -4726,10 +5011,13 @@ function InventoryPage() {
       return;
     }
     if (deletingMovementId === safeId) return;
+    const originalMovement = normalizedMovements.find((m) => Number(m.id) === Number(safeId)) || null;
+    const closedMonthWrite = confirmClosedMonthWrite(originalMovement?.fecha, 'La eliminación del movimiento');
+    if (closedMonthWrite === false) return;
+    const closedMonthAuditSuffix = closedMonthWrite ? ` · Corrección mes cerrado: ${closedMonthWrite.monthLabel}` : '';
     const ok = window.confirm('¿Estás segura de eliminar este movimiento?');
     if (!ok) return;
     setDeletingMovementId(safeId);
-    const originalMovement = normalizedMovements.find((m) => Number(m.id) === Number(safeId)) || null;
     const targetDb = canetDB;
     const targetId = safeId;
     let primaryDeleteCommitted = false;
@@ -4740,7 +5028,7 @@ function InventoryPage() {
         await syncMirrorDeleteStrict(safeId);
       }
       void notifyAnabela(`${actorName} eliminó un movimiento en Inventario (ID ${safeId}).`);
-      appendAudit('Eliminación de movimiento', `ID ${safeId}`);
+      appendAudit('Eliminación de movimiento', `ID ${safeId}${closedMonthAuditSuffix}`);
       emitSuccessFeedback('Movimiento eliminado con éxito.');
     } catch (error) {
       console.error('Error eliminando movimiento de inventario:', error);
@@ -5445,6 +5733,7 @@ function InventoryPage() {
     { key: 'movimientos', label: 'Movimientos', icon: ClipboardList },
     { key: 'ensamblajes', label: 'Ensamblajes', icon: Layers3 },
     { key: 'maestros', label: 'Maestros', icon: Tags },
+    { key: 'auditoria', label: 'Auditoría', icon: AlertTriangle },
   ];
   const visibleTabs = isRestrictedUser
     ? tabs.filter((item) => item.key === 'dashboard' || item.key === 'control_stock')
@@ -5842,11 +6131,11 @@ function InventoryPage() {
 
           {showMainFilters && (
             <div className="mt-3 grid gap-2 md:grid-cols-6">
-              <InputDatalistTag label="Producto" value={productFilterInput} onChange={setProductFilterInput} onSelect={addProductFilter} listId="inv-filter-product" options={productOptions} placeholder="Escribe producto..." />
-              <InputDatalist label="Lote" value={lotFilter} onChange={setLotFilter} listId="inv-filter-lot" options={lotOptions} placeholder="Escribe lote..." />
-              <InputDatalist label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} listId="inv-filter-bodega" options={warehouseOptions} placeholder="Escribe bodega..." />
-              <InputDatalist label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} listId="inv-filter-type" options={typeOptions} placeholder="Escribe tipo..." />
-              <InputDatalist label="Cliente" value={clientFilter} onChange={setClientFilter} listId="inv-filter-client" options={clientOptions} placeholder="Escribe cliente..." />
+              <InputAutocompleteTag label="Producto" value={productFilterInput} onChange={setProductFilterInput} onSelect={addProductFilter} options={productOptions} placeholder="Escribe producto..." />
+              <InputAutocomplete label="Lote" value={lotFilter} onChange={setLotFilter} options={lotOptions} placeholder="Escribe lote..." />
+              <InputAutocomplete label="Bodega" value={warehouseFilter} onChange={setWarehouseFilter} options={warehouseOptions} placeholder="Escribe bodega..." />
+              <InputAutocomplete label="Tipo movimiento" value={typeFilter} onChange={setTypeFilter} options={typeOptions} placeholder="Escribe tipo..." />
+              <InputAutocomplete label="Cliente" value={clientFilter} onChange={setClientFilter} options={clientOptions} placeholder="Escribe cliente..." />
               <Input label="Búsqueda rápida" value={quickSearch} onChange={setQuickSearch} placeholder="producto, lote, nota..." />
             </div>
           )}
@@ -6462,6 +6751,76 @@ function InventoryPage() {
               </div>,
             ])}
           />
+        </div>
+      )}
+
+      {accessReady && tab === 'auditoria' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-amber-600">Auditoría</p>
+                <h3 className="text-lg font-black text-slate-950">Diagnóstico de cambios de stock</h3>
+                <p className="text-sm text-slate-600">
+                  Vista de lectura: detecta cierres que cambiaron, movimientos antiguos tocados, lotes cortos y traspasos incompletos.
+                </p>
+              </div>
+              <span className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                {inventoryAuditFindings.length} hallazgos
+              </span>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+              <p className="text-[11px] font-black uppercase tracking-wide text-rose-700">Críticos</p>
+              <p className="mt-1 text-2xl font-black text-rose-900">{inventoryAuditSummary.critical}</p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-[11px] font-black uppercase tracking-wide text-amber-700">Revisar</p>
+              <p className="mt-1 text-2xl font-black text-amber-900">{inventoryAuditSummary.review}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-600">Informativos</p>
+              <p className="mt-1 text-2xl font-black text-slate-950">{inventoryAuditSummary.info}</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3">
+              <h3 className="text-lg font-black text-slate-950">Hallazgos</h3>
+              <p className="text-sm text-slate-600">
+                Estos registros no modifican inventario. Sirven para decidir qué corregir y en qué movimiento empezar a mirar.
+              </p>
+            </div>
+            <SimpleDataTable
+              headers={['Estado', 'Categoría', 'Periodo', 'Producto', 'Lote', 'Bodega', 'Detalle']}
+              rows={inventoryAuditFindings.map((finding) => [
+                <span
+                  key={`${finding.category}-${finding.period}-${finding.product}-${finding.lot}-sev`}
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                    finding.severity === 'crítico'
+                      ? 'bg-rose-100 text-rose-700'
+                      : finding.severity === 'revisar'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {finding.severity}
+                </span>,
+                finding.category,
+                finding.period,
+                finding.product === '-'
+                  ? '-'
+                  : <ProductPill key={`${finding.category}-${finding.product}-${finding.lot}`} code={finding.product} colorMap={productColorMap} />,
+                finding.lot,
+                finding.warehouse,
+                <span key={`${finding.category}-${finding.period}-${finding.product}-${finding.lot}-detail`} className="text-xs font-semibold text-slate-700">
+                  {finding.detail}
+                </span>,
+              ])}
+            />
+          </div>
         </div>
       )}
 
@@ -7663,6 +8022,148 @@ function SelectInput({
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function filterAutocompleteOptions(options: string[], value: string) {
+  const q = clean(value).toLowerCase();
+  return options
+    .filter((option) => {
+      if (!q) return true;
+      return clean(option).toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      const aa = clean(a).toLowerCase();
+      const bb = clean(b).toLowerCase();
+      if (!q) return aa.localeCompare(bb);
+      const aStarts = aa.startsWith(q);
+      const bStarts = bb.startsWith(q);
+      if (aStarts !== bStarts) return aStarts ? -1 : 1;
+      return aa.localeCompare(bb);
+    })
+    .slice(0, 12);
+}
+
+function InputAutocomplete({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const filtered = filterAutocompleteOptions(options, value);
+  return (
+    <label className="relative flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+      {label}
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 140)}
+        placeholder={placeholder}
+        className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+      />
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-auto rounded-xl border border-violet-200 bg-white py-1 shadow-xl">
+          {filtered.length > 0 ? (
+            filtered.map((option) => (
+              <button
+                key={`${label}-${option}`}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-xs font-bold text-violet-900 hover:bg-violet-50"
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-xs font-semibold normal-case tracking-normal text-slate-500">
+              Sin opciones para este filtro.
+            </div>
+          )}
+        </div>
+      )}
+    </label>
+  );
+}
+
+function InputAutocompleteTag({
+  label,
+  value,
+  onChange,
+  onSelect,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const filtered = filterAutocompleteOptions(options, value);
+  return (
+    <label className="relative flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-violet-600">
+      {label}
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSelect(value);
+            setOpen(false);
+          }
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 140)}
+        placeholder={placeholder}
+        className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-sm text-violet-900 outline-none"
+      />
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-auto rounded-xl border border-violet-200 bg-white py-1 shadow-xl">
+          {filtered.length > 0 ? (
+            filtered.map((option) => (
+              <button
+                key={`${label}-${option}`}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onSelect(option);
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-xs font-bold text-violet-900 hover:bg-violet-50"
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-xs font-semibold normal-case tracking-normal text-slate-500">
+              Sin opciones para este filtro.
+            </div>
+          )}
+        </div>
+      )}
     </label>
   );
 }

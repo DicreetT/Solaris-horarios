@@ -24,6 +24,7 @@ import {
     XCircle,
     ShoppingBag,
     CheckSquare,
+    ClipboardCheck,
     FileText,
     Folder,
     Trash2,
@@ -717,6 +718,12 @@ function Dashboard() {
                     icon: Boxes,
                     tone: 'primary',
                     onClick: () => navigate('/inventory?tab=control_stock'),
+                },
+                {
+                    label: 'Control operativo',
+                    icon: ClipboardCheck,
+                    tone: 'ghost',
+                    onClick: () => navigate('/control-operativo'),
                 },
                 {
                     label: 'Tareas',
@@ -2402,6 +2409,14 @@ function Dashboard() {
                         { count: inventoryCriticalCount, tone: 'rose' },
                     ],
                     onClick: () => navigate('/inventory?tab=control_stock'),
+                },
+                {
+                    label: 'Control operativo',
+                    icon: ClipboardCheck,
+                    tone: 'ghost',
+                    buttonClass: 'border-teal-200 bg-white text-teal-950 hover:bg-teal-50',
+                    iconClass: 'bg-teal-50 text-teal-600 border-teal-100',
+                    onClick: () => navigate('/control-operativo'),
                 },
                 {
                     label: 'Tareas',
