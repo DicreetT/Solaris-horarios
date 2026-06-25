@@ -38,7 +38,7 @@ import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
-type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'ensamblajes' | 'maestros' | 'auditoria';
+type InventoryTab = 'dashboard' | 'control_stock' | 'movimientos' | 'ensamblajes' | 'maestros' | 'cierres' | 'auditoria';
 type CanetMasterKey = 'cartonaje' | 'productos' | 'lotes' | 'bodegas' | 'clientes' | 'tipos' | 'bitacora';
 type InventoryAccessMode = 'unset' | 'consult' | 'edit';
 type HypotheticalScope = 'potential' | 'canet_huarte' | 'canet';
@@ -5709,23 +5709,73 @@ function InventoryPage() {
       alert('Todavía no hay cierre guardado para este mes.');
       return;
     }
+    downloadMonthlyCloseSnapshotExcel(currentMonthlyClose);
+  };
+
+  const downloadMonthlyCloseSnapshotExcel = (snapshot: InventoryMonthlyCloseSnapshot) => {
     openTableExcel(
       'Inventario Canet - Cierre de mes',
-      `cierre-mes-canet-${currentMonthlyClose.monthKey}.xlsx`,
+      `cierre-mes-canet-${snapshot.monthKey}.xlsx`,
       ['Producto', 'Lote', 'Bodega', 'Stock cierre'],
-      appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(currentMonthlyClose)),
-      `Foto congelada · Cierre: ${currentMonthlyClose.monthLabel} · Guardado: ${new Date(currentMonthlyClose.closedAt).toLocaleString('es-ES')} · Responsable: ${currentMonthlyClose.closedBy}`,
+      appendTotalRow(['Producto', 'Lote', 'Bodega', 'Stock cierre'], monthlyCloseRowsForExport(snapshot)),
+      `Foto congelada · Cierre: ${snapshot.monthLabel} · Guardado: ${new Date(snapshot.closedAt).toLocaleString('es-ES')} · Responsable: ${snapshot.closedBy}`,
       [
-        ['Stock cierre', currentMonthlyClose.totalStock],
-        ['Productos', currentMonthlyClose.productCount],
-        ['Lotes', currentMonthlyClose.lotCount],
-        ['Bodegas', currentMonthlyClose.warehouseCount],
-        ['Filas snapshot', currentMonthlyClose.rowCount ?? currentMonthlyClose.rows.length],
-        ['Huella snapshot', currentMonthlyClose.snapshotHash || 'legacy'],
+        ['Stock cierre', snapshot.totalStock],
+        ['Productos', snapshot.productCount],
+        ['Lotes', snapshot.lotCount],
+        ['Bodegas', snapshot.warehouseCount],
+        ['Filas snapshot', snapshot.rowCount ?? snapshot.rows.length],
+        ['Huella snapshot', snapshot.snapshotHash || 'legacy'],
       ],
     );
-    appendAudit('Descarga Excel', `Cierre mensual Canet (${currentMonthlyClose.monthKey})`);
+    appendAudit('Descarga Excel', `Cierre mensual Canet (${snapshot.monthKey})`);
     emitSuccessFeedback('Excel de cierre generado.');
+  };
+  const moveMonthlyCloseToMonth = async (snapshot: InventoryMonthlyCloseSnapshot, nextMonthKeyRaw: string) => {
+    const nextMonthKey = clean(nextMonthKeyRaw);
+    if (!/^\d{4}-\d{2}$/.test(nextMonthKey)) {
+      alert('Selecciona un mes válido para el cierre.');
+      return;
+    }
+    if (nextMonthKey === snapshot.monthKey) return;
+    const nextLabel = monthLabel(nextMonthKey);
+    const existingTarget = getInventoryMonthlyCloseSnapshot(monthlyClosures, snapshot.scope, nextMonthKey);
+    const replaceText = existingTarget && existingTarget.id !== snapshot.id
+      ? `\n\nYa existe un cierre para ${nextLabel}; si continúas, se reemplazará por este cierre.`
+      : '';
+    const ok = window.confirm(
+      `Vas a mover el cierre congelado de ${snapshot.monthLabel} a ${nextLabel}.\n\n` +
+      'No se recalculará el stock: solo se corrige el mes al que pertenece la foto congelada.' +
+      replaceText +
+      '\n\n¿Deseas continuar?',
+    );
+    if (!ok) return;
+
+    const movedSnapshot: InventoryMonthlyCloseSnapshot = {
+      ...snapshot,
+      id: `${snapshot.scope}:${nextMonthKey}`,
+      monthKey: nextMonthKey,
+      monthLabel: nextLabel,
+    };
+    setMonthlyClosures((prev) => [
+      movedSnapshot,
+      ...(Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id && item.id !== movedSnapshot.id),
+    ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope))));
+    await notifyAnabela(`${actorName} movió el cierre mensual de Inventario Canet de ${snapshot.monthLabel} a ${nextLabel}.`);
+    appendAudit('Edición de cierre mensual', `Canet: ${snapshot.monthKey} -> ${nextMonthKey}`);
+    emitSuccessFeedback('Cierre mensual actualizado.');
+  };
+  const deleteMonthlyCloseSnapshot = async (snapshot: InventoryMonthlyCloseSnapshot) => {
+    const ok = window.confirm(
+      `Vas a eliminar el cierre congelado de ${snapshot.monthLabel}.\n\n` +
+      'Ese mes volverá a calcularse con movimientos y dejará de estar bloqueado por esta foto.\n\n' +
+      '¿Deseas eliminarlo?',
+    );
+    if (!ok) return;
+    setMonthlyClosures((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== snapshot.id));
+    await notifyAnabela(`${actorName} eliminó el cierre mensual de Inventario Canet (${snapshot.monthLabel}).`);
+    appendAudit('Eliminación de cierre mensual', `Canet (${snapshot.monthKey})`);
+    emitSuccessFeedback('Cierre mensual eliminado.');
   };
 
   const tabs: Array<{ key: InventoryTab; label: string; icon: React.ElementType; compact?: boolean }> = [
@@ -5733,6 +5783,7 @@ function InventoryPage() {
     { key: 'movimientos', label: 'Movimientos', icon: ClipboardList },
     { key: 'ensamblajes', label: 'Ensamblajes', icon: Layers3 },
     { key: 'maestros', label: 'Maestros', icon: Tags },
+    { key: 'cierres', label: 'Cierres', icon: Archive },
     { key: 'auditoria', label: 'Auditoría', icon: AlertTriangle },
   ];
   const visibleTabs = isRestrictedUser
@@ -6747,6 +6798,69 @@ function InventoryPage() {
                 <button disabled={!isEditModeActive} onClick={() => startEdit(m)} className={`rounded-lg p-1.5 ${isEditModeActive ? 'bg-violet-100 text-violet-700 hover:bg-violet-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Pencil size={13} /></button>
                 <button onClick={() => void deleteMovement(m.id)} disabled={!isEditModeActive || deletingMovementId === toNum(m.id)} className={`rounded-lg p-1.5 ${isEditModeActive && deletingMovementId !== toNum(m.id) ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`} title="Eliminar">
                   <Trash2 size={13} />
+                </button>
+              </div>,
+            ])}
+          />
+        </div>
+      )}
+
+      {accessReady && tab === 'cierres' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-500">Cierres congelados</p>
+                <h3 className="text-lg font-black text-slate-950">Cierres de mes Canet</h3>
+                <p className="text-sm text-slate-600">
+                  Aquí puedes revisar qué meses están cerrados. Si un cierre quedó guardado en el mes equivocado, muévelo al mes correcto o elimínalo.
+                </p>
+              </div>
+              <span className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                {canetMonthlyClosures.length} cierres
+              </span>
+            </div>
+            {!isEditModeActive && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                Entra en modo edición para mover o eliminar cierres. En modo consulta solo puedes revisarlos y descargar Excel.
+              </div>
+            )}
+          </div>
+
+          <SimpleDataTable
+            headers={['Mes cerrado', 'Guardado', 'Responsable', 'Stock', 'Lotes', 'Bodegas', 'Mover a', 'Acciones']}
+            rows={[...canetMonthlyClosures].reverse().map((snapshot) => [
+              <span key={`${snapshot.id}-period`} className="font-black capitalize text-slate-950">{snapshot.monthLabel}</span>,
+              new Date(snapshot.closedAt).toLocaleString('es-ES'),
+              snapshot.closedBy || '-',
+              snapshot.totalStock.toLocaleString('es-ES'),
+              snapshot.lotCount.toLocaleString('es-ES'),
+              snapshot.warehouseCount.toLocaleString('es-ES'),
+              <input
+                key={`${snapshot.id}-month`}
+                type="month"
+                value={snapshot.monthKey}
+                disabled={!isEditModeActive}
+                onChange={(event) => void moveMonthlyCloseToMonth(snapshot, event.target.value)}
+                className="w-36 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm font-bold text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              />,
+              <div key={`${snapshot.id}-actions`} className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadMonthlyCloseSnapshotExcel(snapshot)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+                >
+                  <Download size={13} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  disabled={!isEditModeActive}
+                  onClick={() => void deleteMonthlyCloseSnapshot(snapshot)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  <Trash2 size={13} />
+                  Eliminar
                 </button>
               </div>,
             ])}
