@@ -725,6 +725,40 @@ function mergeParticipantProgress(
   return merged;
 }
 
+function attachmentIdentity(file: Attachment) {
+  return `${file.url || ''}|${file.name || ''}|${file.size || 0}`;
+}
+
+function mergeAttachmentLists(base: Attachment[] = [], incoming: Attachment[] = []) {
+  const byId = new Map<string, Attachment>();
+  [...base, ...incoming].forEach((file) => {
+    const id = attachmentIdentity(file);
+    if (!id.trim()) return;
+    byId.set(id, file);
+  });
+  return Array.from(byId.values());
+}
+
+function mergeAttachmentsByField(
+  base?: Record<string, Attachment[]>,
+  incoming?: Record<string, Attachment[]>,
+) {
+  const merged: Record<string, Attachment[]> = {};
+  const fields = new Set([...Object.keys(base || {}), ...Object.keys(incoming || {})]);
+  fields.forEach((field) => {
+    merged[field] = mergeAttachmentLists(base?.[field] || [], incoming?.[field] || []);
+  });
+  return merged;
+}
+
+function mergeChecklist(base?: Record<string, boolean>, incoming?: Record<string, boolean>) {
+  const merged: Record<string, boolean> = { ...(base || {}), ...(incoming || {}) };
+  Object.entries(base || {}).forEach(([key, value]) => {
+    if (value === true && incoming?.[key] !== false) merged[key] = true;
+  });
+  return merged;
+}
+
 function mergeOperationalControlState(remote: OperationalMonthlyState, local: OperationalMonthlyState): OperationalMonthlyState {
   const safeRemote = safeState(remote);
   const safeLocal = safeState(local);
@@ -742,6 +776,8 @@ function mergeOperationalControlState(remote: OperationalMonthlyState, local: Op
     records.set(key, {
       ...older,
       ...newer,
+      checklist: mergeChecklist(older.checklist, newer.checklist),
+      attachments: mergeAttachmentsByField(older.attachments, newer.attachments),
       participantProgress: mergeParticipantProgress(older.participantProgress, newer.participantProgress),
     });
   };

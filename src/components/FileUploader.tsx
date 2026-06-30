@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Upload, X, FileText, Image as ImageIcon, Loader2, Camera, Video } from 'lucide-react';
 
@@ -32,9 +32,17 @@ export function FileUploader({
 }: FileUploaderProps) {
     const [isUploading, setIsUploading] = useState(false);
     const [files, setFiles] = useState<Attachment[]>(existingFiles);
+    const existingFilesSignature = useMemo(
+        () => existingFiles.map((file) => `${file.url}|${file.name}|${file.size}`).join('::'),
+        [existingFiles],
+    );
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cameraImageInputRef = useRef<HTMLInputElement>(null);
     const cameraVideoInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        setFiles(existingFiles);
+    }, [existingFilesSignature]);
 
     const processSelectedFiles = async (selectedFiles: File[]) => {
         if (selectedFiles.length === 0) return;
