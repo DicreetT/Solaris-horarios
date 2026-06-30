@@ -863,6 +863,18 @@ function allResponsibleLabelsReviewed(record: ProcessRecord | undefined, definit
   return progress.length > 0 && progress.every((item) => !!item.reviewedAt);
 }
 
+function hasResponsibleProgress(record: ProcessRecord | undefined) {
+  return Object.values(record?.participantProgress || {}).some((item) => !!item.savedAt || !!item.reviewedAt);
+}
+
+function effectiveProcessStatus(record: ProcessRecord | undefined, definition: ProcessDefinition): StatusKey {
+  if (!record) return 'pendiente';
+  if (record.status === 'critica') return 'critica';
+  if (allResponsibleLabelsReviewed(record, definition)) return record.status === 'revision' ? 'revision' : 'correcto';
+  if (record.status === 'correcto') return hasResponsibleProgress(record) ? 'revision' : 'pendiente';
+  return record.status || 'pendiente';
+}
+
 function inputType(type?: FieldType) {
   if (type === 'number' || type === 'money') return 'number';
   if (type === 'date') return 'date';
@@ -1042,7 +1054,8 @@ export default function OperationalControlPage() {
   const statusCounts = PROCESS_ORDER.reduce<Record<StatusKey, number>>(
     (acc, process) => {
       const record = getRecord(records, process, year, month);
-      acc[record?.status || 'pendiente'] += 1;
+      const definition = PROCESS_DEFINITIONS[process];
+      acc[effectiveProcessStatus(record, definition)] += 1;
       return acc;
     },
     { pendiente: 0, correcto: 0, revision: 0, critica: 0 },
@@ -1197,7 +1210,8 @@ export default function OperationalControlPage() {
       const snapshotStatusCounts = PROCESS_ORDER.reduce<Record<StatusKey, number>>(
         (acc, process) => {
           const record = getRecord(base.records, process, year, month);
-          acc[record?.status || 'pendiente'] += 1;
+          const definition = PROCESS_DEFINITIONS[process];
+          acc[effectiveProcessStatus(record, definition)] += 1;
           return acc;
         },
         { pendiente: 0, correcto: 0, revision: 0, critica: 0 },
@@ -1266,7 +1280,10 @@ export default function OperationalControlPage() {
   };
 
   const ActiveIcon = activeDefinition.icon;
-  const activeStatusMeta = STATUS_META[draftStatus];
+  const activeDisplayStatus = currentRecord
+    ? effectiveProcessStatus({ ...currentRecord, status: draftStatus }, activeDefinition)
+    : draftStatus;
+  const activeStatusMeta = STATUS_META[activeDisplayStatus];
   const activeProgress = progressForLabels(currentRecord, activeDefinition);
   const activeReviewedCount = activeProgress.filter((item) => !!item.reviewedAt).length;
   const activeSavedCount = activeProgress.filter((item) => !!item.savedAt).length;
@@ -1325,7 +1342,7 @@ export default function OperationalControlPage() {
           {PROCESS_ORDER.map((process) => {
             const definition = PROCESS_DEFINITIONS[process];
             const record = getRecord(records, process, year, month);
-            const status = record?.status || 'pendiente';
+            const status = effectiveProcessStatus(record, definition);
             const meta = STATUS_META[status];
             const Icon = definition.icon;
             const canEdit = canUserEditProcess(definition, currentUserName, isAdmin);
