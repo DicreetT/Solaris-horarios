@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { useInventoryMovementsDB, type InventoryMovementRow } from '../hooks/useInventoryMovementsDB';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { FileUploader, type Attachment } from '../components/FileUploader';
 
@@ -45,9 +46,20 @@ type ProcessRecord = {
   fields: Record<string, string>;
   checklist: Record<string, boolean>;
   attachments: Record<string, Attachment[]>;
+  participantProgress?: Record<string, ParticipantProgress>;
   updatedAt: string;
   updatedBy: string;
   updatedByName: string;
+};
+
+type ParticipantProgress = {
+  label: string;
+  savedAt?: string;
+  savedBy?: string;
+  savedByName?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
 };
 
 type MonthClosure = {
@@ -61,11 +73,27 @@ type MonthClosure = {
   reopenedAt?: string;
   reopenedBy?: string;
   reopenedByName?: string;
+  archiveId?: string;
+};
+
+type OperationalMonthArchive = {
+  id: string;
+  year: number;
+  month: number;
+  monthLabel: string;
+  closedAt: string;
+  closedBy: string;
+  closedByName: string;
+  records: ProcessRecord[];
+  statusCounts: Record<StatusKey, number>;
+  missingAttachments: number;
+  openIncidentCount: number;
 };
 
 type OperationalMonthlyState = {
   records: ProcessRecord[];
   monthClosures: MonthClosure[];
+  operationalClosures?: OperationalMonthArchive[];
 };
 
 type MetricField = {
@@ -112,6 +140,7 @@ type ProcessDefinition = {
 const EMPTY_STATE: OperationalMonthlyState = {
   records: [],
   monthClosures: [],
+  operationalClosures: [],
 };
 
 const STATUS_META: Record<StatusKey, { label: string; short: string; dot: string; badge: string; border: string }> = {
@@ -156,6 +185,26 @@ const DIFFERENCE_REASONS = [
   'Pendiente investigar',
   'Otro',
 ];
+
+const PRODUCT_OPTIONS = [
+  { code: 'SV', label: 'Solar Vital' },
+  { code: 'ENT', label: 'Enterovital' },
+  { code: 'AV', label: 'Avira Vital' },
+  { code: 'RG', label: 'Regenerium' },
+  { code: 'ISO', label: 'Isotónico' },
+  { code: 'KL', label: 'Cala' },
+];
+
+const BASE_LOTS_BY_PRODUCT: Record<string, string[]> = {
+  SV: ['2511A34', '2601A35', '2602A36'],
+  ENT: ['2511A20', '2603A21'],
+  AV: ['2403A05', '2410A06', '2507A07'],
+  RG: ['2504A04'],
+  ISO: ['250932'],
+  KL: ['260101'],
+};
+
+const isLongOperationalLot = (value: string) => value.replace(/[^A-Z0-9]/gi, '').length >= 6;
 
 const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
   entradas_canet: {
@@ -628,6 +677,7 @@ function safeState(state: OperationalMonthlyState | undefined | null): Operation
   return {
     records: Array.isArray(state?.records) ? state.records : [],
     monthClosures: Array.isArray(state?.monthClosures) ? state.monthClosures : [],
+    operationalClosures: Array.isArray(state?.operationalClosures) ? state.operationalClosures : [],
   };
 }
 
@@ -642,6 +692,91 @@ function getRecord(records: ProcessRecord[], process: ProcessKey, year: number, 
 
 function getMonthClosure(closures: MonthClosure[], year: number, month: number) {
   return closures.find((closure) => closure.year === year && closure.month === month);
+}
+
+function timestampMs(value?: string) {
+  if (!value) return 0;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function mergeParticipantProgress(
+  base?: Record<string, ParticipantProgress>,
+  incoming?: Record<string, ParticipantProgress>,
+) {
+  const merged: Record<string, ParticipantProgress> = { ...(base || {}) };
+  for (const [key, progress] of Object.entries(incoming || {})) {
+    const current = merged[key];
+    if (!current) {
+      merged[key] = progress;
+      continue;
+    }
+    merged[key] = {
+      ...current,
+      ...progress,
+      savedAt: timestampMs(progress.savedAt) >= timestampMs(current.savedAt) ? progress.savedAt : current.savedAt,
+      savedBy: timestampMs(progress.savedAt) >= timestampMs(current.savedAt) ? progress.savedBy : current.savedBy,
+      savedByName: timestampMs(progress.savedAt) >= timestampMs(current.savedAt) ? progress.savedByName : current.savedByName,
+      reviewedAt: timestampMs(progress.reviewedAt) >= timestampMs(current.reviewedAt) ? progress.reviewedAt : current.reviewedAt,
+      reviewedBy: timestampMs(progress.reviewedAt) >= timestampMs(current.reviewedAt) ? progress.reviewedBy : current.reviewedBy,
+      reviewedByName: timestampMs(progress.reviewedAt) >= timestampMs(current.reviewedAt) ? progress.reviewedByName : current.reviewedByName,
+    };
+  }
+  return merged;
+}
+
+function mergeOperationalControlState(remote: OperationalMonthlyState, local: OperationalMonthlyState): OperationalMonthlyState {
+  const safeRemote = safeState(remote);
+  const safeLocal = safeState(local);
+  const records = new Map<string, ProcessRecord>();
+  const upsertRecord = (record: ProcessRecord) => {
+    const key = getRecordKey(record.process, record.year, record.month);
+    const current = records.get(key);
+    if (!current) {
+      records.set(key, record);
+      return;
+    }
+    const keepRecord = timestampMs(record.updatedAt) >= timestampMs(current.updatedAt);
+    const newer = keepRecord ? record : current;
+    const older = keepRecord ? current : record;
+    records.set(key, {
+      ...older,
+      ...newer,
+      participantProgress: mergeParticipantProgress(older.participantProgress, newer.participantProgress),
+    });
+  };
+  safeRemote.records.forEach(upsertRecord);
+  safeLocal.records.forEach(upsertRecord);
+
+  const monthClosures = new Map<string, MonthClosure>();
+  const upsertClosure = (closure: MonthClosure) => {
+    const key = `${closure.year}:${closure.month}`;
+    const current = monthClosures.get(key);
+    if (!current) {
+      monthClosures.set(key, closure);
+      return;
+    }
+    const currentTs = Math.max(timestampMs(current.closedAt), timestampMs(current.reopenedAt));
+    const nextTs = Math.max(timestampMs(closure.closedAt), timestampMs(closure.reopenedAt));
+    monthClosures.set(key, nextTs >= currentTs ? { ...current, ...closure } : { ...closure, ...current });
+  };
+  safeRemote.monthClosures.forEach(upsertClosure);
+  safeLocal.monthClosures.forEach(upsertClosure);
+
+  const archives = new Map<string, OperationalMonthArchive>();
+  const upsertArchive = (archive: OperationalMonthArchive) => {
+    const key = `${archive.year}:${archive.month}`;
+    const current = archives.get(key);
+    if (!current || timestampMs(archive.closedAt) >= timestampMs(current.closedAt)) archives.set(key, archive);
+  };
+  (safeRemote.operationalClosures || []).forEach(upsertArchive);
+  (safeLocal.operationalClosures || []).forEach(upsertArchive);
+
+  return {
+    records: Array.from(records.values()),
+    monthClosures: Array.from(monthClosures.values()),
+    operationalClosures: Array.from(archives.values()).sort((a, b) => (a.year === b.year ? b.month - a.month : b.year - a.year)),
+  };
 }
 
 function formatDateTime(value?: string) {
@@ -665,10 +800,67 @@ function fieldKey(sectionId: string, row: string, column: string) {
   return `${sectionId}.${row}.${column}`;
 }
 
+function tableRowsKey(tableId: string) {
+  return `__tableRows.${tableId}`;
+}
+
+function parseExtraRows(value: string | undefined) {
+  if (!value) return [] as string[];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function tableSupportsExtraRows(table: TableDefinition) {
+  if (isStatusMatrix(table.columns)) return false;
+  return table.columns.some((column) => {
+    const normalizedColumn = normalize(column);
+    return (
+      normalizedColumn.includes('producto') ||
+      normalizedColumn.includes('lote') ||
+      normalizedColumn.includes('cantidad') ||
+      normalizedColumn.includes('stock')
+    );
+  });
+}
+
 function canUserEditProcess(definition: ProcessDefinition, currentUserName: string, isAdmin: boolean) {
   if (isAdmin) return true;
   if (definition.key === 'cierre_comun') return false;
   return definition.users.some((userName) => currentUserName.includes(userName));
+}
+
+function splitResponsibleLabels(definition: ProcessDefinition) {
+  return definition.responsible
+    .split('/')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function progressKey(label: string) {
+  return normalize(label).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'usuario';
+}
+
+function participantLabelForCurrentUser(definition: ProcessDefinition, currentUserName: string, fallbackName: string) {
+  const labels = splitResponsibleLabels(definition);
+  const matched = labels.find((label) => currentUserName.includes(normalize(label)));
+  return matched || fallbackName || 'Usuario';
+}
+
+function progressForLabels(record: ProcessRecord | undefined, definition: ProcessDefinition) {
+  return splitResponsibleLabels(definition).map((label) => {
+    const key = progressKey(label);
+    return record?.participantProgress?.[key] || { label };
+  });
+}
+
+function allResponsibleLabelsReviewed(record: ProcessRecord | undefined, definition: ProcessDefinition) {
+  const progress = progressForLabels(record, definition);
+  return progress.length > 0 && progress.every((item) => !!item.reviewedAt);
 }
 
 function inputType(type?: FieldType) {
@@ -684,6 +876,13 @@ function ProcessStatusIcon({ status }: { status: StatusKey }) {
   return <Circle size={20} />;
 }
 
+function parseControlNumber(value: string) {
+  const normalized = String(value || '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function isStatusMatrix(columns: string[]) {
   const allowed = new Set(['correcto', 'requiere atencion', 'incidencia']);
   return columns.length > 0 && columns.every((column) => allowed.has(normalize(column)));
@@ -691,14 +890,60 @@ function isStatusMatrix(columns: string[]) {
 
 function renderCellInput(
   key: string,
+  row: string,
+  table: TableDefinition,
   column: string,
   value: string,
   otherValue: string,
+  fields: Record<string, string>,
+  lotOptionsByProduct: Map<string, string[]>,
   canEdit: boolean,
   setFieldValue: (key: string, value: string) => void,
   ringClass: string,
 ) {
   const normalizedColumn = normalize(column);
+  if (normalizedColumn === 'producto' || normalizedColumn === 'producto ensamblado') {
+    return (
+      <select
+        value={value}
+        onChange={(event) => {
+          setFieldValue(key, event.target.value);
+          const lotColumn = table.columns.find((item) => normalize(item) === 'lote');
+          if (lotColumn) setFieldValue(fieldKey(table.id, row, lotColumn), '');
+        }}
+        disabled={!canEdit}
+        className={`h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50`}
+      >
+        <option value="">Producto</option>
+        {PRODUCT_OPTIONS.map((product) => (
+          <option key={product.code} value={product.code}>{product.label} ({product.code})</option>
+        ))}
+      </select>
+    );
+  }
+
+  if (normalizedColumn === 'lote') {
+    const productColumn = table.columns.find((item) => {
+      const normalized = normalize(item);
+      return normalized === 'producto' || normalized === 'producto ensamblado';
+    });
+    const selectedProduct = productColumn ? String(fields[fieldKey(table.id, row, productColumn)] || '').toUpperCase() : '';
+    const lotOptions = selectedProduct ? lotOptionsByProduct.get(selectedProduct) || [] : [];
+    return (
+      <select
+        value={value}
+        onChange={(event) => setFieldValue(key, event.target.value)}
+        disabled={!canEdit || !selectedProduct}
+        className={`h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50`}
+      >
+        <option value="">{selectedProduct ? 'Lote' : 'Selecciona producto'}</option>
+        {lotOptions.map((lot) => (
+          <option key={lot} value={lot}>{lot}</option>
+        ))}
+      </select>
+    );
+  }
+
   if (normalizedColumn.includes('motivo diferencia')) {
     return (
       <div className="space-y-1">
@@ -754,6 +999,8 @@ function renderCellInput(
 
 export default function OperationalControlPage() {
   const { currentUser } = useAuth();
+  const [canetMovements] = useInventoryMovementsDB('canet');
+  const [huarteMovements] = useInventoryMovementsDB('huarte');
   const today = new Date();
   const currentUserName = normalize(currentUser?.name || currentUser?.email || '');
   const isAdmin = !!currentUser?.isAdmin || currentUserName.includes('thalia');
@@ -764,6 +1011,9 @@ export default function OperationalControlPage() {
       userId: currentUser?.id,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeIncomingWithLocal: true,
+      mergeStrategy: mergeOperationalControlState,
+      pollIntervalMs: 8000,
     },
   );
 
@@ -803,6 +1053,36 @@ export default function OperationalControlPage() {
     return total + definition.attachments.filter((item) => (record?.attachments?.[item] || []).length === 0).length;
   }, 0);
   const openIncidents = recordsForMonth.filter((record) => record.status === 'critica');
+  const lotOptionsByProduct = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    const ensure = (product: string) => {
+      const code = normalize(product).toUpperCase();
+      if (!code) return null;
+      if (!map.has(code)) map.set(code, new Set<string>());
+      return map.get(code) || null;
+    };
+
+    for (const product of PRODUCT_OPTIONS) {
+      const set = ensure(product.code);
+      (BASE_LOTS_BY_PRODUCT[product.code] || []).forEach((lot) => set?.add(lot));
+    }
+
+    const pushMovement = (movement: InventoryMovementRow) => {
+      const product = String(movement?.producto || '').trim().toUpperCase();
+      const lot = String(movement?.lote || '').trim().toUpperCase();
+      if (!product || !lot || !isLongOperationalLot(lot)) return;
+      const set = ensure(product);
+      set?.add(lot);
+    };
+
+    [...(canetMovements || []), ...(huarteMovements || [])].forEach(pushMovement);
+    return new Map(
+      Array.from(map.entries()).map(([product, lots]) => [
+        product,
+        Array.from(lots).sort((a, b) => b.localeCompare(a, 'es')),
+      ]),
+    );
+  }, [canetMovements, huarteMovements]);
 
   useEffect(() => {
     setDraftFields(currentRecord?.fields || {});
@@ -815,6 +1095,19 @@ export default function OperationalControlPage() {
   const setFieldValue = (key: string, value: string) => {
     if (!canEditActiveProcess) return;
     setDraftFields((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const addTableLine = (table: TableDefinition) => {
+    if (!canEditActiveProcess) return;
+    setDraftFields((prev) => {
+      const key = tableRowsKey(table.id);
+      const extraRows = parseExtraRows(prev[key]);
+      const nextNumber = table.rows.length + extraRows.length + 1;
+      return {
+        ...prev,
+        [key]: JSON.stringify([...extraRows, `Línea ${nextNumber}`]),
+      };
+    });
   };
 
   const setChecklistValue = (item: string, checked: boolean) => {
@@ -834,9 +1127,33 @@ export default function OperationalControlPage() {
     if (!canEditActiveProcess) return;
     const nextReviewed = markReviewed || draftReviewed;
     const nextStatus: StatusKey = markReviewed && draftStatus === 'pendiente' ? 'correcto' : draftStatus;
+    const now = new Date().toISOString();
+    const participantLabel = participantLabelForCurrentUser(
+      activeDefinition,
+      currentUserName,
+      currentUser?.name || currentUser?.email || 'Usuario',
+    );
+    const participantKey = progressKey(participantLabel);
     setState((prev) => {
       const base = safeState(prev);
       const existing = getRecord(base.records, selectedProcess, year, month);
+      const participantProgress: Record<string, ParticipantProgress> = {
+        ...(existing?.participantProgress || {}),
+        [participantKey]: {
+          ...(existing?.participantProgress?.[participantKey] || { label: participantLabel }),
+          label: participantLabel,
+          savedAt: now,
+          savedBy: currentUser?.id || '',
+          savedByName: currentUser?.name || currentUser?.email || '',
+          ...(markReviewed
+            ? {
+                reviewedAt: now,
+                reviewedBy: currentUser?.id || '',
+                reviewedByName: currentUser?.name || currentUser?.email || '',
+              }
+            : {}),
+        },
+      };
       const nextRecord: ProcessRecord = {
         id: existing?.id || createId(),
         process: selectedProcess,
@@ -847,9 +1164,10 @@ export default function OperationalControlPage() {
         fields: draftFields,
         checklist: draftChecklist,
         attachments: draftAttachments,
-        updatedAt: new Date().toISOString(),
+        participantProgress,
+        updatedAt: now,
         updatedBy: currentUser?.id || '',
-        updatedByName: currentUser?.name || '',
+        updatedByName: currentUser?.name || currentUser?.email || '',
       };
       const key = getRecordKey(selectedProcess, year, month);
       return {
@@ -869,24 +1187,60 @@ export default function OperationalControlPage() {
     if (!isAdmin || isMonthClosed) return;
     const confirmed = window.confirm(`¿Cerrar ${monthLabel} de ${year}? El mes quedará bloqueado en modo lectura.`);
     if (!confirmed) return;
+    const now = new Date().toISOString();
     setState((prev) => {
       const base = safeState(prev);
       const existing = getMonthClosure(base.monthClosures, year, month);
+      const recordsSnapshot = PROCESS_ORDER
+        .map((process) => getRecord(base.records, process, year, month))
+        .filter(Boolean) as ProcessRecord[];
+      const snapshotStatusCounts = PROCESS_ORDER.reduce<Record<StatusKey, number>>(
+        (acc, process) => {
+          const record = getRecord(base.records, process, year, month);
+          acc[record?.status || 'pendiente'] += 1;
+          return acc;
+        },
+        { pendiente: 0, correcto: 0, revision: 0, critica: 0 },
+      );
+      const snapshotMissingAttachments = PROCESS_ORDER.reduce((total, process) => {
+        const record = getRecord(base.records, process, year, month);
+        const definition = PROCESS_DEFINITIONS[process];
+        return total + definition.attachments.filter((item) => (record?.attachments?.[item] || []).length === 0).length;
+      }, 0);
+      const archiveId = existing?.archiveId || createId();
+      const archive: OperationalMonthArchive = {
+        id: archiveId,
+        year,
+        month,
+        monthLabel,
+        closedAt: now,
+        closedBy: currentUser?.id || '',
+        closedByName: currentUser?.name || currentUser?.email || '',
+        records: recordsSnapshot,
+        statusCounts: snapshotStatusCounts,
+        missingAttachments: snapshotMissingAttachments,
+        openIncidentCount: recordsSnapshot.filter((record) => record.status === 'critica').length,
+      };
       const closure: MonthClosure = {
         id: existing?.id || createId(),
         year,
         month,
         closed: true,
-        closedAt: new Date().toISOString(),
+        closedAt: now,
         closedBy: currentUser?.id || '',
-        closedByName: currentUser?.name || '',
+        closedByName: currentUser?.name || currentUser?.email || '',
+        archiveId,
       };
       return {
         ...base,
         monthClosures: [...base.monthClosures.filter((item) => !(item.year === year && item.month === month)), closure],
+        operationalClosures: [
+          ...(base.operationalClosures || []).filter((item) => !(item.year === year && item.month === month)),
+          archive,
+        ].sort((a, b) => (a.year === b.year ? b.month - a.month : b.year - a.year)),
       };
     });
-    emitSuccessFeedback('Mes cerrado y bloqueado en lectura.');
+    emitSuccessFeedback('Cierre operativo guardado y mes bloqueado en lectura.');
   };
 
   const reopenMonth = () => {
@@ -913,6 +1267,9 @@ export default function OperationalControlPage() {
 
   const ActiveIcon = activeDefinition.icon;
   const activeStatusMeta = STATUS_META[draftStatus];
+  const activeProgress = progressForLabels(currentRecord, activeDefinition);
+  const activeReviewedCount = activeProgress.filter((item) => !!item.reviewedAt).length;
+  const activeSavedCount = activeProgress.filter((item) => !!item.savedAt).length;
 
   return (
     <main className="min-h-screen bg-[#f7f3ec] px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
@@ -972,6 +1329,8 @@ export default function OperationalControlPage() {
             const meta = STATUS_META[status];
             const Icon = definition.icon;
             const canEdit = canUserEditProcess(definition, currentUserName, isAdmin);
+            const progress = progressForLabels(record, definition);
+            const reviewedCount = progress.filter((item) => !!item.reviewedAt).length;
             return (
               <button
                 key={process}
@@ -992,6 +1351,9 @@ export default function OperationalControlPage() {
                 <p className="mt-1 min-h-[2rem] text-sm font-black leading-tight text-slate-950">{definition.title}</p>
                 <p className="mt-1 text-xs font-semibold text-slate-500">{definition.responsible}</p>
                 <span className={`mt-3 inline-flex rounded-full px-2 py-1 text-[11px] font-black uppercase ${meta.badge}`}>{meta.label}</span>
+                <p className="mt-2 text-[11px] font-black text-slate-500">
+                  Revisado: {reviewedCount}/{progress.length}
+                </p>
                 <p className="mt-2 text-[11px] font-semibold text-slate-500">{formatDateTime(record?.updatedAt)}</p>
                 {!canEdit && <p className="mt-1 text-[11px] font-bold text-slate-400">Solo lectura para tu usuario</p>}
               </button>
@@ -1042,7 +1404,28 @@ export default function OperationalControlPage() {
                   <p>Responsable: <span className="text-slate-950">{activeDefinition.responsible}</span></p>
                   {activeDefinition.warehouse && <p>Bodega: <span className="text-slate-950">{activeDefinition.warehouse}</span></p>}
                   {activeDefinition.accounting && <p>Contabilidad: <span className="text-slate-950">{activeDefinition.accounting}</span></p>}
+                  <p>Guardado/revisión: <span className="text-slate-950">{activeSavedCount}/{activeProgress.length} · {activeReviewedCount}/{activeProgress.length}</span></p>
                 </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {activeProgress.map((item) => {
+                    const tone = item.reviewedAt
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : item.savedAt
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-slate-200 bg-white text-slate-500';
+                    const label = item.reviewedAt ? 'Revisado' : item.savedAt ? 'Guardado' : 'Falta';
+                    return (
+                      <span key={progressKey(item.label)} className={`rounded-full border px-3 py-1 text-xs font-black ${tone}`}>
+                        {item.label}: {label}
+                      </span>
+                    );
+                  })}
+                </div>
+                {activeProgress.length > 1 && activeReviewedCount === activeProgress.length && (
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
+                    Todos los responsables marcaron esta sección como revisada.
+                  </div>
+                )}
                 {isMonthClosed && (
                   <div className="mt-3 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700">
                     Este mes está cerrado. Los datos y adjuntos quedan en lectura hasta que administración lo reabra.
@@ -1139,11 +1522,25 @@ export default function OperationalControlPage() {
 
                 {activeDefinition.tables?.map((table) => {
                   const statusMatrix = isStatusMatrix(table.columns);
+                  const rows = [...table.rows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])];
+                  const canAddRows = tableSupportsExtraRows(table);
                   return (
                   <section key={table.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                    <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
-                      <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">{table.title}</h3>
-                      {table.subtitle && <p className="mt-1 text-xs font-semibold text-slate-500">{table.subtitle}</p>}
+                    <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">{table.title}</h3>
+                        {table.subtitle && <p className="mt-1 text-xs font-semibold text-slate-500">{table.subtitle}</p>}
+                      </div>
+                      {canAddRows && (
+                        <button
+                          type="button"
+                          onClick={() => addTableLine(table)}
+                          disabled={!canEditActiveProcess}
+                          className="inline-flex items-center justify-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-black text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          + Añadir línea
+                        </button>
+                      )}
                     </div>
                     <div className="overflow-x-auto">
                       <table className={`w-full border-collapse text-sm ${statusMatrix ? 'min-w-[620px]' : 'min-w-[980px]'}`}>
@@ -1156,14 +1553,31 @@ export default function OperationalControlPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {table.rows.map((row) => (
+                          {rows.map((row) => (
                             <tr key={row} className="border-b border-slate-100 last:border-b-0">
                               <td className="w-20 px-2 py-1.5 text-xs font-black text-slate-500">{row}</td>
                               {table.columns.map((column) => {
                                 const key = fieldKey(table.id, row, column);
                                 const rowStatusKey = fieldKey(table.id, row, 'estado');
+                                const normalizedColumn = normalize(column);
+                                const isDifferenceColumn = normalizedColumn.includes('diferencia');
+                                const zohoColumn = table.columns.find((item) => normalize(item).includes('zoho'));
+                                const lunarisColumn = table.columns.find((item) => normalize(item).includes('lunaris'));
+                                const zohoValue = zohoColumn ? parseControlNumber(draftFields[fieldKey(table.id, row, zohoColumn)] || '') : null;
+                                const lunarisValue = lunarisColumn ? parseControlNumber(draftFields[fieldKey(table.id, row, lunarisColumn)] || '') : null;
+                                const explicitDiff = parseControlNumber(draftFields[key] || '');
+                                const hasComparableValues = zohoValue !== null && lunarisValue !== null;
+                                const hasDifference = explicitDiff !== null ? explicitDiff !== 0 : hasComparableValues ? zohoValue !== lunarisValue : false;
+                                const hasMatch = explicitDiff !== null ? explicitDiff === 0 : hasComparableValues ? zohoValue === lunarisValue : false;
+                                const diffTone = isDifferenceColumn
+                                  ? hasDifference
+                                    ? 'bg-red-50'
+                                    : hasMatch
+                                      ? 'bg-emerald-50'
+                                      : ''
+                                  : '';
                                 return (
-                                  <td key={column} className={`${statusMatrix ? 'min-w-[130px] text-center' : 'min-w-[140px]'} px-1.5 py-1.5`}>
+                                  <td key={column} className={`${statusMatrix ? 'min-w-[130px] text-center' : 'min-w-[140px]'} px-1.5 py-1.5 ${diffTone}`}>
                                     {statusMatrix ? (
                                       <label className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
                                         <input
@@ -1178,9 +1592,13 @@ export default function OperationalControlPage() {
                                       </label>
                                     ) : renderCellInput(
                                       key,
+                                      row,
+                                      table,
                                       column,
                                       draftFields[key] || '',
                                       draftFields[`${key}.otro`] || '',
+                                      draftFields,
+                                      lotOptionsByProduct,
                                       canEditActiveProcess,
                                       setFieldValue,
                                       activeDefinition.color.ring,

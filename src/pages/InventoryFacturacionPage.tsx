@@ -694,12 +694,12 @@ export default function InventoryFacturacionPage() {
   const [lotes, setLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_huarte_lotes_v1',
     seed.lotes as GenericRow[],
-    { userId: actorId },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true },
   );
   const [archivedLotEntries, setArchivedLotEntries] = useSharedJsonState<ArchivedLotEntry[]>(
     STORAGE_LOT_ARCHIVES,
     [],
-    { userId: actorId, mergeBeforePersist: true },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true },
   );
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_huarte_bodegas_v1',

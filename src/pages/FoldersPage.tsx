@@ -15,11 +15,14 @@ import { openTableXlsx } from '../utils/tableExport';
 const FACTURACION_ARCHIVE_KEY = 'facturacion_archive_v1';
 const FACTURACION_FILE_BLOB_PREFIX = 'facturacion_file_blob_v1:';
 const FACTURACION_ARCHIVE_BACKUP_KEY = `shared_json_state_backup_non_empty:${FACTURACION_ARCHIVE_KEY}`;
+const OPERATIONAL_CONTROL_KEY = 'operational_control_monthly_v2';
 
 type ArchiveOrderLine = {
     quantity: number;
     productCode: string;
     productRaw: string;
+    lote?: string;
+    lotePending?: boolean;
 };
 
 type ArchiveOrder = {
@@ -30,6 +33,11 @@ type ArchiveOrder = {
     sourceFileName: string;
     sourcePdfRef?: string;
     sourcePdfDataUrl?: string;
+    status?: string;
+    requiredPackages?: number;
+    labels?: Array<unknown>;
+    movementType?: string;
+    lastChangedAt?: string;
     lines: ArchiveOrderLine[];
 };
 
@@ -40,6 +48,51 @@ type BillingArchiveEntry = {
     totalOrders: number;
     totalLines: number;
     totalQuantity: number;
+};
+
+type OperationalStatusKey = 'pendiente' | 'correcto' | 'revision' | 'critica';
+
+type OperationalAttachment = {
+    name: string;
+    url: string;
+};
+
+type OperationalProcessRecord = {
+    id: string;
+    process: string;
+    year: number;
+    month: number;
+    status: OperationalStatusKey;
+    reviewed: boolean;
+    fields: Record<string, string>;
+    checklist: Record<string, boolean>;
+    attachments: Record<string, OperationalAttachment[]>;
+    participantProgress?: Record<string, {
+        label: string;
+        savedAt?: string;
+        savedByName?: string;
+        reviewedAt?: string;
+        reviewedByName?: string;
+    }>;
+    updatedAt: string;
+    updatedByName: string;
+};
+
+type OperationalMonthArchive = {
+    id: string;
+    year: number;
+    month: number;
+    monthLabel: string;
+    closedAt: string;
+    closedByName: string;
+    records: OperationalProcessRecord[];
+    statusCounts: Record<OperationalStatusKey, number>;
+    missingAttachments: number;
+    openIncidentCount: number;
+};
+
+type OperationalMonthlyState = {
+    operationalClosures?: OperationalMonthArchive[];
 };
 
 function calcArchiveTotals(orders: ArchiveOrder[]) {
@@ -135,6 +188,48 @@ function formatMonthKey(monthKey: string) {
     return new Date(year, month - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 }
 
+const OPERATIONAL_PROCESS_LABELS: Record<string, string> = {
+    entradas_canet: 'Entradas Canet',
+    traspasos_huarte: 'Traspasos Huarte',
+    ensamblajes: 'Ensamblajes',
+    inventario_stock: 'Inventario / Stock',
+    ventas_salidas: 'Ventas / Salidas',
+    contabilidad: 'Contabilidad',
+    sistemas_analytics: 'Sistemas / Analytics',
+    estado_almacen: 'Estado de almacén',
+    cierre_comun: 'Cierre común',
+};
+
+const OPERATIONAL_STATUS_LABELS: Record<OperationalStatusKey, string> = {
+    correcto: 'Completado',
+    revision: 'En revisión',
+    critica: 'Incidencia',
+    pendiente: 'Pendiente',
+};
+
+function isRealDispatchedOrder(order: ArchiveOrder) {
+    return clean(order.status).toUpperCase() === 'DESPACHADO';
+}
+
+function dispatchArchiveReason(order: ArchiveOrder) {
+    const status = clean(order.status).toUpperCase();
+    if (status === 'DESPACHADO') return 'Despachado real: movimientos creados.';
+    const missingLots = (order.lines || []).filter((line) => line.lotePending || !clean(line.lote)).length;
+    if (status === 'PENDIENTE_MANUAL' || missingLots > 0) {
+        return `Pendiente manual: faltan ${missingLots || 1} lote(s).`;
+    }
+    const required = Number(order.requiredPackages) || 0;
+    const attached = Array.isArray(order.labels) ? order.labels.length : 0;
+    if (status === 'PENDIENTE_BULTOS') {
+        return required > 0
+            ? `Pendiente etiquetas/bultos (${attached}/${required}).`
+            : 'Pendiente definir bultos/etiquetas.';
+    }
+    if (status === 'EN_PREPARACION') return 'En preparación: no se completó el despacho o hubo despacho parcial.';
+    if (status === 'CANCELADO') return 'Cancelado.';
+    return status ? `No consta como despachado real (${status}).` : 'Snapshot diario: no consta como despachado real.';
+}
+
 const appendTotalRow = (headers: string[], rows: Array<Array<string | number>>) => [
     ...rows,
     Array.from({ length: Math.max(headers.length, 1) }, (_, idx) => {
@@ -206,6 +301,16 @@ function FoldersPage() {
     const [monthlyClosures, , monthlyClosuresLoading] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
         INVENTORY_MONTHLY_CLOSURES_KEY,
         [],
+        {
+            userId: currentUser?.id,
+            initializeIfMissing: true,
+            pollIntervalMs: 8000,
+            protectFromEmptyOverwrite: true,
+        },
+    );
+    const [operationalControlState, , operationalClosuresLoading] = useSharedJsonState<OperationalMonthlyState>(
+        OPERATIONAL_CONTROL_KEY,
+        {},
         {
             userId: currentUser?.id,
             initializeIfMissing: true,
@@ -388,9 +493,77 @@ function FoldersPage() {
         });
     };
 
+    const renderArchiveOrderCard = (day: BillingArchiveEntry, order: ArchiveOrder, isRealDispatch: boolean) => (
+        <div key={`${day.dateKey}-${order.id}`} className="rounded-xl border border-gray-200 bg-gray-50/50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-black text-gray-900">
+                            Factura {order.invoiceNumber} · {order.customerName || 'Cliente sin detectar'}
+                        </p>
+                        <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
+                                isRealDispatch
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-amber-100 text-amber-800'
+                            }`}
+                        >
+                            {isRealDispatch ? 'Despacho real' : 'Archivo diario'}
+                        </span>
+                    </div>
+                    <p className="text-xs font-semibold text-gray-500">
+                        Factura: {formatDate(order.invoiceDate)}
+                        {isRealDispatch && order.lastChangedAt ? ` · Despacho: ${formatDate(order.lastChangedAt)}` : ''}
+                        {' · '}
+                        {order.sourceFileName}
+                    </p>
+                    {!isRealDispatch && (
+                        <p className="mt-1 text-xs font-black text-amber-800">{dispatchArchiveReason(order)}</p>
+                    )}
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        type="button"
+                        onClick={() => void openPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
+                    >
+                        <FileText size={12} /> Abrir
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => void printPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
+                    >
+                        <Printer size={12} /> Imprimir
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => deleteArchivedInvoice(day.dateKey, order.id)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-black text-rose-700 hover:bg-rose-50"
+                        title="Eliminar factura de este día"
+                    >
+                        <Trash2 size={12} /> Eliminar
+                    </button>
+                </div>
+            </div>
+
+            <div className="mt-2 text-xs font-semibold text-gray-600">
+                {(order.lines || [])
+                    .map((line) => `${line.productCode || line.productRaw}: ${line.quantity}${clean(line.lote) ? ` · lote ${clean(line.lote)}` : ''}`)
+                    .join(' · ')}
+            </div>
+        </div>
+    );
+
     const sortedMonthlyClosures = (Array.isArray(monthlyClosures) ? monthlyClosures : [])
         .slice()
         .sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
+
+    const sortedOperationalClosures = (Array.isArray(operationalControlState?.operationalClosures)
+        ? operationalControlState.operationalClosures
+        : [])
+        .slice()
+        .sort((a, b) => (a.year === b.year ? b.month - a.month : b.year - a.year));
 
     const downloadMonthlyClose = (snapshot: InventoryMonthlyCloseSnapshot) => {
         const scopeLabel = snapshot.scope === 'huarte' ? 'Huarte' : 'Canet';
@@ -407,6 +580,59 @@ function FoldersPage() {
                 ['Bodegas', snapshot.warehouseCount],
                 ['Filas snapshot', snapshot.rowCount ?? snapshot.rows.length],
                 ['Huella snapshot', snapshot.snapshotHash || 'legacy'],
+            ],
+        });
+    };
+
+    const downloadOperationalClose = (snapshot: OperationalMonthArchive) => {
+        const headers = [
+            'Sección',
+            'Estado',
+            'Última edición',
+            'Completó',
+            'Responsables guardaron',
+            'Responsables revisaron',
+            'Adjuntos',
+            'Observaciones',
+        ];
+        const rows = (snapshot.records || []).map((record) => {
+            const progress = Object.values(record.participantProgress || {});
+            const saved = progress
+                .filter((item) => item.savedAt)
+                .map((item) => `${item.label} (${formatDate(item.savedAt || '')})`)
+                .join(' · ');
+            const reviewed = progress
+                .filter((item) => item.reviewedAt)
+                .map((item) => `${item.label} (${formatDate(item.reviewedAt || '')})`)
+                .join(' · ');
+            const attachments = Object.entries(record.attachments || {})
+                .filter(([, files]) => Array.isArray(files) && files.length > 0)
+                .map(([label, files]) => `${label}: ${files.map((file) => file.name).join(', ')}`)
+                .join(' | ');
+            return [
+                OPERATIONAL_PROCESS_LABELS[record.process] || record.process,
+                OPERATIONAL_STATUS_LABELS[record.status] || record.status,
+                formatDate(record.updatedAt),
+                record.updatedByName || '-',
+                saved || '-',
+                reviewed || '-',
+                attachments || '-',
+                record.fields?.observaciones || '-',
+            ];
+        });
+        openTableXlsx({
+            title: 'Cierre operativo mensual Solaris',
+            subtitle: `${snapshot.monthLabel} ${snapshot.year} · Cerrado: ${formatDate(snapshot.closedAt)} · Responsable: ${snapshot.closedByName || '-'}`,
+            fileName: `cierre-operativo-${snapshot.year}-${String(snapshot.month).padStart(2, '0')}.xlsx`,
+            headers,
+            rows,
+            summaryRows: [
+                ['Completado', snapshot.statusCounts?.correcto || 0],
+                ['En revisión', snapshot.statusCounts?.revision || 0],
+                ['Incidencias', snapshot.statusCounts?.critica || 0],
+                ['Pendiente', snapshot.statusCounts?.pendiente || 0],
+                ['Adjuntos pendientes', snapshot.missingAttachments || 0],
+                ['Incidencias abiertas', snapshot.openIncidentCount || 0],
             ],
         });
     };
@@ -525,52 +751,40 @@ function FoldersPage() {
                                                 </summary>
 
                                                 <div className="border-t border-gray-100 px-4 py-3">
-                                                    <div className="space-y-2">
-                                                        {(day.orders || []).map((order) => (
-                                                            <div key={order.id} className="rounded-xl border border-gray-200 bg-gray-50/50 p-3">
-                                                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                                                    <div>
-                                                                        <p className="text-sm font-black text-gray-900">
-                                                                            Factura {order.invoiceNumber} · {order.customerName || 'Cliente sin detectar'}
-                                                                        </p>
-                                                                        <p className="text-xs font-semibold text-gray-500">
-                                                                            {formatDate(order.invoiceDate)} · {order.sourceFileName}
-                                                                        </p>
-                                                                    </div>
-                                                                    <div className="flex gap-2">
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => void openPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
-                                                                            className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
-                                                                        >
-                                                                            <FileText size={12} /> Abrir
-                                                                        </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => void printPdf(order.sourcePdfRef, order.sourcePdfDataUrl)}
-                                                                            className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2 py-1 text-xs font-black text-primary hover:bg-primary/5"
-                                                                        >
-                                                                            <Printer size={12} /> Imprimir
-                                                                        </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => deleteArchivedInvoice(day.dateKey, order.id)}
-                                                                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-black text-rose-700 hover:bg-rose-50"
-                                                                            title="Eliminar factura de este día"
-                                                                        >
-                                                                            <Trash2 size={12} /> Eliminar
-                                                                        </button>
-                                                                    </div>
+                                                    {(() => {
+                                                        const orders = Array.isArray(day.orders) ? day.orders : [];
+                                                        const realDispatches = orders.filter(isRealDispatchedOrder);
+                                                        const dailySnapshots = orders.filter((order) => !isRealDispatchedOrder(order));
+                                                        return (
+                                                            <div className="space-y-4">
+                                                                <div className="space-y-2">
+                                                                    <h4 className="text-xs font-black uppercase tracking-wide text-emerald-700">
+                                                                        Despachos reales ({realDispatches.length})
+                                                                    </h4>
+                                                                    {realDispatches.length > 0 ? (
+                                                                        realDispatches.map((order) => renderArchiveOrderCard(day, order, true))
+                                                                    ) : (
+                                                                        <div className="rounded-xl border border-dashed border-emerald-100 bg-emerald-50/40 p-3 text-xs font-semibold text-emerald-700">
+                                                                            No hay pedidos marcados como despachados reales este día.
+                                                                        </div>
+                                                                    )}
                                                                 </div>
 
-                                                                <div className="mt-2 text-xs font-semibold text-gray-600">
-                                                                    {(order.lines || [])
-                                                                        .map((line) => `${line.productCode || line.productRaw}: ${line.quantity}`)
-                                                                        .join(' · ')}
+                                                                <div className="space-y-2">
+                                                                    <h4 className="text-xs font-black uppercase tracking-wide text-amber-700">
+                                                                        Archivo diario / no despachado ({dailySnapshots.length})
+                                                                    </h4>
+                                                                    {dailySnapshots.length > 0 ? (
+                                                                        dailySnapshots.map((order) => renderArchiveOrderCard(day, order, false))
+                                                                    ) : (
+                                                                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-500">
+                                                                            Sin pedidos pendientes guardados como snapshot diario.
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             </div>
-                                                        ))}
-                                                    </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </details>
                                         ))}
@@ -597,43 +811,83 @@ function FoldersPage() {
                             </span>
                         </summary>
 
-                        <div className="border-t border-gray-100 p-6 pt-4">
-                            {monthlyClosuresLoading ? (
-                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
-                                    Cargando cierres de mes...
-                                </div>
-                            ) : sortedMonthlyClosures.length === 0 ? (
-                                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
-                                    Aún no hay cierres de mes guardados.
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {sortedMonthlyClosures.map((snapshot) => {
-                                        const scopeLabel = snapshot.scope === 'huarte' ? 'Huarte' : 'Canet';
-                                        return (
-                                            <div key={snapshot.id} className="rounded-2xl border border-gray-200 bg-gray-50/50 p-4">
+                        <div className="space-y-6 border-t border-gray-100 p-6 pt-4">
+                            <section>
+                                <h3 className="mb-3 text-sm font-black uppercase tracking-wide text-emerald-800">Cierres de stock congelado</h3>
+                                {monthlyClosuresLoading ? (
+                                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                        Cargando cierres de mes...
+                                    </div>
+                                ) : sortedMonthlyClosures.length === 0 ? (
+                                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                        Aún no hay cierres de stock guardados.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {sortedMonthlyClosures.map((snapshot) => {
+                                            const scopeLabel = snapshot.scope === 'huarte' ? 'Huarte' : 'Canet';
+                                            return (
+                                                <div key={snapshot.id} className="rounded-2xl border border-gray-200 bg-gray-50/50 p-4">
+                                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-sm font-black text-gray-900">
+                                                                Cierre {scopeLabel} · {snapshot.monthLabel || formatMonthKey(snapshot.monthKey)}
+                                                            </p>
+                                                            <p className="text-xs font-semibold text-gray-500">
+                                                                Guardado: {formatDate(snapshot.closedAt)} · {snapshot.totalStock.toLocaleString('es-ES')} uds · {(snapshot.rowCount ?? snapshot.rows.length).toLocaleString('es-ES')} filas
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => downloadMonthlyClose(snapshot)}
+                                                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                                                        >
+                                                            <Download size={13} /> Descargar Excel
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </section>
+
+                            <section>
+                                <h3 className="mb-3 text-sm font-black uppercase tracking-wide text-slate-800">Cierres operativos mensuales</h3>
+                                {operationalClosuresLoading ? (
+                                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                        Cargando cierres operativos...
+                                    </div>
+                                ) : sortedOperationalClosures.length === 0 ? (
+                                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
+                                        Aún no hay cierres operativos guardados.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {sortedOperationalClosures.map((snapshot) => (
+                                            <div key={snapshot.id} className="rounded-2xl border border-gray-200 bg-slate-50/60 p-4">
                                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                                     <div>
                                                         <p className="text-sm font-black text-gray-900">
-                                                            Cierre {scopeLabel} · {snapshot.monthLabel || formatMonthKey(snapshot.monthKey)}
+                                                            Cierre operativo · {snapshot.monthLabel} {snapshot.year}
                                                         </p>
                                                         <p className="text-xs font-semibold text-gray-500">
-                                                            Guardado: {formatDate(snapshot.closedAt)} · {snapshot.totalStock.toLocaleString('es-ES')} uds · {(snapshot.rowCount ?? snapshot.rows.length).toLocaleString('es-ES')} filas
+                                                            Cerrado: {formatDate(snapshot.closedAt)} · {snapshot.statusCounts?.correcto || 0} completadas · {snapshot.openIncidentCount || 0} incidencias · {snapshot.missingAttachments || 0} adjuntos pendientes
                                                         </p>
                                                     </div>
                                                     <button
                                                         type="button"
-                                                        onClick={() => downloadMonthlyClose(snapshot)}
-                                                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50"
+                                                        onClick={() => downloadOperationalClose(snapshot)}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
                                                     >
-                                                        <Download size={13} /> Descargar Excel
+                                                        <Download size={13} /> Descargar resumen
                                                     </button>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
                         </div>
                     </details>
                 </div>

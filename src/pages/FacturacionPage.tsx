@@ -3630,6 +3630,9 @@ export default function FacturacionPage() {
     const destinationMovements = destinationInventory === 'canet' ? canetMovements : huarteMovements;
     const destinationMutation = destinationInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
 
+    const dispatchStartedAt = new Date();
+    const dispatchDateKey = toLocalDateKey(dispatchStartedAt) || dispatchStartedAt.toISOString().slice(0, 10);
+
     setDispatchingOrderIds((prev) => (prev.includes(order.id) ? prev : [...prev, order.id]));
     try {
       const lineOccurrence = new Map<string, number>();
@@ -3664,7 +3667,7 @@ export default function FacturacionPage() {
           } else {
             try {
               const payload = {
-                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                fecha: dispatchDateKey,
               tipo_movimiento: isTransfer ? 'traspaso' : 'venta',
               producto: part.productCode,
               lote: part.lote,
@@ -3719,7 +3722,7 @@ export default function FacturacionPage() {
           if (!existingAuto) {
             try {
               const autoPayload = {
-                fecha: order.invoiceDate || new Date().toISOString().slice(0, 10),
+                fecha: dispatchDateKey,
                 tipo_movimiento: 'entrada_traspaso',
                 producto: part.productCode,
                 lote: part.lote,
@@ -3785,7 +3788,7 @@ export default function FacturacionPage() {
 
       updateOrder(order.id, () => dispatchedSnapshot);
       finalizeLabelsForDispatchedOrder(order.id, labelsToFinalize);
-      const dateKey = toLocalDateKey(new Date()) || toLocalDateKey(order.createdAt);
+      const dateKey = dispatchDateKey || toLocalDateKey(order.createdAt);
       if (dateKey) {
         setArchives((prev) => {
           const current = prev || [];

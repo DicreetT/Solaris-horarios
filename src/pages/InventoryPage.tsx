@@ -1174,12 +1174,12 @@ function InventoryPage() {
   const [deletedLotKeys, setDeletedLotKeys] = useSharedJsonState<string[]>(
     'inventory_canet_deleted_lot_keys_v1',
     [],
-    { userId: actorId, mergeBeforePersist: true },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true },
   );
   const [archivedLotEntries, setArchivedLotEntries] = useSharedJsonState<ArchivedLotEntry[]>(
     INVENTORY_LOT_ARCHIVES_KEY,
     [],
-    { userId: actorId, mergeBeforePersist: true },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true },
   );
   const [bodegas, setBodegas] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_bodegas_v1',
@@ -5090,7 +5090,11 @@ function InventoryPage() {
       ? 'AGOTADO'
       : normalizeLotState(lotForm.estado);
     const currentLotRow = editingLotKey
-      ? lotes.find((l) => `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey)
+      ? (() => {
+          const [editingProductoRaw, editingLoteRaw] = editingLotKey.split('|');
+          const editingKey = lotKeyOf(editingProductoRaw, editingLoteRaw);
+          return lotes.find((l) => lotKeyOf(l.producto, l.lote) === editingKey);
+        })()
       : null;
     const currentAsm = normalizeEnsamblajeFinalizado((currentLotRow as any)?.ensamblaje_finalizado);
     const currentAsmAt = clean((currentLotRow as any)?.ensamblaje_finalizado_at || (currentLotRow as any)?.ensamblajeFinalizadoAt || (currentLotRow as any)?.assemblyFinalizedAt);
@@ -5117,7 +5121,7 @@ function InventoryPage() {
       const newKey = lotKeyOf(newProducto, newLote);
       setLotes((prev) =>
         prev.map((l) =>
-          `${clean(l.producto)}|${clean(l.lote)}` === editingLotKey
+          lotKeyOf(l.producto, l.lote) === oldKey
             ? stampLotRow(clearDeletedLotFields({ ...l, ...lotPatch }))
             : l,
         ),
