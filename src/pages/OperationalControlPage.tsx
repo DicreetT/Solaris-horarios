@@ -29,6 +29,7 @@ type ProcessKey =
   | 'ventas_salidas'
   | 'contabilidad'
   | 'sistemas_analytics'
+  | 'estado_almacen'
   | 'cierre_comun';
 
 type StatusKey = 'pendiente' | 'correcto' | 'revision' | 'critica';
@@ -374,6 +375,13 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
     ],
     tables: [
       {
+        id: 'resumen_comercial',
+        title: 'Resumen comercial comparativo',
+        subtitle: 'Tres productos más vendidos según cada fuente.',
+        columns: ['Zoho', 'Inventario Canet', 'Inventario Huarte'],
+        rows: ['Top 1', 'Top 2', 'Top 3'],
+      },
+      {
         id: 'ventas_producto_lote',
         title: 'Salidas por producto, lote e inventario',
         columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad salida Lunaris', 'Diferencia', 'Motivo diferencia'],
@@ -458,10 +466,16 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       { id: 'diferencias_pendientes', label: 'Diferencias pendientes', type: 'number' },
       { id: 'producto_mas_vendido', label: 'Producto más vendido del mes' },
       { id: 'producto_menos_vendido', label: 'Producto menos vendido del mes' },
-      { id: 'exceso_stock', label: 'Productos con exceso de stock', type: 'textarea' },
-      { id: 'riesgo_rotura', label: 'Productos con riesgo de rotura de stock', type: 'textarea' },
-      { id: 'consumo_mensual', label: 'Consumo mensual aproximado por producto', type: 'textarea' },
       { id: 'variacion_mes_anterior', label: 'Variación frente al mes anterior' },
+    ],
+    tables: [
+      {
+        id: 'analisis_stock_fuente',
+        title: 'Análisis de stock por fuente',
+        subtitle: 'Comparativa de exceso, riesgo y consumo aproximado entre Zoho, Canet y Huarte.',
+        columns: ['Zoho', 'Inventario Canet', 'Inventario Huarte'],
+        rows: ['Productos con exceso de stock', 'Productos con riesgo de rotura de stock', 'Consumo mensual aproximado'],
+      },
     ],
     attachments: [
       'Zoho: Informe de compras a proveedores',
@@ -484,9 +498,48 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       'Si no coinciden, debe registrar área, motivo y responsable de resolución.',
     ],
   },
+  estado_almacen: {
+    key: 'estado_almacen',
+    index: 8,
+    title: 'Estado de almacén',
+    shortTitle: 'Almacén',
+    responsible: 'Anabela / Fernando / Itziar',
+    users: ['anabela', 'anabella', 'fernando', 'fer', 'itzi', 'itziar'],
+    icon: Building2,
+    color: {
+      text: 'text-lime-800',
+      border: 'border-lime-200',
+      soft: 'bg-lime-50',
+      button: 'bg-lime-700 hover:bg-lime-800',
+      ring: 'focus:ring-lime-100 focus:border-lime-500',
+    },
+    summary: 'Revisión mensual de limpieza, plagas, seguridad y estado general por almacén o inventario.',
+    tables: [
+      {
+        id: 'estado_inventario_canet',
+        title: 'Inventario Canet',
+        columns: ['Correcto', 'Requiere atención', 'Incidencia'],
+        rows: ['Limpieza y orden', 'Control de plagas', 'Seguridad en instalaciones', 'Estado general'],
+      },
+      {
+        id: 'estado_inventario_huarte',
+        title: 'Inventario Huarte',
+        columns: ['Correcto', 'Requiere atención', 'Incidencia'],
+        rows: ['Limpieza y orden', 'Control de plagas', 'Seguridad en instalaciones', 'Estado general'],
+      },
+    ],
+    attachments: [
+      'Evidencia de revisión de inventario Canet',
+      'Evidencia de revisión de inventario Huarte',
+    ],
+    validations: [
+      'Cada almacén o inventario debe quedar marcado como correcto, requiere atención o incidencia.',
+      'Toda incidencia debe explicarse en observaciones y quedar registrada antes del cierre común.',
+    ],
+  },
   cierre_comun: {
     key: 'cierre_comun',
-    index: 8,
+    index: 9,
     title: 'Cierre común del mes',
     shortTitle: 'Cierre',
     responsible: 'Thalia',
@@ -549,6 +602,7 @@ const PROCESS_ORDER: ProcessKey[] = [
   'ventas_salidas',
   'contabilidad',
   'sistemas_analytics',
+  'estado_almacen',
   'cierre_comun',
 ];
 
@@ -628,6 +682,11 @@ function ProcessStatusIcon({ status }: { status: StatusKey }) {
   if (status === 'revision') return <AlertTriangle size={20} />;
   if (status === 'critica') return <AlertTriangle size={20} />;
   return <Circle size={20} />;
+}
+
+function isStatusMatrix(columns: string[]) {
+  const allowed = new Set(['correcto', 'requiere atencion', 'incidencia']);
+  return columns.length > 0 && columns.every((column) => allowed.has(normalize(column)));
 }
 
 function renderCellInput(
@@ -905,7 +964,7 @@ export default function OperationalControlPage() {
           </div>
         </section>
 
-        <section className="grid gap-3 xl:grid-cols-8">
+        <section className="grid gap-3 xl:grid-cols-3 2xl:grid-cols-9">
           {PROCESS_ORDER.map((process) => {
             const definition = PROCESS_DEFINITIONS[process];
             const record = getRecord(records, process, year, month);
@@ -981,7 +1040,6 @@ export default function OperationalControlPage() {
                 </div>
                 <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
                   <p>Responsable: <span className="text-slate-950">{activeDefinition.responsible}</span></p>
-                  {activeDefinition.review && <p>Revisión: <span className="text-slate-950">{activeDefinition.review}</span></p>}
                   {activeDefinition.warehouse && <p>Bodega: <span className="text-slate-950">{activeDefinition.warehouse}</span></p>}
                   {activeDefinition.accounting && <p>Contabilidad: <span className="text-slate-950">{activeDefinition.accounting}</span></p>}
                 </div>
@@ -1079,14 +1137,16 @@ export default function OperationalControlPage() {
                   </section>
                 )}
 
-                {activeDefinition.tables?.map((table) => (
+                {activeDefinition.tables?.map((table) => {
+                  const statusMatrix = isStatusMatrix(table.columns);
+                  return (
                   <section key={table.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
                       <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">{table.title}</h3>
                       {table.subtitle && <p className="mt-1 text-xs font-semibold text-slate-500">{table.subtitle}</p>}
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[980px] border-collapse text-sm">
+                      <table className={`w-full border-collapse text-sm ${statusMatrix ? 'min-w-[620px]' : 'min-w-[980px]'}`}>
                         <thead>
                           <tr className="bg-white text-xs uppercase tracking-[0.12em] text-slate-500">
                             <th className="border-b border-slate-200 px-2 py-2 text-left">Línea</th>
@@ -1101,9 +1161,22 @@ export default function OperationalControlPage() {
                               <td className="w-20 px-2 py-1.5 text-xs font-black text-slate-500">{row}</td>
                               {table.columns.map((column) => {
                                 const key = fieldKey(table.id, row, column);
+                                const rowStatusKey = fieldKey(table.id, row, 'estado');
                                 return (
-                                  <td key={column} className="min-w-[140px] px-1.5 py-1.5">
-                                    {renderCellInput(
+                                  <td key={column} className={`${statusMatrix ? 'min-w-[130px] text-center' : 'min-w-[140px]'} px-1.5 py-1.5`}>
+                                    {statusMatrix ? (
+                                      <label className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
+                                        <input
+                                          type="radio"
+                                          name={rowStatusKey}
+                                          checked={draftFields[rowStatusKey] === column}
+                                          onChange={() => setFieldValue(rowStatusKey, column)}
+                                          disabled={!canEditActiveProcess}
+                                          className="h-4 w-4"
+                                        />
+                                        {column}
+                                      </label>
+                                    ) : renderCellInput(
                                       key,
                                       column,
                                       draftFields[key] || '',
@@ -1121,7 +1194,8 @@ export default function OperationalControlPage() {
                       </table>
                     </div>
                   </section>
-                ))}
+                  );
+                })}
 
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <div className="mb-3 flex items-center gap-2">
