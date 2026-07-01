@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Save,
   ShoppingCart,
+  Upload,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { sharedJsonHistoryKeyFor, useSharedJsonState } from '../hooks/useSharedJsonState';
@@ -690,6 +691,62 @@ function safeState(state: OperationalMonthlyState | undefined | null): Operation
   };
 }
 
+function nonBlankFieldCount(fields?: Record<string, string>) {
+  return Object.values(fields || {}).filter((value) => !isBlankFieldValue(value)).length;
+}
+
+function checkedItemCount(checklist?: Record<string, boolean>) {
+  return Object.values(checklist || {}).filter(Boolean).length;
+}
+
+function attachmentCount(attachments?: Record<string, Attachment[]>) {
+  return Object.values(attachments || {}).reduce((total, files) => total + (Array.isArray(files) ? files.length : 0), 0);
+}
+
+function progressCount(progress?: Record<string, ParticipantProgress>) {
+  return Object.values(progress || {}).filter((item) => !!item.savedAt || !!item.reviewedAt).length;
+}
+
+function recordContentStats(record: ProcessRecord | undefined) {
+  return {
+    fields: nonBlankFieldCount(record?.fields),
+    checks: checkedItemCount(record?.checklist),
+    attachments: attachmentCount(record?.attachments),
+    progress: progressCount(record?.participantProgress),
+  };
+}
+
+function stateContentStats(state: OperationalMonthlyState | undefined | null, year?: number, month?: number) {
+  const payload = safeState(state);
+  const records = payload.records.filter((record) => {
+    if (year != null && record.year !== year) return false;
+    if (month != null && record.month !== month) return false;
+    return true;
+  });
+  const stats = records.reduce(
+    (acc, record) => {
+      const recordStats = recordContentStats(record);
+      acc.fields += recordStats.fields;
+      acc.checks += recordStats.checks;
+      acc.attachments += recordStats.attachments;
+      acc.progress += recordStats.progress;
+      return acc;
+    },
+    { records: records.length, fields: 0, checks: 0, attachments: 0, progress: 0 },
+  );
+  return {
+    ...stats,
+    useful:
+      stats.fields + stats.checks + stats.attachments + stats.progress > 0 ||
+      payload.monthClosures.length > 0 ||
+      (payload.operationalClosures || []).length > 0,
+  };
+}
+
+function hasUsefulOperationalContent(state: OperationalMonthlyState | undefined | null) {
+  return stateContentStats(state).useful;
+}
+
 function getRecordKey(process: ProcessKey, year: number, month: number) {
   return `${year}:${month}:${process}`;
 }
@@ -885,6 +942,10 @@ function formatDateTime(value?: string) {
 
 function attachmentKey(label: string) {
   return normalize(label).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function attachmentFolderPath(year: number, month: number, process: ProcessKey, label: string) {
+  return `control-operativo-mensual/${year}/${String(month).padStart(2, '0')}/${process}/${attachmentKey(label)}`;
 }
 
 function fieldKey(sectionId: string, row: string, column: string) {
@@ -1119,6 +1180,7 @@ export default function OperationalControlPage() {
       pollIntervalMs: 8000,
       enableHistory: true,
       maxHistoryEntries: 80,
+      isUsefulPayload: hasUsefulOperationalContent,
     },
   );
 
@@ -1141,6 +1203,7 @@ export default function OperationalControlPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [recoveringAttachments, setRecoveringAttachments] = useState(false);
 
   const monthLabel = MONTHS.find((item) => item.value === month)?.label || '';
   const canEditActiveProcess = canUserEditProcess(activeDefinition, currentUserName, isAdmin) && !isMonthClosed;
@@ -1271,9 +1334,9 @@ export default function OperationalControlPage() {
         month,
         status: nextStatus,
         reviewed: nextReviewed,
-        fields: draftFields,
-        checklist: draftChecklist,
-        attachments: draftAttachments,
+        fields: mergeFields(existing?.fields, draftFields),
+        checklist: mergeChecklist(existing?.checklist, draftChecklist),
+        attachments: mergeAttachmentsByField(existing?.attachments, draftAttachments),
         participantProgress,
         updatedAt: now,
         updatedBy: currentUser?.id || '',
@@ -1437,6 +1500,11 @@ export default function OperationalControlPage() {
 
   const restoreHistorySnapshot = (snapshot: OperationalHistorySnapshot) => {
     if (!isAdmin || !snapshot?.payload) return;
+    const stats = stateContentStats(snapshot.payload, year, month);
+    if (!stats.useful) {
+      window.alert('Esta copia no contiene campos, adjuntos, checks ni revisiones para restaurar.');
+      return;
+    }
     const confirmed = window.confirm(
       `¿Restaurar la copia del ${formatDateTime(snapshot.savedAt)}?\n\nSe fusionará con lo actual para recuperar datos sin borrar guardados recientes.`,
     );
@@ -1447,6 +1515,65 @@ export default function OperationalControlPage() {
       currentUser?.name || currentUser?.email || 'Administración',
     ));
     emitSuccessFeedback('Copia histórica restaurada. Revisa la información y guarda/recarga si hace falta.');
+  };
+
+  const recoverAttachmentsFromStorage = async () => {
+    if (!canEditActiveProcess || recoveringAttachments) return;
+    setRecoveringAttachments(true);
+    try {
+      const recovered: Record<string, Attachment[]> = {};
+      const errors: string[] = [];
+
+      for (const item of activeDefinition.attachments) {
+        const folderPath = attachmentFolderPath(year, month, selectedProcess, item);
+        const { data, error } = await supabase.storage
+          .from('attachments')
+          .list(folderPath, {
+            limit: 100,
+            sortBy: { column: 'created_at', order: 'desc' },
+          });
+        if (error) {
+          errors.push(`${item}: ${error.message}`);
+          continue;
+        }
+        const files = (data || [])
+          .filter((file) => file.name && !file.name.startsWith('.'))
+          .map((file) => {
+            const path = `${folderPath}/${file.name}`;
+            const { data: publicData } = supabase.storage.from('attachments').getPublicUrl(path);
+            return {
+              name: file.name.replace(/^[a-z0-9]+_\\d+\\./i, 'archivo.'),
+              url: publicData.publicUrl,
+              type: file.metadata?.mimetype || file.metadata?.mimeType || 'application/octet-stream',
+              size: Number(file.metadata?.size || 0),
+            };
+          });
+        if (files.length > 0) recovered[item] = files;
+      }
+
+      const recoveredCount = Object.values(recovered).reduce((total, files) => total + files.length, 0);
+      if (recoveredCount === 0) {
+        window.alert(errors.length > 0
+          ? `No pude recuperar adjuntos. Detalle: ${errors.slice(0, 3).join(' | ')}`
+          : 'No encontré adjuntos guardados en Storage para esta sección y mes.');
+        return;
+      }
+
+      setDraftAttachments((prev) => mergeAttachmentsByField(prev, recovered));
+      setDraftChecklist((prev) => {
+        const next = { ...prev };
+        Object.keys(recovered).forEach((item) => {
+          next[item] = true;
+        });
+        return next;
+      });
+      emitSuccessFeedback(`Recuperé ${recoveredCount} adjunto(s). Revisa la sección y pulsa Guardar sección.`);
+    } catch (error) {
+      console.error('[operational_control] attachment recovery failed:', error);
+      window.alert('No pude buscar adjuntos en Storage. Revisa conexión/permisos e inténtalo otra vez.');
+    } finally {
+      setRecoveringAttachments(false);
+    }
   };
 
   const ActiveIcon = activeDefinition.icon;
@@ -1538,6 +1665,7 @@ export default function OperationalControlPage() {
                 {historySnapshots.slice(0, 8).map((snapshot) => {
                   const payload = safeState(snapshot.payload);
                   const currentMonthRecords = payload.records.filter((record) => record.year === year && record.month === month);
+                  const stats = stateContentStats(payload, year, month);
                   const label = snapshot.source === 'backup_non_empty'
                     ? 'Última copia válida'
                     : snapshot.source === 'before_remote'
@@ -1550,13 +1678,17 @@ export default function OperationalControlPage() {
                       <p className="mt-1 text-xs font-semibold text-slate-500">
                         {currentMonthRecords.length} secciones de {monthLabel} {year} · {payload.records.length} registros totales
                       </p>
+                      <p className={`mt-2 rounded-lg px-2 py-1 text-xs font-black ${stats.useful ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>
+                        {stats.fields} campos · {stats.attachments} adjuntos · {stats.checks} checks · {stats.progress} responsables
+                      </p>
                       <button
                         type="button"
                         onClick={() => restoreHistorySnapshot(snapshot)}
-                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-600"
+                        disabled={!stats.useful}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                       >
                         <RotateCcw size={14} />
-                        Restaurar copia
+                        {stats.useful ? 'Restaurar copia' : 'Copia vacía'}
                       </button>
                     </div>
                   );
@@ -1861,9 +1993,22 @@ export default function OperationalControlPage() {
                 })}
 
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-3 flex items-center gap-2">
-                    <FileText size={18} className="text-slate-700" />
-                    <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Adjuntos requeridos con nombre exacto</h3>
+                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText size={18} className="text-slate-700" />
+                      <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Adjuntos requeridos con nombre exacto</h3>
+                    </div>
+                    {canEditActiveProcess && (
+                      <button
+                        type="button"
+                        onClick={recoverAttachmentsFromStorage}
+                        disabled={recoveringAttachments}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 transition hover:bg-teal-50 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <Upload size={14} />
+                        {recoveringAttachments ? 'Buscando...' : 'Buscar adjuntos guardados'}
+                      </button>
+                    )}
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {activeDefinition.attachments.map((item) => {
@@ -1887,7 +2032,7 @@ export default function OperationalControlPage() {
                                 compact
                                 maxSizeMB={18}
                                 acceptedTypes="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
-                                folderPath={`control-operativo-mensual/${year}/${String(month).padStart(2, '0')}/${selectedProcess}/${attachmentKey(item)}`}
+                                folderPath={attachmentFolderPath(year, month, selectedProcess, item)}
                                 existingFiles={files}
                                 onUploadComplete={(uploadedFiles) => setAttachmentValue(item, uploadedFiles)}
                               />

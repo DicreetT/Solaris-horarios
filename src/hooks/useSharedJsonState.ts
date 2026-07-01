@@ -12,6 +12,7 @@ type Options = {
   mergeIncomingWithLocal?: boolean;
   enableHistory?: boolean;
   maxHistoryEntries?: number;
+  isUsefulPayload?: (payload: any) => boolean;
 };
 
 const pendingSharedJsonWrites = new Set<Promise<unknown>>();
@@ -391,6 +392,7 @@ export function useSharedJsonState<T>(
     mergeIncomingWithLocal = true,
     enableHistory = false,
     maxHistoryEntries = DEFAULT_SHARED_JSON_HISTORY_LIMIT,
+    isUsefulPayload,
   } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
@@ -445,6 +447,7 @@ export function useSharedJsonState<T>(
 
       const persistHistory = async (payload: T | undefined, source: SharedJsonHistorySnapshot['source']) => {
         if (!enableHistory || payload === undefined || isEffectivelyEmpty(payload)) return;
+        if (isUsefulPayload && !isUsefulPayload(payload)) return;
         const historyKey = sharedJsonHistoryKeyFor(key);
         try {
           const { data } = await withTimeout<{ data: any; error: any }>(
@@ -522,7 +525,12 @@ export function useSharedJsonState<T>(
 
       await persistHistory(payloadToStore, 'after_save');
 
-      if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(payloadToStore)) {
+      if (
+        protectFromEmptyOverwrite &&
+        !preferRemoteSnapshot &&
+        !isEffectivelyEmpty(payloadToStore) &&
+        (!isUsefulPayload || isUsefulPayload(payloadToStore))
+      ) {
         const backupKey = backupKeyRef.current;
         const { error: backupError } = await withTimeout<{ error: any }>(
           supabase
@@ -554,6 +562,7 @@ export function useSharedJsonState<T>(
       mergeStrategy,
       preferRemoteSnapshot,
       protectFromEmptyOverwrite,
+      isUsefulPayload,
       userId,
     ],
   );
