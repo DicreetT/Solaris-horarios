@@ -66,11 +66,14 @@ function isTransientPersistError(error: unknown) {
   );
 }
 
-function isEffectivelyEmpty(value: unknown) {
+function isEffectivelyEmpty(value: unknown): boolean {
   if (value == null) return true;
-  if (Array.isArray(value)) return value.length === 0;
+  if (Array.isArray(value)) return value.length === 0 || value.every(isEffectivelyEmpty);
   if (typeof value === 'string') return value.trim().length === 0;
-  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length === 0;
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length === 0 || entries.every(([, entryValue]) => isEffectivelyEmpty(entryValue));
+  }
   return false;
 }
 

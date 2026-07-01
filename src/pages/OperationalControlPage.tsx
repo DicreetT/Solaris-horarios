@@ -759,6 +759,10 @@ function mergeChecklist(base?: Record<string, boolean>, incoming?: Record<string
   return merged;
 }
 
+function mergeFields(base?: Record<string, string>, incoming?: Record<string, string>) {
+  return { ...(base || {}), ...(incoming || {}) };
+}
+
 function mergeOperationalControlState(remote: OperationalMonthlyState, local: OperationalMonthlyState): OperationalMonthlyState {
   const safeRemote = safeState(remote);
   const safeLocal = safeState(local);
@@ -776,6 +780,7 @@ function mergeOperationalControlState(remote: OperationalMonthlyState, local: Op
     records.set(key, {
       ...older,
       ...newer,
+      fields: mergeFields(older.fields, newer.fields),
       checklist: mergeChecklist(older.checklist, newer.checklist),
       attachments: mergeAttachmentsByField(older.attachments, newer.attachments),
       participantProgress: mergeParticipantProgress(older.participantProgress, newer.participantProgress),
