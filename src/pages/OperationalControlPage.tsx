@@ -17,8 +17,9 @@ import {
   ShoppingCart,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { sharedJsonHistoryKeyFor, useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB, type InventoryMovementRow } from '../hooks/useInventoryMovementsDB';
+import { supabase } from '../lib/supabase';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { FileUploader, type Attachment } from '../components/FileUploader';
 
@@ -94,6 +95,14 @@ type OperationalMonthlyState = {
   records: ProcessRecord[];
   monthClosures: MonthClosure[];
   operationalClosures?: OperationalMonthArchive[];
+};
+
+type OperationalHistorySnapshot = {
+  id: string;
+  savedAt: string;
+  source?: 'before_remote' | 'after_save' | 'backup_non_empty';
+  updatedBy?: string | null;
+  payload: OperationalMonthlyState;
 };
 
 type MetricField = {
@@ -1067,6 +1076,8 @@ export default function OperationalControlPage() {
       mergeIncomingWithLocal: true,
       mergeStrategy: mergeOperationalControlState,
       pollIntervalMs: 8000,
+      enableHistory: true,
+      maxHistoryEntries: 80,
     },
   );
 
@@ -1085,6 +1096,10 @@ export default function OperationalControlPage() {
   const [draftAttachments, setDraftAttachments] = useState<Record<string, Attachment[]>>({});
   const [draftStatus, setDraftStatus] = useState<StatusKey>('pendiente');
   const [draftReviewed, setDraftReviewed] = useState(false);
+  const [historySnapshots, setHistorySnapshots] = useState<OperationalHistorySnapshot[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyError, setHistoryError] = useState('');
 
   const monthLabel = MONTHS.find((item) => item.value === month)?.label || '';
   const canEditActiveProcess = canUserEditProcess(activeDefinition, currentUserName, isAdmin) && !isMonthClosed;
@@ -1320,6 +1335,68 @@ export default function OperationalControlPage() {
     emitSuccessFeedback('Mes reabierto correctamente.');
   };
 
+  const loadHistorySnapshots = async () => {
+    if (!isAdmin) return;
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const { data, error } = await supabase
+        .from('shared_json_state')
+        .select('payload')
+        .eq('key', sharedJsonHistoryKeyFor('operational_control_monthly_v2'))
+        .maybeSingle();
+      if (error) throw error;
+      const snapshots = Array.isArray(data?.payload?.snapshots)
+        ? (data.payload.snapshots as OperationalHistorySnapshot[])
+        : [];
+      const { data: backupData, error: backupError } = await supabase
+        .from('shared_json_state')
+        .select('payload')
+        .eq('key', 'shared_json_state_backup_non_empty:operational_control_monthly_v2')
+        .maybeSingle();
+      if (backupError) throw backupError;
+      const backupPayload = safeState(backupData?.payload as OperationalMonthlyState | undefined);
+      const backupUpdatedAt = [
+        ...backupPayload.records.map((record) => record.updatedAt),
+        ...backupPayload.monthClosures.map((closure) => closure.closedAt || closure.reopenedAt || ''),
+        ...(backupPayload.operationalClosures || []).map((closure) => closure.closedAt),
+      ]
+        .map(timestampMs)
+        .filter((value) => value > 0)
+        .sort((a, b) => b - a)[0];
+      const backupSnapshot: OperationalHistorySnapshot[] = backupPayload.records.length > 0
+        ? [{
+            id: 'backup_non_empty',
+            savedAt: backupUpdatedAt ? new Date(backupUpdatedAt).toISOString() : new Date().toISOString(),
+            source: 'backup_non_empty',
+            updatedBy: null,
+            payload: backupPayload,
+          }]
+        : [];
+      setHistorySnapshots(
+        [...backupSnapshot, ...snapshots]
+          .filter((snapshot) => snapshot?.payload && Array.isArray(snapshot.payload.records))
+          .sort((a, b) => timestampMs(b.savedAt) - timestampMs(a.savedAt)),
+      );
+      setHistoryLoaded(true);
+    } catch (error) {
+      console.error('[operational_control] history load failed:', error);
+      setHistoryError('No se pudo cargar el historial de seguridad.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const restoreHistorySnapshot = (snapshot: OperationalHistorySnapshot) => {
+    if (!isAdmin || !snapshot?.payload) return;
+    const confirmed = window.confirm(
+      `¿Restaurar la copia del ${formatDateTime(snapshot.savedAt)}?\n\nSe fusionará con lo actual para recuperar datos sin borrar guardados recientes.`,
+    );
+    if (!confirmed) return;
+    setState((prev) => mergeOperationalControlState(safeState(snapshot.payload), safeState(prev)));
+    emitSuccessFeedback('Copia histórica restaurada. Revisa la información y guarda/recarga si hace falta.');
+  };
+
   const ActiveIcon = activeDefinition.icon;
   const activeDisplayStatus = currentRecord
     ? effectiveProcessStatus({ ...currentRecord, status: draftStatus }, activeDefinition)
@@ -1378,6 +1455,64 @@ export default function OperationalControlPage() {
             </div>
           </div>
         </section>
+
+        {isAdmin && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-700">Historial de seguridad</p>
+                <p className="mt-1 text-sm font-semibold text-amber-900">
+                  Copias automáticas del control operativo para recuperar información si una sincronización vacía pisa la vista actual.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={loadHistorySnapshots}
+                disabled={historyLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-black text-amber-900 shadow-sm transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                <RotateCcw size={17} />
+                {historyLoading ? 'Cargando...' : 'Ver copias'}
+              </button>
+            </div>
+            {historyError && <p className="mt-3 text-sm font-bold text-red-700">{historyError}</p>}
+            {historyLoaded && historySnapshots.length === 0 && (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-amber-800">
+                Todavía no hay copias históricas guardadas. Las próximas ediciones quedarán versionadas aquí.
+              </p>
+            )}
+            {historySnapshots.length > 0 && (
+              <div className="mt-3 grid gap-2 lg:grid-cols-2 xl:grid-cols-4">
+                {historySnapshots.slice(0, 8).map((snapshot) => {
+                  const payload = safeState(snapshot.payload);
+                  const currentMonthRecords = payload.records.filter((record) => record.year === year && record.month === month);
+                  const label = snapshot.source === 'backup_non_empty'
+                    ? 'Última copia válida'
+                    : snapshot.source === 'before_remote'
+                      ? 'Antes de guardar'
+                      : 'Después de guardar';
+                  return (
+                    <div key={snapshot.id} className="rounded-xl border border-amber-200 bg-white p-3">
+                      <p className="text-xs font-black uppercase tracking-[0.12em] text-amber-700">{label}</p>
+                      <p className="mt-1 text-sm font-black text-slate-950">{formatDateTime(snapshot.savedAt)}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        {currentMonthRecords.length} secciones de {monthLabel} {year} · {payload.records.length} registros totales
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => restoreHistorySnapshot(snapshot)}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-600"
+                      >
+                        <RotateCcw size={14} />
+                        Restaurar copia
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="grid gap-3 xl:grid-cols-3 2xl:grid-cols-9">
           {PROCESS_ORDER.map((process) => {

@@ -10,11 +10,26 @@ type Options = {
   mergeBeforePersist?: boolean;
   mergeStrategy?: (remote: any, local: any) => any;
   mergeIncomingWithLocal?: boolean;
+  enableHistory?: boolean;
+  maxHistoryEntries?: number;
 };
 
 const pendingSharedJsonWrites = new Set<Promise<unknown>>();
 const DEFAULT_SHARED_JSON_POLL_MS = 600000;
 const MIN_SHARED_JSON_REFRESH_GAP_MS = 30000;
+const DEFAULT_SHARED_JSON_HISTORY_LIMIT = 40;
+
+type SharedJsonHistorySnapshot = {
+  id: string;
+  savedAt: string;
+  source: 'before_remote' | 'after_save';
+  updatedBy: string | null;
+  payload: unknown;
+};
+
+export function sharedJsonHistoryKeyFor(key: string) {
+  return `shared_json_state_history:${key}`;
+}
 
 function trackSharedJsonWrite<T>(promise: Promise<T>): Promise<T> {
   pendingSharedJsonWrites.add(promise);
@@ -357,6 +372,8 @@ export function useSharedJsonState<T>(
     mergeBeforePersist = false,
     mergeStrategy,
     mergeIncomingWithLocal = true,
+    enableHistory = false,
+    maxHistoryEntries = DEFAULT_SHARED_JSON_HISTORY_LIMIT,
   } = options;
   const [value, setValue] = useState<T>(fallbackValue);
   const [loading, setLoading] = useState(true);
@@ -384,6 +401,7 @@ export function useSharedJsonState<T>(
   const persist = useCallback(
     async (next: T): Promise<T> => {
       let payloadToStore = next;
+      let previousRemotePayload: T | undefined;
       if (mergeBeforePersist) {
         try {
           const { data, error } = await withTimeout<{ data: any; error: any }>(
@@ -397,6 +415,7 @@ export function useSharedJsonState<T>(
           );
           if (!error && data && Object.prototype.hasOwnProperty.call(data, 'payload')) {
             const remotePayload = data.payload as T;
+            previousRemotePayload = remotePayload;
             payloadToStore = (mergeStrategy
               ? mergeStrategy(remotePayload, next)
               : defaultMergeRemoteLocal(remotePayload, next)) as T;
@@ -405,6 +424,58 @@ export function useSharedJsonState<T>(
           // fallback to local payload
           payloadToStore = next;
         }
+      }
+
+      const persistHistory = async (payload: T | undefined, source: SharedJsonHistorySnapshot['source']) => {
+        if (!enableHistory || payload === undefined || isEffectivelyEmpty(payload)) return;
+        const historyKey = sharedJsonHistoryKeyFor(key);
+        try {
+          const { data } = await withTimeout<{ data: any; error: any }>(
+            supabase
+              .from('shared_json_state')
+              .select('payload')
+              .eq('key', historyKey)
+              .maybeSingle(),
+            12000,
+            `shared_json_state history-read ${key}`,
+          );
+          const existing = Array.isArray(data?.payload?.snapshots)
+            ? (data.payload.snapshots as SharedJsonHistorySnapshot[])
+            : [];
+          const snapshot: SharedJsonHistorySnapshot = {
+            id: `${Date.now()}-${source}-${Math.random().toString(36).slice(2)}`,
+            savedAt: new Date().toISOString(),
+            source,
+            updatedBy: userId || null,
+            payload,
+          };
+          const snapshots = [snapshot, ...existing]
+            .filter((item, index, list) => index === list.findIndex((candidate) => candidate.id === item.id))
+            .slice(0, Math.max(1, maxHistoryEntries));
+          const { error } = await withTimeout<{ error: any }>(
+            supabase
+              .from('shared_json_state')
+              .upsert(
+                {
+                  key: historyKey,
+                  payload: { snapshots },
+                  updated_by: userId || null,
+                },
+                { onConflict: 'key' },
+              ),
+            15000,
+            `shared_json_state history-upsert ${key}`,
+          );
+          if (error) {
+            console.error(`[shared_json_state] history upsert failed for key ${key}:`, error);
+          }
+        } catch (error) {
+          console.error(`[shared_json_state] history failed for key ${key}:`, error);
+        }
+      };
+
+      if (previousRemotePayload !== undefined) {
+        await persistHistory(previousRemotePayload, 'before_remote');
       }
 
       const { error } = await withTimeout<{ error: any }>(
@@ -425,6 +496,8 @@ export function useSharedJsonState<T>(
         console.error(`[shared_json_state] upsert failed for key ${key}:`, error);
         throw error;
       }
+
+      await persistHistory(payloadToStore, 'after_save');
 
       if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(payloadToStore)) {
         const backupKey = backupKeyRef.current;
@@ -450,7 +523,16 @@ export function useSharedJsonState<T>(
       }
       return payloadToStore;
     },
-    [key, mergeBeforePersist, mergeStrategy, preferRemoteSnapshot, protectFromEmptyOverwrite, userId],
+    [
+      enableHistory,
+      key,
+      maxHistoryEntries,
+      mergeBeforePersist,
+      mergeStrategy,
+      preferRemoteSnapshot,
+      protectFromEmptyOverwrite,
+      userId,
+    ],
   );
 
   useEffect(() => {
