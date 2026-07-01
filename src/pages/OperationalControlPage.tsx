@@ -768,8 +768,20 @@ function mergeChecklist(base?: Record<string, boolean>, incoming?: Record<string
   return merged;
 }
 
+function isBlankFieldValue(value: string | undefined) {
+  if (value == null) return true;
+  const trimmed = String(value).trim();
+  return trimmed === '' || trimmed === '[]';
+}
+
 function mergeFields(base?: Record<string, string>, incoming?: Record<string, string>) {
-  return { ...(base || {}), ...(incoming || {}) };
+  const merged: Record<string, string> = { ...(base || {}) };
+  Object.entries(incoming || {}).forEach(([key, value]) => {
+    if (!isBlankFieldValue(value) || isBlankFieldValue(merged[key])) {
+      merged[key] = value;
+    }
+  });
+  return merged;
 }
 
 function mergeOperationalControlState(remote: OperationalMonthlyState, local: OperationalMonthlyState): OperationalMonthlyState {
@@ -827,6 +839,35 @@ function mergeOperationalControlState(remote: OperationalMonthlyState, local: Op
     monthClosures: Array.from(monthClosures.values()),
     operationalClosures: Array.from(archives.values()).sort((a, b) => (a.year === b.year ? b.month - a.month : b.year - a.year)),
   };
+}
+
+function restoreOperationalSnapshot(current: OperationalMonthlyState, snapshot: OperationalMonthlyState, userName: string): OperationalMonthlyState {
+  const now = new Date().toISOString();
+  const touchedSnapshot = safeState(snapshot);
+  return mergeOperationalControlState(current, {
+    ...touchedSnapshot,
+    records: touchedSnapshot.records.map((record) => ({
+      ...record,
+      updatedAt: now,
+      updatedByName: userName || record.updatedByName || 'Administración',
+    })),
+  });
+}
+
+function operationalSnapshotSignature(snapshot: OperationalHistorySnapshot) {
+  const payload = safeState(snapshot.payload);
+  return JSON.stringify({
+    records: payload.records
+      .map((record) => ({
+        ...record,
+        updatedAt: '',
+        updatedBy: '',
+        updatedByName: '',
+      }))
+      .sort((a, b) => getRecordKey(a.process, a.year, a.month).localeCompare(getRecordKey(b.process, b.year, b.month), 'es')),
+    monthClosures: payload.monthClosures,
+    operationalClosures: payload.operationalClosures || [],
+  });
 }
 
 function formatDateTime(value?: string) {
@@ -1373,10 +1414,17 @@ export default function OperationalControlPage() {
             payload: backupPayload,
           }]
         : [];
+      const seenSignatures = new Set<string>();
       setHistorySnapshots(
         [...backupSnapshot, ...snapshots]
           .filter((snapshot) => snapshot?.payload && Array.isArray(snapshot.payload.records))
-          .sort((a, b) => timestampMs(b.savedAt) - timestampMs(a.savedAt)),
+          .sort((a, b) => timestampMs(b.savedAt) - timestampMs(a.savedAt))
+          .filter((snapshot) => {
+            const signature = operationalSnapshotSignature(snapshot);
+            if (seenSignatures.has(signature)) return false;
+            seenSignatures.add(signature);
+            return true;
+          }),
       );
       setHistoryLoaded(true);
     } catch (error) {
@@ -1393,7 +1441,11 @@ export default function OperationalControlPage() {
       `¿Restaurar la copia del ${formatDateTime(snapshot.savedAt)}?\n\nSe fusionará con lo actual para recuperar datos sin borrar guardados recientes.`,
     );
     if (!confirmed) return;
-    setState((prev) => mergeOperationalControlState(safeState(snapshot.payload), safeState(prev)));
+    setState((prev) => restoreOperationalSnapshot(
+      safeState(prev),
+      safeState(snapshot.payload),
+      currentUser?.name || currentUser?.email || 'Administración',
+    ));
     emitSuccessFeedback('Copia histórica restaurada. Revisa la información y guarda/recarga si hace falta.');
   };
 

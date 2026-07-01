@@ -31,6 +31,23 @@ export function sharedJsonHistoryKeyFor(key: string) {
   return `shared_json_state_history:${key}`;
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((itemKey) => `${JSON.stringify(itemKey)}:${stableStringify((value as Record<string, unknown>)[itemKey])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function historyPayloadSignature(value: unknown) {
+  return stableStringify(value);
+}
+
 function trackSharedJsonWrite<T>(promise: Promise<T>): Promise<T> {
   pendingSharedJsonWrites.add(promise);
   void promise.finally(() => {
@@ -449,8 +466,14 @@ export function useSharedJsonState<T>(
             updatedBy: userId || null,
             payload,
           };
+          const seenPayloads = new Set<string>();
           const snapshots = [snapshot, ...existing]
-            .filter((item, index, list) => index === list.findIndex((candidate) => candidate.id === item.id))
+            .filter((item) => {
+              const signature = historyPayloadSignature(item.payload);
+              if (seenPayloads.has(signature)) return false;
+              seenPayloads.add(signature);
+              return true;
+            })
             .slice(0, Math.max(1, maxHistoryEntries));
           const { error } = await withTimeout<{ error: any }>(
             supabase
