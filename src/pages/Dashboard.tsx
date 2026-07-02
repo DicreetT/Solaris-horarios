@@ -182,10 +182,24 @@ type InventoryStockControlSnapshot = {
     }>;
 };
 
+type DashboardPaymentRequest = {
+    id: string;
+    status?: string;
+    deletedAt?: string;
+};
+
+type DashboardCashMovement = {
+    id: string;
+    createdAt?: string;
+    deletedAt?: string;
+};
+
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
+const PAYMENT_REQUESTS_KEY = 'facturacion_payment_requests_v1';
+const CASH_MOVEMENTS_KEY = 'facturacion_cash_movements_v1';
 const CANET_MOVEMENT_SYNC_START = '2026-02-24';
 
 const notificationFilterLabels: Record<NotificationFilter, string> = {
@@ -344,6 +358,16 @@ function Dashboard() {
         INVENTORY_CANET_MOVS_KEY,
         (canetSeed.movimientos as any[]) || [],
         { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 3000 },
+    );
+    const [billingPaymentRequestsShared] = useSharedJsonState<DashboardPaymentRequest[]>(
+        PAYMENT_REQUESTS_KEY,
+        [],
+        { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 15000 },
+    );
+    const [cashMovementsShared] = useSharedJsonState<DashboardCashMovement[]>(
+        CASH_MOVEMENTS_KEY,
+        [],
+        { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 15000 },
     );
     const [inventoryPanelMode, setInventoryPanelMode] = useState<'critical' | 'general'>('critical');
     const [selectedInventoryDetail, setSelectedInventoryDetail] = useState<{
@@ -2255,13 +2279,32 @@ function Dashboard() {
             }).length,
         [unreadPendingNotifications],
     );
-    const billingBadgeCount = useMemo(
+    const pendingPaymentRequestsCount = useMemo(
         () =>
-            unreadPendingNotifications.filter((n) => {
+            (Array.isArray(billingPaymentRequestsShared) ? billingPaymentRequestsShared : []).filter(
+                (item) => !item.deletedAt && String(item.status || '').toUpperCase() === 'PENDIENTE',
+            ).length,
+        [billingPaymentRequestsShared],
+    );
+    const cashMovementsTodayCount = useMemo(
+        () =>
+            (Array.isArray(cashMovementsShared) ? cashMovementsShared : []).filter((item) => {
+                if (item.deletedAt) return false;
+                const createdAt = item.createdAt ? new Date(item.createdAt) : null;
+                if (!createdAt || Number.isNaN(createdAt.getTime())) return false;
+                return toDateKey(createdAt) === todayKey;
+            }).length,
+        [cashMovementsShared, todayKey],
+    );
+    const billingBadgeCount = useMemo(
+        () => {
+            const notificationCount = unreadPendingNotifications.filter((n) => {
                 const text = `${n.message || ''}`.toLowerCase();
                 return text.includes('factur') || text.includes('invoice') || text.includes('cobro') || text.includes('pendiente de factura');
-            }).length,
-        [unreadPendingNotifications],
+            }).length;
+            return notificationCount + pendingPaymentRequestsCount + cashMovementsTodayCount;
+        },
+        [cashMovementsTodayCount, pendingPaymentRequestsCount, unreadPendingNotifications],
     );
     const notificationsBadgeCount = unreadPendingNotifications.length;
     const checklistPendingCount = checklistTasks.filter((task) => !task.completed).length;

@@ -23,6 +23,8 @@ import { useInventoryMovementsDB, type InventoryMovementRow } from '../hooks/use
 import { supabase } from '../lib/supabase';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { FileUploader, type Attachment } from '../components/FileUploader';
+import canetSeed from '../data/inventory_seed.json';
+import huarteSeed from '../data/inventory_facturacion_seed.json';
 
 type ProcessKey =
   | 'entradas_canet'
@@ -147,6 +149,8 @@ type ProcessDefinition = {
   validations: string[];
 };
 
+type GenericRow = Record<string, any>;
+
 const EMPTY_STATE: OperationalMonthlyState = {
   records: [],
   monthClosures: [],
@@ -199,7 +203,7 @@ const DIFFERENCE_REASONS = [
 const PRODUCT_OPTIONS = [
   { code: 'SV', label: 'Solar Vital' },
   { code: 'ENT', label: 'Enterovital' },
-  { code: 'AV', label: 'Avira Vital' },
+  { code: 'AV', label: 'Aviro Vital' },
   { code: 'RG', label: 'Regenerium' },
   { code: 'ISO', label: 'Isotónico' },
   { code: 'KL', label: 'Cala' },
@@ -214,7 +218,29 @@ const BASE_LOTS_BY_PRODUCT: Record<string, string[]> = {
   KL: ['260101'],
 };
 
-const isLongOperationalLot = (value: string) => value.replace(/[^A-Z0-9]/gi, '').length >= 6;
+const PRODUCT_CODE_BY_LABEL = new Map(
+  PRODUCT_OPTIONS.flatMap((product) => [
+    [normalize(product.code), product.code],
+    [normalize(product.label), product.code],
+  ]),
+);
+
+const operationalProductCode = (value: unknown) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = normalize(raw);
+  return PRODUCT_CODE_BY_LABEL.get(normalized) || raw.toUpperCase();
+};
+
+const operationalLotCode = (value: unknown) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+const isLongOperationalLot = (value: string) => {
+  const lot = operationalLotCode(value);
+  return /^2[3-9]\d{2}A\d{2}$/.test(lot) || /^2[3-9]\d{4}$/.test(lot);
+};
+const isActiveOperationalLot = (row: GenericRow) => {
+  const state = normalize(String(row.estado || row.activo_si_no || row.activo || 'ACTIVO'));
+  return !state || (!state.includes('agotado') && !state.includes('archivado') && state !== 'no');
+};
 
 const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
   entradas_canet: {
@@ -1091,17 +1117,20 @@ function renderCellInput(
       const normalized = normalize(item);
       return normalized === 'producto' || normalized === 'producto ensamblado';
     });
-    const selectedProduct = productColumn ? String(fields[fieldKey(table.id, row, productColumn)] || '').toUpperCase() : '';
+    const selectedProduct = productColumn ? operationalProductCode(fields[fieldKey(table.id, row, productColumn)]) : '';
     const lotOptions = selectedProduct ? lotOptionsByProduct.get(selectedProduct) || [] : [];
+    const normalizedValue = operationalLotCode(value);
+    const visibleLotOptions =
+      normalizedValue && !lotOptions.includes(normalizedValue) ? [normalizedValue, ...lotOptions] : lotOptions;
     return (
       <select
-        value={value}
+        value={normalizedValue}
         onChange={(event) => setFieldValue(key, event.target.value)}
         disabled={!canEdit || !selectedProduct}
         className={`h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50`}
       >
         <option value="">{selectedProduct ? 'Lote' : 'Selecciona producto'}</option>
-        {lotOptions.map((lot) => (
+        {visibleLotOptions.map((lot) => (
           <option key={lot} value={lot}>{lot}</option>
         ))}
       </select>
@@ -1165,6 +1194,26 @@ export default function OperationalControlPage() {
   const { currentUser } = useAuth();
   const [canetMovements] = useInventoryMovementsDB('canet');
   const [huarteMovements] = useInventoryMovementsDB('huarte');
+  const [canetLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_lotes_v1',
+    (canetSeed as any).lotes as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
+  );
+  const [huarteLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_huarte_lotes_v1',
+    (huarteSeed as any).lotes as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
+  );
   const today = new Date();
   const currentUserName = normalize(currentUser?.name || currentUser?.email || '');
   const isAdmin = !!currentUser?.isAdmin || currentUserName.includes('thalia');
@@ -1240,14 +1289,23 @@ export default function OperationalControlPage() {
       (BASE_LOTS_BY_PRODUCT[product.code] || []).forEach((lot) => set?.add(lot));
     }
 
+    const pushLotRow = (row: GenericRow) => {
+      const product = operationalProductCode(row?.producto || row?.product);
+      const lot = operationalLotCode(row?.lote || row?.lot);
+      if (!product || !lot || !isLongOperationalLot(lot) || !isActiveOperationalLot(row)) return;
+      const set = ensure(product);
+      set?.add(lot);
+    };
+
     const pushMovement = (movement: InventoryMovementRow) => {
-      const product = String(movement?.producto || '').trim().toUpperCase();
-      const lot = String(movement?.lote || '').trim().toUpperCase();
+      const product = operationalProductCode(movement?.producto);
+      const lot = operationalLotCode(movement?.lote);
       if (!product || !lot || !isLongOperationalLot(lot)) return;
       const set = ensure(product);
       set?.add(lot);
     };
 
+    [...(canetLotes || []), ...(huarteLotes || [])].forEach(pushLotRow);
     [...(canetMovements || []), ...(huarteMovements || [])].forEach(pushMovement);
     return new Map(
       Array.from(map.entries()).map(([product, lots]) => [
@@ -1255,7 +1313,7 @@ export default function OperationalControlPage() {
         Array.from(lots).sort((a, b) => b.localeCompare(a, 'es')),
       ]),
     );
-  }, [canetMovements, huarteMovements]);
+  }, [canetLotes, canetMovements, huarteLotes, huarteMovements]);
 
   useEffect(() => {
     setDraftFields(currentRecord?.fields || {});

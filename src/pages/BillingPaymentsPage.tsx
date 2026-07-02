@@ -1,12 +1,41 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Edit3, FileDown, FileSpreadsheet, FileUp, Plus, Save, Trash2, XCircle } from 'lucide-react';
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  CheckCircle2,
+  Edit3,
+  FileDown,
+  FileSpreadsheet,
+  FileUp,
+  MessageSquare,
+  Plus,
+  Save,
+  Send,
+  Trash2,
+  Wallet,
+  XCircle,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
+import { useNotificationsContext } from '../context/NotificationsContext';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 
 const PAYMENT_REQUESTS_KEY = 'facturacion_payment_requests_v1';
+const CASH_MOVEMENTS_KEY = 'facturacion_cash_movements_v1';
 
 type PaymentStatus = 'PENDIENTE' | 'PAGADO' | 'CANCELADO';
+type CashMovementType = 'INGRESO' | 'SALIDA';
+
+type BillingNote = {
+  id: string;
+  text: string;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+  recipientId?: string;
+  recipientName?: string;
+};
 
 type PaymentRequest = {
   id: string;
@@ -28,6 +57,7 @@ type PaymentRequest = {
   iban: string;
   notes: string;
   comments?: string;
+  noteThread?: BillingNote[];
   requestFileName?: string;
   requestFileDataUrl?: string;
   status: PaymentStatus;
@@ -36,6 +66,25 @@ type PaymentRequest = {
   paidByName?: string;
   receiptFileName?: string;
   receiptDataUrl?: string;
+};
+
+type CashMovement = {
+  id: string;
+  createdAt: string;
+  updatedAt?: string;
+  lastChangedAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  createdById: string;
+  createdByName: string;
+  type: CashMovementType;
+  date: string;
+  concept: string;
+  amount: number;
+  notes: string;
+  noteThread?: BillingNote[];
+  fileName?: string;
+  fileDataUrl?: string;
 };
 
 function uid(prefix = 'id') {
@@ -328,12 +377,31 @@ function parsePaymentRequestsFromWorkbook(
 
 export default function BillingPaymentsPage() {
   const { currentUser } = useAuth();
+  const { addNotification } = useNotificationsContext();
   const [requests, setRequests, requestsLoading] = useSharedJsonState<PaymentRequest[]>(
     PAYMENT_REQUESTS_KEY,
     [],
-    { userId: currentUser?.id, initializeIfMissing: true, pollIntervalMs: 15000 },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      pollIntervalMs: 15000,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
+  );
+  const [cashMovements, setCashMovements, cashLoading] = useSharedJsonState<CashMovement[]>(
+    CASH_MOVEMENTS_KEY,
+    [],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      pollIntervalMs: 15000,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
   );
 
+  const [activeTab, setActiveTab] = useState<'payments' | 'cash'>('payments');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [manualProvider, setManualProvider] = useState('');
@@ -346,6 +414,7 @@ export default function BillingPaymentsPage() {
   const [searchText, setSearchText] = useState('');
   const [monthFilter, setMonthFilter] = useState('all');
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [noteRecipients, setNoteRecipients] = useState<Record<string, string>>({});
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [editProvider, setEditProvider] = useState('');
   const [editInvoice, setEditInvoice] = useState('');
@@ -353,6 +422,15 @@ export default function BillingPaymentsPage() {
   const [editIban, setEditIban] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editComments, setEditComments] = useState('');
+  const [cashType, setCashType] = useState<CashMovementType>('INGRESO');
+  const [cashDate, setCashDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [cashConcept, setCashConcept] = useState('');
+  const [cashAmount, setCashAmount] = useState('');
+  const [cashNotes, setCashNotes] = useState('');
+  const [cashFile, setCashFile] = useState<File | null>(null);
+  const [editingCashMovementId, setEditingCashMovementId] = useState<string | null>(null);
+  const [existingCashFileName, setExistingCashFileName] = useState('');
+  const [existingCashFileDataUrl, setExistingCashFileDataUrl] = useState('');
 
   const email = clean(currentUser?.email).toLowerCase();
   const isAdmin = !!currentUser?.isAdmin;
@@ -360,6 +438,16 @@ export default function BillingPaymentsPage() {
   const isEsteban = email === 'contacto@solaris.global';
   const canViewAll = isAdmin || isHeidy || isEsteban;
   const canApprovePayments = isAdmin;
+  const canSeeCashMovements = canViewAll;
+  const actorName = clean(currentUser?.name) || clean(currentUser?.email) || 'Alguien';
+  const noteRecipientOptions = useMemo(
+    () =>
+      USERS.filter((user) => !user.isRestricted).map((user) => ({
+        id: user.id,
+        name: user.name,
+      })),
+    [],
+  );
 
   const visibleRequests = useMemo(() => {
     const list = Array.isArray(requests) ? requests : [];
@@ -376,10 +464,26 @@ export default function BillingPaymentsPage() {
     });
   }, [requests, canViewAll, currentUser?.id]);
 
+  const visibleCashMovements = useMemo(() => {
+    const list = Array.isArray(cashMovements) ? cashMovements : [];
+    const active = list.filter((item) => !clean((item as any).deletedAt));
+    const scoped = canSeeCashMovements
+      ? active
+      : active.filter((item) => clean(item.createdById) === clean(currentUser?.id));
+    return [...scoped].sort((a, b) => {
+      const dateDiff = new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [cashMovements, canSeeCashMovements, currentUser?.id]);
+
   const monthOptions = useMemo(() => {
-    const keys = Array.from(new Set(visibleRequests.map((item) => monthKeyFromDate(item.createdAt)).filter(Boolean)));
+    const keys = Array.from(new Set([
+      ...visibleRequests.map((item) => monthKeyFromDate(item.createdAt)),
+      ...visibleCashMovements.map((item) => monthKeyFromDate(item.date || item.createdAt)),
+    ].filter(Boolean)));
     return keys.sort((a, b) => b.localeCompare(a));
-  }, [visibleRequests]);
+  }, [visibleRequests, visibleCashMovements]);
 
   const monthFilteredRequests = useMemo(() => {
     if (monthFilter === 'all') return visibleRequests;
@@ -409,6 +513,21 @@ export default function BillingPaymentsPage() {
     });
   }, [monthFilteredRequests, searchText]);
 
+  const monthFilteredCashMovements = useMemo(() => {
+    if (monthFilter === 'all') return visibleCashMovements;
+    return visibleCashMovements.filter((item) => monthKeyFromDate(item.date || item.createdAt) === monthFilter);
+  }, [visibleCashMovements, monthFilter]);
+
+  const filteredCashMovements = useMemo(() => {
+    const q = normalizeKey(searchText);
+    if (!q) return monthFilteredCashMovements;
+    return monthFilteredCashMovements.filter((item) => {
+      const amountEs = item.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const haystack = [item.type, item.concept, item.notes, item.createdByName, item.fileName, amountEs, item.amount.toFixed(2)];
+      return haystack.some((value) => normalizeKey(value || '').includes(q));
+    });
+  }, [monthFilteredCashMovements, searchText]);
+
   const pendingCount = filteredRequests.filter((r) => r.status === 'PENDIENTE').length;
   const paidCount = filteredRequests.filter((r) => r.status === 'PAGADO').length;
   const pendingAmount = filteredRequests
@@ -416,6 +535,16 @@ export default function BillingPaymentsPage() {
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const paidAmount = filteredRequests
     .filter((r) => r.status === 'PAGADO')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const cashTotal = visibleCashMovements.reduce(
+    (sum, item) => sum + (item.type === 'INGRESO' ? Number(item.amount) || 0 : -(Number(item.amount) || 0)),
+    0,
+  );
+  const cashIncomeMonth = filteredCashMovements
+    .filter((item) => item.type === 'INGRESO')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const cashOutcomeMonth = filteredCashMovements
+    .filter((item) => item.type === 'SALIDA')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
   const resetManualForm = () => {
@@ -426,6 +555,18 @@ export default function BillingPaymentsPage() {
     setManualNotes('');
     setManualComments('');
     setManualRequestFile(null);
+  };
+
+  const resetCashForm = () => {
+    setCashType('INGRESO');
+    setCashDate(new Date().toISOString().slice(0, 10));
+    setCashConcept('');
+    setCashAmount('');
+    setCashNotes('');
+    setCashFile(null);
+    setEditingCashMovementId(null);
+    setExistingCashFileName('');
+    setExistingCashFileDataUrl('');
   };
 
   const closeEditRequest = () => {
@@ -446,6 +587,24 @@ export default function BillingPaymentsPage() {
     setEditIban(item.iban || '');
     setEditNotes(item.notes || '');
     setEditComments(item.comments || '');
+  };
+
+  const openEditCashMovement = (item: CashMovement) => {
+    setEditingCashMovementId(item.id);
+    setCashType(item.type || 'INGRESO');
+    setCashDate(item.date || new Date().toISOString().slice(0, 10));
+    setCashConcept(item.concept || '');
+    setCashAmount(item.amount ? String(item.amount) : '');
+    setCashNotes(item.notes || '');
+    setCashFile(null);
+    setExistingCashFileName(item.fileName || '');
+    setExistingCashFileDataUrl(item.fileDataUrl || '');
+  };
+
+  const removeExistingCashFile = () => {
+    setExistingCashFileName('');
+    setExistingCashFileDataUrl('');
+    setCashFile(null);
   };
 
   const addManualRequest = async () => {
@@ -646,6 +805,12 @@ export default function BillingPaymentsPage() {
     setCommentDrafts((prev) => {
       const next = { ...prev };
       delete next[requestId];
+      delete next[`payment:${requestId}`];
+      return next;
+    });
+    setNoteRecipients((prev) => {
+      const next = { ...prev };
+      delete next[`payment:${requestId}`];
       return next;
     });
     if (editingRequestId === requestId) {
@@ -653,13 +818,230 @@ export default function BillingPaymentsPage() {
     }
   };
 
-  const setCommentDraft = (requestId: string, value: string) => {
-    setCommentDrafts((prev) => ({ ...prev, [requestId]: value }));
+  const saveCashMovement = async () => {
+    const concept = clean(cashConcept);
+    const amount = parseAmount(cashAmount);
+    if (!concept) {
+      alert('Completa el concepto del movimiento de efectivo.');
+      return;
+    }
+    if (amount <= 0) {
+      alert('Completa un importe mayor que cero.');
+      return;
+    }
+    const fileDataUrl = cashFile ? await readFileAsDataUrl(cashFile) : existingCashFileDataUrl || undefined;
+    const fileName = cashFile?.name || existingCashFileName || undefined;
+    const now = new Date().toISOString();
+    if (editingCashMovementId) {
+      const safeId = clean(editingCashMovementId);
+      setCashMovements((prev) =>
+        (Array.isArray(prev) ? prev : []).map((item) =>
+          item.id === safeId
+            ? {
+                ...item,
+                updatedAt: now,
+                lastChangedAt: now,
+                type: cashType,
+                date: cashDate || now.slice(0, 10),
+                concept,
+                amount,
+                notes: clean(cashNotes),
+                fileName,
+                fileDataUrl,
+              }
+            : item,
+        ),
+      );
+      resetCashForm();
+      return;
+    }
+    const next: CashMovement = {
+      id: uid('cash'),
+      createdAt: now,
+      updatedAt: now,
+      lastChangedAt: now,
+      createdById: clean(currentUser?.id),
+      createdByName: clean(currentUser?.name) || clean(currentUser?.email) || 'Sistema',
+      type: cashType,
+      date: cashDate || now.slice(0, 10),
+      concept,
+      amount,
+      notes: clean(cashNotes),
+      fileName,
+      fileDataUrl,
+    };
+    setCashMovements((prev) => [next, ...(Array.isArray(prev) ? prev : [])]);
+    resetCashForm();
   };
 
-  const saveComment = (requestId: string) => {
-    const value = clean(commentDrafts[requestId] ?? '');
-    updateRequest(requestId, (item) => ({ ...item, comments: value }));
+  const deleteCashMovement = (movementId: string) => {
+    if (!window.confirm('¿Eliminar este movimiento de efectivo?')) return;
+    const now = new Date().toISOString();
+    setCashMovements((prev) =>
+      (Array.isArray(prev) ? prev : []).map((item) =>
+        item.id === movementId
+          ? {
+              ...item,
+              deletedAt: now,
+              deletedBy: clean(currentUser?.name) || clean(currentUser?.email) || 'Sistema',
+              updatedAt: now,
+              lastChangedAt: now,
+            }
+          : item,
+      ),
+    );
+    setCommentDrafts((prev) => {
+      const next = { ...prev };
+      delete next[`cash:${movementId}`];
+      return next;
+    });
+    setNoteRecipients((prev) => {
+      const next = { ...prev };
+      delete next[`cash:${movementId}`];
+      return next;
+    });
+  };
+
+  const setCommentDraft = (noteKey: string, value: string) => {
+    setCommentDrafts((prev) => ({ ...prev, [noteKey]: value }));
+  };
+
+  const setNoteRecipient = (noteKey: string, value: string) => {
+    setNoteRecipients((prev) => ({ ...prev, [noteKey]: value }));
+  };
+
+  const notifyNoteRecipient = async (recipientId: string, message: string) => {
+    if (!recipientId || recipientId === clean(currentUser?.id)) return;
+    await addNotification({
+      userId: recipientId,
+      type: 'action_required',
+      message,
+    });
+  };
+
+  const saveInternalNote = async (kind: 'payment' | 'cash', itemId: string, targetLabel: string) => {
+    const noteKey = `${kind}:${itemId}`;
+    const text = clean(commentDrafts[noteKey]);
+    if (!text) {
+      alert('Escribe una nota antes de guardarla.');
+      return;
+    }
+    const recipientId = clean(noteRecipients[noteKey]);
+    const recipient = noteRecipientOptions.find((option) => option.id === recipientId);
+    const now = new Date().toISOString();
+    const note: BillingNote = {
+      id: uid('note'),
+      text,
+      createdAt: now,
+      createdById: clean(currentUser?.id),
+      createdByName: actorName,
+      recipientId: recipient?.id,
+      recipientName: recipient?.name,
+    };
+
+    if (kind === 'payment') {
+      updateRequest(itemId, (item) => ({
+        ...item,
+        noteThread: [...(Array.isArray(item.noteThread) ? item.noteThread : []), note],
+      }));
+    } else {
+      setCashMovements((prev) =>
+        (Array.isArray(prev) ? prev : []).map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                updatedAt: now,
+                lastChangedAt: now,
+                noteThread: [...(Array.isArray(item.noteThread) ? item.noteThread : []), note],
+              }
+            : item,
+        ),
+      );
+    }
+
+    setCommentDrafts((prev) => {
+      const next = { ...prev };
+      delete next[noteKey];
+      return next;
+    });
+    setNoteRecipients((prev) => {
+      const next = { ...prev };
+      delete next[noteKey];
+      return next;
+    });
+
+    if (recipient?.id) {
+      const preview = text.length > 110 ? `${text.slice(0, 110)}...` : text;
+      await notifyNoteRecipient(
+        recipient.id,
+        `${actorName} te dejó una nota en Facturación (${targetLabel}): ${preview}`,
+      );
+    }
+  };
+
+  const renderNotesPanel = (
+    kind: 'payment' | 'cash',
+    itemId: string,
+    noteThread: BillingNote[] | undefined,
+    legacyComment: string | undefined,
+    targetLabel: string,
+  ) => {
+    const noteKey = `${kind}:${itemId}`;
+    const notes = Array.isArray(noteThread) ? noteThread : [];
+    return (
+      <div className="min-w-[250px] space-y-2">
+        {clean(legacyComment) && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-600">
+            <span className="font-black text-slate-800">Nota anterior:</span> {legacyComment}
+          </div>
+        )}
+        {notes.length > 0 && (
+          <div className="max-h-28 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+            {notes.map((note) => (
+              <div key={note.id} className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                <div className="flex flex-wrap items-center gap-1 font-black text-slate-800">
+                  <MessageSquare size={12} />
+                  {note.createdByName || 'Sistema'}
+                  {note.recipientName && <span className="text-teal-700">→ {note.recipientName}</span>}
+                </div>
+                <p className="mt-0.5 font-semibold">{note.text}</p>
+                <div className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                  {new Date(note.createdAt).toLocaleString('es-ES')}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+          <select
+            value={noteRecipients[noteKey] ?? ''}
+            onChange={(event) => setNoteRecipient(noteKey, event.target.value)}
+            className="mb-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-black text-slate-700"
+          >
+            <option value="">Guardar sin notificar</option>
+            {noteRecipientOptions.map((recipient) => (
+              <option key={recipient.id} value={recipient.id}>
+                Notificar a {recipient.name}
+              </option>
+            ))}
+          </select>
+          <textarea
+            value={commentDrafts[noteKey] ?? ''}
+            onChange={(event) => setCommentDraft(noteKey, event.target.value)}
+            placeholder='Nota interna. Ej: "Heidy, porfa falta IBAN"'
+            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-900"
+            rows={2}
+          />
+          <button
+            type="button"
+            onClick={() => void saveInternalNote(kind, itemId, targetLabel)}
+            className="mt-1 inline-flex items-center gap-1 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-black text-teal-800 hover:bg-teal-100"
+          >
+            <Send size={12} /> Guardar nota
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -667,10 +1049,40 @@ export default function BillingPaymentsPage() {
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
         <h1 className="text-3xl font-black text-violet-950">Facturación</h1>
         <p className="mt-1 text-sm text-violet-700">
-          Cola interna de peticiones de pago. Carga Excel/CSV, crea solicitudes manuales y adjunta comprobantes.
+          Cola interna de peticiones de pago y control del efectivo físico de la nave.
         </p>
+        <div className="mt-4 inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('payments')}
+            className={`relative inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition ${
+              activeTab === 'payments' ? 'bg-white text-violet-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileSpreadsheet size={16} />
+            Facturación
+            {pendingCount > 0 && (
+              <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[11px] text-white">{pendingCount}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('cash')}
+            className={`relative inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black transition ${
+              activeTab === 'cash' ? 'bg-white text-emerald-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Wallet size={16} />
+            Efectivo nave
+            {filteredCashMovements.length > 0 && (
+              <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] text-white">{filteredCashMovements.length}</span>
+            )}
+          </button>
+        </div>
       </section>
 
+      {activeTab === 'payments' && (
+        <>
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 border-b border-violet-100 pb-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -959,21 +1371,14 @@ export default function BillingPaymentsPage() {
                           {new Date(item.createdAt).toLocaleDateString('es-ES')}
                         </div>
                       </td>
-                      <td className="px-2 py-2 min-w-[220px]">
-                        <textarea
-                          value={commentDrafts[item.id] ?? clean(item.comments)}
-                          onChange={(e) => setCommentDraft(item.id, e.target.value)}
-                          placeholder="Añadir comentario..."
-                          className="w-full rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs font-semibold text-violet-900"
-                          rows={2}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => saveComment(item.id)}
-                          className="mt-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-black text-violet-700 hover:bg-violet-100"
-                        >
-                          Guardar comentario
-                        </button>
+                      <td className="px-2 py-2">
+                        {renderNotesPanel(
+                          'payment',
+                          item.id,
+                          item.noteThread,
+                          item.comments,
+                          `${item.providerName || 'proveedor'} · ${item.invoiceRef || 'factura sin referencia'}`,
+                        )}
                       </td>
                       <td className="px-2 py-2">
                         <div className="flex flex-wrap items-center gap-1">
@@ -1105,6 +1510,278 @@ export default function BillingPaymentsPage() {
           </div>
         )}
       </section>
+
+        </>
+      )}
+
+      {activeTab === 'cash' && (
+        <>
+          <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex flex-col gap-3 border-b border-emerald-100 pb-4 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-emerald-950">Efectivo nave</h2>
+                <p className="mt-1 text-xs font-semibold text-emerald-700">
+                  Registra ingresos y salidas de efectivo físico de la bodega Canet.
+                </p>
+              </div>
+              <label className="text-xs font-black uppercase tracking-wide text-emerald-700">
+                Mes
+                <select
+                  value={monthFilter}
+                  onChange={(event) => setMonthFilter(event.target.value)}
+                  className="mt-1 h-11 min-w-56 rounded-xl border border-emerald-200 bg-white px-3 text-sm font-bold normal-case text-emerald-900"
+                >
+                  <option value="all">Todos los meses</option>
+                  {monthOptions.map((option) => (
+                    <option key={option} value={option}>{formatMonthLabel(option)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Efectivo actual</p>
+                <p className="mt-1 text-2xl font-black text-emerald-950">{formatCurrency(cashTotal)}</p>
+              </div>
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-sky-700">Ingresos visibles</p>
+                <p className="mt-1 text-2xl font-black text-sky-950">{formatCurrency(cashIncomeMonth)}</p>
+              </div>
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-rose-700">Salidas visibles</p>
+                <p className="mt-1 text-2xl font-black text-rose-950">{formatCurrency(cashOutcomeMonth)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-600">Movimientos</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{filteredCashMovements.length}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{cashLoading ? 'Sincronizando...' : 'Sincronizado'}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-emerald-950">
+                  {editingCashMovementId ? 'Editar movimiento de efectivo' : 'Nuevo movimiento de efectivo'}
+                </h2>
+                {editingCashMovementId && (
+                  <p className="mt-1 text-xs font-semibold text-amber-700">
+                    Estás editando un movimiento existente. Guarda cambios o cancela para volver a crear uno nuevo.
+                  </p>
+                )}
+              </div>
+              {editingCashMovementId && (
+                <button
+                  type="button"
+                  onClick={resetCashForm}
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                >
+                  Cancelar edición
+                </button>
+              )}
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-6">
+              <select
+                value={cashType}
+                onChange={(event) => setCashType(event.target.value as CashMovementType)}
+                className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-bold text-emerald-900"
+              >
+                <option value="INGRESO">Ingreso de efectivo</option>
+                <option value="SALIDA">Salida de efectivo</option>
+              </select>
+              <input
+                type="date"
+                value={cashDate}
+                onChange={(event) => setCashDate(event.target.value)}
+                className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900"
+              />
+              <input
+                value={cashConcept}
+                onChange={(event) => setCashConcept(event.target.value)}
+                placeholder="Concepto"
+                className="md:col-span-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900"
+              />
+              <input
+                value={cashAmount}
+                onChange={(event) => setCashAmount(event.target.value)}
+                placeholder="Importe"
+                className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900"
+              />
+              <button
+                type="button"
+                onClick={() => void saveCashMovement()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-700 px-3 py-2 text-sm font-black text-white"
+              >
+                {editingCashMovementId ? <Save size={14} /> : <Plus size={14} />}
+                {editingCashMovementId ? 'Guardar cambios' : 'Guardar'}
+              </button>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-6">
+              <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-emerald-700">
+                Foto / archivo
+                <input
+                  type="file"
+                  accept=".pdf,image/*"
+                  onChange={(event) => setCashFile(event.target.files?.[0] || null)}
+                  className="mt-1 w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900"
+                />
+              </label>
+              <textarea
+                value={cashNotes}
+                onChange={(event) => setCashNotes(event.target.value)}
+                placeholder="Notas"
+                className="md:col-span-4 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900"
+                rows={2}
+              />
+            </div>
+            {cashFile && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                {cashFile.name}
+                <button type="button" onClick={() => setCashFile(null)} className="font-black text-rose-700">Quitar</button>
+              </div>
+            )}
+            {!cashFile && existingCashFileName && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                Adjunto actual: {existingCashFileName}
+                {existingCashFileDataUrl && (
+                  <button type="button" onClick={() => openFile(existingCashFileDataUrl, 'No hay adjunto cargado.')} className="font-black text-emerald-700">
+                    Abrir
+                  </button>
+                )}
+                <button type="button" onClick={removeExistingCashFile} className="font-black text-rose-700">Quitar</button>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-emerald-950">Historial de efectivo</h2>
+                <p className="mt-1 text-xs font-semibold text-emerald-700">
+                  Ingresos suman, salidas restan. Los adjuntos quedan junto al movimiento.
+                </p>
+              </div>
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Buscar concepto, nota, archivo..."
+                className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 md:w-80"
+              />
+            </div>
+
+            {filteredCashMovements.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-6 text-center text-sm font-semibold text-emerald-700">
+                No hay movimientos de efectivo visibles.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-black uppercase tracking-wide text-emerald-700">
+                      <th className="px-2 py-2">Fecha</th>
+                      <th className="px-2 py-2">Tipo</th>
+                      <th className="px-2 py-2">Concepto</th>
+                      <th className="px-2 py-2">Importe</th>
+                      <th className="px-2 py-2">Adjunto</th>
+                      <th className="px-2 py-2">Usuario</th>
+                      <th className="px-2 py-2">Notas internas</th>
+                      <th className="px-2 py-2">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCashMovements.map((item) => {
+                      const canEditCash = isAdmin || clean(item.createdById) === clean(currentUser?.id);
+                      const positive = item.type === 'INGRESO';
+                      return (
+                        <tr key={item.id} className="border-t border-emerald-100 align-top">
+                          <td className="px-2 py-2 font-semibold text-slate-700">
+                            {item.date ? new Date(`${item.date}T00:00:00`).toLocaleDateString('es-ES') : '-'}
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-black ${
+                              positive
+                                ? 'border-emerald-200 bg-emerald-100 text-emerald-800'
+                                : 'border-rose-200 bg-rose-100 text-rose-800'
+                            }`}
+                            >
+                              {positive ? <ArrowUpCircle size={12} /> : <ArrowDownCircle size={12} />}
+                              {item.type}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 font-black text-slate-900">
+                            {item.concept}
+                            {item.notes && <div className="mt-1 text-[11px] font-semibold text-slate-500">{item.notes}</div>}
+                          </td>
+                          <td className={`px-2 py-2 font-black ${positive ? 'text-emerald-800' : 'text-rose-800'}`}>
+                            {positive ? '+' : '-'} {formatCurrency(item.amount)}
+                          </td>
+                          <td className="px-2 py-2">
+                            {item.fileDataUrl ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openFile(item.fileDataUrl, 'No hay adjunto cargado.')}
+                                  className="rounded-lg border border-emerald-200 bg-white px-2 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-50"
+                                >
+                                  Abrir
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadFile(item.fileDataUrl, item.fileName || 'efectivo-nave')}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-50"
+                                >
+                                  <FileDown size={12} /> Descargar
+                                </button>
+                                <div className="w-full truncate text-[11px] font-semibold text-slate-500">{item.fileName}</div>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] font-black text-amber-700">Sin adjunto</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-2 text-xs font-semibold text-slate-600">
+                            {item.createdByName || 'Sistema'}
+                            <div className="text-[11px] text-slate-400">{new Date(item.createdAt).toLocaleString('es-ES')}</div>
+                          </td>
+                          <td className="px-2 py-2">
+                            {renderNotesPanel(
+                              'cash',
+                              item.id,
+                              item.noteThread,
+                              undefined,
+                              `Efectivo nave · ${item.concept || item.type}`,
+                            )}
+                          </td>
+                          <td className="px-2 py-2">
+                            {canEditCash && (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditCashMovement(item)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700"
+                                >
+                                  <Edit3 size={12} /> Editar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteCashMovement(item.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-black text-rose-700"
+                                >
+                                  <Trash2 size={12} /> Eliminar
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
 
       {editingRequestId && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
