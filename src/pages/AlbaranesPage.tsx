@@ -161,6 +161,23 @@ function formatDateTime(iso: string) {
   return d.toLocaleString('es-ES');
 }
 
+function getCurrentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getMonthKey(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!year || !month) return monthKey || 'Mes';
+  return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
+}
+
 function openAttachment(url: string) {
   if (!url) return;
   window.open(url, '_blank', 'noopener,noreferrer');
@@ -384,6 +401,7 @@ export default function AlbaranesPage() {
   const [damageComment, setDamageComment] = useState('');
   const [damageFiles, setDamageFiles] = useState<Attachment[]>([]);
   const [damageKind, setDamageKind] = useState<AlbaranDamageKind>('origen');
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
 
   const selectedProduct = useMemo(
     () => products.find((product) => product.id === selectedProductId) || null,
@@ -461,6 +479,47 @@ export default function AlbaranesPage() {
       totalDamages,
     };
   }, [products]);
+
+  const monthlyDocuments = useMemo(() => {
+    return products.flatMap((product) =>
+      product.tags.flatMap((tag) =>
+        tag.documents
+          .filter((document) => getMonthKey(document.createdAt) === selectedMonth)
+          .map((document) => ({
+            product,
+            tag,
+            document,
+            attachments: getDocumentAttachments(document),
+          })),
+      ),
+    );
+  }, [products, selectedMonth]);
+
+  const monthlyDamages = useMemo(() => {
+    return products.flatMap((product) =>
+      product.tags.flatMap((tag) =>
+        tag.documents.flatMap((document) =>
+          getDocumentDamageHistory(document)
+            .filter((entry) => getMonthKey(entry.createdAt) === selectedMonth)
+            .map((entry) => ({
+              product,
+              tag,
+              document,
+              entry,
+            })),
+        ),
+      ),
+    );
+  }, [products, selectedMonth]);
+
+  const monthlyEntriesByTag = useMemo(() => {
+    const counts = new Map<string, number>();
+    monthlyDocuments.forEach(({ tag }) => {
+      const name = clean(tag.name) || 'Sin etiqueta';
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [monthlyDocuments]);
 
   const updateState = (updater: (prev: AlbaranesState) => AlbaranesState) => {
     setState((prev) => {
@@ -1065,6 +1124,142 @@ export default function AlbaranesPage() {
     });
   };
 
+  const downloadMonthlyEntriesPdf = () => {
+    const monthLabel = formatMonthKey(selectedMonth);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Lunaris · Informe de entradas desde Albaranes', 36, 36);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Periodo: ${monthLabel} · Total albaranes: ${monthlyDocuments.length}`, 36, 56);
+
+    autoTable(doc, {
+      startY: 76,
+      head: [['Fecha ingreso', 'Producto', 'Etiqueta / tipo', 'Albarán', 'Estado', 'Adjuntos', 'Notas']],
+      body: monthlyDocuments.length > 0
+        ? monthlyDocuments.map(({ product, tag, document, attachments }) => [
+            formatDateTime(document.createdAt),
+            safePdfText(product.name),
+            safePdfText(tag.name),
+            safePdfText(getDocumentTitle(document)),
+            getAlbaranStatus(document) === 'active' ? 'Activo' : getAlbaranStatus(document) === 'exhausted' ? 'Agotado' : 'Pendiente',
+            String(attachments.length),
+            safePdfText(document.note || '-'),
+          ])
+        : [['Sin albaranes en el periodo', '', '', '', '', '', '']],
+      margin: { left: 36, right: 36 },
+      styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 4, textColor: [15, 23, 42] },
+      headStyles: { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [240, 253, 250] },
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY || 76;
+    autoTable(doc, {
+      startY: finalY + 18,
+      head: [['Tipo / etiqueta', 'Albaranes']],
+      body: monthlyEntriesByTag.length > 0 ? monthlyEntriesByTag.map(([tag, count]) => [tag, String(count)]) : [['Sin datos', '0']],
+      margin: { left: 36, right: 36 },
+      tableWidth: 300,
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
+    });
+
+    doc.save(`informe-entradas-lunaris-${selectedMonth}.pdf`);
+  };
+
+  const downloadMonthlyEntriesExcel = () => {
+    openTableXlsx({
+      title: 'Lunaris · Informe de entradas desde Albaranes',
+      subtitle: `Periodo: ${formatMonthKey(selectedMonth)} · Total albaranes: ${monthlyDocuments.length}`,
+      fileName: `informe-entradas-lunaris-${selectedMonth}.xlsx`,
+      headers: ['Fecha ingreso', 'Producto', 'Etiqueta / tipo', 'Albarán', 'Estado', 'Adjuntos', 'Notas'],
+      rows: monthlyDocuments.map(({ product, tag, document, attachments }) => [
+        formatDateTime(document.createdAt),
+        product.name,
+        tag.name,
+        getDocumentTitle(document),
+        getAlbaranStatus(document) === 'active' ? 'Activo' : getAlbaranStatus(document) === 'exhausted' ? 'Agotado' : 'Pendiente',
+        attachments.length,
+        document.note || '',
+      ]),
+      summaryRows: [
+        ['Total albaranes', monthlyDocuments.length],
+        ...monthlyEntriesByTag.map(([tag, count]) => [`${tag}`, count] as [string, number]),
+      ],
+    });
+  };
+
+  const downloadMonthlyDamagesPdf = () => {
+    const monthLabel = formatMonthKey(selectedMonth);
+    const totalOrigin = monthlyDamages
+      .filter(({ entry }) => (entry.kind || 'origen') !== 'envio')
+      .reduce((acc, { entry }) => acc + (Number(entry.quantity) || 0), 0);
+    const totalShipping = monthlyDamages
+      .filter(({ entry }) => (entry.kind || 'origen') === 'envio')
+      .reduce((acc, { entry }) => acc + (Number(entry.quantity) || 0), 0);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Lunaris · Historial de dañados del mes', 36, 36);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Periodo: ${monthLabel} · Registros: ${monthlyDamages.length} · Origen: ${totalOrigin} · Envío: ${totalShipping}`, 36, 56);
+
+    autoTable(doc, {
+      startY: 76,
+      head: [['Fecha', 'Producto', 'Etiqueta', 'Albarán', 'Tipo', 'Cantidad', 'Comentario', 'Adjuntos']],
+      body: monthlyDamages.length > 0
+        ? monthlyDamages.map(({ product, tag, document, entry }) => [
+            formatDateTime(entry.createdAt),
+            safePdfText(product.name),
+            safePdfText(tag.name),
+            safePdfText(getDocumentTitle(document)),
+            getDamageKindLabel(entry.kind || 'origen'),
+            String(entry.quantity || 0),
+            safePdfText(entry.comment || '-'),
+            String(entry.attachments?.length || 0),
+          ])
+        : [['Sin dañados en el periodo', '', '', '', '', '', '', '']],
+      margin: { left: 36, right: 36 },
+      styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 4, textColor: [15, 23, 42] },
+      headStyles: { fillColor: [217, 119, 6], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [255, 251, 235] },
+    });
+    doc.save(`historial-danados-lunaris-${selectedMonth}.pdf`);
+  };
+
+  const downloadMonthlyDamagesExcel = () => {
+    const totalOrigin = monthlyDamages
+      .filter(({ entry }) => (entry.kind || 'origen') !== 'envio')
+      .reduce((acc, { entry }) => acc + (Number(entry.quantity) || 0), 0);
+    const totalShipping = monthlyDamages
+      .filter(({ entry }) => (entry.kind || 'origen') === 'envio')
+      .reduce((acc, { entry }) => acc + (Number(entry.quantity) || 0), 0);
+    openTableXlsx({
+      title: 'Lunaris · Historial de dañados del mes',
+      subtitle: `Periodo: ${formatMonthKey(selectedMonth)} · Registros: ${monthlyDamages.length}`,
+      fileName: `historial-danados-lunaris-${selectedMonth}.xlsx`,
+      headers: ['Fecha', 'Producto', 'Etiqueta', 'Albarán', 'Tipo', 'Cantidad', 'Comentario', 'Adjuntos', 'Creado por'],
+      rows: monthlyDamages.map(({ product, tag, document, entry }) => [
+        formatDateTime(entry.createdAt),
+        product.name,
+        tag.name,
+        getDocumentTitle(document),
+        getDamageKindLabel(entry.kind || 'origen'),
+        Number(entry.quantity) || 0,
+        entry.comment || '',
+        entry.attachments?.length || 0,
+        entry.createdBy || '',
+      ]),
+      summaryRows: [
+        ['Origen', totalOrigin],
+        ['Envío', totalShipping],
+        ['Total dañados', totalOrigin + totalShipping],
+      ],
+    });
+  };
+
   if (!canAccess) {
     return (
       <div className="max-w-5xl mx-auto">
@@ -1085,16 +1280,16 @@ export default function AlbaranesPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-10">
-      <section className="rounded-[2rem] border border-violet-200 bg-white p-6 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="rounded-2xl bg-violet-50 p-3 text-violet-700">
+            <div className="rounded-2xl bg-teal-50 p-3 text-teal-700">
               <FolderOpen size={30} />
             </div>
             <div>
-              <h1 className="text-4xl font-black text-violet-950">Albaranes</h1>
-              <p className="text-sm font-medium text-violet-700">
-                Productos, documentos asociados y historial de incidencias en una sola vista.
+              <h1 className="text-4xl font-black text-slate-950">Albaranes</h1>
+              <p className="text-sm font-medium text-slate-600">
+                Entradas de proveedor, documentos asociados e incidencias de dañados.
               </p>
             </div>
           </div>
@@ -1102,10 +1297,10 @@ export default function AlbaranesPage() {
             <button
               type="button"
               onClick={() => setShowCreateProduct(true)}
-              className="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-violet-700"
+              className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-800"
             >
               <Plus size={16} />
-              Nuevo producto
+              Nuevo producto/tipo
             </button>
           </div>
         </div>
@@ -1117,24 +1312,129 @@ export default function AlbaranesPage() {
           <SummaryCard title="Agotados" value={stats.exhaustedDocs} tone="amber" />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
             Total albaranes: {stats.totalDocs}
           </span>
         </div>
       </section>
 
-      <section className="rounded-[2rem] border border-violet-200 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-teal-700">Informes del mes</p>
+            <h2 className="mt-1 text-2xl font-black text-slate-950">Entradas Lunaris y dañados</h2>
+            <p className="mt-1 max-w-2xl text-sm font-semibold text-slate-600">
+              Estos informes resumen los albaranes subidos y el historial de dañados del periodo seleccionado para adjuntarlos en Control Operativo.
+            </p>
+          </div>
+          <label className="block text-xs font-black uppercase tracking-wide text-slate-500">
+            Mes
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value || getCurrentMonthKey())}
+              className="mt-1 h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-800 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+            />
+          </label>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-teal-100 bg-teal-50 p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-teal-700">Albaranes del mes</p>
+            <p className="mt-1 text-3xl font-black text-teal-950">{monthlyDocuments.length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">Tipos/etiquetas</p>
+            <p className="mt-1 text-3xl font-black text-slate-950">{monthlyEntriesByTag.length}</p>
+          </div>
+          <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-700">Registros dañados</p>
+            <p className="mt-1 text-3xl font-black text-amber-950">{monthlyDamages.length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">Periodo</p>
+            <p className="mt-2 text-lg font-black capitalize text-slate-950">{formatMonthKey(selectedMonth)}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-2">
+          <div className="rounded-xl border border-teal-100 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-950">Informe de entradas desde Lunaris</h3>
+                <p className="text-xs font-semibold text-slate-500">Resumen mensual de albaranes subidos por producto/tipo.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={downloadMonthlyEntriesExcel}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-50"
+                >
+                  <FileSpreadsheet size={14} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadMonthlyEntriesPdf}
+                  className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-50"
+                >
+                  <Download size={14} />
+                  PDF
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {monthlyEntriesByTag.length === 0 ? (
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500">Sin entradas en este mes</span>
+              ) : monthlyEntriesByTag.slice(0, 8).map(([tag, count]) => (
+                <span key={tag} className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-800">
+                  {tag}: {count}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-100 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-950">Historial de dañados del mes</h3>
+                <p className="text-xs font-semibold text-slate-500">Informe mensual de incidencias por albarán, lote/tipo y origen/envío.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={downloadMonthlyDamagesExcel}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-50"
+                >
+                  <FileSpreadsheet size={14} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadMonthlyDamagesPdf}
+                  className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-50"
+                >
+                  <Download size={14} />
+                  PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-black text-violet-950">Catálogo de productos</h2>
-            <p className="text-xs font-semibold text-violet-600">Activos, agotados y documentación adjunta por producto.</p>
+            <h2 className="text-lg font-black text-slate-950">Gestión por producto y etiqueta</h2>
+            <p className="text-xs font-semibold text-slate-500">Aquí se suben los documentos y se registran incidencias concretas.</p>
           </div>
-          <label className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-3 py-2">
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar producto..."
-              className="min-w-[220px] bg-transparent text-sm font-semibold text-violet-900 outline-none placeholder:text-violet-400"
+              placeholder="Buscar producto, tipo o etiqueta..."
+              className="min-w-[220px] bg-transparent text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400"
             />
           </label>
         </div>

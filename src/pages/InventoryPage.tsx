@@ -6600,11 +6600,11 @@ function InventoryPage() {
                 <p className="mt-1 text-2xl font-black text-emerald-900">{stockControlSummary.optimo}</p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-[11px] font-black uppercase text-slate-600">Disponible total</p>
+                <p className="text-[11px] font-black uppercase text-slate-600">Cajas disponibles totales</p>
                 <p className="mt-1 text-2xl font-black text-slate-950">{Number(stockControlSummary.stockDisponibleTotal.toFixed(2))}</p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-[11px] font-black uppercase text-slate-600">Potencial</p>
+                <p className="text-[11px] font-black uppercase text-slate-600">Potencial ensamblable (cajas)</p>
                 <p className="mt-1 text-2xl font-black text-slate-950">{Number(stockControlSummary.potencialTotal.toFixed(2))}</p>
               </div>
             </div>
@@ -6630,7 +6630,7 @@ function InventoryPage() {
               openTablePdf(
                 'Inventario - Control stock',
                 `control-stock-${periodFileKey}.pdf`,
-                ['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible estimado', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
+                ['Producto', 'Lotes vendibles', 'Stock vendible (cajas)', 'Potencial (cajas)', 'Disponible estimado (cajas)', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
                 stockControlDecisionRows.map((r) => [
                   r.producto,
                   r.lotesCount,
@@ -6651,7 +6651,7 @@ function InventoryPage() {
               openTableExcel(
                 'Inventario - Control stock',
                 `control-stock-${periodFileKey}.xlsx`,
-                ['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible estimado', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
+                ['Producto', 'Lotes vendibles', 'Stock vendible (cajas)', 'Potencial (cajas)', 'Disponible estimado (cajas)', 'Stock mínimo', 'Stock óptimo', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida'],
                 stockControlDecisionRows.map((r) => [
                   r.producto,
                   r.lotesCount,
@@ -6671,7 +6671,7 @@ function InventoryPage() {
             }}
           >
             <SimpleDataTable
-              headers={['Producto', 'Lotes vendibles', 'Stock vendible', 'Potencial', 'Disponible', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida']}
+              headers={['Producto', 'Lotes vendibles', 'Stock vendible (cajas)', 'Potencial (cajas)', 'Disponible total (cajas)', 'Consumo mes', 'Cobertura', 'Estado', 'Acción sugerida']}
               rows={stockControlDecisionRows.map((r) => [
                 <ProductPill key={`${r.producto}-decision`} code={r.producto} colorMap={productColorMap} />,
                 r.lotesCount,
@@ -6711,7 +6711,7 @@ function InventoryPage() {
                 </button>
               </div>
               <SimpleDataTable
-                headers={['Lote', 'Canet', 'Huarte', 'Mas Borrás', 'Stock vendible', 'Potencial', 'Disponible', 'Consumo mes', 'Cobertura', 'Estado']}
+                headers={['Lote', 'Canet', 'Huarte', 'Mas Borrás', 'Stock vendible (cajas)', 'Potencial (cajas)', 'Disponible total (cajas)', 'Consumo mes', 'Cobertura', 'Estado']}
                 rows={stockControlDetailRows.map((r) => [
                   r.lote,
                   Number(r.stockCanet.toFixed(2)),

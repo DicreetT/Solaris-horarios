@@ -265,34 +265,32 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
     tables: [
       {
         id: 'entradas',
-        title: 'Entradas de proveedor por producto y lote',
+        title: 'Compras Zoho vs entradas Lunaris',
+        subtitle: 'Cada línea representa una compra/orden del mes y se compara con lo que realmente entró a nave.',
         columns: [
-          'Producto',
-          'Lote',
-          'Cantidad recibida',
-          'Cantidad registrada en Zoho',
-          'Cantidad registrada en Lunaris',
-          'Cantidad dañada',
-          'Tipo de daño',
-          'Diferencia',
-          'Motivo diferencia',
+          'Compra / producto solicitado',
+          'Referencia / lote si aplica',
+          'Cantidad comprada',
+          'Orden de compra Zoho',
+          'Ingresó a Lunaris',
+          'Cantidad ingresada en nave',
+          'Motivo / fecha prevista',
+          'Situación del ingreso',
+          'Revisión contable',
           'Observaciones',
-          'Factura proveedor validada por contabilidad',
         ],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5', 'Línea 6'],
       },
     ],
     attachments: [
-      'Informe de entradas de proveedor descargado desde Zoho',
-      'Informe de entradas de proveedor descargado desde Lunaris',
-      'Albaranes de proveedor del periodo',
+      'Informe de órdenes de compra del mes descargado desde Zoho',
+      'Informe de entradas desde Lunaris',
       'Informe de proveedores del mes de contabilidad',
-      'Validación contable: factura proveedor existe para producto y lote',
     ],
     validations: [
-      'Las cantidades recibidas deben coincidir con Zoho y Lunaris.',
-      'Los lotes recibidos deben coincidir con los albaranes.',
-      'Las facturas de proveedor deben coincidir con productos, lotes y cantidades recibidas.',
+      'Cada orden de compra de Zoho debe indicar si ingresó o no ingresó a Lunaris.',
+      'Si una compra no ingresó en el mes, debe quedar motivo, fecha prevista o incidencia registrada.',
+      'Contabilidad debe marcar si existe registro de pago en banco o si aún está pendiente.',
     ],
   },
   traspasos_huarte: {
@@ -373,10 +371,26 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
         ],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
       },
+      {
+        id: 'danados_ensamblaje',
+        title: 'Historial de dañados Lunaris por lote',
+        subtitle: 'Resumen mensual descargado desde Albaranes para comparar pérdidas de origen o envío.',
+        columns: [
+          'Producto',
+          'Lote',
+          'Dañados origen',
+          'Dañados envío',
+          'Total dañados',
+          'Informe Albaranes adjunto',
+          'Observaciones',
+        ],
+        rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
+      },
     ],
     attachments: [
       'Informe de ensamblajes descargado desde Zoho',
       'Informe de ensamblajes descargado desde Lunaris',
+      'Informe del historial de dañados del mes',
     ],
     validations: [
       'Los ensamblajes de Zoho deben coincidir con los ensamblajes de Lunaris.',
@@ -1006,6 +1020,27 @@ function tableSupportsExtraRows(table: TableDefinition) {
   });
 }
 
+function tableRowHasContent(table: TableDefinition, row: string, fields: Record<string, string>) {
+  return table.columns.some((column) => String(fields[fieldKey(table.id, row, column)] || '').trim());
+}
+
+function buildEntradasSummary(table: TableDefinition, rows: string[], fields: Record<string, string>) {
+  const activeRows = rows.filter((row) => tableRowHasContent(table, row, fields));
+  const ingresoColumn = table.columns.find((column) => normalize(column).includes('ingreso a lunaris') || normalize(column).includes('ingreso lunaris'));
+  const ingresadas = ingresoColumn
+    ? activeRows.filter((row) => normalize(fields[fieldKey(table.id, row, ingresoColumn)] || '') === 'ingreso').length
+    : 0;
+  const noIngresadas = ingresoColumn
+    ? activeRows.filter((row) => normalize(fields[fieldKey(table.id, row, ingresoColumn)] || '') === 'no ingreso').length
+    : 0;
+  return {
+    totalCompras: activeRows.length,
+    ingresadas,
+    noIngresadas,
+    pendientes: Math.max(0, activeRows.length - ingresadas - noIngresadas),
+  };
+}
+
 function canUserEditProcess(definition: ProcessDefinition, currentUserName: string, isAdmin: boolean) {
   if (isAdmin) return true;
   if (definition.key === 'cierre_comun') return false;
@@ -1161,6 +1196,65 @@ function renderCellInput(
           />
         )}
       </div>
+    );
+  }
+
+  if (normalizedColumn.includes('ingreso a lunaris') || normalizedColumn.includes('ingreso lunaris')) {
+    return (
+      <select
+        value={value}
+        onChange={(event) => setFieldValue(key, event.target.value)}
+        disabled={!canEdit}
+        className={`h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50`}
+      >
+        <option value="">Pendiente</option>
+        <option value="Ingresó">Ingresó</option>
+        <option value="No ingresó">No ingresó</option>
+      </select>
+    );
+  }
+
+  if (normalizedColumn.includes('situacion del ingreso')) {
+    const situationTone = normalize(value).includes('programado')
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : normalize(value).includes('retraso') || normalize(value).includes('incidencia') || normalize(value).includes('no ingreso')
+        ? 'border-rose-200 bg-rose-50 text-rose-800'
+        : 'border-slate-200 bg-white text-slate-800';
+    return (
+      <select
+        value={value}
+        onChange={(event) => setFieldValue(key, event.target.value)}
+        disabled={!canEdit}
+        className={`h-9 w-full rounded-lg border px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50 ${situationTone}`}
+      >
+        <option value="">Sin clasificar</option>
+        <option value="Pedido programado para entrar otro mes">Pedido programado para entrar otro mes</option>
+        <option value="Retraso pendiente">Retraso pendiente</option>
+        <option value="No ingresó sin justificar">No ingresó sin justificar</option>
+        <option value="Incidencia de entrada">Incidencia de entrada</option>
+        <option value="Revisión necesaria">Revisión necesaria</option>
+      </select>
+    );
+  }
+
+  if (normalizedColumn.includes('revision contable')) {
+    const accountingTone = normalize(value).includes('registro de pago')
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : normalize(value).includes('aun no') || normalize(value).includes('pendiente')
+        ? 'border-rose-200 bg-rose-50 text-rose-800'
+        : 'border-slate-200 bg-white text-slate-800';
+    return (
+      <select
+        value={value}
+        onChange={(event) => setFieldValue(key, event.target.value)}
+        disabled={!canEdit}
+        className={`h-9 w-full rounded-lg border px-2 text-sm font-semibold outline-none ${ringClass} disabled:bg-slate-50 ${accountingTone}`}
+      >
+        <option value="">Pendiente</option>
+        <option value="Registro de pago en banco">Registro de pago en banco</option>
+        <option value="Aún no hay registro de pago en banco">Aún no hay registro de pago en banco</option>
+        <option value="No aplica este mes">No aplica este mes</option>
+      </select>
     );
   }
 
@@ -2046,6 +2140,29 @@ export default function OperationalControlPage() {
                         </tbody>
                       </table>
                     </div>
+                    {activeDefinition.key === 'entradas_canet' && table.id === 'entradas' && (() => {
+                      const summary = buildEntradasSummary(table, rows, draftFields);
+                      return (
+                        <div className="grid gap-2 border-t border-emerald-100 bg-emerald-50/70 p-3 text-sm sm:grid-cols-4">
+                          <div className="rounded-lg border border-emerald-100 bg-white p-3">
+                            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-emerald-700">Total compras Zoho</p>
+                            <p className="mt-1 text-2xl font-black text-slate-950">{summary.totalCompras}</p>
+                          </div>
+                          <div className="rounded-lg border border-emerald-100 bg-white p-3">
+                            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-emerald-700">Ingresos Lunaris</p>
+                            <p className="mt-1 text-2xl font-black text-emerald-800">{summary.ingresadas}</p>
+                          </div>
+                          <div className="rounded-lg border border-amber-100 bg-white p-3">
+                            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-700">No ingresaron</p>
+                            <p className="mt-1 text-2xl font-black text-amber-800">{summary.noIngresadas}</p>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white p-3">
+                            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">Pendientes</p>
+                            <p className="mt-1 text-2xl font-black text-slate-800">{summary.pendientes}</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </section>
                   );
                 })}
