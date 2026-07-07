@@ -234,6 +234,7 @@ export function calculateInventoryStockByLot<TMovement extends InventoryStockMov
     includeMovement?: (movement: TMovement) => boolean;
     signedQuantity?: (movement: TMovement) => number;
     clampNegative?: boolean;
+    floorNegativeRunningBalance?: boolean;
     round?: boolean;
     skipZero?: boolean;
   } = {},
@@ -245,13 +246,33 @@ export function calculateInventoryStockByLot<TMovement extends InventoryStockMov
     includeMovement,
     signedQuantity = (movement) => getInventorySignedQuantity(movement),
     clampNegative = false,
+    floorNegativeRunningBalance = false,
     round = false,
     skipZero = false,
   } = options;
 
   const map = new Map<string, InventoryStockRow>();
+  const parseMovementTime = (movement: TMovement) => {
+    const raw = cleanInventoryValue(movement.fecha);
+    if (!raw) return 0;
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw;
+    const time = new Date(normalized).getTime();
+    return Number.isFinite(time) ? time : 0;
+  };
+  const sourceMovements = floorNegativeRunningBalance
+    ? [...(Array.isArray(movements) ? movements : [])].sort((a, b) => {
+        const dateDiff = parseMovementTime(a) - parseMovementTime(b);
+        if (dateDiff !== 0) return dateDiff;
+        const aId = cleanInventoryValue(a.id);
+        const bId = cleanInventoryValue(b.id);
+        const aNum = Number(aId);
+        const bNum = Number(bId);
+        if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) return aNum - bNum;
+        return aId.localeCompare(bId);
+      })
+    : (Array.isArray(movements) ? movements : []);
 
-  for (const movement of Array.isArray(movements) ? movements : []) {
+  for (const movement of sourceMovements) {
     if (cleanInventoryValue(movement.afecta_stock || 'SI').toUpperCase() !== 'SI') continue;
     if (includeMovement && !includeMovement(movement)) continue;
 
@@ -262,7 +283,9 @@ export function calculateInventoryStockByLot<TMovement extends InventoryStockMov
 
     const key = `${producto}|${lote}|${bodega}`;
     if (!map.has(key)) map.set(key, { producto, lote, bodega, stock: 0 });
-    map.get(key)!.stock += signedQuantity(movement);
+    const row = map.get(key)!;
+    row.stock += signedQuantity(movement);
+    if (floorNegativeRunningBalance && row.stock < 0) row.stock = 0;
   }
 
   return Array.from(map.values())
@@ -290,6 +313,7 @@ export function calculateInventoryStockSnapshot<TMovement extends InventoryStock
     rowTransform?: (row: InventoryStockRow) => InventoryStockRow;
     excludeMirrorSources?: boolean;
     clampNegative?: boolean;
+    floorNegativeRunningBalance?: boolean;
     round?: boolean;
   } = {},
 ) {
@@ -301,6 +325,7 @@ export function calculateInventoryStockSnapshot<TMovement extends InventoryStock
     normalizeWarehouse,
     signedQuantity: options.signedQuantity,
     clampNegative: options.clampNegative,
+    floorNegativeRunningBalance: options.floorNegativeRunningBalance,
     round: options.round,
     includeMovement: (movement) => {
       const warehouse = normalizeWarehouse(movement.bodega, movement);

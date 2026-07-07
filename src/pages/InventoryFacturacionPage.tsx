@@ -23,6 +23,7 @@ import {
   getInventoryMonthlyCloseSnapshot,
   getPreviousMonthKey,
   INVENTORY_MONTHLY_CLOSURES_KEY,
+  mergeInventoryMonthlyCloseSnapshots,
   monthlyCloseRowsForExport,
   upsertInventoryMonthlyCloseSnapshot,
   type InventoryMonthlyCloseSnapshot,
@@ -32,7 +33,7 @@ import { openTableXlsx } from '../utils/tableExport';
 import { formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
 import { describeConnectionError } from '../utils/connectionErrors';
 import { useDensityMode } from '../hooks/useDensityMode';
-import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { saveSharedJsonStateNow, useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 
 type TabKey = 'dashboard' | 'movimientos' | 'rectificativas' | 'ensamblajes' | 'maestros' | 'cierres';
@@ -612,7 +613,7 @@ export default function InventoryFacturacionPage() {
   const [monthlyClosures, setMonthlyClosures] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
     INVENTORY_MONTHLY_CLOSURES_KEY,
     [],
-    { userId: actorId, mergeBeforePersist: true },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true, mergeStrategy: mergeInventoryMonthlyCloseSnapshots },
   );
   const [auditLog, setAuditLog] = useSharedJsonState<InventoryAuditEntry[]>(
     'inventory_huarte_audit_v1',
@@ -2812,7 +2813,25 @@ export default function InventoryFacturacionPage() {
       closedBy: actorName,
       rows: monthlyCloseRows,
     });
-    setMonthlyClosures((prev) => upsertInventoryMonthlyCloseSnapshot(prev, snapshot));
+    if (!snapshot.rows.length) {
+      alert('No hay filas de stock para congelar en este cierre. Revisa el mes seleccionado y vuelve a intentarlo.');
+      return;
+    }
+    const nextMonthlyClosures = upsertInventoryMonthlyCloseSnapshot(monthlyClosures, snapshot);
+    let storedMonthlyClosures: InventoryMonthlyCloseSnapshot[];
+    try {
+      storedMonthlyClosures = await saveSharedJsonStateNow(INVENTORY_MONTHLY_CLOSURES_KEY, nextMonthlyClosures, {
+        userId: actorId,
+        mergeBeforePersist: true,
+        protectFromEmptyOverwrite: true,
+        mergeStrategy: mergeInventoryMonthlyCloseSnapshots,
+      });
+    } catch (error) {
+      console.error('[inventory-huarte] monthly close save failed', error);
+      alert('No se pudo guardar el cierre de mes en la base de datos. Revisa la conexión e inténtalo de nuevo.');
+      return;
+    }
+    setMonthlyClosures(storedMonthlyClosures);
     const recipients = Array.from(new Set([itziar?.id, ...USERS.filter((u) => u.isAdmin).map((u) => u.id)].filter(Boolean) as string[]));
     await Promise.allSettled(
       recipients.map((userId) =>

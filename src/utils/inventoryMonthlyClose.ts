@@ -107,6 +107,29 @@ export function upsertInventoryMonthlyCloseSnapshot(
   ].sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
 }
 
+export function mergeInventoryMonthlyCloseSnapshots(
+  remote: InventoryMonthlyCloseSnapshot[] | null | undefined,
+  local: InventoryMonthlyCloseSnapshot[] | null | undefined,
+) {
+  const byId = new Map<string, InventoryMonthlyCloseSnapshot>();
+
+  for (const snapshot of Array.isArray(remote) ? remote : []) {
+    const id = clean(snapshot.id);
+    if (!id) continue;
+    byId.set(id, snapshot);
+  }
+
+  for (const snapshot of Array.isArray(local) ? local : []) {
+    const id = clean(snapshot.id);
+    if (!id) continue;
+    byId.set(id, snapshot);
+  }
+
+  return Array.from(byId.values()).sort(
+    (a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)),
+  );
+}
+
 export function getInventoryMonthlyCloseSnapshot(
   snapshots: InventoryMonthlyCloseSnapshot[] | null | undefined,
   scope: InventoryMonthlyCloseScope,

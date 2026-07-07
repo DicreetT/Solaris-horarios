@@ -556,7 +556,7 @@ function FoldersPage() {
     );
 
     const sortedMonthlyClosures = (Array.isArray(monthlyClosures) ? monthlyClosures : [])
-        .slice()
+        .filter((snapshot) => !snapshot.deletedAt)
         .sort((a, b) => clean(b.monthKey).localeCompare(clean(a.monthKey)) || clean(a.scope).localeCompare(clean(b.scope)));
 
     const sortedOperationalClosures = (Array.isArray(operationalControlState?.operationalClosures)

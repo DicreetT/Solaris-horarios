@@ -376,6 +376,87 @@ function defaultMergeRemoteLocal(remote: any, local: any) {
   return local;
 }
 
+export async function saveSharedJsonStateNow<T>(
+  key: string,
+  next: T,
+  options: Pick<Options, 'userId' | 'mergeBeforePersist' | 'mergeStrategy' | 'protectFromEmptyOverwrite' | 'preferRemoteSnapshot'> = {},
+): Promise<T> {
+  const {
+    userId,
+    mergeBeforePersist = false,
+    mergeStrategy,
+    protectFromEmptyOverwrite = false,
+    preferRemoteSnapshot = false,
+  } = options;
+  let payloadToStore = next;
+
+  if (mergeBeforePersist) {
+    try {
+      const { data, error } = await withTimeout<{ data: any; error: any }>(
+        supabase
+          .from('shared_json_state')
+          .select('payload')
+          .eq('key', key)
+          .maybeSingle(),
+        12000,
+        `shared_json_state direct merge-read ${key}`,
+      );
+      if (!error && data && Object.prototype.hasOwnProperty.call(data, 'payload')) {
+        payloadToStore = (mergeStrategy
+          ? mergeStrategy(data.payload as T, next)
+          : defaultMergeRemoteLocal(data.payload as T, next)) as T;
+      }
+    } catch {
+      payloadToStore = next;
+    }
+  }
+
+  const { error } = await withTimeout<{ error: any }>(
+    supabase
+      .from('shared_json_state')
+      .upsert(
+        {
+          key,
+          payload: payloadToStore as any,
+          updated_by: userId || null,
+        },
+        { onConflict: 'key' },
+      ),
+    15000,
+    `shared_json_state direct upsert ${key}`,
+  );
+  if (error) throw error;
+
+  if (protectFromEmptyOverwrite && !preferRemoteSnapshot && !isEffectivelyEmpty(payloadToStore)) {
+    safeWriteLocal(`shared_json_state_cache:${key}`, payloadToStore);
+    const backupKey = `shared_json_state_backup_non_empty:${key}`;
+    safeWriteLocal(backupKey, payloadToStore);
+    try {
+      const { error: backupError } = await withTimeout<{ error: any }>(
+        supabase
+          .from('shared_json_state')
+          .upsert(
+            {
+              key: backupKey,
+              payload: payloadToStore as any,
+              updated_by: userId || null,
+            },
+            { onConflict: 'key' },
+          ),
+        15000,
+        `shared_json_state direct backup upsert ${backupKey}`,
+      );
+      if (backupError) {
+        console.error(`[shared_json_state] direct backup upsert failed for key ${backupKey}:`, backupError);
+      }
+    } catch (error) {
+      console.error(`[shared_json_state] direct backup upsert failed for key ${backupKey}:`, error);
+    }
+  }
+
+  return payloadToStore;
+}
+
 export function useSharedJsonState<T>(
   key: string,
   fallbackValue: T,

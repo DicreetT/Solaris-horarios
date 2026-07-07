@@ -25,6 +25,7 @@ import {
   getInventoryMonthlyCloseSnapshot,
   getPreviousMonthKey,
   INVENTORY_MONTHLY_CLOSURES_KEY,
+  mergeInventoryMonthlyCloseSnapshots,
   monthlyCloseRowsForExport,
   upsertInventoryMonthlyCloseSnapshot,
   type InventoryMonthlyCloseSnapshot,
@@ -34,7 +35,7 @@ import { openTableXlsx } from '../utils/tableExport';
 import { describeConnectionError } from '../utils/connectionErrors';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { useDensityMode } from '../hooks/useDensityMode';
-import { useSharedJsonState } from '../hooks/useSharedJsonState';
+import { saveSharedJsonStateNow, useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB } from '../hooks/useInventoryMovementsDB';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
@@ -1117,7 +1118,7 @@ function InventoryPage() {
   const [monthlyClosures, setMonthlyClosures] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
     INVENTORY_MONTHLY_CLOSURES_KEY,
     [],
-    { userId: actorId, mergeBeforePersist: true },
+    { userId: actorId, mergeBeforePersist: true, protectFromEmptyOverwrite: true, mergeStrategy: mergeInventoryMonthlyCloseSnapshots },
   );
 
   const [
@@ -1982,6 +1983,7 @@ function InventoryPage() {
         if (selectedWarehouse && bodega.toUpperCase() !== selectedWarehouse) return false;
         return !isHuarteMirrorWarehouse(bodega);
       },
+      floorNegativeRunningBalance: true,
       rowTransform: (row) => {
         const safeStock = Math.max(0, toNum(row.stock));
         if (isForcedAgotadoLot(row.producto, row.lote)) {
@@ -2015,6 +2017,7 @@ function InventoryPage() {
       normalizeLot: (value) => clean(value),
       normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
       includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+      floorNegativeRunningBalance: true,
       rowTransform: (row) => {
       const safeStock = Math.max(0, toNum(row.stock));
       if (isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
@@ -2217,6 +2220,7 @@ function InventoryPage() {
       includeMovement: sourceIsHuarte
         ? undefined
         : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      floorNegativeRunningBalance: !sourceIsHuarte,
       rowTransform: (row) => {
         const safeStock = Math.max(0, toNum(row.stock));
         if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
@@ -2407,6 +2411,7 @@ function InventoryPage() {
         normalizeLot: (value) => clean(value),
         normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
         includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+        floorNegativeRunningBalance: true,
         rowTransform: (row) => {
           const safeStock = Math.max(0, toNum(row.stock));
           if (isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
@@ -2482,6 +2487,7 @@ function InventoryPage() {
       normalizeLot: (value) => clean(value),
       normalizeWarehouse: (value) => normalizeWarehouseAlias(value),
       includeMovement: (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias(movement.bodega)),
+      floorNegativeRunningBalance: true,
       rowTransform: (row) => ({ ...row, stock: Math.max(0, toNum(row.stock)) }),
       rowFilter: (row) => toNum(row.stock) > 0,
     }).rows;
@@ -4182,6 +4188,7 @@ function InventoryPage() {
       includeMovement: sourceIsHuarte
         ? undefined
         : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      floorNegativeRunningBalance: !sourceIsHuarte,
       rowTransform: (row) => {
         const safeStock = Math.max(0, toNum(row.stock));
         if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
@@ -4263,6 +4270,7 @@ function InventoryPage() {
       includeMovement: sourceIsHuarte
         ? undefined
         : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+      floorNegativeRunningBalance: !sourceIsHuarte,
       rowTransform: (row) => {
         const safeStock = Math.max(0, toNum(row.stock));
         if (!sourceIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
@@ -4574,6 +4582,7 @@ function InventoryPage() {
           includeMovement: originIsHuarte
             ? undefined
             : (movement) => !isHuarteMirrorWarehouse(normalizeWarehouseAlias((movement as any).bodega)),
+          floorNegativeRunningBalance: !originIsHuarte,
           rowTransform: (row) => {
             if (!originIsHuarte && isForcedAgotadoLot(row.producto, row.lote)) return { ...row, stock: 0 };
             return { ...row, stock: toNum(row.stock) };
@@ -5703,10 +5712,28 @@ function InventoryPage() {
       closedBy: actorName,
       rows: monthlyCloseRows,
     });
-    setMonthlyClosures((prev) => upsertInventoryMonthlyCloseSnapshot(prev, snapshot));
+    if (!snapshot.rows.length) {
+      alert('No hay filas de stock para congelar en este cierre. Revisa el mes seleccionado y vuelve a intentarlo.');
+      return;
+    }
+    const nextMonthlyClosures = upsertInventoryMonthlyCloseSnapshot(monthlyClosures, snapshot);
+    let storedMonthlyClosures: InventoryMonthlyCloseSnapshot[];
+    try {
+      storedMonthlyClosures = await saveSharedJsonStateNow(INVENTORY_MONTHLY_CLOSURES_KEY, nextMonthlyClosures, {
+        userId: actorId,
+        mergeBeforePersist: true,
+        protectFromEmptyOverwrite: true,
+        mergeStrategy: mergeInventoryMonthlyCloseSnapshots,
+      });
+    } catch (error) {
+      console.error('[inventory] monthly close save failed', error);
+      alert('No se pudo guardar el cierre de mes en la base de datos. Revisa la conexión e inténtalo de nuevo.');
+      return;
+    }
+    setMonthlyClosures(storedMonthlyClosures);
     await notifyAnabela(`${actorName} guardó el cierre mensual de Inventario Canet (${monthLabel(closeMonthKey)}).`);
     appendAudit('Cierre mensual', `Canet (${closeMonthKey})`);
-    emitSuccessFeedback('Cierre de mes congelado y guardado.');
+    emitSuccessFeedback(`Cierre de ${monthLabel(closeMonthKey)} congelado y guardado.`);
   };
   const downloadMonthlyCloseExcel = () => {
     if (!currentMonthlyClose) {
