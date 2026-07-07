@@ -112,17 +112,30 @@ export function mergeInventoryMonthlyCloseSnapshots(
   local: InventoryMonthlyCloseSnapshot[] | null | undefined,
 ) {
   const byId = new Map<string, InventoryMonthlyCloseSnapshot>();
+  const eventTime = (snapshot: InventoryMonthlyCloseSnapshot) => {
+    const raw = snapshot.deletedAt || snapshot.closedAt;
+    const time = new Date(clean(raw)).getTime();
+    return Number.isFinite(time) ? time : 0;
+  };
+  const chooseLatest = (current: InventoryMonthlyCloseSnapshot | undefined, next: InventoryMonthlyCloseSnapshot) => {
+    if (!current) return next;
+    const currentTime = eventTime(current);
+    const nextTime = eventTime(next);
+    if (nextTime !== currentTime) return nextTime > currentTime ? next : current;
+    if (current.deletedAt && !next.deletedAt) return next;
+    return next;
+  };
 
   for (const snapshot of Array.isArray(remote) ? remote : []) {
     const id = clean(snapshot.id);
     if (!id) continue;
-    byId.set(id, snapshot);
+    byId.set(id, chooseLatest(byId.get(id), snapshot));
   }
 
   for (const snapshot of Array.isArray(local) ? local : []) {
     const id = clean(snapshot.id);
     if (!id) continue;
-    byId.set(id, snapshot);
+    byId.set(id, chooseLatest(byId.get(id), snapshot));
   }
 
   return Array.from(byId.values()).sort(
