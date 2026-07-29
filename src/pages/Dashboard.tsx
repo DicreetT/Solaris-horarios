@@ -988,6 +988,25 @@ function Dashboard() {
             }, 0);
     }, [absenceRequests, currentUser]);
 
+    const requestCalendarSelectedDate = useMemo(() => {
+        const parsed = requestDate ? new Date(`${requestDate}T12:00:00`) : new Date();
+        return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    }, [requestDate]);
+
+    const approvedAbsenceOverlaps = useMemo(() => {
+        if (!(activeRequestModal === 'absence' || activeRequestModal === 'vacation')) return [];
+        const start = requestDate || todayKey;
+        const end = requestIsDateRange && requestEndDate ? requestEndDate : start;
+        return absenceRequests
+            .filter((absence: any) => {
+                if (absence.status !== 'approved') return false;
+                const absenceStart = absence.date_key;
+                const absenceEnd = absence.end_date || absence.date_key;
+                return absenceStart <= end && absenceEnd >= start;
+            })
+            .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key));
+    }, [activeRequestModal, absenceRequests, requestDate, requestEndDate, requestIsDateRange, todayKey]);
+
     const managedAbsenceRows = useMemo(() => {
         if (!currentUser) return [];
         const visible = isAdmin
@@ -4636,7 +4655,7 @@ function Dashboard() {
             {activeRequestModal && (
                 <div className="app-modal-overlay">
                     <div
-                        className="app-modal-panel w-full max-w-2xl bg-white rounded-3xl border border-gray-200 shadow-2xl overflow-hidden flex flex-col"
+                        className="app-modal-panel w-full max-w-6xl bg-white rounded-3xl border border-gray-200 shadow-2xl overflow-hidden flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between p-6 pb-0">
@@ -4651,7 +4670,8 @@ function Dashboard() {
                             </button>
                         </div>
 
-                        <div className="p-6 overflow-y-auto space-y-5">
+                        <div className={`grid gap-5 overflow-y-auto p-6 ${(activeRequestModal === 'absence' || activeRequestModal === 'vacation') ? 'lg:grid-cols-[minmax(0,1fr)_430px]' : ''}`}>
+                          <div className="space-y-5">
                             {isAdmin && (
                                 <div>
                                     <label className="block text-sm font-bold text-gray-900 mb-2">Persona objetivo</label>
@@ -4822,6 +4842,48 @@ function Dashboard() {
                                     folderPath={activeRequestModal === 'meeting' ? 'meetings' : activeRequestModal === 'training' ? 'trainings' : 'absences'}
                                 />
                             </div>
+                          </div>
+
+                          {(activeRequestModal === 'absence' || activeRequestModal === 'vacation') && (
+                            <aside className="space-y-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-3">
+                              <div>
+                                <p className="text-xs font-black uppercase tracking-widest text-violet-700">Disponibilidad aprobada</p>
+                                <p className="mt-1 text-sm font-bold text-violet-950">Vacaciones y ausencias ya aceptadas</p>
+                              </div>
+                              <div className="h-[420px] overflow-hidden rounded-2xl border border-white bg-white">
+                                <CalendarGrid
+                                  monthDate={calendarMonthDate}
+                                  selectedDate={requestCalendarSelectedDate}
+                                  onChangeMonth={(date) => setCalendarMonthDate(date)}
+                                  onSelectDate={(date) => {
+                                    const nextDate = toDateKey(date);
+                                    setRequestDate(nextDate);
+                                    if (requestEndDate && requestEndDate < nextDate) setRequestEndDate('');
+                                  }}
+                                  overrides={calendarOverrides}
+                                />
+                              </div>
+                              <div className="rounded-2xl border border-white bg-white p-3">
+                                <p className="mb-2 text-xs font-black uppercase tracking-widest text-violet-700">Solapes del rango</p>
+                                <div className="max-h-44 space-y-2 overflow-y-auto">
+                                  {approvedAbsenceOverlaps.map((absence: any) => {
+                                    const user = USERS.find((item) => item.id === absence.created_by);
+                                    return (
+                                      <div key={`request-overlap-${absence.id}`} className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+                                        <p className="text-sm font-black text-violet-950">{user?.name || 'Persona'}</p>
+                                        <p className="text-xs font-semibold text-violet-700">
+                                          {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                        </p>
+                                      </div>
+                                    );
+                                  })}
+                                  {approvedAbsenceOverlaps.length === 0 && (
+                                    <p className="rounded-xl border border-dashed border-violet-200 bg-white p-3 text-xs font-bold text-violet-500">No hay solapes aprobados en ese rango.</p>
+                                  )}
+                                </div>
+                              </div>
+                            </aside>
+                          )}
                         </div>
 
                         <div className="p-6 border-t border-gray-100 flex items-center justify-end gap-2">
