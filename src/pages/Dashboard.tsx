@@ -207,6 +207,29 @@ type DailyInventoryControlRow = {
     sohoOk?: boolean;
 };
 
+type DailyControlMovementSnapshot = {
+    id: string;
+    tipo: string;
+    producto: string;
+    lote: string;
+    bodega?: string;
+    destino?: string;
+    cliente?: string;
+    cantidad: number;
+};
+
+type DailyControlStockSnapshot = {
+    key: string;
+    producto: string;
+    lote: string;
+    bodega: string;
+    lunaris: number;
+    physical: string;
+    zoho: string;
+    zohoOk: boolean;
+    difference: number | null;
+};
+
 type DailyInventoryControlReport = {
     id: string;
     dateKey: string;
@@ -219,6 +242,14 @@ type DailyInventoryControlReport = {
     rows: Record<string, DailyInventoryControlRow>;
     attachments: Attachment[];
     notes: string;
+    snapshot?: {
+        shipments: DailyControlMovementSnapshot[];
+        transfers: DailyControlMovementSnapshot[];
+        assemblies: DailyControlMovementSnapshot[];
+        stock: DailyControlStockSnapshot[];
+    };
+    savedAt?: string;
+    savedBy?: string;
     createdAt: string;
     updatedAt: string;
     updatedBy?: string;
@@ -226,6 +257,8 @@ type DailyInventoryControlReport = {
 
 type DailyInventoryControlState = {
     reports: DailyInventoryControlReport[];
+    deletedReportIds?: string[];
+    deletedEventIds?: number[];
 };
 
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
@@ -344,6 +377,12 @@ const normalizeAttachmentsList = (value: unknown): Attachment[] => {
 
 const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryControlState => {
     const reportsRaw = Array.isArray((value as any)?.reports) ? (value as any).reports : [];
+    const deletedReportIds: string[] = Array.isArray((value as any)?.deletedReportIds)
+        ? Array.from(new Set<string>((value as any).deletedReportIds.map((id: unknown) => clean(id)).filter(Boolean)))
+        : [];
+    const deletedEventIds: number[] = Array.isArray((value as any)?.deletedEventIds)
+        ? Array.from(new Set<number>((value as any).deletedEventIds.map((id: unknown) => Number(id)).filter(Number.isFinite)))
+        : [];
     return {
         reports: reportsRaw
             .map((report: any) => ({
@@ -358,11 +397,57 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                 rows: report?.rows && typeof report.rows === 'object' ? report.rows : {},
                 attachments: normalizeAttachmentsList(report?.attachments),
                 notes: clean(report?.notes),
+                snapshot: report?.snapshot && typeof report.snapshot === 'object'
+                    ? {
+                        shipments: Array.isArray(report.snapshot.shipments) ? report.snapshot.shipments : [],
+                        transfers: Array.isArray(report.snapshot.transfers) ? report.snapshot.transfers : [],
+                        assemblies: Array.isArray(report.snapshot.assemblies) ? report.snapshot.assemblies : [],
+                        stock: Array.isArray(report.snapshot.stock) ? report.snapshot.stock : [],
+                    }
+                    : undefined,
+                savedAt: clean(report?.savedAt),
+                savedBy: clean(report?.savedBy),
                 createdAt: clean(report?.createdAt) || new Date().toISOString(),
                 updatedAt: clean(report?.updatedAt) || clean(report?.createdAt) || new Date().toISOString(),
                 updatedBy: clean(report?.updatedBy),
             }))
-            .filter((report: DailyInventoryControlReport) => report.dateKey),
+            .filter((report: DailyInventoryControlReport) => (
+                report.dateKey &&
+                !deletedReportIds.includes(report.id) &&
+                !(report.eventId && deletedEventIds.includes(Number(report.eventId)))
+            )),
+        deletedReportIds,
+        deletedEventIds,
+    };
+};
+
+const mergeDailyInventoryControlState = (remote: unknown, local: unknown): DailyInventoryControlState => {
+    const remoteState = normalizeDailyInventoryControlState(remote);
+    const localState = normalizeDailyInventoryControlState(local);
+    const deletedReportIds = Array.from(new Set([...(remoteState.deletedReportIds || []), ...(localState.deletedReportIds || [])]));
+    const deletedEventIds = Array.from(new Set([...(remoteState.deletedEventIds || []), ...(localState.deletedEventIds || [])]));
+    const reportById = new Map<string, DailyInventoryControlReport>();
+
+    [...remoteState.reports, ...localState.reports].forEach((report) => {
+        if (deletedReportIds.includes(report.id) || (report.eventId && deletedEventIds.includes(Number(report.eventId)))) return;
+        const existing = reportById.get(report.id);
+        const reportTime = Date.parse(report.updatedAt || report.createdAt || '') || 0;
+        const existingTime = existing ? (Date.parse(existing.updatedAt || existing.createdAt || '') || 0) : -1;
+        if (!existing || reportTime >= existingTime) reportById.set(report.id, report);
+    });
+
+    const reportByDate = new Map<string, DailyInventoryControlReport>();
+    Array.from(reportById.values()).forEach((report) => {
+        const existing = reportByDate.get(report.dateKey);
+        const reportTime = Date.parse(report.updatedAt || report.createdAt || '') || 0;
+        const existingTime = existing ? (Date.parse(existing.updatedAt || existing.createdAt || '') || 0) : -1;
+        if (!existing || reportTime >= existingTime) reportByDate.set(report.dateKey, report);
+    });
+
+    return {
+        reports: Array.from(reportByDate.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey)),
+        deletedReportIds,
+        deletedEventIds,
     };
 };
 
@@ -448,6 +533,7 @@ function Dashboard() {
             protectFromEmptyOverwrite: true,
             mergeBeforePersist: true,
             mergeIncomingWithLocal: true,
+            mergeStrategy: mergeDailyInventoryControlState,
         },
     );
     const [billingPaymentRequestsShared] = useSharedJsonState<DashboardPaymentRequest[]>(
@@ -1212,7 +1298,10 @@ function Dashboard() {
             await deleteEvent(Number(event.id));
             setDailyInventoryControlState((prev) => {
                 const base = normalizeDailyInventoryControlState(prev);
+                const relatedReports = base.reports.filter((report) => Number(report.eventId) === Number(event.id));
                 return {
+                    deletedReportIds: Array.from(new Set([...(base.deletedReportIds || []), ...relatedReports.map((report) => report.id)])),
+                    deletedEventIds: Array.from(new Set([...(base.deletedEventIds || []), Number(event.id)])),
                     reports: base.reports.filter((report) => Number(report.eventId) !== Number(event.id)),
                 };
             });
@@ -1288,6 +1377,8 @@ function Dashboard() {
             const existing = base.reports.find((report) => report.dateKey === dateKey) || null;
             const nextReport = updater(existing);
             return {
+                deletedReportIds: base.deletedReportIds || [],
+                deletedEventIds: base.deletedEventIds || [],
                 reports: [
                     nextReport,
                     ...base.reports.filter((report) => report.dateKey !== dateKey),
@@ -1405,6 +1496,37 @@ function Dashboard() {
         }
     };
 
+    const handleSaveDailyInventoryControl = () => {
+        if (!activeDailyInventoryControl) return;
+        const savedAt = new Date().toISOString();
+        const stockSnapshot = dailyStockControlRows.map((row) => ({
+            key: row.key,
+            producto: row.producto,
+            lote: row.lote,
+            bodega: row.bodega,
+            lunaris: toNum(row.lunaris),
+            physical: clean(row.physical),
+            zoho: clean(row.soho),
+            zohoOk: !!row.sohoOk,
+            difference: clean(row.physical) === '' ? null : toNum(row.physical) - toNum(row.lunaris),
+        }));
+
+        upsertDailyInventoryControl(inventoryControlDateKey, (existing) => ({
+            ...(existing || buildEmptyDailyControlReport(inventoryControlDateKey)),
+            snapshot: {
+                shipments: dailyShipmentRows.map((row) => ({ ...row })),
+                transfers: dailyTransferRows.map((row) => ({ ...row })),
+                assemblies: dailyAssemblyRows.map((row) => ({ ...row })),
+                stock: stockSnapshot,
+            },
+            savedAt,
+            savedBy: currentUser?.id || '',
+            updatedAt: savedAt,
+            updatedBy: currentUser?.id || '',
+        }));
+        emitSuccessFeedback('Control inventario diario guardado.');
+    };
+
     const handleDeleteDailyInventoryControl = async () => {
         const report = activeDailyInventoryControl;
         if (!report) return;
@@ -1417,6 +1539,10 @@ function Dashboard() {
             setDailyInventoryControlState((prev) => {
                 const base = normalizeDailyInventoryControlState(prev);
                 return {
+                    deletedReportIds: Array.from(new Set([...(base.deletedReportIds || []), report.id])),
+                    deletedEventIds: report.eventId
+                        ? Array.from(new Set([...(base.deletedEventIds || []), Number(report.eventId)]))
+                        : base.deletedEventIds || [],
                     reports: base.reports.filter((item) => item.dateKey !== report.dateKey),
                 };
             });
@@ -2481,6 +2607,11 @@ function Dashboard() {
         () => dailyInventoryControls.reports.find((report) => report.dateKey === inventoryControlDateKey) || null,
         [dailyInventoryControls, inventoryControlDateKey],
     );
+    const selectedCalendarDailyControl = useMemo(
+        () => dailyInventoryControls.reports.find((report) => report.dateKey === selectedCalendarDateKey) || null,
+        [dailyInventoryControls, selectedCalendarDateKey],
+    );
+    const selectedCalendarItemCount = selectedCalendarEvents.length + (selectedCalendarDailyControl ? 1 : 0);
     const canetMovementsForControlDate = useMemo(() => {
         return canetMovementsEffectiveSource.filter((movement: any) => {
             const movementDate = dateFromAny(clean(movement?.fecha));
@@ -4873,17 +5004,17 @@ function Dashboard() {
                                 />
                             </div>
                             <div className="space-y-3">
-                                <div className={`rounded-2xl border p-4 ${selectedCalendarEvents.length > 0 ? 'border-rose-200 bg-rose-50' : 'border-violet-100 bg-violet-50/60'}`}>
-                                    <p className={`text-xs font-bold uppercase tracking-widest ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Día seleccionado</p>
-                                    <p className={`mt-1 text-lg font-black ${selectedCalendarEvents.length > 0 ? 'text-rose-950' : 'text-violet-950'}`}>
+                                <div className={`rounded-2xl border p-4 ${selectedCalendarItemCount > 0 ? 'border-rose-200 bg-rose-50' : 'border-violet-100 bg-violet-50/60'}`}>
+                                    <p className={`text-xs font-bold uppercase tracking-widest ${selectedCalendarItemCount > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Día seleccionado</p>
+                                    <p className={`mt-1 text-lg font-black ${selectedCalendarItemCount > 0 ? 'text-rose-950' : 'text-violet-950'}`}>
                                         {calendarSelectedDate.toLocaleDateString('es-ES', {
                                             weekday: 'long',
                                             day: 'numeric',
                                             month: 'long',
                                         })}
                                     </p>
-                                    <p className={`mt-1 text-sm font-bold ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>
-                                        {selectedCalendarEvents.length} evento(s) en este día
+                                    <p className={`mt-1 text-sm font-bold ${selectedCalendarItemCount > 0 ? 'text-rose-700' : 'text-violet-700'}`}>
+                                        {selectedCalendarItemCount} elemento(s) en este día
                                     </p>
                                 </div>
                                 <div className="rounded-2xl border border-violet-100 bg-white p-4">
@@ -4896,7 +5027,7 @@ function Dashboard() {
                                                 title: 'Eventos del día',
                                                 items: selectedCalendarEvents,
                                             })}
-                                            className={`text-xs font-bold ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}
+                                            className={`text-xs font-bold ${selectedCalendarItemCount > 0 ? 'text-rose-700' : 'text-violet-700'}`}
                                         >
                                             Ver listado
                                         </button>
@@ -4929,11 +5060,38 @@ function Dashboard() {
                                         </button>
                                     </div>
                                 </div>
-                                <div className={`rounded-2xl border bg-white p-4 ${selectedCalendarEvents.length > 0 ? 'border-rose-200 ring-1 ring-rose-100' : 'border-violet-100'}`}>
-                                    <p className={`mb-2 text-xs font-bold uppercase tracking-widest ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Eventos del día</p>
+                                <div className={`rounded-2xl border bg-white p-4 ${selectedCalendarItemCount > 0 ? 'border-rose-200 ring-1 ring-rose-100' : 'border-violet-100'}`}>
+                                    <p className={`mb-2 text-xs font-bold uppercase tracking-widest ${selectedCalendarItemCount > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Eventos del día</p>
                                     <div className="space-y-2">
-                                        {selectedCalendarEvents.length > 0 ? (
-                                            selectedCalendarEvents
+                                        {selectedCalendarItemCount > 0 ? (
+                                            <>
+                                            {selectedCalendarDailyControl && (
+                                                <div className="group flex items-start justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3">
+                                                    <div>
+                                                        <p className="text-sm font-black text-teal-950">Control inventario diario</p>
+                                                        <p className="text-xs font-semibold text-teal-700">
+                                                            {selectedCalendarDailyControl.savedAt
+                                                                ? `Guardado ${new Date(selectedCalendarDailyControl.savedAt).toLocaleString('es-ES')}`
+                                                                : 'Pendiente de guardar'}
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setEventFormDateKey(selectedCalendarDateKey);
+                                                            setSummaryModal({
+                                                                kind: 'events',
+                                                                title: 'Eventos del día',
+                                                                items: selectedCalendarEvents,
+                                                            });
+                                                        }}
+                                                        className="rounded-lg border border-teal-200 bg-white px-2.5 py-1.5 text-xs font-black text-teal-700 transition hover:bg-teal-50"
+                                                    >
+                                                        Abrir
+                                                    </button>
+                                                </div>
+                                            )}
+                                            {selectedCalendarEvents
                                                 .map((event) => (
                                                     <div key={`calendar-modal-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
                                                         <div>
@@ -4963,7 +5121,8 @@ function Dashboard() {
                                                             </div>
                                                         )}
                                                     </div>
-                                                ))
+                                                ))}
+                                            </>
                                         ) : (
                                             <div className="app-empty-card">No hay eventos para este día.</div>
                                         )}
@@ -5199,6 +5358,11 @@ function Dashboard() {
                                             <span className={`rounded-full border px-3 py-1 text-xs font-black ${dailyStockDiffCount > 0 ? 'border-amber-200 bg-amber-100 text-amber-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
                                                 {dailyStockDiffCount > 0 ? `${dailyStockDiffCount} diferencias` : 'Sin diferencias marcadas'}
                                             </span>
+                                            {activeDailyInventoryControl.savedAt && (
+                                                <span className="rounded-full border border-teal-200 bg-white px-3 py-1 text-xs font-black text-teal-700">
+                                                    Guardado {new Date(activeDailyInventoryControl.savedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={handleRefreshDailyInventoryControl}
@@ -5207,6 +5371,14 @@ function Dashboard() {
                                             >
                                                 <RotateCcw size={13} className={dailyInventoryRefreshing ? 'animate-spin' : ''} />
                                                 {dailyInventoryRefreshing ? 'Refrescando' : 'Refrescar'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveDailyInventoryControl}
+                                                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-600 px-3 py-1.5 text-xs font-black text-white hover:bg-emerald-700"
+                                            >
+                                                <Save size={13} />
+                                                Guardar
                                             </button>
                                             <button
                                                 type="button"

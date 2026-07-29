@@ -53,7 +53,10 @@ export function useCalendarEvents() {
             const existing = Array.isArray(sharedEvents) ? sharedEvents : [];
             const signatures = new Set(existing.map((ev) => `${ev.date_key}::${ev.title}::${ev.created_by || ''}`));
             const missingLegacy = cleaned.filter((ev) => !signatures.has(`${ev.date_key}::${ev.title}::${ev.created_by || ''}`));
-            if (missingLegacy.length === 0) return;
+            if (missingLegacy.length === 0) {
+                window.localStorage.removeItem(LEGACY_LOCAL_CALENDAR_EVENTS_KEY);
+                return;
+            }
 
             setSharedEvents((prev) => {
                 const base = Array.isArray(prev) ? prev : [];
@@ -67,6 +70,7 @@ export function useCalendarEvents() {
                 }));
                 return [...base, ...normalizedMissing];
             });
+            window.localStorage.removeItem(LEGACY_LOCAL_CALENDAR_EVENTS_KEY);
         } catch {
             // noop
         }
@@ -89,6 +93,20 @@ export function useCalendarEvents() {
 
     const deleteEvent = async (id: number) => {
         setSharedEvents((prev) => (Array.isArray(prev) ? prev.filter((row) => Number(row.id) !== Number(id)) : []));
+        if (typeof window !== 'undefined') {
+            try {
+                const raw = window.localStorage.getItem(LEGACY_LOCAL_CALENDAR_EVENTS_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                if (Array.isArray(parsed)) {
+                    window.localStorage.setItem(
+                        LEGACY_LOCAL_CALENDAR_EVENTS_KEY,
+                        JSON.stringify(parsed.filter((row: any) => Number(row?.id) !== Number(id))),
+                    );
+                }
+            } catch {
+                // noop
+            }
+        }
         queryClient.invalidateQueries({ queryKey: ['calendarEvents'] });
     };
 

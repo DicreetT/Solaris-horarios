@@ -4,6 +4,7 @@ import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { USERS } from '../constants';
 
 const EMPTY_ARRAY: Todo[] = [];
 const EMPTY_GRACE_MS = 120000;
@@ -27,6 +28,34 @@ function writeTodosCache(userId: string, todos: Todo[]) {
     } catch {
         // noop
     }
+}
+
+const MANUAL_MENTION_ALIASES: Record<string, string[]> = {
+    '6bafcb97-6a1b-4224-adbb-1340b86ffeb9': ['anabela', 'anabella'],
+};
+
+function normalizeMentionText(value: unknown) {
+    return `${value || ''}`
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function findMentionedUserIds(...values: unknown[]) {
+    const text = ` ${normalizeMentionText(values.join(' '))} `;
+    return USERS.filter((user) => {
+        const name = normalizeMentionText(user.name);
+        const firstName = name.split(/\s+/)[0];
+        const aliases = Array.from(new Set([
+            name,
+            firstName,
+            normalizeMentionText(user.email.split('@')[0]),
+            ...(MANUAL_MENTION_ALIASES[user.id] || []),
+        ].filter((alias) => alias.length >= 3)));
+
+        return aliases.some((alias) => text.includes(`@${alias}`));
+    }).map((user) => user.id);
 }
 
 export function useTodos(currentUser: User | null) {
@@ -178,6 +207,20 @@ export function useTodos(currentUser: User | null) {
                     console.warn(`No se pudieron crear ${failed.length} notificaciones de tarea.`, failed);
                 }
             }
+
+            const mentionedRecipients = findMentionedUserIds(variables.title, variables.description)
+                .filter((userId) => userId && userId !== currentUser.id && !(variables.assignedTo || []).includes(userId));
+            if (mentionedRecipients.length > 0) {
+                await Promise.allSettled(
+                    mentionedRecipients.map((userId) =>
+                        addNotification({
+                            message: `Te han mencionado en la tarea [#${createdTodo.id}]: "${variables.title}"`,
+                            type: 'action_required',
+                            userId,
+                        }),
+                    ),
+                );
+            }
         },
     });
 
@@ -249,9 +292,10 @@ export function useTodos(currentUser: User | null) {
 
             if (updateError) throw updateError;
 
-            // Notify assigned users (except the commenter)
+            // Notify assigned users and mentioned users (except the commenter)
             const assignedIds: string[] = currentTodo.assigned_to || [];
-            const recipients = Array.from(new Set(assignedIds)).filter((userId) => userId && userId !== currentUser.id);
+            const mentionedIds = findMentionedUserIds(text);
+            const recipients = Array.from(new Set([...assignedIds, ...mentionedIds])).filter((userId) => userId && userId !== currentUser.id);
             const results = await Promise.allSettled(
                 recipients.map((userId) =>
                     addNotification({

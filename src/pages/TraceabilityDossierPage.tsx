@@ -362,6 +362,27 @@ export default function TraceabilityDossierPage() {
     setSupplierDraft((prev) => ({ ...prev, [key]: value }));
   };
 
+  const scrollToDossierBlock = (id: string) => {
+    if (typeof document === 'undefined') return;
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const selectSupplierForProduct = (supplierId: string) => {
+    setSelectedSupplierId(supplierId);
+    window.setTimeout(() => scrollToDossierBlock('traceability-product-form'), 50);
+  };
+
+  const selectSupplierForEntry = (supplier: Supplier, product?: SupplierProduct) => {
+    setSelectedSupplierId(supplier.id);
+    setEntryDraft((prev) => ({
+      ...prev,
+      supplierId: supplier.id,
+      supplierProductId: product?.id || prev.supplierProductId,
+      stage: product?.category || prev.stage,
+    }));
+    window.setTimeout(() => scrollToDossierBlock('traceability-lot-workspace'), 50);
+  };
+
   const addSupplier = () => {
     if (!clean(supplierDraft.name)) {
       alert('Pon al menos el nombre del proveedor.');
@@ -886,6 +907,28 @@ export default function TraceabilityDossierPage() {
           </button>
         </div>
 
+        <section className="mb-5 rounded-2xl border border-teal-200 bg-teal-50/70 p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <ShieldCheck size={18} className="text-teal-700" />
+            <h2 className="text-sm font-black text-teal-950">Rellenado guiado</h2>
+          </div>
+          <div className="grid gap-3 md:grid-cols-5">
+            {[
+              { n: '1', title: 'Proveedor', text: 'Alta con registro sanitario y datos de contacto.' },
+              { n: '2', title: 'Producto suministrado', text: 'Materia prima, cartonaje, envasado o servicio recibido.' },
+              { n: '3', title: 'Lote final', text: 'Producto montado al que se va a enlazar todo.' },
+              { n: '4', title: 'Entrada documental', text: 'Albarán, lote proveedor, identificación física y certificados.' },
+              { n: '5', title: 'PDF dossier', text: 'Hoja limpia para entregar a sanidad por producto y lote.' },
+            ].map((step) => (
+              <div key={step.n} className="rounded-xl border border-white bg-white p-3">
+                <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-xs font-black text-white">{step.n}</div>
+                <p className="text-sm font-black text-slate-950">{step.title}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{step.text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
           <aside className="space-y-5">
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -914,10 +957,10 @@ export default function TraceabilityDossierPage() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section id="traceability-product-form" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm scroll-mt-6">
               <div className="mb-3 flex items-center gap-2">
                 <Package size={18} className="text-teal-700" />
-                <h2 className="text-sm font-black text-slate-950">Producto suministrado</h2>
+                <h2 className="text-sm font-black text-slate-950">Rellenar producto suministrado</h2>
               </div>
               <select value={selectedSupplier?.id || ''} onChange={(e) => setSelectedSupplierId(e.target.value)} className="mb-2 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-400">
                 {suppliers.length === 0 && <option value="">Sin proveedores</option>}
@@ -935,7 +978,7 @@ export default function TraceabilityDossierPage() {
                   <FileUploader folderPath="traceability/supplier-products/technical-sheets" existingFiles={productDraft.technicalSheets} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, technicalSheets: files }))} compact maxSizeMB={15} />
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados recurrentes</p>
+                  <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base del proveedor</p>
                   <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productDraft.certificates} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
                 </div>
                 <button type="button" onClick={addSupplierProduct} className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-black text-teal-950 hover:bg-teal-100">
@@ -968,7 +1011,7 @@ export default function TraceabilityDossierPage() {
           </aside>
 
           <main className="space-y-5">
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section id="traceability-lot-workspace" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm scroll-mt-6">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-2">
                   <FolderTree size={18} className="text-teal-700" />
@@ -1214,9 +1257,54 @@ export default function TraceabilityDossierPage() {
                       {supplier.categories.map((category) => (
                         <span key={category} className="rounded-full bg-white px-2 py-1 text-[11px] font-black text-slate-600">{labelForCategory(category)}</span>
                       ))}
+                      {supplier.categories.length === 0 && (
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black text-slate-500">Sin suministros todavía</span>
+                      )}
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <button
+                        type="button"
+                        onClick={() => selectSupplierForProduct(supplier.id)}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-50"
+                      >
+                        <Plus size={14} />
+                        Rellenar producto suministrado
+                      </button>
+                      {supplier.products.length > 0 ? (
+                        <div className="space-y-2">
+                          {supplier.products.map((product) => (
+                            <div key={product.id} className="rounded-xl border border-white bg-white p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-slate-950">{product.name}</p>
+                                  <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => selectSupplierForEntry(supplier, product)}
+                                  className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-black text-teal-800 hover:bg-teal-100"
+                                  title="Usar en un lote"
+                                >
+                                  Usar
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="rounded-xl border border-dashed border-slate-200 bg-white p-3 text-xs font-semibold text-slate-500">
+                          Siguiente paso: añade el producto o material que suministra este proveedor.
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
+                {suppliers.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                    <Building2 size={22} className="mx-auto text-slate-400" />
+                    <p className="mt-2 text-sm font-bold text-slate-600">Crea el primer proveedor para desbloquear su mapa.</p>
+                  </div>
+                )}
               </div>
             </section>
           </main>
