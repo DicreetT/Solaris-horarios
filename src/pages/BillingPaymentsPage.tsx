@@ -26,6 +26,7 @@ const CASH_MOVEMENTS_KEY = 'facturacion_cash_movements_v1';
 
 type PaymentStatus = 'PENDIENTE' | 'PAGADO' | 'CANCELADO';
 type CashMovementType = 'INGRESO' | 'SALIDA';
+type CashMovementBucket = 'NAVE_BUDGET' | 'SALES_CASH' | 'OTHER';
 
 type BillingNote = {
   id: string;
@@ -78,6 +79,7 @@ type CashMovement = {
   createdById: string;
   createdByName: string;
   type: CashMovementType;
+  cashBucket?: CashMovementBucket;
   date: string;
   concept: string;
   amount: number;
@@ -85,6 +87,19 @@ type CashMovement = {
   noteThread?: BillingNote[];
   fileName?: string;
   fileDataUrl?: string;
+};
+
+const NAVE_MONTHLY_BUDGET = 150;
+const CASH_BUCKET_LABELS: Record<CashMovementBucket, string> = {
+  NAVE_BUDGET: 'Presupuesto nave',
+  SALES_CASH: 'Efectivo ventas',
+  OTHER: 'Otros',
+};
+
+const CASH_BUCKET_STYLES: Record<CashMovementBucket, string> = {
+  NAVE_BUDGET: 'border-amber-200 bg-amber-100 text-amber-800',
+  SALES_CASH: 'border-sky-200 bg-sky-100 text-sky-800',
+  OTHER: 'border-slate-200 bg-slate-100 text-slate-700',
 };
 
 function uid(prefix = 'id') {
@@ -265,6 +280,13 @@ function formatCurrency(value: number) {
   })} €`;
 }
 
+function getCashBucket(value: unknown): CashMovementBucket {
+  const raw = clean(value).toUpperCase();
+  if (raw === 'NAVE_BUDGET' || raw === 'PRESUPUESTO_NAVE') return 'NAVE_BUDGET';
+  if (raw === 'SALES_CASH' || raw === 'VENTAS' || raw === 'EFECTIVO_VENTAS') return 'SALES_CASH';
+  return 'OTHER';
+}
+
 const PROVIDER_ALIASES = [
   'nombre',
   'proveedor',
@@ -423,6 +445,7 @@ export default function BillingPaymentsPage() {
   const [editNotes, setEditNotes] = useState('');
   const [editComments, setEditComments] = useState('');
   const [cashType, setCashType] = useState<CashMovementType>('INGRESO');
+  const [cashBucket, setCashBucket] = useState<CashMovementBucket>('OTHER');
   const [cashDate, setCashDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [cashConcept, setCashConcept] = useState('');
   const [cashAmount, setCashAmount] = useState('');
@@ -524,6 +547,7 @@ export default function BillingPaymentsPage() {
     return monthFilteredCashMovements.filter((item) => {
       const amountEs = item.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const haystack = [item.type, item.concept, item.notes, item.createdByName, item.fileName, amountEs, item.amount.toFixed(2)];
+      haystack.push(CASH_BUCKET_LABELS[getCashBucket(item.cashBucket)]);
       return haystack.some((value) => normalizeKey(value || '').includes(q));
     });
   }, [monthFilteredCashMovements, searchText]);
@@ -546,6 +570,18 @@ export default function BillingPaymentsPage() {
   const cashOutcomeMonth = filteredCashMovements
     .filter((item) => item.type === 'SALIDA')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const cashBudgetMonthKey = monthFilter === 'all' ? monthKeyFromDate(new Date().toISOString()) : monthFilter;
+  const cashBudgetMovements = visibleCashMovements.filter(
+    (item) => monthKeyFromDate(item.date || item.createdAt) === cashBudgetMonthKey && getCashBucket(item.cashBucket) === 'NAVE_BUDGET',
+  );
+  const cashBudgetIncome = cashBudgetMovements
+    .filter((item) => item.type === 'INGRESO')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const cashBudgetOutcome = cashBudgetMovements
+    .filter((item) => item.type === 'SALIDA')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const cashBudgetAvailable = NAVE_MONTHLY_BUDGET + cashBudgetIncome - cashBudgetOutcome;
+  const cashBudgetReplenish = Math.max(0, NAVE_MONTHLY_BUDGET - cashBudgetAvailable);
 
   const resetManualForm = () => {
     setManualProvider('');
@@ -559,6 +595,7 @@ export default function BillingPaymentsPage() {
 
   const resetCashForm = () => {
     setCashType('INGRESO');
+    setCashBucket('OTHER');
     setCashDate(new Date().toISOString().slice(0, 10));
     setCashConcept('');
     setCashAmount('');
@@ -592,6 +629,7 @@ export default function BillingPaymentsPage() {
   const openEditCashMovement = (item: CashMovement) => {
     setEditingCashMovementId(item.id);
     setCashType(item.type || 'INGRESO');
+    setCashBucket(getCashBucket(item.cashBucket));
     setCashDate(item.date || new Date().toISOString().slice(0, 10));
     setCashConcept(item.concept || '');
     setCashAmount(item.amount ? String(item.amount) : '');
@@ -842,6 +880,7 @@ export default function BillingPaymentsPage() {
                 updatedAt: now,
                 lastChangedAt: now,
                 type: cashType,
+                cashBucket,
                 date: cashDate || now.slice(0, 10),
                 concept,
                 amount,
@@ -863,6 +902,7 @@ export default function BillingPaymentsPage() {
       createdById: clean(currentUser?.id),
       createdByName: clean(currentUser?.name) || clean(currentUser?.email) || 'Sistema',
       type: cashType,
+      cashBucket,
       date: cashDate || now.slice(0, 10),
       concept,
       amount,
@@ -1557,6 +1597,33 @@ export default function BillingPaymentsPage() {
                 <p className="mt-1 text-xs font-semibold text-slate-500">{cashLoading ? 'Sincronizando...' : 'Sincronizado'}</p>
               </div>
             </div>
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wide text-amber-700">Presupuesto nave</p>
+                  <h3 className="text-lg font-black text-amber-950">{formatMonthLabel(cashBudgetMonthKey)}</h3>
+                </div>
+                <p className="text-xs font-semibold text-amber-800">Base mensual: {formatCurrency(NAVE_MONTHLY_BUDGET)}</p>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-wide text-amber-700">Usado del mes</p>
+                  <p className="mt-1 text-xl font-black text-rose-800">{formatCurrency(cashBudgetOutcome)}</p>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-wide text-amber-700">Repuesto</p>
+                  <p className="mt-1 text-xl font-black text-sky-800">{formatCurrency(cashBudgetIncome)}</p>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-wide text-amber-700">Disponible estimado</p>
+                  <p className="mt-1 text-xl font-black text-emerald-800">{formatCurrency(cashBudgetAvailable)}</p>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-wide text-amber-700">A reponer</p>
+                  <p className="mt-1 text-xl font-black text-amber-950">{formatCurrency(cashBudgetReplenish)}</p>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
@@ -1581,7 +1648,7 @@ export default function BillingPaymentsPage() {
                 </button>
               )}
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-6">
+            <div className="mt-3 grid gap-3 md:grid-cols-7">
               <select
                 value={cashType}
                 onChange={(event) => setCashType(event.target.value as CashMovementType)}
@@ -1589,6 +1656,15 @@ export default function BillingPaymentsPage() {
               >
                 <option value="INGRESO">Ingreso de efectivo</option>
                 <option value="SALIDA">Salida de efectivo</option>
+              </select>
+              <select
+                value={cashBucket}
+                onChange={(event) => setCashBucket(event.target.value as CashMovementBucket)}
+                className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-bold text-emerald-900"
+              >
+                <option value="NAVE_BUDGET">Presupuesto nave</option>
+                <option value="SALES_CASH">Efectivo ventas</option>
+                <option value="OTHER">Otros</option>
               </select>
               <input
                 type="date"
@@ -1681,6 +1757,7 @@ export default function BillingPaymentsPage() {
                     <tr className="text-left text-xs font-black uppercase tracking-wide text-emerald-700">
                       <th className="px-2 py-2">Fecha</th>
                       <th className="px-2 py-2">Tipo</th>
+                      <th className="px-2 py-2">Bolsa</th>
                       <th className="px-2 py-2">Concepto</th>
                       <th className="px-2 py-2">Importe</th>
                       <th className="px-2 py-2">Adjunto</th>
@@ -1693,6 +1770,7 @@ export default function BillingPaymentsPage() {
                     {filteredCashMovements.map((item) => {
                       const canEditCash = isAdmin || clean(item.createdById) === clean(currentUser?.id);
                       const positive = item.type === 'INGRESO';
+                      const bucket = getCashBucket(item.cashBucket);
                       return (
                         <tr key={item.id} className="border-t border-emerald-100 align-top">
                           <td className="px-2 py-2 font-semibold text-slate-700">
@@ -1707,6 +1785,11 @@ export default function BillingPaymentsPage() {
                             >
                               {positive ? <ArrowUpCircle size={12} /> : <ArrowDownCircle size={12} />}
                               {item.type}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-black ${CASH_BUCKET_STYLES[bucket]}`}>
+                              {CASH_BUCKET_LABELS[bucket]}
                             </span>
                           </td>
                           <td className="px-2 py-2 font-black text-slate-900">
