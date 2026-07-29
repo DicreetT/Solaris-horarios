@@ -1140,6 +1140,9 @@ function Dashboard() {
     });
 
     const todayEvents = calendarEvents.filter((e) => e.date_key === todayKey);
+    const todayEventsPreview = todayEvents.slice(0, 3);
+    const selectedCalendarDateKey = toDateKey(calendarSelectedDate);
+    const selectedCalendarEvents = calendarEvents.filter((event) => event.date_key === selectedCalendarDateKey);
     const currentDayTimeEntries = currentUser ? (timeData[todayKey]?.[currentUser.id] || []) : [];
     const currentActiveEntry = currentDayTimeEntries.find((e: any) => e.entry && !e.exit);
     const currentOnBreak = currentActiveEntry?.status === 'break_paid';
@@ -2773,9 +2776,13 @@ function Dashboard() {
                     label: 'Eventos',
                     icon: CalendarClock,
                     tone: 'ghost',
-                    buttonClass: 'border-amber-200 bg-white text-amber-950 hover:bg-amber-50',
-                    iconClass: 'bg-amber-50 text-amber-600 border-amber-100',
-                    badges: [{ count: todayEvents.length, tone: 'amber' }],
+                    buttonClass: todayEvents.length > 0
+                        ? 'border-rose-300 bg-rose-50 text-rose-950 hover:bg-rose-100'
+                        : 'border-amber-200 bg-white text-amber-950 hover:bg-amber-50',
+                    iconClass: todayEvents.length > 0
+                        ? 'bg-white text-rose-700 border-rose-100'
+                        : 'bg-amber-50 text-amber-600 border-amber-100',
+                    badges: [{ count: todayEvents.length, tone: todayEvents.length > 0 ? 'rose' : 'amber' }],
                     onClick: () => {
                         setEventFormTitle('');
                         setEventFormDateKey(todayKey);
@@ -3175,6 +3182,52 @@ function Dashboard() {
                     ))}
                 </div>
             </div>
+
+            {todayEvents.length > 0 && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        setEventFormTitle('');
+                        setEventFormDateKey(todayKey);
+                        setEventFormDescription('');
+                        setSummaryModal({
+                            kind: 'events',
+                            title: 'Eventos del día',
+                            items: calendarEventsSorted.filter((event) => event.date_key === todayKey),
+                        });
+                    }}
+                    className="w-full rounded-3xl border border-rose-300 bg-rose-50 p-4 text-left shadow-sm ring-1 ring-rose-100 transition hover:bg-rose-100 compact-card"
+                >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-start gap-3">
+                            <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-600 text-white shadow-sm">
+                                <AlertTriangle size={20} />
+                            </span>
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-widest text-rose-700">Eventos importantes de hoy</p>
+                                <h2 className="mt-1 text-lg font-black text-rose-950">
+                                    {todayEvents.length} evento(s) para revisar
+                                </h2>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {todayEventsPreview.map((event) => (
+                                        <span key={`today-alert-${event.id}`} className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-black text-rose-800">
+                                            {event.title}
+                                        </span>
+                                    ))}
+                                    {todayEvents.length > todayEventsPreview.length && (
+                                        <span className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-black text-rose-800">
+                                            +{todayEvents.length - todayEventsPreview.length} más
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <span className="inline-flex w-fit items-center rounded-full bg-rose-700 px-3 py-1 text-xs font-black text-white">
+                            Ver eventos
+                        </span>
+                    </div>
+                </button>
+            )}
 
             <div className="rounded-3xl border border-violet-100 bg-white p-4 md:p-5 shadow-sm compact-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -4796,17 +4849,17 @@ function Dashboard() {
                                 />
                             </div>
                             <div className="space-y-3">
-                                <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
-                                    <p className="text-xs font-bold uppercase tracking-widest text-violet-700">Día seleccionado</p>
-                                    <p className="mt-1 text-lg font-black text-violet-950">
+                                <div className={`rounded-2xl border p-4 ${selectedCalendarEvents.length > 0 ? 'border-rose-200 bg-rose-50' : 'border-violet-100 bg-violet-50/60'}`}>
+                                    <p className={`text-xs font-bold uppercase tracking-widest ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Día seleccionado</p>
+                                    <p className={`mt-1 text-lg font-black ${selectedCalendarEvents.length > 0 ? 'text-rose-950' : 'text-violet-950'}`}>
                                         {calendarSelectedDate.toLocaleDateString('es-ES', {
                                             weekday: 'long',
                                             day: 'numeric',
                                             month: 'long',
                                         })}
                                     </p>
-                                    <p className="mt-1 text-sm text-violet-700">
-                                        {calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)).length} evento(s) en este día
+                                    <p className={`mt-1 text-sm font-bold ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>
+                                        {selectedCalendarEvents.length} evento(s) en este día
                                     </p>
                                 </div>
                                 <div className="rounded-2xl border border-violet-100 bg-white p-4">
@@ -4817,9 +4870,9 @@ function Dashboard() {
                                             onClick={() => setSummaryModal({
                                                 kind: 'events',
                                                 title: 'Eventos del día',
-                                                items: calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)),
+                                                items: selectedCalendarEvents,
                                             })}
-                                            className="text-xs font-bold text-violet-700"
+                                            className={`text-xs font-bold ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}
                                         >
                                             Ver listado
                                         </button>
@@ -4852,17 +4905,16 @@ function Dashboard() {
                                         </button>
                                     </div>
                                 </div>
-                                <div className="rounded-2xl border border-violet-100 bg-white p-4">
-                                    <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Eventos del día</p>
+                                <div className={`rounded-2xl border bg-white p-4 ${selectedCalendarEvents.length > 0 ? 'border-rose-200 ring-1 ring-rose-100' : 'border-violet-100'}`}>
+                                    <p className={`mb-2 text-xs font-bold uppercase tracking-widest ${selectedCalendarEvents.length > 0 ? 'text-rose-700' : 'text-violet-700'}`}>Eventos del día</p>
                                     <div className="space-y-2">
-                                        {calendarEvents.filter((event) => event.date_key === toDateKey(calendarSelectedDate)).length > 0 ? (
-                                            calendarEvents
-                                                .filter((event) => event.date_key === toDateKey(calendarSelectedDate))
+                                        {selectedCalendarEvents.length > 0 ? (
+                                            selectedCalendarEvents
                                                 .map((event) => (
-                                                    <div key={`calendar-modal-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+                                                    <div key={`calendar-modal-${event.id}`} className="group flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
                                                         <div>
-                                                            <p className="text-sm font-black text-violet-900">{event.title}</p>
-                                                            <p className="text-xs text-violet-700">{event.description || 'Sin descripción'}</p>
+                                                            <p className="text-sm font-black text-rose-950">{event.title}</p>
+                                                            <p className="text-xs font-semibold text-rose-700">{event.description || 'Sin descripción'}</p>
                                                         </div>
                                                         {canDeleteCalendarEvent(event) && (
                                                             <div className="flex shrink-0 items-center gap-1">

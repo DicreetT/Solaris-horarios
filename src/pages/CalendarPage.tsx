@@ -11,6 +11,7 @@ import { useMeetings } from '../hooks/useMeetings';
 import { toDateKey } from '../utils/dateUtils';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, UserX, Palmtree, Users, GraduationCap, Lock, Sun, AlertCircle, CheckSquare, X } from 'lucide-react';
 import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
+import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import { USERS } from '../constants';
 import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
@@ -82,6 +83,7 @@ function CalendarPage() {
     const { todos } = useTodos(currentUser);
     const { meetingRequests, createMeeting } = useMeetings(currentUser);
     const { overrides, toggleDayStatus } = useCalendarOverrides();
+    const { calendarEvents } = useCalendarEvents();
     const [togglingDays, setTogglingDays] = useState<Record<string, boolean>>({});
     const handleDateClick = (date: Date) => {
         setSelectedDate(date);
@@ -345,6 +347,7 @@ function CalendarPage() {
                         const trainingsCount = events?.trainings.length || 0;
                         const vacationsCount = (events?.absences || []).filter((a) => a.type === 'vacation').length;
                         const absencesCount = (events?.absences || []).filter((a) => a.type !== 'vacation').length;
+                        const dayCalendarEvents = calendarEvents.filter((event) => event.date_key === dayKey);
                         const toneClass = workdayToneClasses[Math.min(index, workdayToneClasses.length - 1)];
                         return (
                             <div
@@ -485,6 +488,15 @@ function CalendarPage() {
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
+                                    {dayCalendarEvents.length > 0 && (
+                                        <button
+                                            onClick={() => handleDateClick(day)}
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 transition-colors"
+                                        >
+                                            <AlertCircle size={12} />
+                                            Eventos {dayCalendarEvents.length}
+                                        </button>
+                                    )}
                                     {meetingsCount > 0 && (
                                         <button
                                             onClick={() => openEventListModal('meetings', day, events?.meetings || [])}

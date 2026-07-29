@@ -182,6 +182,16 @@ export default function CalendarGrid({
 
                             const badges = [];
 
+                            dayEvents.forEach(event => {
+                                badges.push({
+                                    type: 'calendar-event',
+                                    label: event.title || 'Evento',
+                                    color: 'bg-rose-50 text-rose-800 border-rose-200',
+                                    icon: <AlertCircle size={10} />,
+                                    detail: event.description || event.title || 'Evento del día'
+                                });
+                            });
+
                             relevantAbsences.forEach(absence => {
                                 const isVacation = absence.reason?.includes('[Vacaciones]') || absence.reason?.toLowerCase().includes('vacaciones') || absence.type === 'vacation';
                                 const user = USERS.find(u => u.id === absence.created_by);
