@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -411,6 +411,7 @@ export default function BillingPaymentsPage() {
       mergeBeforePersist: true,
     },
   );
+  const cashFormRef = useRef<HTMLElement | null>(null);
   const [cashMovements, setCashMovements, cashLoading] = useSharedJsonState<CashMovement[]>(
     CASH_MOVEMENTS_KEY,
     [],
@@ -637,6 +638,9 @@ export default function BillingPaymentsPage() {
     setCashFile(null);
     setExistingCashFileName(item.fileName || '');
     setExistingCashFileDataUrl(item.fileDataUrl || '');
+    window.setTimeout(() => {
+      cashFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   };
 
   const removeExistingCashFile = () => {
@@ -763,10 +767,10 @@ export default function BillingPaymentsPage() {
         const now = new Date().toISOString();
         return {
           ...updated,
-          updatedAt: updated.updatedAt || now,
-          lastChangedAt: updated.lastChangedAt || updated.updatedAt || now,
-          updatedById: updated.updatedById || clean(currentUser?.id),
-          updatedByName: updated.updatedByName || clean(currentUser?.name) || 'Sistema',
+          updatedAt: now,
+          lastChangedAt: now,
+          updatedById: clean(currentUser?.id),
+          updatedByName: clean(currentUser?.name) || 'Sistema',
         };
       }),
     );
@@ -1556,7 +1560,7 @@ export default function BillingPaymentsPage() {
 
       {activeTab === 'cash' && (
         <>
-          <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
+          <section ref={cashFormRef} className="scroll-mt-4 rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 border-b border-emerald-100 pb-4 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-lg font-black text-emerald-950">Efectivo nave</h2>
