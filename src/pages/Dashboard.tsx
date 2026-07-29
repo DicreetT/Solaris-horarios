@@ -1007,6 +1007,27 @@ function Dashboard() {
             .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key));
     }, [activeRequestModal, absenceRequests, requestDate, requestEndDate, requestIsDateRange, todayKey]);
 
+    const selectedManagedAbsenceDate = useMemo(() => {
+        const dateKey = manageRequestDate || selectedManagedRequest?.dateKey || todayKey;
+        const parsed = new Date(`${dateKey}T12:00:00`);
+        return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    }, [manageRequestDate, selectedManagedRequest?.dateKey, todayKey]);
+
+    const selectedManagedAbsenceOverlaps = useMemo(() => {
+        if (!selectedManagedRequest || selectedManagedRequest.source !== 'absence') return [];
+        const start = manageRequestDate || selectedManagedRequest.dateKey || todayKey;
+        const end = selectedManagedRequest.endDate || start;
+        return absenceRequests
+            .filter((absence: any) => {
+                if (Number(absence.id) === Number(selectedManagedRequest.id)) return false;
+                if (absence.status !== 'approved') return false;
+                const absenceStart = absence.date_key;
+                const absenceEnd = absence.end_date || absence.date_key;
+                return absenceStart <= end && absenceEnd >= start;
+            })
+            .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key));
+    }, [absenceRequests, manageRequestDate, selectedManagedRequest, todayKey]);
+
     const managedAbsenceRows = useMemo(() => {
         if (!currentUser) return [];
         const visible = isAdmin
@@ -4379,6 +4400,48 @@ function Dashboard() {
                                         />
                                     </div>
 
+                                    {selectedManagedRequest.source === 'absence' && (
+                                        <div className="space-y-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-3">
+                                            <div>
+                                                <p className="text-xs font-black uppercase tracking-widest text-violet-700">Calendario de vacaciones aprobadas</p>
+                                                <p className="mt-1 text-xs font-bold text-violet-900">
+                                                    Revisa quién ya tiene ausencia aceptada antes de aprobar o reprogramar.
+                                                </p>
+                                            </div>
+                                            <div className="h-[380px] overflow-hidden rounded-2xl border border-white bg-white">
+                                                <CalendarGrid
+                                                    monthDate={calendarMonthDate}
+                                                    selectedDate={selectedManagedAbsenceDate}
+                                                    onChangeMonth={(date) => setCalendarMonthDate(date)}
+                                                  onSelectDate={(date) => setManageRequestDate(toDateKey(date))}
+                                                  overrides={calendarOverrides}
+                                                  absenceStatusFilter="approved-only"
+                                              />
+                                            </div>
+                                            <div className="rounded-2xl border border-white bg-white p-3">
+                                                <p className="mb-2 text-xs font-black uppercase tracking-widest text-violet-700">Solapes aprobados</p>
+                                                <div className="max-h-40 space-y-2 overflow-y-auto">
+                                                    {selectedManagedAbsenceOverlaps.map((absence: any) => {
+                                                        const user = USERS.find((item) => item.id === absence.created_by);
+                                                        return (
+                                                            <div key={`managed-overlap-${absence.id}`} className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+                                                                <p className="text-sm font-black text-violet-950">{user?.name || 'Persona'}</p>
+                                                                <p className="text-xs font-semibold text-violet-700">
+                                                                    {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                                                </p>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {selectedManagedAbsenceOverlaps.length === 0 && (
+                                                        <p className="rounded-xl border border-dashed border-violet-200 bg-white p-3 text-xs font-bold text-violet-500">
+                                                            No hay solapes aprobados para esa fecha/rango.
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {selectedManagedRequest.source === 'meeting' && (
                                         <div>
                                             <label className="block text-xs font-bold text-gray-700 mb-1">Título</label>
@@ -4861,6 +4924,7 @@ function Dashboard() {
                                     if (requestEndDate && requestEndDate < nextDate) setRequestEndDate('');
                                   }}
                                   overrides={calendarOverrides}
+                                  absenceStatusFilter="approved-only"
                                 />
                               </div>
                               <div className="rounded-2xl border border-white bg-white p-3">

@@ -25,13 +25,15 @@ export default function CalendarGrid({
     selectedDate,
     onChangeMonth,
     onSelectDate,
-    overrides = []
+    overrides = [],
+    absenceStatusFilter,
 }: {
     monthDate: Date;
     selectedDate: Date;
     onChangeMonth: (date: Date) => void;
     onSelectDate: (date: Date) => void;
     overrides?: CalendarOverride[];
+    absenceStatusFilter?: 'approved-only';
 }) {
     const { currentUser } = useAuth();
     const isAdminView = currentUser?.isAdmin;
@@ -151,6 +153,7 @@ export default function CalendarGrid({
 
                             const relevantAbsences = absenceRequests.filter(r => {
                                 if (r.status === 'rejected') return false;
+                                if (absenceStatusFilter === 'approved-only' && r.status !== 'approved') return false;
                                 const start = r.date_key;
                                 const end = r.end_date || r.date_key;
                                 if (dKey < start || dKey > end) return false;

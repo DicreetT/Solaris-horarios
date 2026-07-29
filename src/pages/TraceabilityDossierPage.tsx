@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Beaker,
   Building2,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   Download,
   Edit2,
@@ -131,8 +133,6 @@ type SupplierLotDraft = {
   deliveryDate: string;
   albaranNumber: string;
   receivedQuantity: string;
-  soldQuantity: string;
-  currentQuantity: string;
   manufactureDate: string;
   expiryDate: string;
   notes: string;
@@ -204,8 +204,6 @@ function emptySupplierLotDraft(productName = ''): SupplierLotDraft {
     deliveryDate: '',
     albaranNumber: '',
     receivedQuantity: '',
-    soldQuantity: '',
-    currentQuantity: '',
     manufactureDate: '',
     expiryDate: '',
     notes: '',
@@ -381,6 +379,9 @@ export default function TraceabilityDossierPage() {
     attachments: [] as Attachment[],
   });
   const [supplierLotDrafts, setSupplierLotDrafts] = useState<Record<string, SupplierLotDraft>>({});
+  const [expandedSupplierIds, setExpandedSupplierIds] = useState<string[]>([]);
+  const [expandedProductIds, setExpandedProductIds] = useState<string[]>([]);
+  const [expandedLotIds, setExpandedLotIds] = useState<string[]>([]);
 
   const suppliers = normalized.suppliers;
   const lots = normalized.lots;
@@ -398,6 +399,26 @@ export default function TraceabilityDossierPage() {
   };
 
   const draftKeyFor = (supplierId: string, productId: string) => `${supplierId}::${productId}`;
+  const productKeyFor = (supplierId: string, productId: string) => `${supplierId}::${productId}`;
+
+  const toggleExpanded = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    id: string,
+  ) => {
+    setter((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
+
+  const expandAllDossier = () => {
+    setExpandedSupplierIds(suppliers.map((supplier) => supplier.id));
+    setExpandedProductIds(suppliers.flatMap((supplier) => supplier.products.map((product) => productKeyFor(supplier.id, product.id))));
+    setExpandedLotIds(lots.map((lot) => lot.id));
+  };
+
+  const collapseAllDossier = () => {
+    setExpandedSupplierIds([]);
+    setExpandedProductIds([]);
+    setExpandedLotIds([]);
+  };
 
   const lotDraftFor = (supplier: Supplier, product: SupplierProduct) => {
     const key = draftKeyFor(supplier.id, product.id);
@@ -463,6 +484,7 @@ export default function TraceabilityDossierPage() {
       return { ...base, suppliers: [nextSupplier, ...base.suppliers] };
     });
     setSelectedSupplierId(nextSupplier.id);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, nextSupplier.id])));
     setEntryDraft((prev) => ({ ...prev, supplierId: nextSupplier.id }));
     setSupplierDraft({ name: '', fiscalName: '', taxId: '', sanitaryRegister: '', address: '', contactName: '', phone: '', email: '', notes: '' });
     emitSuccessFeedback('Proveedor creado.');
@@ -472,6 +494,7 @@ export default function TraceabilityDossierPage() {
     const existing = suppliers.find((supplier) => supplier.name.toLowerCase() === 'solaris interno');
     if (existing) {
       setSelectedSupplierId(existing.id);
+      setExpandedSupplierIds((prev) => Array.from(new Set([...prev, existing.id])));
       setEntryDraft((prev) => ({ ...prev, supplierId: existing.id }));
       return;
     }
@@ -508,6 +531,8 @@ export default function TraceabilityDossierPage() {
       return { ...base, suppliers: [internalSupplier, ...base.suppliers] };
     });
     setSelectedSupplierId(internalSupplier.id);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, internalSupplier.id])));
+    setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(internalSupplier.id, internalSupplier.products[0].id)])));
     setEntryDraft((prev) => ({
       ...prev,
       supplierId: internalSupplier.id,
@@ -517,8 +542,8 @@ export default function TraceabilityDossierPage() {
     emitSuccessFeedback('Solaris interno añadido como responsable.');
   };
 
-  const addSupplierProduct = () => {
-    const supplier = selectedSupplier;
+  const addSupplierProduct = (supplierOverride?: Supplier) => {
+    const supplier = supplierOverride || selectedSupplier;
     if (!supplier) {
       alert('Crea o selecciona un proveedor primero.');
       return;
@@ -552,6 +577,9 @@ export default function TraceabilityDossierPage() {
       supplierProductId: nextProduct.id,
       stage: productDraft.category,
     }));
+    setSelectedSupplierId(supplier.id);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
+    setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, nextProduct.id)])));
     setProductDraft({ name: '', reference: '', category: 'materia_prima', unit: '', notes: '', technicalSheets: [], certificates: [] });
     emitSuccessFeedback('Producto del proveedor guardado.');
   };
@@ -591,15 +619,13 @@ export default function TraceabilityDossierPage() {
     const productName = clean(draft.finalProductName) || product.name;
     const quantityLine = [
       clean(draft.receivedQuantity) ? `Cantidad recibida: ${clean(draft.receivedQuantity)}` : '',
-      clean(draft.soldQuantity) ? `Cantidad vendida/consumida: ${clean(draft.soldQuantity)}` : '',
-      clean(draft.currentQuantity) ? `Existencias actuales: ${clean(draft.currentQuantity)}` : '',
     ].filter(Boolean).join(' · ');
     const processNotes = [quantityLine, clean(draft.notes)].filter(Boolean).join('\n');
     const nextLot: FinalLot = {
       id: uid('lot'),
       productName,
       lotNumber: clean(draft.lotNumber),
-      quantity: clean(draft.currentQuantity) || clean(draft.receivedQuantity),
+      quantity: clean(draft.receivedQuantity),
       status: 'abierto',
       manufactureDate: clean(draft.manufactureDate),
       expiryDate: clean(draft.expiryDate),
@@ -634,6 +660,9 @@ export default function TraceabilityDossierPage() {
     });
     setSelectedSupplierId(supplier.id);
     setSelectedLotId(nextLot.id);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
+    setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, product.id)])));
+    setExpandedLotIds((prev) => Array.from(new Set([...prev, nextLot.id])));
     setSupplierLotDrafts((prev) => ({
       ...prev,
       [draftKeyFor(supplier.id, product.id)]: emptySupplierLotDraft(product.name),
@@ -945,16 +974,33 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 18,
-      head: [['Etapa', 'Proveedor', 'Producto/material', 'Albarán', 'Lote proveedor', 'Cantidad', 'Cad./cons.', 'Adjuntos']],
+      head: [['Proveedor', 'Registro sanitario', 'Producto suministrado', 'Referencia', 'Tipo', 'Unidad/formato']],
       body: lot.entries.map((entry) => {
         const supplier = suppliers.find((item) => item.id === entry.supplierId);
         const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
         return [
-          labelForCategory(entry.stage),
           supplier?.name || '-',
+          supplier?.sanitaryRegister || '-',
           product?.name || '-',
+          product?.reference || '-',
+          product ? labelForCategory(product.category) : labelForCategory(entry.stage),
+          product?.unit || '-',
+        ];
+      }),
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 4 },
+      headStyles: { fillColor: [15, 118, 110] },
+    });
+
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 18,
+      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad llegada', 'Cad./cons.', 'Adjuntos']],
+      body: lot.entries.map((entry) => {
+        return [
+          labelForCategory(entry.stage),
           entry.albaranNumber || '-',
           entry.supplierLot || '-',
+          entry.deliveryDate || '-',
           entry.quantity || '-',
           entry.expiryDate || entry.bestBeforeDate || '-',
           String(fileCount(entry)),
@@ -968,7 +1014,7 @@ export default function TraceabilityDossierPage() {
     if (lot.entries.length > 0) {
       autoTable(doc, {
         startY: (doc as any).lastAutoTable.finalY + 18,
-        head: [['Entrada', 'Tipo documental', 'Archivo', 'URL']],
+        head: [['Entrada', 'Tipo documental', 'Archivo adjunto', 'URL']],
         body: lot.entries.flatMap((entry) => {
           const supplier = suppliers.find((item) => item.id === entry.supplierId);
           const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
@@ -1112,19 +1158,40 @@ export default function TraceabilityDossierPage() {
           </div>
         </section>
 
+        {suppliers.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={expandAllDossier} className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
+              Desplegar todo
+            </button>
+            <button type="button" onClick={collapseAllDossier} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+              Plegar todo
+            </button>
+          </div>
+        )}
+
         <main className="grid gap-4">
           {suppliers.map((supplier) => {
-            const isOpen = selectedSupplier?.id === supplier.id;
+            const isOpen = expandedSupplierIds.includes(supplier.id);
             const relatedLots = lots.filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id));
             return (
               <section key={supplier.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition ${isOpen ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <button type="button" onClick={() => setSelectedSupplierId(supplier.id)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSupplierId(supplier.id);
+                      toggleExpanded(setExpandedSupplierIds, supplier.id);
+                    }}
+                    className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                  >
                     <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-teal-100 bg-teal-50 text-teal-700">
                       <UserRound size={24} />
                     </span>
                     <span className="min-w-0">
-                      <span className="block text-lg font-black text-slate-950">{supplier.name}</span>
+                      <span className="flex items-center gap-2 text-lg font-black text-slate-950">
+                        {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                        {supplier.name}
+                      </span>
                       <span className="mt-1 block text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'} · {supplier.products.length} producto(s) · {relatedLots.length} lote(s)</span>
                       <span className="mt-1 block text-xs font-semibold text-slate-500">{supplier.phone || 'Sin teléfono'} · {supplier.email || 'Sin email'}</span>
                     </span>
@@ -1144,6 +1211,7 @@ export default function TraceabilityDossierPage() {
 
                 {isOpen && (
                   <div className="mt-4 space-y-4">
+                    {selectedSupplierId === supplier.id ? (
                     <div className="grid gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-3 md:grid-cols-4">
                       <div className="md:col-span-4">
                         <p className="text-xs font-black uppercase tracking-widest text-teal-700">Crear producto suministrado dentro de {supplier.name}</p>
@@ -1162,22 +1230,41 @@ export default function TraceabilityDossierPage() {
                         <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base</p>
                         <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productDraft.certificates} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
                       </div>
-                      <button type="button" onClick={addSupplierProduct} className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700 md:col-span-4">
+                      <button type="button" onClick={() => addSupplierProduct(supplier)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700 md:col-span-4">
                         <Save size={16} />
                         Guardar producto suministrado
                       </button>
                     </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSupplierId(supplier.id)}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-black text-teal-800 hover:bg-teal-100"
+                      >
+                        <Plus size={16} />
+                        Crear producto suministrado en este proveedor
+                      </button>
+                    )}
 
                     {supplier.products.map((product) => {
                       const draft = lotDraftFor(supplier, product);
                       const productLots = supplierProductLots(supplier, product);
+                      const productKey = productKeyFor(supplier.id, product.id);
+                      const isProductOpen = expandedProductIds.includes(productKey);
                       return (
                         <div key={product.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                            <div>
-                              <p className="text-base font-black text-slate-950">{product.name}</p>
-                              <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'} · {product.unit || 'Sin unidad'}</p>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(setExpandedProductIds, productKey)}
+                              className="min-w-0 flex-1 text-left"
+                            >
+                              <p className="flex items-center gap-2 text-base font-black text-slate-950">
+                                {isProductOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                {product.name}
+                              </p>
+                              <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'} · {product.unit || 'Sin unidad'} · {productLots.length} lote(s)</p>
+                            </button>
                             <div className="flex shrink-0 gap-1">
                               <button type="button" onClick={() => editSupplierProduct(supplier, product)} className="rounded-lg border border-teal-200 bg-white p-1.5 text-teal-700 hover:bg-teal-50" title="Editar producto">
                                 <Edit2 size={14} />
@@ -1188,25 +1275,57 @@ export default function TraceabilityDossierPage() {
                             </div>
                           </div>
 
-                          <div className="mt-3 grid gap-2">
-                            {productLots.map((lot) => {
-                              const entry = lot.entries.find((item) => item.supplierId === supplier.id && item.supplierProductId === product.id);
-                              return (
-                                <div key={lot.id} className="flex flex-col gap-2 rounded-xl border border-white bg-white p-3 md:flex-row md:items-center md:justify-between">
-                                  <div>
-                                    <p className="text-sm font-black text-slate-900">Lote {entry?.supplierLot || lot.lotNumber}</p>
-                                    <p className="text-xs font-semibold text-slate-500">Albarán {entry?.albaranNumber || '-'} · Entrega {entry?.deliveryDate || '-'} · Caducidad {entry?.expiryDate || lot.expiryDate || '-'}</p>
-                                    <p className="text-xs font-semibold text-slate-500">Cantidad {entry?.quantity || lot.quantity || '-'} · {fileCount(entry || lot.entries[0])} documento(s)</p>
+                          {isProductOpen && (
+                            <div className="mt-3 grid gap-2">
+                              {productLots.map((lot) => {
+                                const entry = lot.entries.find((item) => item.supplierId === supplier.id && item.supplierProductId === product.id);
+                                const isLotOpen = expandedLotIds.includes(lot.id);
+                                return (
+                                  <div key={lot.id} className="rounded-xl border border-white bg-white p-3">
+                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                      <button type="button" onClick={() => toggleExpanded(setExpandedLotIds, lot.id)} className="min-w-0 flex-1 text-left">
+                                        <p className="flex items-center gap-2 text-sm font-black text-slate-900">
+                                          {isLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                          Lote {entry?.supplierLot || lot.lotNumber}
+                                        </p>
+                                        <p className="text-xs font-semibold text-slate-500">Albarán {entry?.albaranNumber || '-'} · Cantidad llegada {entry?.quantity || lot.quantity || '-'} · {fileCount(entry || lot.entries[0])} documento(s)</p>
+                                      </button>
+                                      <button type="button" onClick={() => downloadLotPdf(lot)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
+                                        <Download size={14} />
+                                        Descargar lote
+                                      </button>
+                                    </div>
+                                    {isLotOpen && (
+                                      <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Entrega: {entry?.deliveryDate || '-'}</p>
+                                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {entry?.expiryDate || lot.expiryDate || '-'}</p>
+                                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {entry?.albaranNumber || '-'}</p>
+                                        {entry && DOCUMENT_GROUPS.map((group) => (
+                                          <div key={`${lot.id}-${group.key}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                            <p className="text-xs font-black uppercase tracking-widest text-slate-500">{group.label}</p>
+                                            {(entry.attachments[group.key] || []).length === 0 ? (
+                                              <p className="mt-1 text-xs font-semibold text-slate-400">Sin adjuntos</p>
+                                            ) : (
+                                              <div className="mt-2 space-y-1">
+                                                {entry.attachments[group.key].map((file) => (
+                                                  <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 truncate text-xs font-bold text-teal-700 hover:text-teal-900">
+                                                    <LinkIcon size={13} />
+                                                    {file.name}
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
-                                  <button type="button" onClick={() => downloadLotPdf(lot)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
-                                    <Download size={14} />
-                                    Descargar lote
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
+                                );
+                              })}
+                            </div>
+                          )}
 
+                          {isProductOpen && (
                           <div className="mt-3 rounded-2xl border border-dashed border-teal-200 bg-white p-3">
                             <p className="mb-2 text-xs font-black uppercase tracking-widest text-teal-700">Dar de alta lote de este producto</p>
                             <div className="grid gap-2 md:grid-cols-4">
@@ -1218,8 +1337,6 @@ export default function TraceabilityDossierPage() {
                                 <input type="date" value={draft.deliveryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               </label>
                               <input value={draft.receivedQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { receivedQuantity: e.target.value })} placeholder="Cantidad recibida" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.soldQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { soldQuantity: e.target.value })} placeholder="Vendida/consumida" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.currentQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { currentQuantity: e.target.value })} placeholder="Existencias actuales" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <label className="grid gap-1">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fabricación</span>
                                 <input type="date" value={draft.manufactureDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { manufactureDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
@@ -1250,6 +1367,7 @@ export default function TraceabilityDossierPage() {
                               Guardar lote en esta carpeta
                             </button>
                           </div>
+                          )}
                         </div>
                       );
                     })}
