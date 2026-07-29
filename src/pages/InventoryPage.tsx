@@ -3428,6 +3428,71 @@ function InventoryPage() {
       .sort((a, b) => a.lote.localeCompare(b.lote));
   }, [potentialDetailProduct, stockControlTables.potentialLotRows]);
 
+  const stockControlDetailExportHeaders = [
+    'Lote',
+    'Bodegas con stock',
+    'Canet',
+    'Huarte',
+    'Mas Borrás',
+    'Stock vendible',
+    'Potencial',
+    'Disponible total',
+  ];
+
+  const stockControlDetailExportRows = useMemo(
+    () =>
+      stockControlDetailRows.map((row) => {
+        const stockCanet = Number(row.stockCanet.toFixed(2));
+        const stockHuarte = Number(row.stockHuarte.toFixed(2));
+        const stockMasBorras = Number(row.stockMasBorras.toFixed(2));
+        const warehouses = [
+          ['Canet', stockCanet],
+          ['Huarte', stockHuarte],
+          ['Mas Borrás', stockMasBorras],
+        ]
+          .filter(([, qty]) => toNum(qty) > 0)
+          .map(([warehouse, qty]) => `${warehouse}: ${qty}`)
+          .join(' · ');
+        return [
+          row.lote,
+          warehouses || '-',
+          stockCanet,
+          stockHuarte,
+          stockMasBorras,
+          Number(row.stockVendible.toFixed(2)),
+          Number(row.potencialCajas.toFixed(2)),
+          Number(row.disponible.toFixed(2)),
+        ];
+      }),
+    [stockControlDetailRows],
+  );
+
+  const downloadStockControlDetailPdf = async () => {
+    if (!potentialDetailProduct) return;
+    openTablePdf(
+      `Control stock - Detalle por lote - ${potentialDetailProduct}`,
+      `control-stock-${potentialDetailProduct.toLowerCase()}-detalle-lotes-${periodFileKey}.pdf`,
+      stockControlDetailExportHeaders,
+      stockControlDetailExportRows,
+    );
+    await notifyAnabela(`${actorName} descargó detalle por lote de ${potentialDetailProduct} en Control stock (${periodFileKey}).`);
+    appendAudit('Descarga PDF', `Control stock detalle por lote ${potentialDetailProduct} (${periodFileKey})`);
+    emitSuccessFeedback('PDF de detalle por lote generado.');
+  };
+
+  const downloadStockControlDetailExcel = async () => {
+    if (!potentialDetailProduct) return;
+    openTableExcel(
+      `Control stock - Detalle por lote - ${potentialDetailProduct}`,
+      `control-stock-${potentialDetailProduct.toLowerCase()}-detalle-lotes-${periodFileKey}.xlsx`,
+      stockControlDetailExportHeaders,
+      stockControlDetailExportRows,
+    );
+    await notifyAnabela(`${actorName} descargó Excel de detalle por lote de ${potentialDetailProduct} en Control stock (${periodFileKey}).`);
+    appendAudit('Descarga Excel', `Control stock detalle por lote ${potentialDetailProduct} (${periodFileKey})`);
+    emitSuccessFeedback('Excel de detalle por lote generado.');
+  };
+
   const riskyProductsSummary = useMemo(() => {
     const acc = new Map<string, { producto: string; stockTotal: number; coberturaMeses: number }>();
     for (const row of controlStockRows as any[]) {
@@ -6728,6 +6793,8 @@ function InventoryPage() {
               title={`Detalle por lote · ${potentialDetailProduct}`}
               subtitle="Desglose por lote en bodegas vendibles: Canet, Huarte y Mas Borrás."
               tone="amber"
+              onDownload={() => void downloadStockControlDetailPdf()}
+              onDownloadExcel={() => void downloadStockControlDetailExcel()}
             >
               <div className="mb-2 flex justify-end">
                 <button
