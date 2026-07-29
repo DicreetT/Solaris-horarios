@@ -87,6 +87,7 @@ type TraceabilityEntry = {
   deliveryDate: string;
   albaranNumber: string;
   solarisInvoiceNumber: string;
+  deliveryNoteQuantity: string;
   quantity: string;
   quantityMatchesInvoice: string;
   quantityDifference: string;
@@ -138,6 +139,7 @@ type SupplierLotDraft = {
   deliveryDate: string;
   albaranNumber: string;
   solarisInvoiceNumber: string;
+  deliveryNoteQuantity: string;
   receivedQuantity: string;
   quantityMatchesInvoice: string;
   quantityDifference: string;
@@ -221,6 +223,7 @@ function emptySupplierLotDraft(productName = ''): SupplierLotDraft {
     deliveryDate: '',
     albaranNumber: '',
     solarisInvoiceNumber: '',
+    deliveryNoteQuantity: '',
     receivedQuantity: '',
     quantityMatchesInvoice: '',
     quantityDifference: '',
@@ -325,6 +328,7 @@ function normalizeState(value: any): TraceabilityState {
         deliveryDate: clean(entry?.deliveryDate),
         albaranNumber: clean(entry?.albaranNumber),
         solarisInvoiceNumber: clean(entry?.solarisInvoiceNumber),
+        deliveryNoteQuantity: clean(entry?.deliveryNoteQuantity),
         quantity: clean(entry?.quantity),
         quantityMatchesInvoice: clean(entry?.quantityMatchesInvoice),
         quantityDifference: clean(entry?.quantityDifference),
@@ -398,6 +402,7 @@ export default function TraceabilityDossierPage() {
     deliveryDate: '',
     albaranNumber: '',
     solarisInvoiceNumber: '',
+    deliveryNoteQuantity: '',
     quantity: '',
     quantityMatchesInvoice: '',
     quantityDifference: '',
@@ -420,6 +425,7 @@ export default function TraceabilityDossierPage() {
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([]);
   const [expandedLotIds, setExpandedLotIds] = useState<string[]>([]);
   const [expandedDocumentBlockIds, setExpandedDocumentBlockIds] = useState<string[]>([]);
+  const [expandedCreateBlockIds, setExpandedCreateBlockIds] = useState<string[]>([]);
   const [editingSupplierId, setEditingSupplierId] = useState('');
   const [supplierEditDraft, setSupplierEditDraft] = useState(emptySupplierFormDraft());
   const [editingProductKey, setEditingProductKey] = useState('');
@@ -465,6 +471,7 @@ export default function TraceabilityDossierPage() {
     setExpandedProductIds([]);
     setExpandedLotIds([]);
     setExpandedDocumentBlockIds([]);
+    setExpandedCreateBlockIds([]);
   };
 
   const lotDraftFor = (supplier: Supplier, product: SupplierProduct) => {
@@ -627,6 +634,7 @@ export default function TraceabilityDossierPage() {
     setSelectedSupplierId(supplier.id);
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
     setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, nextProduct.id)])));
+    setExpandedCreateBlockIds((prev) => prev.filter((id) => id !== documentBlockKeyFor('create-product', supplier.id)));
     setProductDraft(emptyProductFormDraft());
     emitSuccessFeedback('Producto del proveedor guardado.');
   };
@@ -665,7 +673,8 @@ export default function TraceabilityDossierPage() {
     const now = new Date().toISOString();
     const productName = clean(draft.finalProductName) || product.name;
     const quantityLine = [
-      clean(draft.receivedQuantity) ? `Cantidad recibida: ${clean(draft.receivedQuantity)}` : '',
+      clean(draft.deliveryNoteQuantity) ? `Cantidad en albarán: ${clean(draft.deliveryNoteQuantity)}` : '',
+      clean(draft.receivedQuantity) ? `Cantidad entregada: ${clean(draft.receivedQuantity)}` : '',
     ].filter(Boolean).join(' · ');
     const processNotes = [quantityLine, clean(draft.notes)].filter(Boolean).join('\n');
     const nextLot: FinalLot = {
@@ -682,15 +691,16 @@ export default function TraceabilityDossierPage() {
         id: uid('ent'),
         supplierId: supplier.id,
         supplierProductId: product.id,
-      stage: product.category,
-      deliveryDate: clean(draft.deliveryDate),
-      albaranNumber: clean(draft.albaranNumber),
-      solarisInvoiceNumber: clean(draft.solarisInvoiceNumber),
-      quantity: clean(draft.receivedQuantity),
-      quantityMatchesInvoice: clean(draft.quantityMatchesInvoice),
-      quantityDifference: clean(draft.quantityDifference),
-      quantityCheckNotes: clean(draft.quantityCheckNotes),
-      supplierLot: clean(draft.lotNumber),
+        stage: product.category,
+        deliveryDate: clean(draft.deliveryDate),
+        albaranNumber: clean(draft.albaranNumber),
+        solarisInvoiceNumber: clean(draft.solarisInvoiceNumber),
+        deliveryNoteQuantity: clean(draft.deliveryNoteQuantity),
+        quantity: clean(draft.receivedQuantity),
+        quantityMatchesInvoice: clean(draft.quantityMatchesInvoice),
+        quantityDifference: clean(draft.quantityDifference),
+        quantityCheckNotes: clean(draft.quantityCheckNotes),
+        supplierLot: clean(draft.lotNumber),
         finalLotId: '',
         expiryDate: clean(draft.expiryDate),
         bestBeforeDate: clean(draft.expiryDate),
@@ -714,6 +724,7 @@ export default function TraceabilityDossierPage() {
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
     setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, product.id)])));
     setExpandedLotIds((prev) => Array.from(new Set([...prev, nextLot.id])));
+    setExpandedCreateBlockIds((prev) => prev.filter((id) => id !== documentBlockKeyFor('create-lot', supplier.id, product.id)));
     setSupplierLotDrafts((prev) => ({
       ...prev,
       [draftKeyFor(supplier.id, product.id)]: emptySupplierLotDraft(product.name),
@@ -755,6 +766,7 @@ export default function TraceabilityDossierPage() {
       deliveryDate: '',
       albaranNumber: '',
       solarisInvoiceNumber: '',
+      deliveryNoteQuantity: '',
       quantity: '',
       quantityMatchesInvoice: '',
       quantityDifference: '',
@@ -978,6 +990,7 @@ export default function TraceabilityDossierPage() {
       deliveryDate: entry?.deliveryDate || '',
       albaranNumber: entry?.albaranNumber || '',
       solarisInvoiceNumber: entry?.solarisInvoiceNumber || '',
+      deliveryNoteQuantity: entry?.deliveryNoteQuantity || '',
       receivedQuantity: entry?.quantity || lot.quantity,
       quantityMatchesInvoice: entry?.quantityMatchesInvoice || '',
       quantityDifference: entry?.quantityDifference || '',
@@ -1006,7 +1019,10 @@ export default function TraceabilityDossierPage() {
           if (item.id !== editingLotId) return item;
           const supplier = base.suppliers.find((candidate) => candidate.id === lotEditContext.supplierId);
           const product = supplier?.products.find((candidate) => candidate.id === lotEditContext.productId);
-          const quantityLine = clean(lotEditDraft.receivedQuantity) ? `Cantidad recibida: ${clean(lotEditDraft.receivedQuantity)}` : '';
+          const quantityLine = [
+            clean(lotEditDraft.deliveryNoteQuantity) ? `Cantidad en albarán: ${clean(lotEditDraft.deliveryNoteQuantity)}` : '',
+            clean(lotEditDraft.receivedQuantity) ? `Cantidad entregada: ${clean(lotEditDraft.receivedQuantity)}` : '',
+          ].filter(Boolean).join(' · ');
           const processNotes = [quantityLine, clean(lotEditDraft.notes)].filter(Boolean).join('\n');
           return {
             ...item,
@@ -1025,6 +1041,7 @@ export default function TraceabilityDossierPage() {
                     deliveryDate: clean(lotEditDraft.deliveryDate),
                     albaranNumber: clean(lotEditDraft.albaranNumber),
                     solarisInvoiceNumber: clean(lotEditDraft.solarisInvoiceNumber),
+                    deliveryNoteQuantity: clean(lotEditDraft.deliveryNoteQuantity),
                     quantity: clean(lotEditDraft.receivedQuantity),
                     quantityMatchesInvoice: clean(lotEditDraft.quantityMatchesInvoice),
                     quantityDifference: clean(lotEditDraft.quantityDifference),
@@ -1089,7 +1106,10 @@ export default function TraceabilityDossierPage() {
         unit: clean(product?.unit),
       };
     });
-    const receivedQuantities = entryDetails
+    const deliveryNoteQuantities = entryDetails
+      .map(({ entry, unit }) => [entry.deliveryNoteQuantity || '-', unit].filter(Boolean).join(' '))
+      .join('\n') || '-';
+    const deliveredQuantities = entryDetails
       .map(({ entry, unit }) => [entry.quantity || lot.quantity || '-', unit].filter(Boolean).join(' '))
       .join('\n') || '-';
     const receptionFormats = Array.from(new Set(entryDetails.map((detail) => detail.unit).filter(Boolean))).join(', ') || '-';
@@ -1106,7 +1126,8 @@ export default function TraceabilityDossierPage() {
       body: [
         ['Producto final', safePdfText(lot.productName)],
         ['Lote final', safePdfText(lot.lotNumber)],
-        ['Cantidades recibidas', safePdfText(receivedQuantities) || '-'],
+        ['Cantidades en albarán', safePdfText(deliveryNoteQuantities) || '-'],
+        ['Cantidades entregadas', safePdfText(deliveredQuantities) || '-'],
         ['Formato de recepción', safePdfText(receptionFormats) || '-'],
         ['Fecha montaje/fabricación', safePdfText(lot.manufactureDate) || '-'],
         ['Caducidad / consumo preferente final', safePdfText(lot.expiryDate) || '-'],
@@ -1134,12 +1155,13 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 18,
-      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad recibida', 'Cad./cons.', 'Factura Solaris', 'Corresponde', 'Diferencia', 'Observación', 'Adjuntos']],
+      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad en albarán', 'Cantidad entregada', 'Cad./cons.', 'Factura Solaris', 'Corresponde', 'Diferencia', 'Observación', 'Adjuntos']],
       body: entryDetails.map(({ entry, stage, unit }) => [
         labelForCategory(stage),
         entry.albaranNumber || '-',
         entry.supplierLot || '-',
         entry.deliveryDate || '-',
+        [entry.deliveryNoteQuantity || '-', unit].filter(Boolean).join(' '),
         [entry.quantity || '-', unit].filter(Boolean).join(' '),
         entry.expiryDate || entry.bestBeforeDate || '-',
         entry.solarisInvoiceNumber || '-',
@@ -1151,7 +1173,7 @@ export default function TraceabilityDossierPage() {
       theme: 'grid',
       styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
       headStyles: { fillColor: [31, 41, 55] },
-      columnStyles: { 9: { cellWidth: 120 } },
+      columnStyles: { 10: { cellWidth: 115 } },
     });
 
     if (lot.entries.length > 0) {
@@ -1239,7 +1261,7 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Lote', 'Producto', 'Albarán', 'Factura Solaris', 'Entrega', 'Caducidad', 'Cantidad', 'Corresponde', 'Diferencia', 'Documentos', 'Notas']],
+      head: [['Lote', 'Producto', 'Albarán', 'Factura Solaris', 'Entrega', 'Caducidad', 'Cant. albarán', 'Cant. entregada', 'Corresponde', 'Diferencia', 'Documentos', 'Notas']],
       body: relatedLots.flatMap((lot) => lot.entries
         .filter((entry) => entry.supplierId === supplier.id)
         .map((entry) => {
@@ -1251,6 +1273,7 @@ export default function TraceabilityDossierPage() {
             entry.solarisInvoiceNumber || '-',
             entry.deliveryDate || '-',
             entry.expiryDate || entry.bestBeforeDate || lot.expiryDate || '-',
+            [entry.deliveryNoteQuantity || '-', product?.unit || ''].filter(Boolean).join(' '),
             [entry.quantity || lot.quantity || '-', product?.unit || ''].filter(Boolean).join(' '),
             labelForQuantityMatch(entry.quantityMatchesInvoice),
             entry.quantityDifference || '-',
@@ -1261,7 +1284,7 @@ export default function TraceabilityDossierPage() {
       theme: 'striped',
       styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
       headStyles: { fillColor: [15, 118, 110] },
-      columnStyles: { 10: { cellWidth: 150 } },
+      columnStyles: { 11: { cellWidth: 140 } },
     });
 
     doc.save(`carpeta-proveedor-${supplier.name}.pdf`.replace(/[^\w.-]+/g, '-').toLowerCase());
@@ -1319,6 +1342,8 @@ export default function TraceabilityDossierPage() {
           {suppliers.map((supplier) => {
             const isOpen = expandedSupplierIds.includes(supplier.id);
             const relatedLots = lots.filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id));
+            const createProductKey = documentBlockKeyFor('create-product', supplier.id);
+            const isCreateProductOpen = expandedCreateBlockIds.includes(createProductKey);
             return (
               <section key={supplier.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition ${isOpen ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1381,40 +1406,44 @@ export default function TraceabilityDossierPage() {
                       </div>
                     )}
 
-                    {selectedSupplierId === supplier.id ? (
-                    <div className="grid gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-3 md:grid-cols-4">
-                      <div className="md:col-span-4">
-                        <p className="text-xs font-black uppercase tracking-widest text-teal-700">Crear producto suministrado dentro de {supplier.name}</p>
-                      </div>
-                      <input value={productDraft.name} onChange={(e) => setProductDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Producto/material" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                      <input value={productDraft.reference} onChange={(e) => setProductDraft((prev) => ({ ...prev, reference: e.target.value }))} placeholder="Referencia comercial" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                      <select value={productDraft.category} onChange={(e) => setProductDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-bold outline-none focus:border-teal-400">
-                        {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-                      </select>
-                      <input value={productDraft.unit} onChange={(e) => setProductDraft((prev) => ({ ...prev, unit: e.target.value }))} placeholder="Unidad/formato" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                      <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                        <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Ficha técnica</p>
-                        <FileUploader folderPath="traceability/supplier-products/technical-sheets" existingFiles={productDraft.technicalSheets} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, technicalSheets: files }))} compact maxSizeMB={15} />
-                      </div>
-                      <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                        <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base</p>
-                        <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productDraft.certificates} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
-                      </div>
-                      <button type="button" onClick={() => addSupplierProduct(supplier)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700 md:col-span-4">
-                        <Save size={16} />
-                        Guardar producto suministrado
-                      </button>
-                    </div>
-                    ) : (
+                    <div className="rounded-2xl border border-teal-100 bg-teal-50/50 p-2">
                       <button
                         type="button"
-                        onClick={() => setSelectedSupplierId(supplier.id)}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-black text-teal-800 hover:bg-teal-100"
+                        onClick={() => {
+                          setSelectedSupplierId(supplier.id);
+                          toggleExpanded(setExpandedCreateBlockIds, createProductKey);
+                        }}
+                        className="inline-flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-white"
                       >
-                        <Plus size={16} />
-                        Crear producto suministrado en este proveedor
+                        <span className="inline-flex items-center gap-2">
+                          {isCreateProductOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          Crear producto suministrado dentro de {supplier.name}
+                        </span>
+                        <Plus size={15} />
                       </button>
-                    )}
+                      {isCreateProductOpen && selectedSupplierId === supplier.id && (
+                        <div className="mt-2 grid gap-2 md:grid-cols-4">
+                          <input value={productDraft.name} onChange={(e) => setProductDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Producto/material" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                          <input value={productDraft.reference} onChange={(e) => setProductDraft((prev) => ({ ...prev, reference: e.target.value }))} placeholder="Referencia comercial" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                          <select value={productDraft.category} onChange={(e) => setProductDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-bold outline-none focus:border-teal-400">
+                            {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                          </select>
+                          <input value={productDraft.unit} onChange={(e) => setProductDraft((prev) => ({ ...prev, unit: e.target.value }))} placeholder="Unidad/formato" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                          <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
+                            <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Ficha técnica</p>
+                            <FileUploader folderPath="traceability/supplier-products/technical-sheets" existingFiles={productDraft.technicalSheets} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, technicalSheets: files }))} compact maxSizeMB={15} />
+                          </div>
+                          <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
+                            <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base</p>
+                            <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productDraft.certificates} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
+                          </div>
+                          <button type="button" onClick={() => addSupplierProduct(supplier)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700 md:col-span-4">
+                            <Save size={16} />
+                            Guardar producto suministrado
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     {supplier.products.map((product) => {
                       const draft = lotDraftFor(supplier, product);
@@ -1423,6 +1452,8 @@ export default function TraceabilityDossierPage() {
                       const isProductOpen = expandedProductIds.includes(productKey);
                       const newDocumentsKey = documentBlockKeyFor('new-docs', supplier.id, product.id);
                       const areNewDocumentsOpen = expandedDocumentBlockIds.includes(newDocumentsKey);
+                      const createLotKey = documentBlockKeyFor('create-lot', supplier.id, product.id);
+                      const isCreateLotOpen = expandedCreateBlockIds.includes(createLotKey);
                       return (
                         <div key={product.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -1496,7 +1527,7 @@ export default function TraceabilityDossierPage() {
                                           {isLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                           Lote {entry?.supplierLot || lot.lotNumber}
                                         </p>
-                                        <p className="text-xs font-semibold text-slate-600">Albarán {entry?.albaranNumber || '-'} · Cantidad recibida {entry?.quantity || lot.quantity || '-'} · {lotFileCount} documento(s)</p>
+                                        <p className="text-xs font-semibold text-slate-600">Albarán {entry?.albaranNumber || '-'} · En albarán {entry?.deliveryNoteQuantity || '-'} · Entregada {entry?.quantity || lot.quantity || '-'} · {lotFileCount} documento(s)</p>
                                       </button>
                                       <div className="flex flex-wrap gap-1">
                                         <button type="button" onClick={() => editLot(lot, supplier, product, entry)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-100">
@@ -1522,7 +1553,8 @@ export default function TraceabilityDossierPage() {
                                               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
                                               <input type="date" value={lotEditDraft.deliveryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, deliveryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             </label>
-                                            <input value={lotEditDraft.receivedQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, receivedQuantity: e.target.value }))} placeholder="Cantidad recibida" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+                                            <input value={lotEditDraft.deliveryNoteQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, deliveryNoteQuantity: e.target.value }))} placeholder="Cantidad en albarán" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+                                            <input value={lotEditDraft.receivedQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, receivedQuantity: e.target.value }))} placeholder="Cantidad entregada" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             <label className="grid gap-1">
                                               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
                                               <select value={lotEditDraft.quantityMatchesInvoice} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityMatchesInvoice: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-bold outline-none focus:border-amber-400">
@@ -1588,6 +1620,8 @@ export default function TraceabilityDossierPage() {
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Entrega: {entry?.deliveryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {entry?.expiryDate || lot.expiryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {entry?.albaranNumber || '-'}</p>
+                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Cantidad en albarán: {entry?.deliveryNoteQuantity || '-'}</p>
+                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Cantidad entregada: {entry?.quantity || lot.quantity || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Factura Solaris: {entry?.solarisInvoiceNumber || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Corresponde: {entry ? labelForQuantityMatch(entry.quantityMatchesInvoice) : '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Diferencia: {entry?.quantityDifference || '-'}</p>
@@ -1642,8 +1676,20 @@ export default function TraceabilityDossierPage() {
 
                           {isProductOpen && (
                           <div className="mt-3 rounded-2xl border border-dashed border-teal-200 bg-white p-3">
-                            <p className="mb-2 text-xs font-black uppercase tracking-widest text-teal-700">Dar de alta lote de este producto</p>
-                            <div className="grid gap-2 md:grid-cols-4">
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(setExpandedCreateBlockIds, createLotKey)}
+                              className="inline-flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-teal-50"
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                {isCreateLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                Dar de alta nuevo lote de este producto
+                              </span>
+                              <Plus size={15} />
+                            </button>
+                            {isCreateLotOpen && (
+                            <>
+                            <div className="mt-3 grid gap-2 md:grid-cols-4">
                               <input value={draft.finalProductName} onChange={(e) => updateSupplierLotDraft(supplier, product, { finalProductName: e.target.value })} placeholder="Producto/lote: SolarVital..." className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <input value={draft.lotNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { lotNumber: e.target.value })} placeholder="Nº lote" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <input value={draft.albaranNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { albaranNumber: e.target.value })} placeholder="Albarán/factura entrada" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
@@ -1652,7 +1698,8 @@ export default function TraceabilityDossierPage() {
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
                                 <input type="date" value={draft.deliveryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               </label>
-                              <input value={draft.receivedQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { receivedQuantity: e.target.value })} placeholder="Cantidad recibida" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                              <input value={draft.deliveryNoteQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryNoteQuantity: e.target.value })} placeholder="Cantidad en albarán" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                              <input value={draft.receivedQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { receivedQuantity: e.target.value })} placeholder="Cantidad entregada" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <label className="grid gap-1">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
                                 <select value={draft.quantityMatchesInvoice} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityMatchesInvoice: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-400">
@@ -1707,6 +1754,8 @@ export default function TraceabilityDossierPage() {
                               <Plus size={16} />
                               Guardar lote en esta carpeta
                             </button>
+                            </>
+                            )}
                           </div>
                           )}
                         </div>
