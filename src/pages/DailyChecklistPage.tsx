@@ -6,12 +6,21 @@ import { toDateKey, formatDatePretty } from '../utils/dateUtils';
 import { Plus, Trash2, Save, CheckSquare, Settings, Calendar, User as UserIcon, Loader } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 
+type ChecklistTask = {
+    id: string;
+    text: string;
+    completed: boolean;
+    source?: 'template' | 'personal';
+    created_at?: string;
+};
+
 export default function DailyChecklistPage() {
     const { currentUser } = useAuth();
     const [viewMode, setViewMode] = useState<'daily' | 'templates' | 'history'>('daily');
     const [selectedUserForTemplate, setSelectedUserForTemplate] = useState(USERS[0]?.id || '');
     const [templateTasks, setTemplateTasks] = useState<{ id: string; text: string }[]>([]);
-    const [dailyTasks, setDailyTasks] = useState<{ id: string; text: string; completed: boolean }[]>([]);
+    const [dailyTasks, setDailyTasks] = useState<ChecklistTask[]>([]);
+    const [dailyTaskDraft, setDailyTaskDraft] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [history, setHistory] = useState<any[]>([]);
@@ -109,30 +118,35 @@ export default function DailyChecklistPage() {
                 .single()
         ]);
 
-        let tasksToShow = [];
+        let tasksToShow: ChecklistTask[] = [];
+
+        const savedHistory = Array.isArray(dailyData?.history) ? dailyData.history : [];
+        const completionMap = new Map<string, boolean>();
+        savedHistory.forEach((t: any) => {
+            completionMap.set(t.id, !!t.completed);
+        });
 
         if (templateData?.tasks) {
-            // 2. Logic: Always respect the TEMPLATE structure (so deleted tasks disappear, new ones appear)
-            // But preserve the COMPLETION STATUS from the daily record if it exists.
-
-            const completionMap = new Map();
-            if (dailyData?.history) {
-                dailyData.history.forEach((t: any) => {
-                    completionMap.set(t.id, t.completed);
-                });
-            }
-
+            // Always respect the template structure, while preserving today's progress.
             tasksToShow = templateData.tasks.map((t: any) => ({
                 ...t,
-                completed: completionMap.has(t.id) ? completionMap.get(t.id) : false
+                source: 'template',
+                completed: completionMap.has(t.id) ? completionMap.get(t.id) || false : false
             }));
-
-        } else if (dailyData?.history) {
-            // Fallback: If no template exists anymore but we have history, show history? 
-            // Or if template is empty, show nothing. 
-            // Let's assume if template is missing/empty, the user should have no tasks.
-            tasksToShow = [];
         }
+
+        const personalTasks = savedHistory
+            .filter((t: any) => t?.source === 'personal' || String(t?.id || '').startsWith('personal-'))
+            .map((t: any) => ({
+                id: t.id || crypto.randomUUID(),
+                text: String(t.text || '').trim(),
+                completed: !!t.completed,
+                source: 'personal' as const,
+                created_at: t.created_at
+            }))
+            .filter((t: ChecklistTask) => t.text.length > 0);
+
+        tasksToShow = [...tasksToShow, ...personalTasks];
 
         setDailyTasks(tasksToShow);
         setLoading(false);
@@ -149,7 +163,7 @@ export default function DailyChecklistPage() {
                 date_key: todayKey,
                 history: dailyTasks,
                 updated_at: new Date().toISOString()
-            }, { onConflict: 'user_id, date_key' });
+            }, { onConflict: 'user_id,date_key' });
 
         if (error) alert('Error al guardar el día');
         else alert('¡Progreso diario guardado!');
@@ -160,6 +174,30 @@ export default function DailyChecklistPage() {
         setDailyTasks(dailyTasks.map(t =>
             t.id === taskId ? { ...t, completed: !t.completed } : t
         ));
+    }
+
+    function addDailyTask() {
+        const text = dailyTaskDraft.trim();
+        if (!text) return;
+        setDailyTasks([
+            ...dailyTasks,
+            {
+                id: `personal-${crypto.randomUUID()}`,
+                text,
+                completed: false,
+                source: 'personal',
+                created_at: new Date().toISOString()
+            }
+        ]);
+        setDailyTaskDraft('');
+    }
+
+    function removeDailyTask(taskId: string) {
+        const task = dailyTasks.find(t => t.id === taskId);
+        if (!task || task.source !== 'personal') return;
+        if (confirm('¿Quitar esta tarea personal del día?')) {
+            setDailyTasks(dailyTasks.filter(t => t.id !== taskId));
+        }
     }
 
     // --- History (View) ---
@@ -245,6 +283,35 @@ export default function DailyChecklistPage() {
                             </button>
                         </div>
 
+                        <div className="mb-6 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                            <p className="text-xs font-black uppercase tracking-widest text-blue-700">Añadir algo de hoy</p>
+                            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                <input
+                                    value={dailyTaskDraft}
+                                    onChange={(event) => setDailyTaskDraft(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                            event.preventDefault();
+                                            addDailyTask();
+                                        }
+                                    }}
+                                    placeholder="Ej: Revisar stock físico, llamar proveedor, subir albarán..."
+                                    className="min-h-11 flex-1 rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-950"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={addDailyTask}
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white hover:bg-blue-800"
+                                >
+                                    <Plus size={16} />
+                                    Añadir
+                                </button>
+                            </div>
+                            <p className="mt-2 text-xs font-semibold text-blue-700">
+                                Estas tareas se guardan solo en tu checklist de hoy; no cambian tu plantilla recurrente.
+                            </p>
+                        </div>
+
                         {loading ? (
                             <div className="flex justify-center p-12"><Loader className="animate-spin text-gray-400" /></div>
                         ) : dailyTasks.length === 0 ? (
@@ -262,19 +329,44 @@ export default function DailyChecklistPage() {
                                 {dailyTasks.map(task => (
                                     <div
                                         key={task.id}
-                                        onClick={() => toggleTask(task.id)}
-                                        className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${task.completed
+                                        className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${task.completed
                                             ? 'bg-gray-50 border-gray-200'
                                             : 'bg-green-50 border-green-200 hover:border-green-300 shadow-sm'
                                             }`}
                                     >
-                                        <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors ${task.completed ? 'bg-gray-400 border-gray-400 text-white' : 'border-green-500 bg-white text-transparent'
-                                            }`}>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleTask(task.id)}
+                                            className={`w-6 h-6 rounded-lg border-2 flex shrink-0 items-center justify-center transition-colors ${task.completed ? 'bg-gray-400 border-gray-400 text-white' : 'border-green-500 bg-white text-transparent'
+                                                }`}
+                                            aria-label={task.completed ? 'Marcar como pendiente' : 'Marcar como completada'}
+                                        >
                                             <CheckSquare size={14} fill="currentColor" className={task.completed ? 'text-white' : 'text-green-500 opacity-0'} />
-                                        </div>
-                                        <span className={`text-lg font-medium transition-colors ${task.completed ? 'text-gray-400 line-through' : 'text-green-900'}`}>
-                                            {task.text}
-                                        </span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleTask(task.id)}
+                                            className="min-w-0 flex-1 text-left"
+                                        >
+                                            <span className={`text-lg font-medium transition-colors ${task.completed ? 'text-gray-400 line-through' : 'text-green-900'}`}>
+                                                {task.text}
+                                            </span>
+                                            {task.source === 'personal' && (
+                                                <span className="ml-2 inline-flex rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-blue-700">
+                                                    Personal
+                                                </span>
+                                            )}
+                                        </button>
+                                        {task.source === 'personal' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => removeDailyTask(task.id)}
+                                                className="rounded-lg p-2 text-gray-300 transition hover:bg-red-50 hover:text-red-600"
+                                                title="Quitar tarea personal"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -397,12 +489,14 @@ export default function DailyChecklistPage() {
                                             const user = USERS.find(u => u.id === record.user_id);
                                             const tasks = record.history || [];
                                             const completedTasks = tasks.filter((t: any) => t.completed);
+                                            const pendingTasks = tasks.filter((t: any) => !t.completed);
                                             const totalCount = tasks.length;
                                             const completedCount = completedTasks.length;
                                             const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+                                            const isIncomplete = totalCount > 0 && completedCount < totalCount;
 
                                             return (
-                                                <tr key={record.id} className="hover:bg-blue-50/30 transition-colors">
+                                                <tr key={record.id} className={`transition-colors ${isIncomplete ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-blue-50/30'}`}>
                                                     <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
                                                         {formatDatePretty(new Date(record.date_key))}
                                                     </td>
@@ -416,11 +510,18 @@ export default function DailyChecklistPage() {
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
                                                                 <div
-                                                                    className={`h-full rounded-full ${percentage === 100 ? 'bg-green-500' : 'bg-primary'}`}
+                                                                    className={`h-full rounded-full ${percentage === 100 ? 'bg-green-500' : 'bg-red-500'}`}
                                                                     style={{ width: `${percentage}%` }}
                                                                 />
                                                             </div>
-                                                            <span className="text-xs font-bold">{percentage}%</span>
+                                                            <span className={`text-xs font-bold ${isIncomplete ? 'text-red-700' : 'text-gray-700'}`}>
+                                                                {percentage}%
+                                                            </span>
+                                                            {isIncomplete && (
+                                                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-700">
+                                                                    {pendingTasks.length} pendiente(s)
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
@@ -429,10 +530,11 @@ export default function DailyChecklistPage() {
                                                                 tasks.map((t: any) => (
                                                                     <div key={t.id} className="flex items-center gap-2">
                                                                         <div
-                                                                            className={`w-2 h-2 rounded-full ${t.completed ? 'bg-green-500' : 'bg-gray-200'}`}
+                                                                            className={`w-2 h-2 rounded-full ${t.completed ? 'bg-green-500' : 'bg-red-500'}`}
                                                                         />
-                                                                        <span className={`text-xs ${t.completed ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+                                                                        <span className={`text-xs ${t.completed ? 'text-gray-700 font-medium' : 'text-red-700 font-black'}`}>
                                                                             {t.text}
+                                                                            {t.source === 'personal' ? ' · personal' : ''}
                                                                         </span>
                                                                     </div>
                                                                 ))}

@@ -396,7 +396,7 @@ function Dashboard() {
 
     const [checklistLoading, setChecklistLoading] = useState(false);
     const [checklistSaving, setChecklistSaving] = useState(false);
-    const [checklistTasks, setChecklistTasks] = useState<Array<{ id: string; text: string; completed: boolean }>>([]);
+    const [checklistTasks, setChecklistTasks] = useState<Array<{ id: string; text: string; completed: boolean; source?: 'template' | 'personal' }>>([]);
     const [showAllTimeRows, setShowAllTimeRows] = useState(false);
     const [activeRequestModal, setActiveRequestModal] = useState<QuickRequestType>(null);
     const [requestDate, setRequestDate] = useState(toDateKey(new Date()));
@@ -2078,9 +2078,10 @@ function Dashboard() {
                         .single(),
                 ]);
 
+                const savedHistory = Array.isArray(dailyData?.history) ? dailyData.history as any[] : [];
                 const completionMap = new Map<string, boolean>();
-                if (dailyData?.history) {
-                    (dailyData.history as any[]).forEach((task) => {
+                if (savedHistory.length > 0) {
+                    savedHistory.forEach((task) => {
                         completionMap.set(task.id, !!task.completed);
                     });
                 }
@@ -2088,10 +2089,21 @@ function Dashboard() {
                 const merged = ((templateData?.tasks || []) as any[]).map((task) => ({
                     id: task.id,
                     text: task.text,
+                    source: 'template' as const,
                     completed: completionMap.get(task.id) || false,
                 }));
 
-                setChecklistTasks(merged);
+                const personalTasks = savedHistory
+                    .filter((task) => task?.source === 'personal' || String(task?.id || '').startsWith('personal-'))
+                    .map((task) => ({
+                        id: task.id,
+                        text: String(task.text || '').trim(),
+                        source: 'personal' as const,
+                        completed: !!task.completed,
+                    }))
+                    .filter((task) => task.id && task.text);
+
+                setChecklistTasks([...merged, ...personalTasks]);
             } finally {
                 setChecklistLoading(false);
             }
@@ -2100,7 +2112,7 @@ function Dashboard() {
         loadChecklist();
     }, [currentUser, todayKey]);
 
-    const saveChecklist = async (nextTasks: Array<{ id: string; text: string; completed: boolean }>) => {
+    const saveChecklist = async (nextTasks: Array<{ id: string; text: string; completed: boolean; source?: 'template' | 'personal' }>) => {
         if (!currentUser) return;
         setChecklistSaving(true);
         try {
@@ -3483,14 +3495,26 @@ function Dashboard() {
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     {checklistTasks.slice(0, 8).map((task) => (
-                                        <label key={task.id} className="flex items-center gap-2 p-2 rounded-xl border border-violet-100 bg-violet-50/70 text-sm cursor-pointer">
+                                        <label
+                                            key={task.id}
+                                            className={`flex items-center gap-2 p-2 rounded-xl border text-sm cursor-pointer ${
+                                                task.completed
+                                                    ? 'border-violet-100 bg-violet-50/70'
+                                                    : 'border-rose-100 bg-rose-50/70'
+                                            }`}
+                                        >
                                             <input
                                                 type="checkbox"
                                                 checked={task.completed}
                                                 onChange={() => toggleChecklistTask(task.id)}
-                                                className="accent-violet-700"
+                                                className="accent-rose-700"
                                             />
-                                            <span className={task.completed ? 'line-through text-violet-500' : 'text-violet-900'}>{task.text}</span>
+                                            <span className={task.completed ? 'line-through text-violet-500' : 'font-bold text-rose-900'}>
+                                                {task.text}
+                                                {task.source === 'personal' && (
+                                                    <span className="ml-1 text-[10px] font-black uppercase tracking-wide text-blue-700">personal</span>
+                                                )}
+                                            </span>
                                         </label>
                                     ))}
                                 </div>
