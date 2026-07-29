@@ -1188,7 +1188,7 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Lote', 'Producto', 'Albarán', 'Entrega', 'Caducidad', 'Cantidad', 'Documentos', 'Observaciones']],
+      head: [['Lote', 'Producto', 'Albarán', 'Entrega', 'Caducidad', 'Cantidad', 'Documentos', 'Notas']],
       body: relatedLots.flatMap((lot) => lot.entries
         .filter((entry) => entry.supplierId === supplier.id)
         .map((entry) => {
