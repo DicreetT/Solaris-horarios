@@ -27,6 +27,7 @@ const InventoryUnifiedPage = React.lazy(() => import('./pages/InventoryUnifiedPa
 const FacturacionPage = React.lazy(() => import('./pages/FacturacionPage'));
 const BillingPaymentsPage = React.lazy(() => import('./pages/BillingPaymentsPage'));
 const OperationalControlPage = React.lazy(() => import('./pages/OperationalControlPage'));
+const TraceabilityDossierPage = React.lazy(() => import('./pages/TraceabilityDossierPage'));
 
 /**
  * Protected Route wrapper
@@ -117,6 +118,7 @@ function App() {
             <Route path="/inventory" element={withLazyPage(<InventoryUnifiedPage />)} />
             <Route path="/inventory-facturacion" element={withLazyPage(<InventoryUnifiedPage />)} />
             <Route path="/control-operativo" element={withLazyPage(<OperationalControlPage />)} />
+            <Route path="/dossier-trazabilidad" element={withLazyPage(<TraceabilityDossierPage />)} />
             <Route path="/despachos" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<FacturacionPage />)} />
             <Route path="/facturacion" element={isRestrictedUser ? <Navigate to="/dashboard" replace /> : withLazyPage(<BillingPaymentsPage />)} />
           </Route>

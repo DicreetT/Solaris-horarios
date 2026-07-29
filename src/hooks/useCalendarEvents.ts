@@ -92,10 +92,20 @@ export function useCalendarEvents() {
         queryClient.invalidateQueries({ queryKey: ['calendarEvents'] });
     };
 
+    const updateEvent = async (id: number, updates: Partial<Omit<CalendarEvent, 'id' | 'created_at'>>) => {
+        setSharedEvents((prev) => (
+            Array.isArray(prev)
+                ? prev.map((row) => (Number(row.id) === Number(id) ? { ...row, ...updates } : row))
+                : []
+        ));
+        queryClient.invalidateQueries({ queryKey: ['calendarEvents'] });
+    };
+
     return {
         calendarEvents,
         isLoading,
         createEvent,
         deleteEvent,
+        updateEvent,
     };
 }

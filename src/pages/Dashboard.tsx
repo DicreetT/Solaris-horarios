@@ -20,6 +20,7 @@ import {
     Save,
     Sparkles,
     FileSpreadsheet,
+    RotateCcw,
     UserX,
     XCircle,
     ShoppingBag,
@@ -27,6 +28,7 @@ import {
     ClipboardCheck,
     FileText,
     Folder,
+    ShieldCheck,
     Trash2,
     Users,
 } from 'lucide-react';
@@ -60,6 +62,11 @@ import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 import canetSeed from '../data/inventory_seed.json';
 import LinkifiedText from '../components/LinkifiedText';
+import {
+    formatInventoryWarehouseLabel,
+    getInventorySignedQuantity,
+    normalizeInventorySearch,
+} from '../utils/inventoryStock';
 
 type NotificationFilter = 'all' | 'tasks' | 'schedule' | 'meetings' | 'absences' | 'trainings' | 'stock';
 type QuickRequestType = 'absence' | 'vacation' | 'meeting' | 'training' | null;
@@ -194,10 +201,38 @@ type DashboardCashMovement = {
     deletedAt?: string;
 };
 
+type DailyInventoryControlRow = {
+    physicalStock?: string;
+    sohoStock?: string;
+    sohoOk?: boolean;
+};
+
+type DailyInventoryControlReport = {
+    id: string;
+    dateKey: string;
+    eventId?: number;
+    checks: {
+        shipments: boolean;
+        assemblies: boolean;
+        stock: boolean;
+    };
+    rows: Record<string, DailyInventoryControlRow>;
+    attachments: Attachment[];
+    notes: string;
+    createdAt: string;
+    updatedAt: string;
+    updatedBy?: string;
+};
+
+type DailyInventoryControlState = {
+    reports: DailyInventoryControlReport[];
+};
+
 const INVENTORY_ALERTS_KEY = 'inventory_alerts_summary_v1';
 const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
 const INVENTORY_HUARTE_MOVS_KEY = 'invhf_movimientos_v1';
 const INVENTORY_CANET_MOVS_KEY = 'inventory_canet_movimientos_v1';
+const DAILY_INVENTORY_CONTROL_KEY = 'daily_inventory_control_events_v1';
 const PAYMENT_REQUESTS_KEY = 'facturacion_payment_requests_v1';
 const CASH_MOVEMENTS_KEY = 'facturacion_cash_movements_v1';
 const CANET_MOVEMENT_SYNC_START = '2026-02-24';
@@ -251,10 +286,16 @@ const formatCoverageText = (months: number) => {
 };
 
 const clean = (v: unknown) => (v == null ? '' : String(v).trim());
+const uid = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const productKey = (v: unknown) => clean(v).toUpperCase();
 const toNum = (v: unknown) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
+};
+const formatQty = (value: unknown) => {
+    const n = toNum(value);
+    if (!Number.isFinite(n)) return '0';
+    return Number.isInteger(n) ? String(n) : n.toLocaleString('es-ES', { maximumFractionDigits: 2 });
 };
 const normStatus = (value: unknown) => clean(value).toLowerCase();
 const isVisibleAbsenceStatus = (value: unknown) => {
@@ -289,6 +330,42 @@ const dateFromAny = (v: string): Date | null => {
     return null;
 };
 
+const normalizeAttachmentsList = (value: unknown): Attachment[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((file: any) => ({
+            name: clean(file?.name),
+            url: clean(file?.url),
+            type: clean(file?.type) || 'application/octet-stream',
+            size: toNum(file?.size),
+        }))
+        .filter((file) => file.name && file.url);
+};
+
+const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryControlState => {
+    const reportsRaw = Array.isArray((value as any)?.reports) ? (value as any).reports : [];
+    return {
+        reports: reportsRaw
+            .map((report: any) => ({
+                id: clean(report?.id) || uid('ctrl'),
+                dateKey: clean(report?.dateKey),
+                eventId: Number.isFinite(Number(report?.eventId)) ? Number(report.eventId) : undefined,
+                checks: {
+                    shipments: !!report?.checks?.shipments,
+                    assemblies: !!report?.checks?.assemblies,
+                    stock: !!report?.checks?.stock,
+                },
+                rows: report?.rows && typeof report.rows === 'object' ? report.rows : {},
+                attachments: normalizeAttachmentsList(report?.attachments),
+                notes: clean(report?.notes),
+                createdAt: clean(report?.createdAt) || new Date().toISOString(),
+                updatedAt: clean(report?.updatedAt) || clean(report?.createdAt) || new Date().toISOString(),
+                updatedBy: clean(report?.updatedBy),
+            }))
+            .filter((report: DailyInventoryControlReport) => report.dateKey),
+    };
+};
+
 function Dashboard() {
     const { currentUser } = useAuth();
     const queryClient = useQueryClient();
@@ -302,7 +379,7 @@ function Dashboard() {
     const { timeData, createTimeEntry, updateTimeEntry } = useTimeData();
     const { userProfiles } = useWorkProfile();
     const { dailyStatuses, setDailyStatus } = useDailyStatus(currentUser);
-    const { calendarEvents, createEvent, deleteEvent } = useCalendarEvents();
+    const { calendarEvents, createEvent, deleteEvent, updateEvent } = useCalendarEvents();
     const { overrides: calendarOverrides } = useCalendarOverrides();
     const { notifications, sendCaffeineBoost, markAllAsRead, markAsRead } = useNotificationsContext();
     const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
@@ -310,6 +387,8 @@ function Dashboard() {
     const [eventFormTitle, setEventFormTitle] = useState('');
     const [eventFormDateKey, setEventFormDateKey] = useState(toDateKey(new Date()));
     const [eventFormDescription, setEventFormDescription] = useState('');
+    const [dailyControlCanetMovementsOverride, setDailyControlCanetMovementsOverride] = useState<any[] | null>(null);
+    const [dailyInventoryRefreshing, setDailyInventoryRefreshing] = useState(false);
     const [savingMood, setSavingMood] = useState<string | null>(null);
     const [editingDateKey, setEditingDateKey] = useState<string | null>(null);
     const [timeEdit, setTimeEdit] = useState({ entry: '', exit: '' });
@@ -358,6 +437,18 @@ function Dashboard() {
         INVENTORY_CANET_MOVS_KEY,
         (canetSeed.movimientos as any[]) || [],
         { userId: currentUser?.id, initializeIfMissing: false, pollIntervalMs: 3000 },
+    );
+    const [dailyInventoryControlState, setDailyInventoryControlState] = useSharedJsonState<DailyInventoryControlState>(
+        DAILY_INVENTORY_CONTROL_KEY,
+        { reports: [] },
+        {
+            userId: currentUser?.id,
+            initializeIfMissing: false,
+            pollIntervalMs: 3000,
+            protectFromEmptyOverwrite: true,
+            mergeBeforePersist: true,
+            mergeIncomingWithLocal: true,
+        },
     );
     const [billingPaymentRequestsShared] = useSharedJsonState<DashboardPaymentRequest[]>(
         PAYMENT_REQUESTS_KEY,
@@ -726,12 +817,6 @@ function Dashboard() {
                     tone: 'ghost',
                     onClick: () => setShowRequestsModal(true),
                 },
-                {
-                    label: 'Pulso',
-                    icon: Sparkles,
-                    tone: 'ghost',
-                    onClick: () => setShowPulseModal(true),
-                },
             ],
         },
         {
@@ -748,6 +833,12 @@ function Dashboard() {
                     icon: ClipboardCheck,
                     tone: 'ghost',
                     onClick: () => navigate('/control-operativo'),
+                },
+                {
+                    label: 'Dossier trazabilidad',
+                    icon: ShieldCheck,
+                    tone: 'ghost',
+                    onClick: () => navigate('/dossier-trazabilidad'),
                 },
                 {
                     label: 'Tareas',
@@ -1116,6 +1207,12 @@ function Dashboard() {
         if (!ok) return;
         try {
             await deleteEvent(Number(event.id));
+            setDailyInventoryControlState((prev) => {
+                const base = normalizeDailyInventoryControlState(prev);
+                return {
+                    reports: base.reports.filter((report) => Number(report.eventId) !== Number(event.id)),
+                };
+            });
             setSummaryModal((prev) =>
                 prev && (prev.kind === 'events' || prev.kind === 'calendar')
                     ? { ...prev, items: prev.items.filter((item) => Number(item.id) !== Number(event.id)) }
@@ -1124,6 +1221,210 @@ function Dashboard() {
             emitSuccessFeedback('Evento eliminado correctamente.');
         } catch {
             window.alert('No se pudo eliminar el evento. Inténtalo de nuevo.');
+        }
+    };
+
+    const handleEditDashboardEvent = async (event: any) => {
+        if (!event?.id || !canDeleteCalendarEvent(event)) return;
+        const nextTitle = window.prompt('Título del evento', clean(event.title));
+        if (nextTitle === null) return;
+        const title = clean(nextTitle);
+        if (!title) {
+            window.alert('El evento necesita un título.');
+            return;
+        }
+        const nextDate = window.prompt('Fecha del evento (AAAA-MM-DD)', clean(event.date_key));
+        if (nextDate === null) return;
+        const dateKey = clean(nextDate) || clean(event.date_key);
+        const nextDescription = window.prompt('Descripción', clean(event.description));
+        if (nextDescription === null) return;
+        try {
+            await updateEvent(Number(event.id), {
+                title,
+                date_key: dateKey,
+                description: clean(nextDescription) || null,
+            });
+            setSummaryModal((prev) =>
+                prev && (prev.kind === 'events' || prev.kind === 'calendar')
+                    ? {
+                        ...prev,
+                        items: prev.items.map((item) => Number(item.id) === Number(event.id)
+                            ? { ...item, title, date_key: dateKey, description: clean(nextDescription) || null }
+                            : item),
+                    }
+                    : prev,
+            );
+            emitSuccessFeedback('Evento editado correctamente.');
+        } catch {
+            window.alert('No se pudo editar el evento.');
+        }
+    };
+
+    const buildEmptyDailyControlReport = (dateKey: string, eventId?: number): DailyInventoryControlReport => {
+        const now = new Date().toISOString();
+        return {
+            id: uid('ctrl'),
+            dateKey,
+            eventId,
+            checks: { shipments: false, assemblies: false, stock: false },
+            rows: {},
+            attachments: [],
+            notes: '',
+            createdAt: now,
+            updatedAt: now,
+            updatedBy: currentUser?.id || '',
+        };
+    };
+
+    const upsertDailyInventoryControl = (
+        dateKey: string,
+        updater: (report: DailyInventoryControlReport | null) => DailyInventoryControlReport,
+    ) => {
+        setDailyInventoryControlState((prev) => {
+            const base = normalizeDailyInventoryControlState(prev);
+            const existing = base.reports.find((report) => report.dateKey === dateKey) || null;
+            const nextReport = updater(existing);
+            return {
+                reports: [
+                    nextReport,
+                    ...base.reports.filter((report) => report.dateKey !== dateKey),
+                ],
+            };
+        });
+    };
+
+    const handleCreateDailyInventoryControl = async () => {
+        if (!currentUser) return;
+        const dateKey = eventFormDateKey || todayKey;
+        let createdEventId: number | undefined = activeDailyInventoryControl?.eventId;
+        let createdCalendarEvent: any = null;
+        try {
+            if (!createdEventId) {
+                const event = await createEvent({
+                    date_key: dateKey,
+                    title: 'Control inventario diario',
+                    description: 'Parte diario generado desde Lunaris: envíos/traspasos, ensamblajes y stock físico/Lunaris/Zoho.',
+                    created_by: currentUser.id,
+                });
+                createdCalendarEvent = event;
+                createdEventId = Number((event as any)?.id) || undefined;
+            }
+            upsertDailyInventoryControl(dateKey, (existing) => ({
+                ...(existing || buildEmptyDailyControlReport(dateKey, createdEventId)),
+                eventId: createdEventId || existing?.eventId,
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            }));
+            if (createdCalendarEvent) {
+                setSummaryModal((prev) => (
+                    prev?.kind === 'events' && prev.title === 'Eventos del día'
+                        ? {
+                            ...prev,
+                            items: prev.items.some((item) => Number(item.id) === Number(createdCalendarEvent.id))
+                                ? prev.items
+                                : [...prev.items, createdCalendarEvent],
+                        }
+                        : prev
+                ));
+            }
+            setEventFormTitle('');
+            setEventFormDescription('');
+            emitSuccessFeedback('Control inventario diario creado.');
+        } catch {
+            window.alert('No se pudo crear el control de inventario.');
+        }
+    };
+
+    const updateDailyControlCheck = (key: keyof DailyInventoryControlReport['checks'], checked: boolean) => {
+        const dateKey = inventoryControlDateKey;
+        upsertDailyInventoryControl(dateKey, (existing) => {
+            const base = existing || buildEmptyDailyControlReport(dateKey);
+            return {
+                ...base,
+                checks: { ...base.checks, [key]: checked },
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            };
+        });
+    };
+
+    const updateDailyStockRow = (rowKey: string, patch: DailyInventoryControlRow) => {
+        const dateKey = inventoryControlDateKey;
+        upsertDailyInventoryControl(dateKey, (existing) => {
+            const base = existing || buildEmptyDailyControlReport(dateKey);
+            return {
+                ...base,
+                rows: {
+                    ...base.rows,
+                    [rowKey]: {
+                        ...(base.rows[rowKey] || {}),
+                        ...patch,
+                    },
+                },
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            };
+        });
+    };
+
+    const updateDailyControlAttachments = (files: Attachment[]) => {
+        const dateKey = inventoryControlDateKey;
+        upsertDailyInventoryControl(dateKey, (existing) => ({
+            ...(existing || buildEmptyDailyControlReport(dateKey)),
+            attachments: files,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUser?.id || '',
+        }));
+    };
+
+    const handleRefreshDailyInventoryControl = async () => {
+        setDailyInventoryRefreshing(true);
+        try {
+            const { data, error } = await supabase
+                .from('inventory_movements')
+                .select('*')
+                .eq('inventory_id', 'canet')
+                .order('fecha', { ascending: false })
+                .order('id', { ascending: false })
+                .limit(10000);
+            if (error) throw error;
+            setDailyControlCanetMovementsOverride(Array.isArray(data) ? data : []);
+            upsertDailyInventoryControl(inventoryControlDateKey, (existing) => ({
+                ...(existing || buildEmptyDailyControlReport(inventoryControlDateKey)),
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            }));
+            emitSuccessFeedback('Control actualizado con movimientos recientes.');
+        } catch {
+            window.alert('No se pudo refrescar el control. Inténtalo de nuevo.');
+        } finally {
+            setDailyInventoryRefreshing(false);
+        }
+    };
+
+    const handleDeleteDailyInventoryControl = async () => {
+        const report = activeDailyInventoryControl;
+        if (!report) return;
+        const ok = window.confirm('¿Eliminar este control inventario diario y su evento asociado?');
+        if (!ok) return;
+        try {
+            if (report.eventId) {
+                await deleteEvent(Number(report.eventId));
+            }
+            setDailyInventoryControlState((prev) => {
+                const base = normalizeDailyInventoryControlState(prev);
+                return {
+                    reports: base.reports.filter((item) => item.dateKey !== report.dateKey),
+                };
+            });
+            setSummaryModal((prev) => (
+                prev && (prev.kind === 'events' || prev.kind === 'calendar')
+                    ? { ...prev, items: prev.items.filter((item) => Number(item.id) !== Number(report.eventId)) }
+                    : prev
+            ));
+            emitSuccessFeedback('Control inventario diario eliminado.');
+        } catch {
+            window.alert('No se pudo eliminar el control.');
         }
     };
 
@@ -1927,6 +2228,7 @@ function Dashboard() {
                 : ((canetSeed.movimientos as any[]) || []),
         [canetMovementsShared],
     );
+    const canetMovementsEffectiveSource = dailyControlCanetMovementsOverride || canetMovementsSource;
     const fallbackCriticalFromHuarte = useMemo(() => {
         try {
             // Montadas: fuente principal Huarte (incluye todas las bodegas).
@@ -2113,7 +2415,7 @@ function Dashboard() {
         });
     }, [generalStockByProduct, monthlyConsumptionByProduct]);
     const canetStockRowsWithBodega = useMemo(() => {
-        if (globalStockByProductLotBodegaFromInventory.length > 0) {
+        if (!dailyControlCanetMovementsOverride && globalStockByProductLotBodegaFromInventory.length > 0) {
             return globalStockByProductLotBodegaFromInventory
                 .map((row: { producto: string; lote: string; bodega: string; stockTotal: number }) => ({
                     producto: productKey(row.producto),
@@ -2124,7 +2426,7 @@ function Dashboard() {
                 .filter((row: { producto: string; lote: string; bodega: string; stockTotal: number }) => !!row.producto && !!row.lote && row.stockTotal > 0);
         }
         const map = new Map<string, number>();
-        canetMovementsSource.forEach((m: any) => {
+        canetMovementsEffectiveSource.forEach((m: any) => {
             const producto = productKey(m?.producto);
             const lote = clean(m?.lote);
             const bodega = clean(m?.bodega) || 'Canet';
@@ -2140,7 +2442,7 @@ function Dashboard() {
                 return { producto, lote, bodega, stockTotal: Math.max(0, toNum(stockTotal)) };
             })
             .filter((row) => row.stockTotal > 0);
-    }, [globalStockByProductLotBodegaFromInventory, canetMovementsSource]);
+    }, [dailyControlCanetMovementsOverride, globalStockByProductLotBodegaFromInventory, canetMovementsEffectiveSource]);
     const canetTopLots = useMemo(() => {
         const byProductLot = new Map<string, number>();
         canetStockRowsWithBodega.forEach((row) => {
@@ -2155,6 +2457,84 @@ function Dashboard() {
             .sort((a, b) => b.cantidad - a.cantidad)
             .slice(0, 8);
     }, [canetStockRowsWithBodega]);
+    const inventoryControlDateKey = eventFormDateKey || todayKey;
+    const dailyInventoryControls = useMemo(
+        () => normalizeDailyInventoryControlState(dailyInventoryControlState),
+        [dailyInventoryControlState],
+    );
+    const activeDailyInventoryControl = useMemo(
+        () => dailyInventoryControls.reports.find((report) => report.dateKey === inventoryControlDateKey) || null,
+        [dailyInventoryControls, inventoryControlDateKey],
+    );
+    const canetMovementsForControlDate = useMemo(() => {
+        return canetMovementsEffectiveSource.filter((movement: any) => {
+            const movementDate = dateFromAny(clean(movement?.fecha));
+            return movementDate ? toDateKey(movementDate) === inventoryControlDateKey : clean(movement?.fecha) === inventoryControlDateKey;
+        });
+    }, [canetMovementsEffectiveSource, inventoryControlDateKey]);
+    const dailyTransferRows = useMemo(() => (
+        canetMovementsForControlDate
+            .filter((movement: any) => normalizeInventorySearch(movement?.tipo_movimiento).includes('traspaso'))
+            .map((movement: any) => ({
+                id: clean(movement?.id) || `${movement?.producto}-${movement?.lote}-${movement?.destino}`,
+                tipo: clean(movement?.tipo_movimiento) || 'Traspaso',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                bodega: clean(movement?.bodega),
+                destino: clean(movement?.destino || movement?.cliente),
+                cantidad: Math.abs(getInventorySignedQuantity(movement)),
+            }))
+            .filter((row) => row.producto && row.lote && row.cantidad > 0)
+    ), [canetMovementsForControlDate]);
+    const dailyShipmentRows = useMemo(() => (
+        canetMovementsForControlDate
+            .filter((movement: any) => {
+                const type = normalizeInventorySearch(movement?.tipo_movimiento);
+                return !type.includes('traspaso') && (type.includes('envio') || type.includes('venta') || type.includes('salida'));
+            })
+            .map((movement: any) => ({
+                id: clean(movement?.id) || `${movement?.producto}-${movement?.lote}-${movement?.cliente}`,
+                tipo: clean(movement?.tipo_movimiento) || 'Envío',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                cliente: clean(movement?.cliente || movement?.destino),
+                cantidad: Math.abs(getInventorySignedQuantity(movement)),
+            }))
+            .filter((row) => row.producto && row.lote && row.cantidad > 0)
+    ), [canetMovementsForControlDate]);
+    const dailyAssemblyRows = useMemo(() => (
+        canetMovementsForControlDate
+            .filter((movement: any) => normalizeInventorySearch(movement?.tipo_movimiento).includes('ensam'))
+            .map((movement: any) => ({
+                id: clean(movement?.id) || `${movement?.producto}-${movement?.lote}-${movement?.bodega}`,
+                tipo: clean(movement?.tipo_movimiento) || 'Ensamblaje',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                bodega: clean(movement?.bodega),
+                cantidad: Math.abs(getInventorySignedQuantity(movement)),
+            }))
+            .filter((row) => row.producto && row.lote && row.cantidad > 0)
+    ), [canetMovementsForControlDate]);
+    const dailyStockControlRows = useMemo(() => (
+        canetStockRowsWithBodega
+            .map((row) => ({
+                key: `${row.producto}|${row.lote}|${row.bodega}`,
+                producto: row.producto,
+                lote: row.lote,
+                bodega: row.bodega,
+                lunaris: row.stockTotal,
+                physical: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.physicalStock || '',
+                soho: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.sohoStock || '',
+                sohoOk: !!activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.sohoOk,
+            }))
+            .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega))
+    ), [activeDailyInventoryControl, canetStockRowsWithBodega]);
+    const dailyStockDiffCount = useMemo(() => (
+        dailyStockControlRows.filter((row) => {
+            if (clean(row.physical) === '') return false;
+            return Math.abs(toNum(row.physical) - toNum(row.lunaris)) > 0.000001;
+        }).length
+    ), [dailyStockControlRows]);
     const fallbackCanetCritical = useMemo(() => {
         const consumoByProduct = new Map<string, number>();
         ((canetSeed.productos as any[]) || []).forEach((p: any) => {
@@ -2347,7 +2727,7 @@ function Dashboard() {
     const trainingsTileLabel = canSeeTrainingsPanel ? 'Gestionar formaciones' : 'Formaciones';
 
     const compactTiles: Array<{
-        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications' | 'pulse';
+        key: 'events' | 'quick' | 'checklist' | 'time' | 'absences' | 'trainings' | 'alerts' | 'notifications';
         label: string;
         Icon: any;
     }> = [
@@ -2359,7 +2739,6 @@ function Dashboard() {
             { key: 'trainings', label: trainingsTileLabel, Icon: GraduationCap },
             { key: 'alerts', label: 'Inventario', Icon: Info },
             { key: 'notifications', label: 'Notifs', Icon: MessageCircle },
-            { key: 'pulse', label: 'Pulso', Icon: Coffee },
         ];
     const compactTilesVisible = compactTiles.filter((tile) => tile.key !== 'trainings' || canSeeTrainingsPanel);
     const compactTileBadges: Partial<Record<typeof compactTiles[number]['key'], number>> = {
@@ -2425,14 +2804,6 @@ function Dashboard() {
                     badges: [{ count: requestsBadgeCount, tone: 'fuchsia' }],
                     onClick: () => setShowRequestsModal(true),
                 },
-                {
-                    label: 'Pulso',
-                    icon: Sparkles,
-                    tone: 'ghost',
-                    buttonClass: 'border-violet-200 bg-white text-violet-950 hover:bg-violet-50',
-                    iconClass: 'bg-violet-50 text-violet-600 border-violet-100',
-                    onClick: () => setShowPulseModal(true),
-                },
             ],
         },
         {
@@ -2460,6 +2831,14 @@ function Dashboard() {
                     buttonClass: 'border-teal-200 bg-white text-teal-950 hover:bg-teal-50',
                     iconClass: 'bg-teal-50 text-teal-600 border-teal-100',
                     onClick: () => navigate('/control-operativo'),
+                },
+                {
+                    label: 'Dossier trazabilidad',
+                    icon: ShieldCheck,
+                    tone: 'ghost',
+                    buttonClass: 'border-cyan-200 bg-white text-cyan-950 hover:bg-cyan-50',
+                    iconClass: 'bg-cyan-50 text-cyan-600 border-cyan-100',
+                    onClick: () => navigate('/dossier-trazabilidad'),
                 },
                 {
                     label: 'Tareas',
@@ -4486,15 +4865,26 @@ function Dashboard() {
                                                             <p className="text-xs text-violet-700">{event.description || 'Sin descripción'}</p>
                                                         </div>
                                                         {canDeleteCalendarEvent(event) && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleDeleteDashboardEvent(event)}
-                                                                className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
-                                                                title="Eliminar evento"
-                                                                aria-label="Eliminar evento"
-                                                            >
-                                                                <Trash2 size={14} />
-                                                            </button>
+                                                            <div className="flex shrink-0 items-center gap-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleEditDashboardEvent(event)}
+                                                                    className="rounded-lg border border-violet-200 bg-white p-1.5 text-violet-600 transition hover:bg-violet-50"
+                                                                    title="Editar evento"
+                                                                    aria-label="Editar evento"
+                                                                >
+                                                                    <Edit2 size={14} />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleDeleteDashboardEvent(event)}
+                                                                    className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-600 transition hover:bg-rose-50"
+                                                                    title="Eliminar evento"
+                                                                    aria-label="Eliminar evento"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 ))
@@ -4711,10 +5101,188 @@ function Dashboard() {
                                             placeholder="Descripción"
                                             className="min-h-[84px] rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={handleCreateDailyInventoryControl}
+                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-600 px-3 py-2 text-sm font-black text-white hover:bg-teal-700"
+                                        >
+                                            <ClipboardCheck size={15} />
+                                            Crear control inventario diario
+                                        </button>
                                     </div>
                                 </div>
                             )}
-                            {summaryModal.items.length === 0 && (
+                            {summaryModal.kind === 'events' && activeDailyInventoryControl && (
+                                <div className="mb-3 rounded-2xl border border-teal-200 bg-teal-50/60 p-3">
+                                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <p className="text-xs font-black uppercase tracking-widest text-teal-700">Control inventario diario</p>
+                                            <h4 className="text-base font-black text-teal-950">{inventoryControlDateKey}</h4>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className={`rounded-full border px-3 py-1 text-xs font-black ${dailyStockDiffCount > 0 ? 'border-amber-200 bg-amber-100 text-amber-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
+                                                {dailyStockDiffCount > 0 ? `${dailyStockDiffCount} diferencias` : 'Sin diferencias marcadas'}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={handleRefreshDailyInventoryControl}
+                                                disabled={dailyInventoryRefreshing}
+                                                className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-white px-3 py-1.5 text-xs font-black text-teal-700 hover:bg-teal-50 disabled:opacity-60"
+                                            >
+                                                <RotateCcw size={13} className={dailyInventoryRefreshing ? 'animate-spin' : ''} />
+                                                {dailyInventoryRefreshing ? 'Refrescando' : 'Refrescar'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleDeleteDailyInventoryControl}
+                                                className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-black text-rose-700 hover:bg-rose-50"
+                                            >
+                                                <Trash2 size={13} />
+                                                Eliminar control
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid gap-3 lg:grid-cols-3">
+                                        <div className="rounded-xl border border-white bg-white p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                                <p className="text-xs font-black uppercase tracking-widest text-slate-600">Envíos y traspasos</p>
+                                                <label className="inline-flex items-center gap-1 text-xs font-black text-teal-700">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!!activeDailyInventoryControl.checks.shipments}
+                                                        onChange={(e) => updateDailyControlCheck('shipments', e.target.checked)}
+                                                    />
+                                                    Visto
+                                                </label>
+                                            </div>
+                                            <p className="text-[11px] font-black text-slate-500">Envíos</p>
+                                            <div className="mt-1 space-y-1">
+                                                {dailyShipmentRows.slice(0, 8).map((row) => (
+                                                    <p key={`ship-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.cliente || 'Sin destino'}
+                                                    </p>
+                                                ))}
+                                                {dailyShipmentRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin envíos registrados.</p>}
+                                            </div>
+                                            <p className="mt-3 text-[11px] font-black text-slate-500">Traspasos</p>
+                                            <div className="mt-1 space-y-1">
+                                                {dailyTransferRows.slice(0, 8).map((row) => (
+                                                    <p key={`transfer-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.bodega || '-'} → {row.destino || '-'}
+                                                    </p>
+                                                ))}
+                                                {dailyTransferRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin traspasos registrados.</p>}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-xl border border-white bg-white p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                                <p className="text-xs font-black uppercase tracking-widest text-slate-600">Ensamblaje</p>
+                                                <label className="inline-flex items-center gap-1 text-xs font-black text-teal-700">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!!activeDailyInventoryControl.checks.assemblies}
+                                                        onChange={(e) => updateDailyControlCheck('assemblies', e.target.checked)}
+                                                    />
+                                                    Visto
+                                                </label>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {dailyAssemblyRows.slice(0, 10).map((row) => (
+                                                    <p key={`asm-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {formatInventoryWarehouseLabel(row.bodega)}
+                                                    </p>
+                                                ))}
+                                                {dailyAssemblyRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin ensamblajes registrados.</p>}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-xl border border-white bg-white p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                                <p className="text-xs font-black uppercase tracking-widest text-slate-600">Soporte del día</p>
+                                                <label className="inline-flex items-center gap-1 text-xs font-black text-teal-700">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!!activeDailyInventoryControl.checks.stock}
+                                                        onChange={(e) => updateDailyControlCheck('stock', e.target.checked)}
+                                                    />
+                                                    Stock visto
+                                                </label>
+                                            </div>
+                                            <FileUploader
+                                                folderPath={`daily-inventory-control/${inventoryControlDateKey}`}
+                                                existingFiles={activeDailyInventoryControl.attachments}
+                                                onUploadComplete={updateDailyControlAttachments}
+                                                compact
+                                                maxSizeMB={20}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-3 overflow-x-auto rounded-xl border border-white bg-white">
+                                        <table className="min-w-full text-left text-xs">
+                                            <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                                                <tr>
+                                                    <th className="px-3 py-2">Producto</th>
+                                                    <th className="px-3 py-2">Lote</th>
+                                                    <th className="px-3 py-2">Bodega</th>
+                                                    <th className="px-3 py-2">Lunaris</th>
+                                                    <th className="px-3 py-2">Físico</th>
+                                                    <th className="px-3 py-2">Zoho</th>
+                                                    <th className="px-3 py-2">Ok Zoho</th>
+                                                    <th className="px-3 py-2">Dif.</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {dailyStockControlRows.slice(0, 80).map((row) => {
+                                                    const diff = clean(row.physical) === '' ? 0 : toNum(row.physical) - toNum(row.lunaris);
+                                                    return (
+                                                        <tr key={row.key} className="border-t border-slate-100">
+                                                            <td className="px-3 py-2 font-black text-slate-800">{row.producto}</td>
+                                                            <td className="px-3 py-2 font-semibold text-slate-700">{row.lote}</td>
+                                                            <td className="px-3 py-2 font-semibold text-slate-600">{formatInventoryWarehouseLabel(row.bodega)}</td>
+                                                            <td className="px-3 py-2 font-black text-slate-800">{formatQty(row.lunaris)}</td>
+                                                            <td className="px-3 py-2">
+                                                                <input
+                                                                    value={row.physical}
+                                                                    onChange={(e) => updateDailyStockRow(row.key, { physicalStock: e.target.value })}
+                                                                    className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs font-bold outline-none focus:border-teal-400"
+                                                                    placeholder="Físico"
+                                                                />
+                                                            </td>
+                                                            <td className="px-3 py-2">
+                                                                <input
+                                                                    value={row.soho}
+                                                                    onChange={(e) => updateDailyStockRow(row.key, { sohoStock: e.target.value })}
+                                                                    className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs font-bold outline-none focus:border-teal-400"
+                                                                    placeholder="Zoho"
+                                                                />
+                                                            </td>
+                                                            <td className="px-3 py-2">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={row.sohoOk}
+                                                                    onChange={(e) => updateDailyStockRow(row.key, { sohoOk: e.target.checked })}
+                                                                />
+                                                            </td>
+                                                            <td className={`px-3 py-2 font-black ${Math.abs(diff) > 0.000001 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                                                {clean(row.physical) === '' ? '-' : formatQty(diff)}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                                {dailyStockControlRows.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={8} className="px-3 py-4 text-center font-semibold text-slate-400">Sin stock Canet para mostrar.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                            {summaryModal.items.length === 0 && !(summaryModal.kind === 'events' && activeDailyInventoryControl) && (
                                 <div className="app-empty-card">No hay elementos para mostrar.</div>
                             )}
                             {summaryModal.kind === 'calendar' && summaryModal.items.map((event: any) => (
@@ -4724,15 +5292,26 @@ function Dashboard() {
                                         <p className="text-xs text-violet-700">Fecha: {event.date_key || '-'}</p>
                                     </div>
                                     {canDeleteCalendarEvent(event) && (
-                                        <button
-                                            type="button"
-                                            onClick={() => handleDeleteDashboardEvent(event)}
-                                            className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
-                                            title="Eliminar evento"
-                                            aria-label="Eliminar evento"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleEditDashboardEvent(event)}
+                                                className="rounded-lg border border-violet-200 bg-white p-1.5 text-violet-600 transition hover:bg-violet-50"
+                                                title="Editar evento"
+                                                aria-label="Editar evento"
+                                            >
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteDashboardEvent(event)}
+                                                className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-600 transition hover:bg-rose-50"
+                                                title="Eliminar evento"
+                                                aria-label="Eliminar evento"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             ))}
@@ -4752,15 +5331,26 @@ function Dashboard() {
                                         </p>
                                     </div>
                                     {canDeleteCalendarEvent(event) && (
-                                        <button
-                                            type="button"
-                                            onClick={() => handleDeleteDashboardEvent(event)}
-                                            className="rounded-lg p-1.5 text-rose-500 opacity-80 transition hover:bg-rose-50 hover:text-rose-700 md:opacity-0 md:group-hover:opacity-100"
-                                            title="Eliminar evento"
-                                            aria-label="Eliminar evento"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleEditDashboardEvent(event)}
+                                                className="rounded-lg border border-violet-200 bg-white p-1.5 text-violet-600 transition hover:bg-violet-50"
+                                                title="Editar evento"
+                                                aria-label="Editar evento"
+                                            >
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteDashboardEvent(event)}
+                                                className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-600 transition hover:bg-rose-50"
+                                                title="Eliminar evento"
+                                                aria-label="Eliminar evento"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             ))}
