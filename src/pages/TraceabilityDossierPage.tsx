@@ -390,6 +390,7 @@ export default function TraceabilityDossierPage() {
   const [expandedSupplierIds, setExpandedSupplierIds] = useState<string[]>([]);
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([]);
   const [expandedLotIds, setExpandedLotIds] = useState<string[]>([]);
+  const [expandedDocumentBlockIds, setExpandedDocumentBlockIds] = useState<string[]>([]);
   const [editingSupplierId, setEditingSupplierId] = useState('');
   const [supplierEditDraft, setSupplierEditDraft] = useState(emptySupplierFormDraft());
   const [editingProductKey, setEditingProductKey] = useState('');
@@ -415,6 +416,7 @@ export default function TraceabilityDossierPage() {
 
   const draftKeyFor = (supplierId: string, productId: string) => `${supplierId}::${productId}`;
   const productKeyFor = (supplierId: string, productId: string) => `${supplierId}::${productId}`;
+  const documentBlockKeyFor = (...parts: string[]) => parts.join('::');
 
   const toggleExpanded = (
     setter: React.Dispatch<React.SetStateAction<string[]>>,
@@ -433,6 +435,7 @@ export default function TraceabilityDossierPage() {
     setExpandedSupplierIds([]);
     setExpandedProductIds([]);
     setExpandedLotIds([]);
+    setExpandedDocumentBlockIds([]);
   };
 
   const lotDraftFor = (supplier: Supplier, product: SupplierProduct) => {
@@ -1030,6 +1033,22 @@ export default function TraceabilityDossierPage() {
   const downloadLotPdf = (lot: FinalLot) => {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const margin = 36;
+    const entryDetails = lot.entries.map((entry) => {
+      const supplier = suppliers.find((item) => item.id === entry.supplierId);
+      const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
+      return {
+        entry,
+        supplier,
+        product,
+        stage: product?.category || entry.stage,
+        unit: clean(product?.unit),
+      };
+    });
+    const receivedQuantities = entryDetails
+      .map(({ entry, unit }) => [entry.quantity || lot.quantity || '-', unit].filter(Boolean).join(' '))
+      .join('\n') || '-';
+    const receptionFormats = Array.from(new Set(entryDetails.map((detail) => detail.unit).filter(Boolean))).join(', ') || '-';
+
     doc.setFontSize(18);
     doc.text('Dossier de trazabilidad', margin, 42);
     doc.setFontSize(10);
@@ -1042,12 +1061,10 @@ export default function TraceabilityDossierPage() {
       body: [
         ['Producto final', safePdfText(lot.productName)],
         ['Lote final', safePdfText(lot.lotNumber)],
-        ['Cantidad', safePdfText(lot.quantity) || '-'],
+        ['Cantidades recibidas', safePdfText(receivedQuantities) || '-'],
+        ['Formato de recepción', safePdfText(receptionFormats) || '-'],
         ['Fecha montaje/fabricación', safePdfText(lot.manufactureDate) || '-'],
         ['Caducidad / consumo preferente final', safePdfText(lot.expiryDate) || '-'],
-        ['Estado', lot.status],
-        ['Proceso', lot.processSteps.map(labelForCategory).join(' > ')],
-        ['Observaciones', safePdfText(lot.processNotes) || '-'],
       ],
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 5 },
@@ -1057,18 +1074,14 @@ export default function TraceabilityDossierPage() {
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 18,
       head: [['Proveedor', 'Registro sanitario', 'Producto suministrado', 'Referencia', 'Tipo', 'Unidad/formato']],
-      body: lot.entries.map((entry) => {
-        const supplier = suppliers.find((item) => item.id === entry.supplierId);
-        const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
-        return [
-          supplier?.name || '-',
-          supplier?.sanitaryRegister || '-',
-          product?.name || '-',
-          product?.reference || '-',
-          product ? labelForCategory(product.category) : labelForCategory(entry.stage),
-          product?.unit || '-',
-        ];
-      }),
+      body: entryDetails.map(({ supplier, product, stage }) => [
+        supplier?.name || '-',
+        supplier?.sanitaryRegister || '-',
+        product?.name || '-',
+        product?.reference || '-',
+        labelForCategory(stage),
+        product?.unit || '-',
+      ]),
       theme: 'grid',
       styles: { fontSize: 7, cellPadding: 4 },
       headStyles: { fillColor: [15, 118, 110] },
@@ -1076,18 +1089,15 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 18,
-      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad llegada', 'Cad./cons.', 'Adjuntos']],
-      body: lot.entries.map((entry) => {
-        return [
-          labelForCategory(entry.stage),
-          entry.albaranNumber || '-',
-          entry.supplierLot || '-',
-          entry.deliveryDate || '-',
-          entry.quantity || '-',
-          entry.expiryDate || entry.bestBeforeDate || '-',
-          String(fileCount(entry)),
-        ];
-      }),
+      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad entregada', 'Cad./cons.']],
+      body: entryDetails.map(({ entry, stage, unit }) => [
+        labelForCategory(stage),
+        entry.albaranNumber || '-',
+        entry.supplierLot || '-',
+        entry.deliveryDate || '-',
+        [entry.quantity || '-', unit].filter(Boolean).join(' '),
+        entry.expiryDate || entry.bestBeforeDate || '-',
+      ]),
       theme: 'grid',
       styles: { fontSize: 7, cellPadding: 4 },
       headStyles: { fillColor: [31, 41, 55] },
@@ -1357,6 +1367,8 @@ export default function TraceabilityDossierPage() {
                       const productLots = supplierProductLots(supplier, product);
                       const productKey = productKeyFor(supplier.id, product.id);
                       const isProductOpen = expandedProductIds.includes(productKey);
+                      const newDocumentsKey = documentBlockKeyFor('new-docs', supplier.id, product.id);
+                      const areNewDocumentsOpen = expandedDocumentBlockIds.includes(newDocumentsKey);
                       return (
                         <div key={product.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -1417,15 +1429,20 @@ export default function TraceabilityDossierPage() {
                                 const entry = lot.entries.find((item) => item.supplierId === supplier.id && item.supplierProductId === product.id);
                                 const isLotOpen = expandedLotIds.includes(lot.id);
                                 const isEditingThisLot = editingLotId === lot.id && lotEditContext?.supplierId === supplier.id && lotEditContext?.productId === product.id;
+                                const lotDocumentsKey = documentBlockKeyFor('lot-docs', lot.id, supplier.id, product.id);
+                                const editDocumentsKey = documentBlockKeyFor('edit-docs', lot.id, supplier.id, product.id);
+                                const areLotDocumentsOpen = expandedDocumentBlockIds.includes(lotDocumentsKey);
+                                const areEditDocumentsOpen = expandedDocumentBlockIds.includes(editDocumentsKey);
+                                const lotFileCount = entry ? fileCount(entry) : 0;
                                 return (
-                                  <div key={lot.id} className="rounded-xl border border-white bg-white p-3">
+                                  <div key={lot.id} className="rounded-xl border border-teal-300 bg-teal-50/80 p-3 shadow-sm">
                                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                                       <button type="button" onClick={() => toggleExpanded(setExpandedLotIds, lot.id)} className="min-w-0 flex-1 text-left">
                                         <p className="flex items-center gap-2 text-sm font-black text-slate-900">
                                           {isLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                           Lote {entry?.supplierLot || lot.lotNumber}
                                         </p>
-                                        <p className="text-xs font-semibold text-slate-500">Albarán {entry?.albaranNumber || '-'} · Cantidad llegada {entry?.quantity || lot.quantity || '-'} · {fileCount(entry || lot.entries[0])} documento(s)</p>
+                                        <p className="text-xs font-semibold text-slate-600">Albarán {entry?.albaranNumber || '-'} · Cantidad recibida {entry?.quantity || lot.quantity || '-'} · {lotFileCount} documento(s)</p>
                                       </button>
                                       <div className="flex flex-wrap gap-1">
                                         <button type="button" onClick={() => editLot(lot, supplier, product, entry)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-100">
@@ -1460,20 +1477,35 @@ export default function TraceabilityDossierPage() {
                                               <input type="date" value={lotEditDraft.expiryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, expiryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             </label>
                                             <textarea value={lotEditDraft.notes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-4" />
-                                            <div className="grid gap-2 md:col-span-4 md:grid-cols-3">
-                                              {DOCUMENT_GROUPS.map((group) => (
-                                                <div key={`edit-${lot.id}-${group.key}`} className="rounded-xl border border-white bg-white p-3">
-                                                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
-                                                  <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
-                                                  <FileUploader
-                                                    folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
-                                                    existingFiles={lotEditDraft.attachments[group.key]}
-                                                    onUploadComplete={(files) => setLotEditDraft((prev) => ({ ...prev, attachments: { ...prev.attachments, [group.key]: files } }))}
-                                                    compact
-                                                    maxSizeMB={20}
-                                                  />
+                                            <div className="md:col-span-4">
+                                              <button
+                                                type="button"
+                                                onClick={() => toggleExpanded(setExpandedDocumentBlockIds, editDocumentsKey)}
+                                                className="inline-flex w-full items-center justify-between rounded-xl border border-amber-200 bg-white px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-50"
+                                              >
+                                                <span className="inline-flex items-center gap-2">
+                                                  {areEditDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                                  Documentos del lote
+                                                </span>
+                                                <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (lotEditDraft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
+                                              </button>
+                                              {areEditDocumentsOpen && (
+                                                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                                  {DOCUMENT_GROUPS.map((group) => (
+                                                    <div key={`edit-${lot.id}-${group.key}`} className="rounded-xl border border-white bg-white p-3">
+                                                      <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
+                                                      <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
+                                                      <FileUploader
+                                                        folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
+                                                        existingFiles={lotEditDraft.attachments[group.key]}
+                                                        onUploadComplete={(files) => setLotEditDraft((prev) => ({ ...prev, attachments: { ...prev.attachments, [group.key]: files } }))}
+                                                        compact
+                                                        maxSizeMB={20}
+                                                      />
+                                                    </div>
+                                                  ))}
                                                 </div>
-                                              ))}
+                                              )}
                                             </div>
                                             <div className="flex flex-wrap gap-2 md:col-span-4">
                                               <button type="button" onClick={saveLotEdit} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
@@ -1491,24 +1523,44 @@ export default function TraceabilityDossierPage() {
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Entrega: {entry?.deliveryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {entry?.expiryDate || lot.expiryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {entry?.albaranNumber || '-'}</p>
-                                          {entry && DOCUMENT_GROUPS.map((group) => (
-                                            <div key={`${lot.id}-${group.key}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                                              <p className="text-xs font-black uppercase tracking-widest text-slate-500">{group.label}</p>
-                                              {(entry.attachments[group.key] || []).length === 0 ? (
-                                                <p className="mt-1 text-xs font-semibold text-slate-400">Sin adjuntos</p>
-                                              ) : (
-                                                <div className="mt-2 space-y-1">
-                                                  {entry.attachments[group.key].map((file) => (
-                                                    <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 truncate text-xs font-bold text-teal-700 hover:text-teal-900">
-                                                      <LinkIcon size={13} />
-                                                      {file.name}
-                                                    </a>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))}
                                         </div>
+
+                                        {entry && (
+                                          <div className="rounded-xl border border-teal-200 bg-white p-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleExpanded(setExpandedDocumentBlockIds, lotDocumentsKey)}
+                                              className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-teal-50"
+                                            >
+                                              <span className="inline-flex items-center gap-2">
+                                                {areLotDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                                Documentos adjuntos
+                                              </span>
+                                              <span>{lotFileCount} archivo(s)</span>
+                                            </button>
+                                            {areLotDocumentsOpen && (
+                                              <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                                {DOCUMENT_GROUPS.map((group) => (
+                                                  <div key={`${lot.id}-${group.key}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">{group.label}</p>
+                                                    {(entry.attachments[group.key] || []).length === 0 ? (
+                                                      <p className="mt-1 text-xs font-semibold text-slate-400">Sin adjuntos</p>
+                                                    ) : (
+                                                      <div className="mt-2 space-y-1">
+                                                        {entry.attachments[group.key].map((file) => (
+                                                          <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 truncate text-xs font-bold text-teal-700 hover:text-teal-900">
+                                                            <LinkIcon size={13} />
+                                                            {file.name}
+                                                          </a>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                     )}
                                   </div>
@@ -1539,20 +1591,35 @@ export default function TraceabilityDossierPage() {
                               </label>
                               <textarea value={draft.notes} onChange={(e) => updateSupplierLotDraft(supplier, product, { notes: e.target.value })} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
                             </div>
-                            <div className="mt-3 grid gap-2 md:grid-cols-3">
-                              {DOCUMENT_GROUPS.map((group) => (
-                                <div key={group.key} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
-                                  <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
-                                  <FileUploader
-                                    folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
-                                    existingFiles={draft.attachments[group.key]}
-                                    onUploadComplete={(files) => updateSupplierLotDraft(supplier, product, { attachments: { ...draft.attachments, [group.key]: files } })}
-                                    compact
-                                    maxSizeMB={20}
-                                  />
+                            <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleExpanded(setExpandedDocumentBlockIds, newDocumentsKey)}
+                                className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-white"
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  {areNewDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                  Documentos para adjuntar
+                                </span>
+                                <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (draft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
+                              </button>
+                              {areNewDocumentsOpen && (
+                                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                  {DOCUMENT_GROUPS.map((group) => (
+                                    <div key={group.key} className="rounded-xl border border-slate-100 bg-white p-3">
+                                      <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
+                                      <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
+                                      <FileUploader
+                                        folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
+                                        existingFiles={draft.attachments[group.key]}
+                                        onUploadComplete={(files) => updateSupplierLotDraft(supplier, product, { attachments: { ...draft.attachments, [group.key]: files } })}
+                                        compact
+                                        maxSizeMB={20}
+                                      />
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              )}
                             </div>
                             <button type="button" onClick={() => addSupplierProductLot(supplier, product)} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700">
                               <Plus size={16} />
