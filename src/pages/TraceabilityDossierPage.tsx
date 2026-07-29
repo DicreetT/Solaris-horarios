@@ -43,6 +43,7 @@ type FinalLotStatus = 'abierto' | 'completo' | 'revision';
 
 type DocumentGroupKey =
   | 'albaran'
+  | 'factura_solaris'
   | 'microbiologia'
   | 'identificacion_envase'
   | 'ficha_tecnica'
@@ -85,7 +86,11 @@ type TraceabilityEntry = {
   stage: SupplierCategory;
   deliveryDate: string;
   albaranNumber: string;
+  solarisInvoiceNumber: string;
   quantity: string;
+  quantityMatchesInvoice: string;
+  quantityDifference: string;
+  quantityCheckNotes: string;
   supplierLot: string;
   finalLotId: string;
   expiryDate: string;
@@ -132,7 +137,11 @@ type SupplierLotDraft = {
   lotNumber: string;
   deliveryDate: string;
   albaranNumber: string;
+  solarisInvoiceNumber: string;
   receivedQuantity: string;
+  quantityMatchesInvoice: string;
+  quantityDifference: string;
+  quantityCheckNotes: string;
   manufactureDate: string;
   expiryDate: string;
   notes: string;
@@ -156,6 +165,7 @@ const CATEGORY_OPTIONS: Array<{ key: SupplierCategory; label: string; descriptio
 
 const DOCUMENT_GROUPS: Array<{ key: DocumentGroupKey; label: string; hint: string }> = [
   { key: 'albaran', label: 'Albarán', hint: 'Entrega, factura o documento de compra.' },
+  { key: 'factura_solaris', label: 'Factura Solaris', hint: 'Factura emitida por Solaris relacionada con este lote o entrega.' },
   { key: 'microbiologia', label: 'Microbiología', hint: 'Análisis microbiológico o control sanitario del lote.' },
   { key: 'identificacion_envase', label: 'Identificación física', hint: 'Foto/PDF de etiqueta de pallet, caja, saco o envase recibido.' },
   { key: 'ficha_tecnica', label: 'Ficha técnica', hint: 'Especificaciones pactadas del producto o material.' },
@@ -185,9 +195,16 @@ function labelForCategory(category: SupplierCategory) {
   return CATEGORY_OPTIONS.find((option) => option.key === category)?.label || category;
 }
 
+function labelForQuantityMatch(value: string) {
+  if (value === 'si') return 'Sí';
+  if (value === 'no') return 'No';
+  return '-';
+}
+
 function emptyAttachments(): Record<DocumentGroupKey, Attachment[]> {
   return {
     albaran: [],
+    factura_solaris: [],
     microbiologia: [],
     identificacion_envase: [],
     ficha_tecnica: [],
@@ -203,7 +220,11 @@ function emptySupplierLotDraft(productName = ''): SupplierLotDraft {
     lotNumber: '',
     deliveryDate: '',
     albaranNumber: '',
+    solarisInvoiceNumber: '',
     receivedQuantity: '',
+    quantityMatchesInvoice: '',
+    quantityDifference: '',
+    quantityCheckNotes: '',
     manufactureDate: '',
     expiryDate: '',
     notes: '',
@@ -303,7 +324,11 @@ function normalizeState(value: any): TraceabilityState {
         stage: CATEGORY_OPTIONS.some((option) => option.key === entry?.stage) ? entry.stage : 'otros',
         deliveryDate: clean(entry?.deliveryDate),
         albaranNumber: clean(entry?.albaranNumber),
+        solarisInvoiceNumber: clean(entry?.solarisInvoiceNumber),
         quantity: clean(entry?.quantity),
+        quantityMatchesInvoice: clean(entry?.quantityMatchesInvoice),
+        quantityDifference: clean(entry?.quantityDifference),
+        quantityCheckNotes: clean(entry?.quantityCheckNotes),
         supplierLot: clean(entry?.supplierLot),
         finalLotId: clean(entry?.finalLotId),
         expiryDate: clean(entry?.expiryDate),
@@ -372,7 +397,11 @@ export default function TraceabilityDossierPage() {
     stage: 'materia_prima' as SupplierCategory,
     deliveryDate: '',
     albaranNumber: '',
+    solarisInvoiceNumber: '',
     quantity: '',
+    quantityMatchesInvoice: '',
+    quantityDifference: '',
+    quantityCheckNotes: '',
     supplierLot: '',
     expiryDate: '',
     bestBeforeDate: '',
@@ -653,11 +682,15 @@ export default function TraceabilityDossierPage() {
         id: uid('ent'),
         supplierId: supplier.id,
         supplierProductId: product.id,
-        stage: product.category,
-        deliveryDate: clean(draft.deliveryDate),
-        albaranNumber: clean(draft.albaranNumber),
-        quantity: clean(draft.receivedQuantity),
-        supplierLot: clean(draft.lotNumber),
+      stage: product.category,
+      deliveryDate: clean(draft.deliveryDate),
+      albaranNumber: clean(draft.albaranNumber),
+      solarisInvoiceNumber: clean(draft.solarisInvoiceNumber),
+      quantity: clean(draft.receivedQuantity),
+      quantityMatchesInvoice: clean(draft.quantityMatchesInvoice),
+      quantityDifference: clean(draft.quantityDifference),
+      quantityCheckNotes: clean(draft.quantityCheckNotes),
+      supplierLot: clean(draft.lotNumber),
         finalLotId: '',
         expiryDate: clean(draft.expiryDate),
         bestBeforeDate: clean(draft.expiryDate),
@@ -721,7 +754,11 @@ export default function TraceabilityDossierPage() {
       stage: entryDraft.stage,
       deliveryDate: '',
       albaranNumber: '',
+      solarisInvoiceNumber: '',
       quantity: '',
+      quantityMatchesInvoice: '',
+      quantityDifference: '',
+      quantityCheckNotes: '',
       supplierLot: '',
       expiryDate: '',
       bestBeforeDate: '',
@@ -940,7 +977,11 @@ export default function TraceabilityDossierPage() {
       lotNumber: entry?.supplierLot || lot.lotNumber,
       deliveryDate: entry?.deliveryDate || '',
       albaranNumber: entry?.albaranNumber || '',
+      solarisInvoiceNumber: entry?.solarisInvoiceNumber || '',
       receivedQuantity: entry?.quantity || lot.quantity,
+      quantityMatchesInvoice: entry?.quantityMatchesInvoice || '',
+      quantityDifference: entry?.quantityDifference || '',
+      quantityCheckNotes: entry?.quantityCheckNotes || '',
       manufactureDate: lot.manufactureDate,
       expiryDate: entry?.expiryDate || entry?.bestBeforeDate || lot.expiryDate,
       notes: entry?.notes || lot.processNotes,
@@ -983,7 +1024,11 @@ export default function TraceabilityDossierPage() {
                     stage: product?.category || entry.stage,
                     deliveryDate: clean(lotEditDraft.deliveryDate),
                     albaranNumber: clean(lotEditDraft.albaranNumber),
+                    solarisInvoiceNumber: clean(lotEditDraft.solarisInvoiceNumber),
                     quantity: clean(lotEditDraft.receivedQuantity),
+                    quantityMatchesInvoice: clean(lotEditDraft.quantityMatchesInvoice),
+                    quantityDifference: clean(lotEditDraft.quantityDifference),
+                    quantityCheckNotes: clean(lotEditDraft.quantityCheckNotes),
                     supplierLot: clean(lotEditDraft.lotNumber),
                     expiryDate: clean(lotEditDraft.expiryDate),
                     bestBeforeDate: clean(lotEditDraft.expiryDate),
@@ -1089,7 +1134,7 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 18,
-      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad entregada', 'Cad./cons.']],
+      head: [['Etapa', 'Albarán', 'Lote proveedor', 'Fecha entrega', 'Cantidad recibida', 'Cad./cons.', 'Factura Solaris', 'Corresponde', 'Diferencia', 'Observación', 'Adjuntos']],
       body: entryDetails.map(({ entry, stage, unit }) => [
         labelForCategory(stage),
         entry.albaranNumber || '-',
@@ -1097,10 +1142,16 @@ export default function TraceabilityDossierPage() {
         entry.deliveryDate || '-',
         [entry.quantity || '-', unit].filter(Boolean).join(' '),
         entry.expiryDate || entry.bestBeforeDate || '-',
+        entry.solarisInvoiceNumber || '-',
+        labelForQuantityMatch(entry.quantityMatchesInvoice),
+        entry.quantityDifference || '-',
+        safePdfText(entry.quantityCheckNotes) || '-',
+        String(fileCount(entry)),
       ]),
       theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 4 },
+      styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
       headStyles: { fillColor: [31, 41, 55] },
+      columnStyles: { 9: { cellWidth: 120 } },
     });
 
     if (lot.entries.length > 0) {
@@ -1188,7 +1239,7 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Lote', 'Producto', 'Albarán', 'Entrega', 'Caducidad', 'Cantidad', 'Documentos', 'Notas']],
+      head: [['Lote', 'Producto', 'Albarán', 'Factura Solaris', 'Entrega', 'Caducidad', 'Cantidad', 'Corresponde', 'Diferencia', 'Documentos', 'Notas']],
       body: relatedLots.flatMap((lot) => lot.entries
         .filter((entry) => entry.supplierId === supplier.id)
         .map((entry) => {
@@ -1197,17 +1248,20 @@ export default function TraceabilityDossierPage() {
             entry.supplierLot || lot.lotNumber,
             product?.name || lot.productName,
             entry.albaranNumber || '-',
+            entry.solarisInvoiceNumber || '-',
             entry.deliveryDate || '-',
             entry.expiryDate || entry.bestBeforeDate || lot.expiryDate || '-',
-            entry.quantity || lot.quantity || '-',
+            [entry.quantity || lot.quantity || '-', product?.unit || ''].filter(Boolean).join(' '),
+            labelForQuantityMatch(entry.quantityMatchesInvoice),
+            entry.quantityDifference || '-',
             String(fileCount(entry)),
-            safePdfText(entry.notes || lot.processNotes) || '-',
+            safePdfText(entry.quantityCheckNotes || entry.notes || lot.processNotes) || '-',
           ];
         })),
       theme: 'striped',
       styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
       headStyles: { fillColor: [15, 118, 110] },
-      columnStyles: { 7: { cellWidth: 210 } },
+      columnStyles: { 10: { cellWidth: 150 } },
     });
 
     doc.save(`carpeta-proveedor-${supplier.name}.pdf`.replace(/[^\w.-]+/g, '-').toLowerCase());
@@ -1463,11 +1517,21 @@ export default function TraceabilityDossierPage() {
                                             <input value={lotEditDraft.finalProductName} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, finalProductName: e.target.value }))} placeholder="Producto/lote" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             <input value={lotEditDraft.lotNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, lotNumber: e.target.value }))} placeholder="Nº lote" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             <input value={lotEditDraft.albaranNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, albaranNumber: e.target.value }))} placeholder="Albarán/factura entrada" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+                                            <input value={lotEditDraft.solarisInvoiceNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, solarisInvoiceNumber: e.target.value }))} placeholder="Factura Solaris" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             <label className="grid gap-1">
                                               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
                                               <input type="date" value={lotEditDraft.deliveryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, deliveryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             </label>
                                             <input value={lotEditDraft.receivedQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, receivedQuantity: e.target.value }))} placeholder="Cantidad recibida" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+                                            <label className="grid gap-1">
+                                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
+                                              <select value={lotEditDraft.quantityMatchesInvoice} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityMatchesInvoice: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-bold outline-none focus:border-amber-400">
+                                                <option value="">Sin revisar</option>
+                                                <option value="si">Sí corresponde</option>
+                                                <option value="no">No corresponde</option>
+                                              </select>
+                                            </label>
+                                            <input value={lotEditDraft.quantityDifference} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityDifference: e.target.value }))} placeholder="Diferencia" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             <label className="grid gap-1">
                                               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fabricación</span>
                                               <input type="date" value={lotEditDraft.manufactureDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, manufactureDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
@@ -1476,7 +1540,8 @@ export default function TraceabilityDossierPage() {
                                               <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
                                               <input type="date" value={lotEditDraft.expiryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, expiryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                                             </label>
-                                            <textarea value={lotEditDraft.notes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-4" />
+                                            <textarea value={lotEditDraft.quantityCheckNotes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityCheckNotes: e.target.value }))} placeholder="Observación de correspondencia de cantidades" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-2" />
+                                            <textarea value={lotEditDraft.notes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-2" />
                                             <div className="md:col-span-4">
                                               <button
                                                 type="button"
@@ -1523,6 +1588,12 @@ export default function TraceabilityDossierPage() {
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Entrega: {entry?.deliveryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {entry?.expiryDate || lot.expiryDate || '-'}</p>
                                           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {entry?.albaranNumber || '-'}</p>
+                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Factura Solaris: {entry?.solarisInvoiceNumber || '-'}</p>
+                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Corresponde: {entry ? labelForQuantityMatch(entry.quantityMatchesInvoice) : '-'}</p>
+                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Diferencia: {entry?.quantityDifference || '-'}</p>
+                                          {entry?.quantityCheckNotes && (
+                                            <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:col-span-3">Observación: {entry.quantityCheckNotes}</p>
+                                          )}
                                         </div>
 
                                         {entry && (
@@ -1576,11 +1647,21 @@ export default function TraceabilityDossierPage() {
                               <input value={draft.finalProductName} onChange={(e) => updateSupplierLotDraft(supplier, product, { finalProductName: e.target.value })} placeholder="Producto/lote: SolarVital..." className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <input value={draft.lotNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { lotNumber: e.target.value })} placeholder="Nº lote" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <input value={draft.albaranNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { albaranNumber: e.target.value })} placeholder="Albarán/factura entrada" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                              <input value={draft.solarisInvoiceNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { solarisInvoiceNumber: e.target.value })} placeholder="Factura Solaris" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <label className="grid gap-1">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
                                 <input type="date" value={draft.deliveryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               </label>
                               <input value={draft.receivedQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { receivedQuantity: e.target.value })} placeholder="Cantidad recibida" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                              <label className="grid gap-1">
+                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
+                                <select value={draft.quantityMatchesInvoice} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityMatchesInvoice: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-400">
+                                  <option value="">Sin revisar</option>
+                                  <option value="si">Sí corresponde</option>
+                                  <option value="no">No corresponde</option>
+                                </select>
+                              </label>
+                              <input value={draft.quantityDifference} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityDifference: e.target.value })} placeholder="Diferencia" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               <label className="grid gap-1">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fabricación</span>
                                 <input type="date" value={draft.manufactureDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { manufactureDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
@@ -1589,6 +1670,7 @@ export default function TraceabilityDossierPage() {
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
                                 <input type="date" value={draft.expiryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { expiryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
                               </label>
+                              <textarea value={draft.quantityCheckNotes} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityCheckNotes: e.target.value })} placeholder="Observación de correspondencia de cantidades" className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
                               <textarea value={draft.notes} onChange={(e) => updateSupplierLotDraft(supplier, product, { notes: e.target.value })} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
                             </div>
                             <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
