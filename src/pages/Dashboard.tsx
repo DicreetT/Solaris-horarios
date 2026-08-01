@@ -698,6 +698,57 @@ function Dashboard() {
     const dueTodayTodos = pendingTodos.filter((t) => t.due_date_key === todayKey);
     const nowHour = new Date().getHours();
     const greeting = nowHour < 12 ? 'Buenos días' : nowHour < 20 ? 'Buenas tardes' : 'Buenas noches';
+    const vacationMilestoneMessage = useMemo(() => {
+        if (!currentUser) return null;
+        const approvedVacations = absenceRequests
+            .filter((absence: any) =>
+                absence.created_by === currentUser.id &&
+                absence.type === 'vacation' &&
+                normStatus(absence.status) === 'approved',
+            )
+            .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key));
+
+        const isNonWorkingDay = (date: Date) => {
+            const dateKey = toDateKey(date);
+            const override = calendarOverrides.find((item) => item.date_key === dateKey);
+            if (override) return !!override.is_non_working;
+            return date.getDay() === 0 || date.getDay() === 6;
+        };
+
+        const nextWorkingDateKey = (dateKey?: string | null) => {
+            const parsed = parseDateKeySafe(dateKey);
+            if (!parsed) return '';
+            const cursor = new Date(parsed);
+            for (let i = 0; i < 14; i += 1) {
+                cursor.setDate(cursor.getDate() + 1);
+                if (!isNonWorkingDay(cursor)) return toDateKey(cursor);
+            }
+            return toDateKey(cursor);
+        };
+
+        const startingToday = approvedVacations.find((absence: any) => absence.date_key === todayKey);
+        if (startingToday) {
+            const returnDate = nextWorkingDateKey(startingToday.end_date || startingToday.date_key);
+            return {
+                tone: 'departure',
+                title: 'Desconecta y disfruta de tus vacaciones',
+                body: returnDate ? `Lunaris te espera de vuelta el ${returnDate}.` : 'Lunaris se queda cuidando la casa mientras descansas.',
+            };
+        }
+
+        const returningToday = approvedVacations.find((absence: any) =>
+            nextWorkingDateKey(absence.end_date || absence.date_key) === todayKey,
+        );
+        if (returningToday) {
+            return {
+                tone: 'return',
+                title: 'Bienvenida/o de vuelta',
+                body: 'Qué bueno tenerte de nuevo por aquí. Ojalá hayas podido descansar.',
+            };
+        }
+
+        return null;
+    }, [absenceRequests, calendarOverrides, currentUser, todayKey]);
 
     const weeklyMeetings = useMemo(
         () =>
@@ -3162,6 +3213,16 @@ function Dashboard() {
                             Lo importante primero
                         </div>
                     </div>
+                    {vacationMilestoneMessage && (
+                        <div className={`mt-4 rounded-2xl border p-4 ${
+                            vacationMilestoneMessage.tone === 'departure'
+                                ? 'border-sky-200 bg-sky-50 text-sky-950'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                        }`}>
+                            <p className="text-sm font-black">{vacationMilestoneMessage.title}</p>
+                            <p className="mt-1 text-sm font-semibold opacity-80">{vacationMilestoneMessage.body}</p>
+                        </div>
+                    )}
                     <div className="mt-4 flex flex-wrap gap-2">
                         <Link
                             to="/inventory"
@@ -3379,6 +3440,16 @@ function Dashboard() {
                         {weeklyAbsences.length === 0 ? 'Equipo completo' : `${weeklyAbsences.length} ausencia(s) esta semana`}
                     </span>
                 </div>
+                {vacationMilestoneMessage && (
+                    <div className={`mt-4 rounded-2xl border p-4 ${
+                        vacationMilestoneMessage.tone === 'departure'
+                            ? 'border-sky-200 bg-sky-50 text-sky-950'
+                            : 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                    }`}>
+                        <p className="text-sm font-black">{vacationMilestoneMessage.title}</p>
+                        <p className="mt-1 text-sm font-semibold opacity-80">{vacationMilestoneMessage.body}</p>
+                    </div>
+                )}
                 <p className="mt-3 text-sm font-semibold text-violet-900/90 mb-2">
                     Semana: {formatDatePretty(weekStart)} - {formatDatePretty(weekEnd)}.
                 </p>
