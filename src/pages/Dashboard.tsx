@@ -503,6 +503,7 @@ function Dashboard() {
     const [showCalendarModal, setShowCalendarModal] = useState(false);
     const [calendarMonthDate, setCalendarMonthDate] = useState(new Date());
     const [calendarSelectedDate, setCalendarSelectedDate] = useState(new Date());
+    const [requestsCalendarSelectedDate, setRequestsCalendarSelectedDate] = useState(new Date());
     const [inventoryAlerts] = useSharedJsonState<InventoryAlertsSummary | null>(
         INVENTORY_ALERTS_KEY,
         null,
@@ -616,6 +617,12 @@ function Dashboard() {
 
     const today = new Date();
     const todayKey = toDateKey(today);
+    const openRequestsHub = () => {
+        const currentDate = new Date();
+        setCalendarMonthDate(currentDate);
+        setRequestsCalendarSelectedDate(currentDate);
+        setShowRequestsModal(true);
+    };
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const { timeData: monthTimeData } = useTimeData({
@@ -901,7 +908,7 @@ function Dashboard() {
                     label: 'Solicitudes',
                     icon: Users,
                     tone: 'ghost',
-                    onClick: () => setShowRequestsModal(true),
+                    onClick: openRequestsHub,
                 },
             ],
         },
@@ -1006,6 +1013,32 @@ function Dashboard() {
             })
             .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key));
     }, [activeRequestModal, absenceRequests, requestDate, requestEndDate, requestIsDateRange, todayKey]);
+
+    const requestsCalendarSelectedDateKey = toDateKey(requestsCalendarSelectedDate);
+    const requestsCalendarApprovedAbsences = useMemo(
+        () =>
+            absenceRequests
+                .filter((absence: any) => {
+                    if (absence.status !== 'approved') return false;
+                    const start = absence.date_key;
+                    const end = absence.end_date || absence.date_key;
+                    return start <= requestsCalendarSelectedDateKey && end >= requestsCalendarSelectedDateKey;
+                })
+                .sort((a: any, b: any) => {
+                    const userA = USERS.find((user) => user.id === a.created_by)?.name || '';
+                    const userB = USERS.find((user) => user.id === b.created_by)?.name || '';
+                    return userA.localeCompare(userB, 'es') || a.date_key.localeCompare(b.date_key);
+                }),
+        [absenceRequests, requestsCalendarSelectedDateKey],
+    );
+
+    const upcomingApprovedAbsences = useMemo(() => {
+        const today = todayKey;
+        return absenceRequests
+            .filter((absence: any) => absence.status === 'approved' && (absence.end_date || absence.date_key) >= today)
+            .sort((a: any, b: any) => a.date_key.localeCompare(b.date_key))
+            .slice(0, 6);
+    }, [absenceRequests, todayKey]);
 
     const selectedManagedAbsenceDate = useMemo(() => {
         const dateKey = manageRequestDate || selectedManagedRequest?.dateKey || todayKey;
@@ -2992,7 +3025,7 @@ function Dashboard() {
                     buttonClass: 'border-fuchsia-200 bg-white text-fuchsia-950 hover:bg-fuchsia-50',
                     iconClass: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100',
                     badges: [{ count: requestsBadgeCount, tone: 'fuchsia' }],
-                    onClick: () => setShowRequestsModal(true),
+                    onClick: openRequestsHub,
                 },
             ],
         },
@@ -5279,7 +5312,7 @@ function Dashboard() {
             )}
             {showRequestsModal && (
                 <div className="app-modal-overlay" onClick={() => setShowRequestsModal(false)}>
-                    <div className="app-modal-panel w-full max-w-3xl rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                    <div className="app-modal-panel flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-gray-100 p-4">
                             <div>
                                 <p className="text-xs font-bold uppercase tracking-widest text-violet-500">Centro de mando</p>
@@ -5289,68 +5322,126 @@ function Dashboard() {
                                 <XCircle size={18} />
                             </button>
                         </div>
-                        <div className="p-4 space-y-4">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('absence'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
-                                    <UserX size={16} />
-                                    Solicitar ausencia
-                                </button>
-                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('vacation'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
-                                    <CalendarClock size={16} />
-                                    Solicitar vacaciones
-                                </button>
-                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('meeting'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
-                                    <Users size={16} />
-                                    Solicitar reunión/sugerencia
-                                </button>
-                                <button onClick={() => { setShowRequestsModal(false); openRequestModal('training'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
-                                    <GraduationCap size={16} />
-                                    Solicitar formación
-                                </button>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                {isAdmin && (
+                        <div className="grid gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_430px]">
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button onClick={() => { setShowRequestsModal(false); openRequestModal('absence'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                        <UserX size={16} />
+                                        Solicitar ausencia
+                                    </button>
+                                    <button onClick={() => { setShowRequestsModal(false); openRequestModal('vacation'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                        <CalendarClock size={16} />
+                                        Solicitar vacaciones
+                                    </button>
+                                    <button onClick={() => { setShowRequestsModal(false); openRequestModal('meeting'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                        <Users size={16} />
+                                        Solicitar reunión/sugerencia
+                                    </button>
+                                    <button onClick={() => { setShowRequestsModal(false); openRequestModal('training'); }} className="p-4 rounded-2xl border border-violet-200 bg-white hover:bg-violet-50 flex items-center gap-2.5 text-base font-bold text-violet-900 min-h-[58px]">
+                                        <GraduationCap size={16} />
+                                        Solicitar formación
+                                    </button>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {isAdmin && (
+                                        <button
+                                            onClick={() => {
+                                                setShowRequestsModal(false);
+                                                setShowAbsencesManageModal(true);
+                                            }}
+                                            className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold"
+                                        >
+                                            Gestionar solicitudes
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => {
                                             setShowRequestsModal(false);
                                             setShowAbsencesManageModal(true);
                                         }}
-                                        className="px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-bold"
+                                        className="px-4 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold"
                                     >
-                                        Gestionar solicitudes
+                                        Mis solicitudes
                                     </button>
-                                )}
-                                <button
-                                    onClick={() => {
-                                        setShowRequestsModal(false);
-                                        setShowAbsencesManageModal(true);
-                                    }}
-                                    className="px-4 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold"
-                                >
-                                    Mis solicitudes
-                                </button>
-                            </div>
-                            <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
-                                <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Mis solicitudes recientes</p>
-                                <div className="space-y-1.5">
-                                    {myRequestRows.slice(0, 6).map((row) => (
-                                        <button
-                                            key={row.id}
-                                            onClick={() => {
-                                                const target = myDetailedRequestRows.find((r) => r.source === row.source && r.id === row.requestId);
-                                                if (!target) return;
-                                                setShowRequestsModal(false);
-                                                openMyRequest(target);
-                                            }}
-                                            className="w-full text-left rounded-lg border border-violet-100 bg-white p-2 text-xs hover:border-violet-300 transition"
-                                        >
-                                            <p className="font-bold text-violet-900">{row.title}</p>
-                                            <p className="text-violet-700">{row.date} · Estado: {row.status}</p>
-                                        </button>
-                                    ))}
-                                    {myRequestRows.length === 0 && <div className="app-empty-card">Aún no tienes solicitudes creadas.</div>}
+                                </div>
+                                <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
+                                    <p className="text-xs font-bold uppercase tracking-widest text-violet-700 mb-2">Mis solicitudes recientes</p>
+                                    <div className="space-y-1.5">
+                                        {myRequestRows.slice(0, 6).map((row) => (
+                                            <button
+                                                key={row.id}
+                                                onClick={() => {
+                                                    const target = myDetailedRequestRows.find((r) => r.source === row.source && r.id === row.requestId);
+                                                    if (!target) return;
+                                                    setShowRequestsModal(false);
+                                                    openMyRequest(target);
+                                                }}
+                                                className="w-full text-left rounded-lg border border-violet-100 bg-white p-2 text-xs hover:border-violet-300 transition"
+                                            >
+                                                <p className="font-bold text-violet-900">{row.title}</p>
+                                                <p className="text-violet-700">{row.date} · Estado: {row.status}</p>
+                                            </button>
+                                        ))}
+                                        {myRequestRows.length === 0 && <div className="app-empty-card">Aún no tienes solicitudes creadas.</div>}
+                                    </div>
+                                </div>
+                                <div className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 p-3">
+                                    <p className="text-xs font-bold uppercase tracking-widest text-fuchsia-700 mb-2">Próximas ausencias aprobadas</p>
+                                    <div className="space-y-1.5">
+                                        {upcomingApprovedAbsences.map((absence: any) => {
+                                            const user = USERS.find((item) => item.id === absence.created_by);
+                                            return (
+                                                <div key={`upcoming-approved-${absence.id}`} className="rounded-lg border border-fuchsia-100 bg-white p-2 text-xs">
+                                                    <p className="font-bold text-fuchsia-950">{user?.name || 'Persona'}</p>
+                                                    <p className="font-semibold text-fuchsia-700">
+                                                        {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                                    </p>
+                                                </div>
+                                            );
+                                        })}
+                                        {upcomingApprovedAbsences.length === 0 && <div className="app-empty-card">No hay ausencias aprobadas próximas.</div>}
+                                    </div>
                                 </div>
                             </div>
+                            <aside className="space-y-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-3">
+                                <div>
+                                    <p className="text-xs font-black uppercase tracking-widest text-violet-700">Calendario de vacaciones aceptadas</p>
+                                    <p className="mt-1 text-sm font-bold text-violet-950">Mira quién ya tiene días aprobados antes de crear o aprobar una solicitud.</p>
+                                </div>
+                                <div className="h-[420px] overflow-hidden rounded-2xl border border-white bg-white">
+                                    <CalendarGrid
+                                        monthDate={calendarMonthDate}
+                                        selectedDate={requestsCalendarSelectedDate}
+                                        onChangeMonth={(date) => setCalendarMonthDate(date)}
+                                        onSelectDate={setRequestsCalendarSelectedDate}
+                                        overrides={calendarOverrides}
+                                        absenceStatusFilter="approved-only"
+                                    />
+                                </div>
+                                <div className="rounded-2xl border border-white bg-white p-3">
+                                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-violet-700">
+                                        {requestsCalendarSelectedDateKey}
+                                    </p>
+                                    <div className="max-h-44 space-y-2 overflow-y-auto">
+                                        {requestsCalendarApprovedAbsences.map((absence: any) => {
+                                            const user = USERS.find((item) => item.id === absence.created_by);
+                                            return (
+                                                <div key={`requests-calendar-approved-${absence.id}`} className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+                                                    <p className="text-sm font-black text-violet-950">{user?.name || 'Persona'}</p>
+                                                    <p className="text-xs font-semibold text-violet-700">
+                                                        {absence.type === 'vacation' ? 'Vacaciones' : absence.type === 'special_permit' ? 'Permiso especial' : 'Ausencia'} · {absence.date_key}{absence.end_date ? ` al ${absence.end_date}` : ''}
+                                                    </p>
+                                                </div>
+                                            );
+                                        })}
+                                        {requestsCalendarApprovedAbsences.length === 0 && (
+                                            <p className="rounded-xl border border-dashed border-violet-200 bg-white p-3 text-xs font-bold text-violet-500">
+                                                No hay vacaciones o ausencias aprobadas para este día.
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            </aside>
                         </div>
                     </div>
                 </div>
