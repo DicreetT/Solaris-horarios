@@ -10,6 +10,7 @@ import { Celebration } from './Celebration';
 
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { supabase } from '../lib/supabase';
+import { isHiddenTaskTag } from '../utils/taskLinks';
 
 interface TaskCardRowProps {
     todo: Todo;
@@ -98,9 +99,9 @@ export function TaskCardRow({ todo, currentUser, unreadCommentsCount = 0, onClic
                                 {isOverdue ? 'Vencida' : 'Hoy'}
                             </span>
                         )}
-                        {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG).length > 0 && (
+                        {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG && !isHiddenTaskTag(tag)).length > 0 && (
                             <div className="flex gap-1">
-                                {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG).map(tag => (
+                                {(todo.tags || []).filter((tag) => tag !== PRIORITY_TAG && !isHiddenTaskTag(tag)).map(tag => (
                                     <span key={tag} className="px-1.5 py-0.5 rounded-md bg-primary/5 text-primary text-[10px] font-bold">
                                         #{tag}
                                     </span>

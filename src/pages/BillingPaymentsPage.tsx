@@ -420,7 +420,9 @@ export default function BillingPaymentsPage() {
       initializeIfMissing: true,
       pollIntervalMs: 15000,
       protectFromEmptyOverwrite: true,
+      preferRemoteSnapshot: true,
       mergeBeforePersist: true,
+      mergeIncomingWithLocal: false,
     },
   );
 
@@ -462,7 +464,7 @@ export default function BillingPaymentsPage() {
   const isEsteban = email === 'contacto@solaris.global';
   const canViewAll = isAdmin || isHeidy || isEsteban;
   const canApprovePayments = isAdmin;
-  const canSeeCashMovements = canViewAll;
+  const canSeeCashMovements = true;
   const actorName = clean(currentUser?.name) || clean(currentUser?.email) || 'Alguien';
   const noteRecipientOptions = useMemo(
     () =>
@@ -541,6 +543,14 @@ export default function BillingPaymentsPage() {
     if (monthFilter === 'all') return visibleCashMovements;
     return visibleCashMovements.filter((item) => monthKeyFromDate(item.date || item.createdAt) === monthFilter);
   }, [visibleCashMovements, monthFilter]);
+  const cashSummaryMovements = useMemo(
+    () => visibleCashMovements.filter((item) => getCashBucket(item.cashBucket) !== 'NAVE_BUDGET'),
+    [visibleCashMovements],
+  );
+  const monthFilteredCashSummaryMovements = useMemo(
+    () => monthFilteredCashMovements.filter((item) => getCashBucket(item.cashBucket) !== 'NAVE_BUDGET'),
+    [monthFilteredCashMovements],
+  );
 
   const filteredCashMovements = useMemo(() => {
     const q = normalizeKey(searchText);
@@ -561,28 +571,32 @@ export default function BillingPaymentsPage() {
   const paidAmount = filteredRequests
     .filter((r) => r.status === 'PAGADO')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const cashTotal = visibleCashMovements.reduce(
+  const cashTotal = cashSummaryMovements.reduce(
     (sum, item) => sum + (item.type === 'INGRESO' ? Number(item.amount) || 0 : -(Number(item.amount) || 0)),
     0,
   );
-  const cashIncomeMonth = filteredCashMovements
+  const cashIncomeMonth = monthFilteredCashSummaryMovements
     .filter((item) => item.type === 'INGRESO')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const cashOutcomeMonth = filteredCashMovements
+  const cashOutcomeMonth = monthFilteredCashSummaryMovements
     .filter((item) => item.type === 'SALIDA')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const cashBudgetMonthKey = monthFilter === 'all' ? monthKeyFromDate(new Date().toISOString()) : monthFilter;
   const cashBudgetMovements = visibleCashMovements.filter(
     (item) => monthKeyFromDate(item.date || item.createdAt) === cashBudgetMonthKey && getCashBucket(item.cashBucket) === 'NAVE_BUDGET',
   );
-  const cashBudgetIncome = cashBudgetMovements
+  const cashBudgetRawIncome = cashBudgetMovements
     .filter((item) => item.type === 'INGRESO')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const cashBudgetOutcome = cashBudgetMovements
     .filter((item) => item.type === 'SALIDA')
     .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const cashBudgetAvailable = NAVE_MONTHLY_BUDGET + cashBudgetIncome - cashBudgetOutcome;
-  const cashBudgetReplenish = Math.max(0, NAVE_MONTHLY_BUDGET - cashBudgetAvailable);
+  const cashBudgetIncome = Math.min(cashBudgetRawIncome, cashBudgetOutcome);
+  const cashBudgetAvailable = Math.max(
+    0,
+    Math.min(NAVE_MONTHLY_BUDGET, NAVE_MONTHLY_BUDGET - cashBudgetOutcome + cashBudgetIncome),
+  );
+  const cashBudgetReplenish = Math.max(0, cashBudgetOutcome - cashBudgetIncome);
 
   const resetManualForm = () => {
     setManualProvider('');
@@ -1588,16 +1602,16 @@ export default function BillingPaymentsPage() {
                 <p className="mt-1 text-2xl font-black text-emerald-950">{formatCurrency(cashTotal)}</p>
               </div>
               <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
-                <p className="text-xs font-black uppercase tracking-wide text-sky-700">Ingresos visibles</p>
+                <p className="text-xs font-black uppercase tracking-wide text-sky-700">Ingresos del periodo</p>
                 <p className="mt-1 text-2xl font-black text-sky-950">{formatCurrency(cashIncomeMonth)}</p>
               </div>
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-                <p className="text-xs font-black uppercase tracking-wide text-rose-700">Salidas visibles</p>
+                <p className="text-xs font-black uppercase tracking-wide text-rose-700">Salidas del periodo</p>
                 <p className="mt-1 text-2xl font-black text-rose-950">{formatCurrency(cashOutcomeMonth)}</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-xs font-black uppercase tracking-wide text-slate-600">Movimientos</p>
-                <p className="mt-1 text-2xl font-black text-slate-950">{filteredCashMovements.length}</p>
+                <p className="text-xs font-black uppercase tracking-wide text-slate-600">Movimientos del periodo</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{monthFilteredCashSummaryMovements.length}</p>
                 <p className="mt-1 text-xs font-semibold text-slate-500">{cashLoading ? 'Sincronizando...' : 'Sincronizado'}</p>
               </div>
             </div>

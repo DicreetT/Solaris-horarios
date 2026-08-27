@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
 import TodoModal from '../components/TodoModal';
@@ -11,9 +11,11 @@ import { CheckSquare, Plus, UserCheck, Shield, Search, SlidersHorizontal } from 
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS } from '../constants';
 import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
+import { getOperationalControlUrl, parseOperationalControlTask } from '../utils/taskLinks';
 
 function TasksPage() {
     const { currentUser } = useAuth();
+    const navigate = useNavigate();
     const { todos, toggleTodo } = useTodos(currentUser);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
@@ -94,6 +96,11 @@ function TasksPage() {
     };
 
     const openTaskDetail = (task: Todo) => {
+        const operationalTarget = parseOperationalControlTask(task);
+        if (operationalTarget) {
+            navigate(getOperationalControlUrl(operationalTarget));
+            return;
+        }
         setSelectedTask(task);
     };
 

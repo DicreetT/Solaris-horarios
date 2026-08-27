@@ -705,7 +705,7 @@ export function useSharedJsonState<T>(
         const incomingRaw = ((data.payload as T) ?? fallbackRef.current);
         if (protectFromEmptyOverwrite && isEffectivelyEmpty(incomingRaw)) {
           // Evitar vaciar estado útil por lecturas inconsistentes/transitorias.
-          if (!isEffectivelyEmpty(valueRef.current)) {
+          if (!preferRemoteSnapshot && !isEffectivelyEmpty(valueRef.current)) {
             if (active && !silent) setLoading(false);
             return;
           }
@@ -759,17 +759,19 @@ export function useSharedJsonState<T>(
         // En refrescos silenciosos, no pisar estado local con fallback para evitar
         // vaciar temporalmente la UI si hay lecturas inconsistentes.
         if (protectFromEmptyOverwrite) {
-          if (!isEffectivelyEmpty(valueRef.current)) {
+          if (!preferRemoteSnapshot && !isEffectivelyEmpty(valueRef.current)) {
             if (active && !silent) setLoading(false);
             return;
           }
-          const cached = safeReadLocal<T>(localCacheKeyRef.current);
-          if (cached !== undefined && !isEffectivelyEmpty(cached)) {
-            setValue(cached);
-            valueRef.current = cached;
-            if (!silent) await persist(cached);
-            if (active && !silent) setLoading(false);
-            return;
+          if (!preferRemoteSnapshot) {
+            const cached = safeReadLocal<T>(localCacheKeyRef.current);
+            if (cached !== undefined && !isEffectivelyEmpty(cached)) {
+              setValue(cached);
+              valueRef.current = cached;
+              if (!silent) await persist(cached);
+              if (active && !silent) setLoading(false);
+              return;
+            }
           }
         }
         if (!silent) {
