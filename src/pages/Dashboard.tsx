@@ -56,6 +56,7 @@ import { FileUploader, Attachment } from '../components/FileUploader';
 import TaskDetailModal from '../components/TaskDetailModal';
 import { Todo } from '../types';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { getOperationalControlUrl, parseOperationalControlTask } from '../utils/taskLinks';
 import { useDensityMode } from '../hooks/useDensityMode';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
@@ -694,6 +695,15 @@ function Dashboard() {
         () => todos.filter((t) => t.assigned_to.includes(currentUser?.id || '') && !t.completed_by.includes(currentUser?.id || '')),
         [todos, currentUser],
     );
+
+    const openTaskFromDashboard = (task: Todo) => {
+        const operationalTarget = parseOperationalControlTask(task);
+        if (operationalTarget) {
+            navigate(getOperationalControlUrl(operationalTarget));
+            return;
+        }
+        setSelectedTask(task);
+    };
 
     const dueTodayTodos = pendingTodos.filter((t) => t.due_date_key === todayKey);
     const nowHour = new Date().getHours();
@@ -1754,7 +1764,7 @@ function Dashboard() {
         if (category === 'tasks') {
             const task = findTaskFromNotification(notification);
             if (task) {
-                setSelectedTask(task);
+                openTaskFromDashboard(task);
                 return;
             }
             navigate('/tasks');
@@ -5894,8 +5904,8 @@ function Dashboard() {
                                 <button
                                     key={`summary-task-${task.id}`}
                                     onClick={() => {
-                                        setSelectedTask(task);
                                         setSummaryModal(null);
+                                        openTaskFromDashboard(task);
                                     }}
                                     className="w-full rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-left hover:border-violet-400"
                                 >

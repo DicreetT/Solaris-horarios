@@ -190,7 +190,7 @@ function formatMonthKey(monthKey: string) {
 
 const OPERATIONAL_PROCESS_LABELS: Record<string, string> = {
     entradas_canet: 'Entradas Canet',
-    traspasos_huarte: 'Traspasos Huarte',
+    traspasos_huarte: 'Traspasos',
     ensamblajes: 'Ensamblajes',
     inventario_stock: 'Inventario / Stock',
     ventas_salidas: 'Ventas / Salidas',

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send, Tag, Plus, X } from 'lucide-react';
+import { XCircle, Calendar, User, Users, Paperclip, CheckCircle2, Circle, MessageSquare, Send, Tag, Plus, X, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Todo, Attachment, Comment } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { USERS } from '../constants';
@@ -11,6 +12,7 @@ import { Celebration } from './Celebration';
 import { haptics } from '../utils/haptics';
 import { useTaskCommentSeen } from '../hooks/useTaskCommentSeen';
 import LinkifiedText from './LinkifiedText';
+import { getOperationalControlUrl, isHiddenTaskTag, parseOperationalControlTask } from '../utils/taskLinks';
 
 const PRIORITY_TAG = '__priority__';
 
@@ -22,6 +24,7 @@ interface TaskDetailModalProps {
 
 export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: TaskDetailModalProps) {
     const { currentUser } = useAuth();
+    const navigate = useNavigate();
     const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
     const [newComment, setNewComment] = useState('');
     const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
@@ -33,12 +36,13 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const [editDescription, setEditDescription] = useState(task.description || '');
-    const [editTags, setEditTags] = useState<string[]>((task.tags || []).filter((tag) => tag !== PRIORITY_TAG));
+    const [editTags, setEditTags] = useState<string[]>((task.tags || []).filter((tag) => tag !== PRIORITY_TAG && !isHiddenTaskTag(tag)));
     const [tagInput, setTagInput] = useState("");
 
     const creator = USERS.find((u) => u.id === task.created_by)?.name || task.created_by;
     const isDoneForMe = task.completed_by.includes(currentUser.id);
     const isGloballyDone = task.assigned_to.length > 0 && task.assigned_to.every((uid: string) => task.completed_by.includes(uid));
+    const operationalTarget = parseOperationalControlTask(task);
 
     // Main badge/button state reflects the current user
     const isCompleted = isDoneForMe;
@@ -157,8 +161,8 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                     title: editTitle,
                     description: editDescription,
                     tags: (task.tags || []).includes(PRIORITY_TAG)
-                        ? Array.from(new Set([...editTags, PRIORITY_TAG]))
-                        : editTags
+                        ? Array.from(new Set([...editTags, ...(task.tags || []).filter((tag) => tag === PRIORITY_TAG || isHiddenTaskTag(tag))]))
+                        : Array.from(new Set([...editTags, ...(task.tags || []).filter(isHiddenTaskTag)]))
                 }
             });
             setIsEditing(false);
@@ -233,7 +237,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                             )}
 
                             {/* Tags View (Non-Edit) */}
-                            {!isEditing && (task.tags || []).filter((tag) => tag !== PRIORITY_TAG).map(tag => (
+                            {!isEditing && (task.tags || []).filter((tag) => tag !== PRIORITY_TAG && !isHiddenTaskTag(tag)).map(tag => (
                                 <span key={tag} className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${getTagColor(tag)}`}>
                                     {tag}
                                 </span>
@@ -337,6 +341,23 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                         </div>
                     )}
 
+                    {operationalTarget && (
+                        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+                            <p className="text-sm font-black text-red-900">Esta tarea abre una tarjeta de Control Operativo.</p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onClose();
+                                    navigate(getOperationalControlUrl(operationalTarget));
+                                }}
+                                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-red-700"
+                            >
+                                <ExternalLink size={15} />
+                                Abrir tarjeta
+                            </button>
+                        </div>
+                    )}
+
                     {/* Description */}
                     <div>
                         <h3 className="text-sm font-bold text-gray-900 mb-3 uppercase tracking-wider">Descripción</h3>
@@ -368,7 +389,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                                         setIsEditing(false);
                                         setEditTitle(task.title);
                                         setEditDescription(task.description || '');
-                                        setEditTags((task.tags || []).filter((tag) => tag !== PRIORITY_TAG));
+                                        setEditTags((task.tags || []).filter((tag) => tag !== PRIORITY_TAG && !isHiddenTaskTag(tag)));
                                     }}
                                     className="px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors"
                                 >

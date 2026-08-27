@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
+  AtSign,
   AlertTriangle,
   Building2,
   Calculator,
@@ -14,15 +16,24 @@ import {
   PackageCheck,
   RotateCcw,
   Save,
+  Send,
   ShoppingCart,
   Upload,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { USERS } from '../constants';
 import { sharedJsonHistoryKeyFor, useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useInventoryMovementsDB, type InventoryMovementRow } from '../hooks/useInventoryMovementsDB';
+import { useTodos } from '../hooks/useTodos';
 import { supabase } from '../lib/supabase';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import { getOperationalControlUrl, makeOperationalControlTag } from '../utils/taskLinks';
 import { FileUploader, type Attachment } from '../components/FileUploader';
+import {
+  calculateInventoryStockSnapshot,
+  formatInventoryWarehouseLabel,
+  getInventorySignedQuantity,
+} from '../utils/inventoryStock';
 import canetSeed from '../data/inventory_seed.json';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
@@ -151,6 +162,80 @@ type ProcessDefinition = {
 
 type GenericRow = Record<string, any>;
 
+type TraceabilityDossierState = {
+  suppliers?: Array<{
+    id: string;
+    name: string;
+    sanitaryRegister?: string;
+    products?: Array<{ id: string; name: string; reference?: string; category?: string; unit?: string }>;
+  }>;
+  lots?: Array<{
+    id: string;
+    productName: string;
+    lotNumber: string;
+    quantity?: string;
+    quantityUnit?: string;
+    deliveryDate?: string;
+    albaranNumber?: string;
+    zohoPurchaseOrder?: string;
+    zohoInvoiceNumber?: string;
+    deliveryNoteQuantity?: string;
+    calculatedBoxes?: string;
+    expiryDate?: string;
+    status?: string;
+    entries?: Array<{
+      id: string;
+      supplierId: string;
+      supplierProductId: string;
+      deliveryDate?: string;
+      albaranNumber?: string;
+      solarisInvoiceNumber?: string;
+      deliveryNoteQuantity?: string;
+      quantity?: string;
+      quantityMatchesInvoice?: string;
+      quantityDifference?: string;
+      quantityCheckNotes?: string;
+      expiryDate?: string;
+      attachments?: Record<string, Attachment[]>;
+    }>;
+  }>;
+};
+
+type AlbaranesState = {
+  products?: Array<{
+    id: string;
+    name: string;
+    tags?: Array<{
+      id: string;
+      name: string;
+      documents?: Array<{
+        id: string;
+        title?: string;
+        damageHistory?: Array<{
+          id: string;
+          quantity: number;
+          kind?: 'origen' | 'envio';
+          comment?: string;
+          createdAt?: string;
+          createdBy?: string;
+          attachments?: Attachment[];
+        }>;
+      }>;
+    }>;
+  }>;
+};
+
+type LotAssemblyFinalizationEntry = {
+  id: string;
+  producto: string;
+  lote: string;
+  ensamblaje_finalizado: 'SI' | 'NO';
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
+
 const EMPTY_STATE: OperationalMonthlyState = {
   records: [],
   monthClosures: [],
@@ -241,6 +326,46 @@ const isActiveOperationalLot = (row: GenericRow) => {
   const state = normalize(String(row.estado || row.activo_si_no || row.activo || 'ACTIVO'));
   return !state || (!state.includes('agotado') && !state.includes('archivado') && state !== 'no');
 };
+const normalizeAssemblyFinalized = (value: unknown) => {
+  const token = normalize(String(value || ''));
+  return token === 'si' || token === 'true' || token === '1' || token === 'finalizado';
+};
+const operationalLotMatches = (left: unknown, right: unknown) => {
+  const a = operationalLotCode(left);
+  const b = operationalLotCode(right);
+  if (!a || !b) return false;
+  return a === b || a.endsWith(b) || b.endsWith(a);
+};
+const numberFromControlValue = (value: unknown) => parseControlNumber(String(value || '')) || 0;
+const formatControlQuantity = (value: number, decimals = 2) => {
+  if (!Number.isFinite(value)) return '-';
+  const rounded = Number(value.toFixed(decimals));
+  return rounded.toLocaleString('es-ES', { maximumFractionDigits: decimals });
+};
+const traceabilityDateInMonth = (value: unknown, targetYear: number, targetMonth: number) => {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
+};
+const traceabilityFilesCount = (attachments?: Record<string, Attachment[]>) => (
+  Object.values(attachments || {}).reduce((total, files) => total + (Array.isArray(files) ? files.length : 0), 0)
+);
+const movementDateInMonth = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
+  const raw = String((movement as any).fecha || (movement as any).date || (movement as any).created_at || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return false;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
+};
+const isoDateInMonth = (value: unknown, targetYear: number, targetMonth: number) => {
+  const raw = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return false;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
+};
 
 const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
   entradas_canet: {
@@ -265,16 +390,16 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
     tables: [
       {
         id: 'entradas',
-        title: 'Compras Zoho vs entradas Lunaris',
-        subtitle: 'Cada línea representa una compra/orden del mes y se compara con lo que realmente entró a nave.',
+        title: 'Recepciones del mes',
+        subtitle: 'Cada línea representa una recepción/albarán cuya entrada cae en este mes. El cierre final del lote puede ocurrir meses después.',
         columns: [
-          'Compra / producto solicitado',
-          'Referencia / lote si aplica',
-          'Cantidad comprada',
+          'Producto',
+          'Lote',
+          'Cantidad según albarán',
           'Orden de compra Zoho',
           'Ingresó a Lunaris',
-          'Cantidad ingresada en nave',
-          'Motivo / fecha prevista',
+          'Cantidad recibida/verificada',
+          'Factura Solaris',
           'Situación del ingreso',
           'Revisión contable',
           'Observaciones',
@@ -288,19 +413,19 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       'Informe de proveedores del mes de contabilidad',
     ],
     validations: [
-      'Cada orden de compra de Zoho debe indicar si ingresó o no ingresó a Lunaris.',
-      'Si una compra no ingresó en el mes, debe quedar motivo, fecha prevista o incidencia registrada.',
+      'Cada albarán del mes debe indicar si la recepción quedó registrada en Lunaris.',
+      'Si la cantidad recibida/verificada todavía no está cerrada, debe quedar como pendiente o en proceso.',
       'Contabilidad debe marcar si existe registro de pago en banco o si aún está pendiente.',
     ],
   },
   traspasos_huarte: {
     key: 'traspasos_huarte',
     index: 2,
-    title: 'Traspasos Huarte',
+    title: 'Traspasos',
     shortTitle: 'Traspasos',
     responsible: 'Itziar',
     review: 'Esteban',
-    warehouse: 'Huarte',
+    warehouse: 'Todas',
     users: ['itzi', 'itziar'],
     icon: PackageCheck,
     color: {
@@ -310,7 +435,7 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-amber-600 hover:bg-amber-700',
       ring: 'focus:ring-amber-100 focus:border-amber-500',
     },
-    summary: 'Huarte no recibe proveedor directo; sus entradas vienen de traspasos desde Canet.',
+    summary: 'Control mensual de traspasos entre bodegas registrados en Lunaris y contrastables con Zoho.',
     tables: [
       {
         id: 'traspasos',
@@ -318,12 +443,15 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
         columns: [
           'Producto',
           'Lote',
-          'Cantidad enviada desde Canet',
-          'Cantidad recibida en Huarte',
+          'Bodega origen',
+          'Bodega destino',
+          'Cantidad enviada',
+          'Cantidad recibida',
           'Cantidad registrada en Zoho',
           'Cantidad registrada en Lunaris',
           'Diferencia',
           'Motivo diferencia',
+          'Movimiento Lunaris',
           'Observaciones',
         ],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5', 'Línea 6'],
@@ -335,7 +463,7 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
     ],
     validations: [
       'Los traspasos de Zoho deben coincidir con los traspasos de Lunaris.',
-      'Las cantidades enviadas desde Canet deben coincidir con las recibidas en Huarte.',
+      'Las cantidades enviadas desde una bodega deben coincidir con las recibidas en la bodega destino.',
     ],
   },
   ensamblajes: {
@@ -386,6 +514,30 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
         ],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
       },
+      {
+        id: 'ensamblajes_finalizados',
+        title: 'Ensamblajes finalizados',
+        subtitle: 'Aparecen los lotes marcados como ensamblaje finalizado en Inventario durante este mes.',
+        columns: [
+          'Producto',
+          'Lote',
+          'Fecha finalización',
+          'Cantidad albarán (viales/unid.)',
+          'Cantidad caja según albarán',
+          'Cantidad ensamblada Lunaris',
+          'Dañados Canet origen',
+          'Dañados Canet envío',
+          'Dañados Huarte origen',
+          'Dañados Huarte envío',
+          'Total dañados',
+          'Diferencia albarán vs cierre Lunaris',
+          'Cantidad final según Zoho',
+          'Diferencia Zoho vs Lunaris',
+          'Motivo diferencia',
+          'Observaciones',
+        ],
+        rows: ['Lote 1', 'Lote 2', 'Lote 3'],
+      },
     ],
     attachments: [
       'Informe de ensamblajes descargado desde Zoho',
@@ -418,7 +570,7 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       {
         id: 'stock',
         title: 'Stock por producto, lote y bodega',
-        subtitle: 'Incluye bodegas de inventario Canet e inventario Huarte.',
+        subtitle: 'Prellenado desde el stock vivo del inventario Canet.',
         columns: [
           'Producto',
           'Lote',
@@ -461,43 +613,43 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-violet-700 hover:bg-violet-800',
       ring: 'focus:ring-violet-100 focus:border-violet-500',
     },
-    summary: 'Ventas, salidas por venta y facturación cobrada frente a Zoho y bancos.',
+    summary: 'Comparación de salidas por venta entre Zoho y Lunaris por producto, lote e inventario.',
     fields: [
-      { id: 'total_facturas_zoho', label: 'Total facturas emitidas en Zoho', type: 'money' },
-      { id: 'total_pedidos_preparados', label: 'Total pedidos preparados', type: 'number' },
-      { id: 'total_salidas_lunaris', label: 'Total salidas por venta en Lunaris', type: 'number' },
-      { id: 'total_salidas_zoho', label: 'Total salidas por venta en Zoho', type: 'number' },
-      { id: 'total_traspasos', label: 'Total traspasos', type: 'number' },
-      { id: 'total_etiquetas', label: 'Total etiquetas creadas', type: 'number' },
-      { id: 'diferencia_ventas_salidas', label: 'Diferencia ventas vs salidas', type: 'text' },
-      { id: 'ventas_banco_vs_zoho', label: 'Total facturas/ventas reflejadas en bancos vs Zoho', type: 'money' },
+      { id: 'ventas_mes_lunaris', label: 'Cantidad ventas/salidas por venta del mes', type: 'number' },
+      { id: 'traspasos_mes_lunaris', label: 'Cantidad traspasos del mes', type: 'number' },
+      { id: 'total_salidas_mes_lunaris', label: 'Total salidas del mes', type: 'number' },
+      { id: 'devoluciones_mes_lunaris', label: 'Devoluciones o rectificativas del mes' },
+      { id: 'ventas_por_bodega_lunaris', label: 'Ventas por bodega en Lunaris', type: 'textarea' },
+      { id: 'traspasos_por_bodega_lunaris', label: 'Traspasos por bodega en Lunaris', type: 'textarea' },
+      { id: 'estado_ventas_salidas', label: 'Estado ventas vs salidas', type: 'status' },
+      { id: 'comentario_ventas', label: 'Comentario de ventas/salidas', type: 'textarea' },
     ],
     tables: [
       {
-        id: 'resumen_comercial',
-        title: 'Resumen comercial comparativo',
-        subtitle: 'Tres productos más vendidos según cada fuente.',
-        columns: ['Zoho', 'Inventario Canet', 'Inventario Huarte'],
-        rows: ['Top 1', 'Top 2', 'Top 3'],
-      },
-      {
         id: 'ventas_producto_lote',
         title: 'Salidas por producto, lote e inventario',
-        columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad salida Lunaris', 'Diferencia', 'Motivo diferencia'],
+        subtitle: 'Lunaris prellena las salidas por venta/envío; Zoho se completa para comparar por línea.',
+        columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad salida Lunaris', 'Diferencia', 'Salidas revisadas por contabilidad', 'Motivo diferencia', 'Observaciones'],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
+      },
+      {
+        id: 'devoluciones_lunaris',
+        title: 'Devoluciones / rectificativas detectadas en Lunaris',
+        subtitle: 'Detalle de movimientos del mes que contienen devolución, rectificativa o nota crédito.',
+        columns: ['Fecha', 'Producto', 'Lote', 'Inventario', 'Tipo', 'Cantidad', 'Movimiento Lunaris', 'Observaciones'],
+        rows: ['Movimiento 1', 'Movimiento 2', 'Movimiento 3'],
       },
     ],
     attachments: [
       'Informe de facturas emitidas descargado desde Zoho',
-      'Informe de pedidos / envíos descargado desde Zoho',
+      'Informe de ventas por producto y lote descargado desde Zoho',
       'Informe de salidas por venta descargado desde Lunaris',
-      'Informe de ventas pagadas en banco vs ventas pendientes',
+      'Soporte de devoluciones o rectificativas del mes',
     ],
     validations: [
-      'Facturas emitidas deben coincidir con pedidos preparados.',
-      'Ventas registradas deben coincidir con salidas por venta.',
-      'El total facturado en banco debe coincidir con las facturas por cliente.',
-      'Las etiquetas creadas solo requieren número total, no PDF de etiquetas.',
+      'La comparación principal se revisa por producto, lote e inventario.',
+      'Las cantidades vendidas en Zoho deben coincidir con las salidas por venta/envío de Lunaris.',
+      'Las devoluciones o rectificativas deben quedar anotadas para explicar diferencias.',
     ],
   },
   contabilidad: {
@@ -515,19 +667,30 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-orange-600 hover:bg-orange-700',
       ring: 'focus:ring-orange-100 focus:border-orange-500',
     },
-    summary: 'Conciliación de facturas, bancos, cobros vencidos y resultado financiero.',
+    summary: 'Conciliación mensual de facturas de proveedor, facturas cliente, Caixa, BBVA y cobros pendientes.',
     fields: [
-      { id: 'facturas_proveedor_revisadas', label: 'Facturas proveedor revisadas', type: 'number' },
-      { id: 'facturas_cliente_revisadas', label: 'Facturas cliente revisadas', type: 'number' },
-      { id: 'bancos_conciliados', label: 'Bancos conciliados: Caixa / BBVA' },
-      { id: 'cobros_vencidos', label: 'Cobros vencidos relevantes', type: 'textarea' },
+      { id: 'facturas_proveedor_revisadas', label: 'Nº facturas proveedor revisadas', type: 'number' },
+      { id: 'facturas_cliente_revisadas', label: 'Nº facturas cliente revisadas', type: 'number' },
+      { id: 'deuda_clientes_zoho', label: 'Por cobrar según Zoho', type: 'money' },
+      { id: 'cobros_vencidos_mas_un_mes', label: 'Cobros vencidos de más de un mes', type: 'textarea' },
+      { id: 'caixa_conciliada', label: 'Caixa conciliada', type: 'status' },
+      { id: 'bbva_conciliada', label: 'BBVA conciliada', type: 'status' },
       { id: 'estado_financiero', label: 'Estado financiero del mes', type: 'status' },
       { id: 'objetivo_caixa', label: 'Objetivo colchón Caixa', type: 'money' },
+      { id: 'diferencia_objetivo_caixa', label: 'Diferencia frente a objetivo Caixa', type: 'money' },
       { id: 'objetivo_bbva', label: 'Objetivo colchón BBVA', type: 'money' },
-      { id: 'diferencia_objetivo', label: 'Diferencia frente a objetivo', type: 'money' },
+      { id: 'diferencia_objetivo_bbva', label: 'Diferencia frente a objetivo BBVA', type: 'money' },
       { id: 'resultado_mes', label: 'Resultado del mes', type: 'money' },
       { id: 'comparacion_mes_anterior', label: 'Comparación con mes anterior' },
       { id: 'comentario_financiero', label: 'Comentario financiero general', type: 'textarea' },
+    ],
+    tables: [
+      {
+        id: 'cobros_pendientes',
+        title: 'Cobros pendientes y vencidos',
+        columns: ['Cliente', 'Factura', 'Importe pendiente', 'Vencimiento', 'Más de un mes', 'Estado', 'Observaciones'],
+        rows: ['Cobro 1', 'Cobro 2', 'Cobro 3'],
+      },
     ],
     attachments: [
       'Informe de facturas proveedor revisadas',
@@ -537,9 +700,9 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       'Informe de cobros vencidos',
     ],
     validations: [
-      'Facturas cliente deben ser coherentes con ventas.',
-      'Facturas proveedor deben ser coherentes con entradas/albaranes.',
-      'Bancos deben estar conciliados o marcar incidencia.',
+      'Facturas cliente deben ser coherentes con ventas/salidas.',
+      'Facturas proveedor deben ser coherentes con entradas/albaranes del dossier.',
+      'Caixa y BBVA deben revisarse por separado.',
     ],
   },
   sistemas_analytics: {
@@ -557,23 +720,22 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-blue-700 hover:bg-blue-800',
       ring: 'focus:ring-blue-100 focus:border-blue-500',
     },
-    summary: 'Valida que los informes existen, se revisaron y coinciden entre sistemas.',
+    summary: 'Indicadores mensuales de sistemas y datos útiles de Zoho.',
     fields: [
-      { id: 'diferencias_detectadas', label: 'Diferencias detectadas', type: 'number' },
-      { id: 'area_diferencia', label: 'Área de diferencia' },
-      { id: 'diferencias_resueltas', label: 'Diferencias resueltas', type: 'number' },
-      { id: 'diferencias_pendientes', label: 'Diferencias pendientes', type: 'number' },
-      { id: 'producto_mas_vendido', label: 'Producto más vendido del mes' },
-      { id: 'producto_menos_vendido', label: 'Producto menos vendido del mes' },
-      { id: 'variacion_mes_anterior', label: 'Variación frente al mes anterior' },
+      { id: 'entradas_estado_sistemas', label: 'Entradas revisadas entre sistemas', type: 'status' },
+      { id: 'traspasos_estado_sistemas', label: 'Traspasos revisados entre sistemas', type: 'status' },
+      { id: 'ensamblajes_estado_sistemas', label: 'Ensamblajes revisados entre sistemas', type: 'status' },
+      { id: 'stock_estado_sistemas', label: 'Stock revisado entre sistemas', type: 'status' },
+      { id: 'ventas_estado_sistemas', label: 'Ventas revisadas entre sistemas', type: 'status' },
+      { id: 'diferencias_abiertas_total', label: 'Total diferencias abiertas', type: 'number' },
+      { id: 'comentario_sistemas', label: 'Comentario sistemas/analytics', type: 'textarea' },
     ],
     tables: [
       {
-        id: 'analisis_stock_fuente',
-        title: 'Análisis de stock por fuente',
-        subtitle: 'Comparativa de exceso, riesgo y consumo aproximado entre Zoho, Canet y Huarte.',
-        columns: ['Zoho', 'Inventario Canet', 'Inventario Huarte'],
-        rows: ['Productos con exceso de stock', 'Productos con riesgo de rotura de stock', 'Consumo mensual aproximado'],
+        id: 'indicadores_mes',
+        title: 'Indicadores del mes',
+        columns: ['Indicador', 'Valor Zoho', 'Valor Lunaris', 'Comentario'],
+        rows: ['Producto más vendido', 'Producto menos vendido', 'Variación frente al mes anterior'],
       },
     ],
     attachments: [
@@ -593,8 +755,8 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       'Lunaris: Informe de incidencias',
     ],
     validations: [
-      'Sistemas debe confirmar si Zoho, Lunaris y conteos físicos coinciden.',
-      'Si no coinciden, debe registrar área, motivo y responsable de resolución.',
+      'Sistemas registra indicadores de Zoho que aporten contexto al cierre mensual.',
+      'Las diferencias operativas se revisan en su propia sección y pasan al cierre común.',
     ],
   },
   estado_almacen: {
@@ -721,6 +883,22 @@ function normalize(value: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
+}
+
+function userMatchesOperationalAlias(userName: string, alias: string) {
+  const normalizedAlias = normalize(alias);
+  const aliases: Record<string, string[]> = {
+    anabela: ['anabela', 'anabella'],
+    anabella: ['anabela', 'anabella'],
+    fernando: ['fernando', 'fer'],
+    fer: ['fernando', 'fer'],
+    heidy: ['heidy', 'heidi'],
+    heidi: ['heidy', 'heidi'],
+    itzi: ['itzi', 'itziar'],
+    itziar: ['itzi', 'itziar'],
+  };
+  const acceptedAliases = aliases[normalizedAlias] || [normalizedAlias];
+  return acceptedAliases.some((item) => userName.includes(item));
 }
 
 function safeState(state: OperationalMonthlyState | undefined | null): OperationalMonthlyState {
@@ -1286,8 +1464,20 @@ function renderCellInput(
 
 export default function OperationalControlPage() {
   const { currentUser } = useAuth();
+  const [searchParams] = useSearchParams();
+  const { createTodo } = useTodos(currentUser);
   const [canetMovements] = useInventoryMovementsDB('canet');
   const [huarteMovements] = useInventoryMovementsDB('huarte');
+  const [canetProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_productos_v1',
+    (canetSeed as any).productos as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
+  );
   const [canetLotes] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
     (canetSeed as any).lotes as GenericRow[],
@@ -1306,6 +1496,38 @@ export default function OperationalControlPage() {
       initializeIfMissing: false,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+    },
+  );
+  const [lotAssemblyFinalizations] = useSharedJsonState<LotAssemblyFinalizationEntry[]>(
+    INVENTORY_CANET_LOT_FINALIZATIONS_KEY,
+    [],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+    },
+  );
+  const [traceabilityDossier] = useSharedJsonState<TraceabilityDossierState>(
+    'traceability_dossier_v1',
+    { suppliers: [], lots: [] },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+      preferRemoteSnapshot: true,
+    },
+  );
+  const [albaranesState] = useSharedJsonState<AlbaranesState>(
+    'albaranes_state_v1',
+    { products: [] },
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+      preferRemoteSnapshot: true,
     },
   );
   const today = new Date();
@@ -1342,6 +1564,10 @@ export default function OperationalControlPage() {
   const [draftAttachments, setDraftAttachments] = useState<Record<string, Attachment[]>>({});
   const [draftStatus, setDraftStatus] = useState<StatusKey>('pendiente');
   const [draftReviewed, setDraftReviewed] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteAssigneeIds, setNoteAssigneeIds] = useState<string[]>([]);
+  const [creatingNoteTask, setCreatingNoteTask] = useState(false);
+  const [focusActiveCard, setFocusActiveCard] = useState(false);
   const [historySnapshots, setHistorySnapshots] = useState<OperationalHistorySnapshot[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -1369,6 +1595,590 @@ export default function OperationalControlPage() {
     return total + definition.attachments.filter((item) => (record?.attachments?.[item] || []).length === 0).length;
   }, 0);
   const openIncidents = recordsForMonth.filter((record) => record.status === 'critica');
+  const recordsToCorrect = recordsForMonth.filter((record) => {
+    if (record.process === 'cierre_comun') return false;
+    if (record.status === 'revision' || record.status === 'critica') return true;
+    return Object.entries(record.fields || {}).some(([key, value]) => (
+      normalize(key).includes('diferencia') && !!String(value || '').trim() && String(value).trim() !== '0'
+    ));
+  });
+  const traceabilityEntradasMonth = useMemo(() => {
+    const suppliers = Array.isArray(traceabilityDossier?.suppliers) ? traceabilityDossier.suppliers : [];
+    const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+    return (Array.isArray(traceabilityDossier?.lots) ? traceabilityDossier.lots : [])
+      .flatMap((lot) => (Array.isArray(lot.entries) ? lot.entries : []).map((entry) => {
+        const supplier = supplierById.get(entry.supplierId);
+        const supplierProduct = supplier?.products?.find((product) => product.id === entry.supplierProductId);
+        return {
+          lot,
+          entry,
+          supplier,
+          supplierProduct,
+          productCode: operationalProductCode(lot.productName),
+          files: traceabilityFilesCount(entry.attachments),
+        };
+      }))
+      .filter(({ entry }) => traceabilityDateInMonth(entry.deliveryDate, year, month))
+      .sort((a, b) => String(a.entry.deliveryDate || '').localeCompare(String(b.entry.deliveryDate || '')));
+  }, [traceabilityDossier, year, month]);
+  const traceabilityEntradasWithDifferences = traceabilityEntradasMonth.filter(({ entry }) => (
+    entry.quantityMatchesInvoice === 'no'
+    || !!String(entry.quantityDifference || '').trim()
+  ));
+  const productMetaByCode = useMemo(() => {
+    const map = new Map<string, { mode: string; vialsPerBox: number }>();
+    const push = (row: GenericRow) => {
+      const code = operationalProductCode(row?.producto || row?.product || row?.name);
+      if (!code) return;
+      const mode = normalize(String(row?.modo_stock || row?.tipo_producto || row?.mode || 'DIRECTO')).includes('ensambl')
+        ? 'ENSAMBLAJE'
+        : String(row?.modo_stock || row?.tipo_producto || row?.mode || 'DIRECTO').toUpperCase();
+      const vialsPerBox = numberFromControlValue(row?.viales_por_caja || row?.vialsPerBox);
+      map.set(code, {
+        mode: mode || 'DIRECTO',
+        vialsPerBox: vialsPerBox > 0 ? vialsPerBox : code === 'SV' || code === 'ENT' ? 20 : 0,
+      });
+    };
+    ((canetSeed as any).productos as GenericRow[] || []).forEach(push);
+    (Array.isArray(canetProductos) ? canetProductos : []).forEach(push);
+    return map;
+  }, [canetProductos]);
+  const assemblyAccumulatedByLot = useMemo(() => {
+    const map = new Map<string, number>();
+    [...(canetMovements || []), ...(huarteMovements || [])]
+      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('ensamblaje'))
+      .forEach((movement) => {
+        const product = operationalProductCode(movement.producto);
+        const lot = operationalLotCode(movement.lote);
+        const quantity = Math.abs(getInventorySignedQuantity(movement as any) || 0);
+        if (!product || !lot || quantity <= 0) return;
+        const key = `${product}::${lot}`;
+        map.set(key, (map.get(key) || 0) + quantity);
+      });
+    return map;
+  }, [canetMovements, huarteMovements]);
+  const assemblyMovementsMonth = useMemo(() => (
+    [...(canetMovements || []), ...(huarteMovements || [])]
+      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('ensamblaje'))
+      .filter((movement) => movementDateInMonth(movement, year, month))
+      .map((movement) => ({
+        id: String((movement as any).id || `${movement.fecha}-${movement.producto}-${movement.lote}-${movement.bodega}`),
+        date: String((movement as any).fecha || ''),
+        product: operationalProductCode(movement.producto),
+        lot: operationalLotCode(movement.lote),
+        warehouse: String((movement as any).bodega || '').trim() || '-',
+        type: String(movement.tipo_movimiento || '').trim(),
+        quantity: Math.abs(parseControlNumber(String((movement as any).cantidad_signed ?? movement.cantidad ?? '0')) || 0),
+      }))
+      .filter((movement) => movement.product && movement.lot && movement.quantity > 0)
+  ), [canetMovements, huarteMovements, year, month]);
+  const assemblySummaryRows = useMemo(() => {
+    const map = new Map<string, { product: string; lot: string; warehouse: string; quantity: number; count: number }>();
+    assemblyMovementsMonth.forEach((movement) => {
+      const key = `${movement.product}::${movement.lot}::${movement.warehouse}`;
+      const existing = map.get(key) || {
+        product: movement.product,
+        lot: movement.lot,
+        warehouse: movement.warehouse,
+        quantity: 0,
+        count: 0,
+      };
+      existing.quantity += movement.quantity;
+      existing.count += 1;
+      map.set(key, existing);
+    });
+    return Array.from(map.values()).sort((a, b) => a.product.localeCompare(b.product, 'es') || a.lot.localeCompare(b.lot, 'es'));
+  }, [assemblyMovementsMonth]);
+  const assemblyMonthTotal = assemblySummaryRows.reduce((total, row) => total + row.quantity, 0);
+  const transferSummaryRows = useMemo(() => {
+    const map = new Map<string, {
+      product: string;
+      lot: string;
+      origin: string;
+      destination: string;
+      sent: number;
+      received: number;
+      lunaris: number;
+      count: number;
+      sources: string[];
+    }>();
+    [...(canetMovements || []), ...(huarteMovements || [])]
+      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('traspaso') || normalize(String(movement.tipo_movimiento || '')).includes('transfer'))
+      .filter((movement) => movementDateInMonth(movement, year, month))
+      .forEach((movement) => {
+        const product = operationalProductCode(movement.producto);
+        const lot = operationalLotCode(movement.lote);
+        if (!product || !lot) return;
+        const signed = getInventorySignedQuantity(movement as any);
+        const quantity = Math.abs(signed || 0);
+        if (quantity <= 0) return;
+        const movementType = normalize(String(movement.tipo_movimiento || ''));
+        const isIncoming = (movementType.includes('entrada') && movementType.includes('traspaso')) || signed > 0;
+        const rawWarehouse = formatInventoryWarehouseLabel((movement as any).bodega || '').trim();
+        const rawCounterparty = formatInventoryWarehouseLabel(
+          isIncoming
+            ? ((movement as any).cliente || (movement as any).destino || '')
+            : ((movement as any).destino || (movement as any).cliente || ''),
+        ).trim();
+        const origin = isIncoming ? (rawCounterparty || '-') : (rawWarehouse || '-');
+        const destination = isIncoming ? (rawWarehouse || '-') : (rawCounterparty || '-');
+        const key = `${product}::${lot}::${origin}::${destination}`;
+        const existing = map.get(key) || {
+          product,
+          lot,
+          origin,
+          destination,
+          sent: 0,
+          received: 0,
+          lunaris: 0,
+          count: 0,
+          sources: [],
+        };
+        if (isIncoming) {
+          existing.received += quantity;
+        } else {
+          existing.sent += quantity;
+        }
+        existing.lunaris = Math.max(existing.sent, existing.received);
+        existing.count += 1;
+        existing.sources.push([
+          `ID ${(movement as any).id || '-'}`,
+          String((movement as any).fecha || '-'),
+          String((movement as any).tipo_movimiento || 'Traspaso'),
+          `${origin || '-'} -> ${destination || '-'}`,
+        ].join(' · '));
+        map.set(key, existing);
+      });
+    return Array.from(map.values()).sort((a, b) => (
+      a.product.localeCompare(b.product, 'es')
+      || a.lot.localeCompare(b.lot, 'es')
+      || a.origin.localeCompare(b.origin, 'es')
+      || a.destination.localeCompare(b.destination, 'es')
+    ));
+  }, [canetMovements, huarteMovements, year, month]);
+  const stockSummaryRows = useMemo(() => (
+    calculateInventoryStockSnapshot(canetMovements as any[], {
+      scope: 'canet',
+      normalizeProduct: (value) => operationalProductCode(value),
+      normalizeLot: (value) => operationalLotCode(value),
+      excludeMirrorSources: true,
+      clampNegative: true,
+      round: true,
+    }).positiveRows
+      .map((row) => ({
+        product: row.producto,
+        lot: row.lote,
+        warehouse: formatInventoryWarehouseLabel(row.bodega),
+        stock: row.stock,
+      }))
+      .filter((row) => row.product && row.lot && row.warehouse && row.stock > 0)
+      .sort((a, b) => (
+        a.product.localeCompare(b.product, 'es')
+        || a.lot.localeCompare(b.lot, 'es')
+        || a.warehouse.localeCompare(b.warehouse, 'es')
+      ))
+  ), [canetMovements]);
+  const salesExitSummaryRows = useMemo(() => {
+    const map = new Map<string, {
+      product: string;
+      lot: string;
+      inventory: string;
+      quantity: number;
+      documents: Set<string>;
+    }>();
+    const pushMovement = (movement: InventoryMovementRow, fallbackInventory: string) => {
+      const type = normalize(String(movement.tipo_movimiento || ''));
+      if ((!type.includes('venta') && !type.includes('envio')) || type.includes('traspaso') || type.includes('entrada')) return;
+      if (!movementDateInMonth(movement, year, month)) return;
+      const signed = getInventorySignedQuantity(movement as any);
+      if (signed >= 0) return;
+      const quantity = Math.abs(signed);
+      const product = operationalProductCode(movement.producto);
+      const lot = operationalLotCode(movement.lote);
+      const inventory = formatInventoryWarehouseLabel((movement as any).bodega || fallbackInventory);
+      if (!product || !lot || !inventory || quantity <= 0) return;
+      const key = `${product}::${lot}::${inventory}`;
+      const existing = map.get(key) || {
+        product,
+        lot,
+        inventory,
+        quantity: 0,
+        documents: new Set<string>(),
+      };
+      existing.quantity += quantity;
+      const documentName = String((movement as any).factura_doc || '').trim();
+      if (documentName) existing.documents.add(documentName);
+      map.set(key, existing);
+    };
+
+    (canetMovements || []).forEach((movement) => pushMovement(movement, 'Canet'));
+    (huarteMovements || []).forEach((movement) => pushMovement(movement, 'Huarte'));
+
+    return Array.from(map.values()).sort((a, b) => (
+      a.product.localeCompare(b.product, 'es')
+      || a.lot.localeCompare(b.lot, 'es')
+      || a.inventory.localeCompare(b.inventory, 'es')
+    ));
+  }, [canetMovements, huarteMovements, year, month]);
+  const returnSummaryRows = useMemo(() => (
+    [...(canetMovements || []), ...(huarteMovements || [])]
+      .filter((movement) => {
+        if (!movementDateInMonth(movement, year, month)) return false;
+        const haystack = normalize([
+          movement.tipo_movimiento,
+          (movement as any).destino,
+          (movement as any).cliente,
+          (movement as any).motivo,
+          (movement as any).notas,
+        ].filter(Boolean).join(' '));
+        return haystack.includes('devolucion') || haystack.includes('rectificativa') || haystack.includes('nota credito');
+      })
+      .map((movement) => ({
+        id: String((movement as any).id || ''),
+        date: String((movement as any).fecha || ''),
+        product: operationalProductCode(movement.producto),
+        lot: operationalLotCode(movement.lote),
+        inventory: formatInventoryWarehouseLabel((movement as any).bodega || ''),
+        type: String(movement.tipo_movimiento || '').trim() || '-',
+        quantity: Math.abs(getInventorySignedQuantity(movement as any) || 0),
+        notes: String((movement as any).notas || (movement as any).motivo || '').trim(),
+      }))
+      .sort((a, b) => (
+        a.date.localeCompare(b.date)
+        || a.product.localeCompare(b.product, 'es')
+        || a.lot.localeCompare(b.lot, 'es')
+      ))
+  ), [canetMovements, huarteMovements, year, month]);
+  const returnSummary = useMemo(() => ({
+    count: returnSummaryRows.length,
+    quantity: returnSummaryRows.reduce((total, movement) => total + movement.quantity, 0),
+  }), [returnSummaryRows]);
+  const salesTotalsByWarehouse = useMemo(() => {
+    const map = new Map<string, number>();
+    salesExitSummaryRows.forEach((row) => {
+      map.set(row.inventory, (map.get(row.inventory) || 0) + row.quantity);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'))
+      .map(([warehouse, quantity]) => `${warehouse}: ${quantity}`);
+  }, [salesExitSummaryRows]);
+  const transferTotalsByWarehouse = useMemo(() => {
+    const map = new Map<string, number>();
+    transferSummaryRows.forEach((row) => {
+      const quantity = row.sent || row.received || row.lunaris;
+      if (row.origin && row.origin !== '-') map.set(row.origin, (map.get(row.origin) || 0) + quantity);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'))
+      .map(([warehouse, quantity]) => `${warehouse}: ${quantity}`);
+  }, [transferSummaryRows]);
+  const automaticFieldValues = useMemo(() => {
+    const salesTotal = salesExitSummaryRows.reduce((total, row) => total + row.quantity, 0);
+    const transferTotal = transferSummaryRows.reduce((total, row) => total + (row.sent || row.received || row.lunaris), 0);
+    return {
+      ventas_mes_lunaris: String(salesTotal),
+      traspasos_mes_lunaris: String(transferTotal),
+      total_salidas_mes_lunaris: String(salesTotal + transferTotal),
+      devoluciones_mes_lunaris: returnSummary.count > 0 ? `${returnSummary.count} mov. / ${returnSummary.quantity} unidades` : '0',
+      ventas_por_bodega_lunaris: salesTotalsByWarehouse.join('\n') || 'Sin ventas/salidas por venta registradas.',
+      traspasos_por_bodega_lunaris: transferTotalsByWarehouse.join('\n') || 'Sin traspasos registrados.',
+    } as Record<string, string>;
+  }, [returnSummary, salesExitSummaryRows, salesTotalsByWarehouse, transferSummaryRows, transferTotalsByWarehouse]);
+  const damageSummaryRows = useMemo(() => {
+    const map = new Map<string, {
+      product: string;
+      lot: string;
+      origin: number;
+      shipping: number;
+      total: number;
+      documents: number;
+      notes: string[];
+    }>();
+
+    (Array.isArray(albaranesState?.products) ? albaranesState.products : []).forEach((product) => {
+      const productCode = operationalProductCode(product.name);
+      (product.tags || []).forEach((tag) => {
+        const lot = operationalLotCode(tag.name);
+        (tag.documents || []).forEach((document) => {
+          (document.damageHistory || []).forEach((damage) => {
+            if (!isoDateInMonth(damage.createdAt, year, month)) return;
+            const key = `${productCode}::${lot || operationalLotCode(document.title) || 'SINLOTE'}`;
+            const existing = map.get(key) || {
+              product: productCode || product.name,
+              lot: lot || operationalLotCode(document.title) || '-',
+              origin: 0,
+              shipping: 0,
+              total: 0,
+              documents: 0,
+              notes: [],
+            };
+            const quantity = Math.abs(Number(damage.quantity) || 0);
+            if ((damage.kind || 'origen') === 'envio') {
+              existing.shipping += quantity;
+            } else {
+              existing.origin += quantity;
+            }
+            existing.total += quantity;
+            existing.documents += Array.isArray(damage.attachments) ? damage.attachments.length : 0;
+            if (damage.comment) existing.notes.push(String(damage.comment));
+            map.set(key, existing);
+          });
+        });
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.product.localeCompare(b.product, 'es') || a.lot.localeCompare(b.lot, 'es'));
+  }, [albaranesState, year, month]);
+  const damageByProductLot = useMemo(() => {
+    const map = new Map<string, {
+      canetOrigin: number;
+      canetShipping: number;
+      huarteOrigin: number;
+      huarteShipping: number;
+      total: number;
+    }>();
+    (Array.isArray(albaranesState?.products) ? albaranesState.products : []).forEach((product) => {
+      const productCode = operationalProductCode(product.name);
+      (product.tags || []).forEach((tag) => {
+        const tagLot = operationalLotCode(tag.name);
+        (tag.documents || []).forEach((document) => {
+          const documentLot = operationalLotCode(document.title);
+          const lot = tagLot || documentLot || 'SINLOTE';
+          const key = `${productCode}::${lot}`;
+          const existing = map.get(key) || {
+            canetOrigin: 0,
+            canetShipping: 0,
+            huarteOrigin: 0,
+            huarteShipping: 0,
+            total: 0,
+          };
+          (document.damageHistory || []).forEach((damage) => {
+            const quantity = Math.abs(Number(damage.quantity) || 0);
+            if (quantity <= 0) return;
+            const ownerText = normalize([damage.createdBy, damage.comment].filter(Boolean).join(' '));
+            const isHuarte = ownerText.includes('huarte') || ownerText.includes('guarte') || ownerText.includes('itzi') || ownerText.includes('ichi');
+            const isShipping = (damage.kind || 'origen') === 'envio';
+            if (isHuarte && isShipping) existing.huarteShipping += quantity;
+            else if (isHuarte) existing.huarteOrigin += quantity;
+            else if (isShipping) existing.canetShipping += quantity;
+            else existing.canetOrigin += quantity;
+            existing.total += quantity;
+          });
+          map.set(key, existing);
+        });
+      });
+    });
+    return map;
+  }, [albaranesState]);
+  const finalizedAssemblyRows = useMemo(() => {
+    const latest = new Map<string, {
+      product: string;
+      lot: string;
+      finalizedAt: string;
+      finalizedBy: string;
+    }>();
+    const upsert = (productRaw: unknown, lotRaw: unknown, finalizedRaw: unknown, finalizedAtRaw: unknown, finalizedByRaw: unknown) => {
+      if (!normalizeAssemblyFinalized(finalizedRaw)) return;
+      const product = operationalProductCode(productRaw);
+      const lot = operationalLotCode(lotRaw);
+      const finalizedAt = String(finalizedAtRaw || '').trim();
+      if (!product || !lot || !traceabilityDateInMonth(finalizedAt, year, month)) return;
+      const key = `${product}::${lot}`;
+      const prev = latest.get(key);
+      if (!prev || new Date(finalizedAt).getTime() >= new Date(prev.finalizedAt).getTime()) {
+        latest.set(key, {
+          product,
+          lot,
+          finalizedAt,
+          finalizedBy: String(finalizedByRaw || '').trim(),
+        });
+      }
+    };
+    (Array.isArray(lotAssemblyFinalizations) ? lotAssemblyFinalizations : []).forEach((entry) => {
+      upsert(entry.producto, entry.lote, entry.ensamblaje_finalizado, entry.updatedAt, entry.updatedBy);
+    });
+    (Array.isArray(canetLotes) ? canetLotes : []).forEach((lot) => {
+      upsert(
+        lot.producto,
+        lot.lote,
+        (lot as any).ensamblaje_finalizado,
+        (lot as any).ensamblaje_finalizado_at || (lot as any).ensamblajeFinalizadoAt || (lot as any).assemblyFinalizedAt,
+        (lot as any).updated_by || (lot as any).updatedBy,
+      );
+    });
+
+    const traceLots = Array.isArray(traceabilityDossier?.lots) ? traceabilityDossier.lots : [];
+    const masterLots = Array.isArray(canetLotes) ? canetLotes : [];
+    const findMatchingTraceLot = (product: string, lot: string) => (
+      traceLots.find((item) => operationalProductCode(item.productName) === product && operationalLotMatches(item.lotNumber, lot))
+      || null
+    );
+    const findMatchingMasterLot = (product: string, lot: string) => (
+      masterLots.find((item) => operationalProductCode(item.producto) === product && operationalLotMatches(item.lote, lot))
+      || null
+    );
+    const findDamage = (product: string, lot: string) => {
+      const exact = damageByProductLot.get(`${product}::${lot}`);
+      if (exact) return exact;
+      for (const [key, value] of damageByProductLot.entries()) {
+        const [keyProduct, keyLot] = key.split('::');
+        if (keyProduct === product && operationalLotMatches(keyLot, lot)) return value;
+      }
+      return { canetOrigin: 0, canetShipping: 0, huarteOrigin: 0, huarteShipping: 0, total: 0 };
+    };
+    const accumulatedFor = (product: string, lot: string) => {
+      const exact = assemblyAccumulatedByLot.get(`${product}::${lot}`);
+      if (exact !== undefined) return exact;
+      for (const [key, value] of assemblyAccumulatedByLot.entries()) {
+        const [keyProduct, keyLot] = key.split('::');
+        if (keyProduct === product && operationalLotMatches(keyLot, lot)) return value;
+      }
+      return 0;
+    };
+
+    return Array.from(latest.values())
+      .map((finalized) => {
+        const meta = productMetaByCode.get(finalized.product) || { mode: 'DIRECTO', vialsPerBox: 0 };
+        const traceLot = findMatchingTraceLot(finalized.product, finalized.lot);
+        const masterLot = findMatchingMasterLot(finalized.product, finalized.lot);
+        const albaranQuantity = numberFromControlValue(
+          traceLot?.deliveryNoteQuantity
+          || traceLot?.quantity
+          || traceLot?.entries?.find((entry) => entry.deliveryNoteQuantity)?.deliveryNoteQuantity
+          || (masterLot as any)?.viales_recibidos,
+        );
+        const albaranBoxes = numberFromControlValue(traceLot?.calculatedBoxes)
+          || (meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0 && albaranQuantity > 0
+            ? albaranQuantity / meta.vialsPerBox
+            : albaranQuantity);
+        const assembled = accumulatedFor(finalized.product, finalized.lot);
+        const damage = findDamage(finalized.product, finalized.lot);
+        const damagedAsOutputUnits = meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0
+          ? damage.total / meta.vialsPerBox
+          : damage.total;
+        const albaranDifference = albaranBoxes - assembled - damagedAsOutputUnits;
+        return {
+          ...finalized,
+          albaranQuantity,
+          albaranBoxes,
+          assembled,
+          canetOrigin: damage.canetOrigin,
+          canetShipping: damage.canetShipping,
+          huarteOrigin: damage.huarteOrigin,
+          huarteShipping: damage.huarteShipping,
+          damageTotal: damage.total,
+          albaranDifference,
+        };
+      })
+      .sort((a, b) => a.finalizedAt.localeCompare(b.finalizedAt) || a.product.localeCompare(b.product, 'es') || a.lot.localeCompare(b.lot, 'es'));
+  }, [
+    assemblyAccumulatedByLot,
+    canetLotes,
+    damageByProductLot,
+    lotAssemblyFinalizations,
+    month,
+    productMetaByCode,
+    traceabilityDossier,
+    year,
+  ]);
+  const automaticTableRows = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (assemblySummaryRows.length > 0) {
+      map.set('ensamblajes', assemblySummaryRows.map((row) => `${row.product} · ${row.lot} · ${row.warehouse}`));
+    }
+    if (damageSummaryRows.length > 0) {
+      map.set('danados_ensamblaje', damageSummaryRows.map((row) => `${row.product} · ${row.lot}`));
+    }
+    if (finalizedAssemblyRows.length > 0) {
+      map.set('ensamblajes_finalizados', finalizedAssemblyRows.map((row) => `${row.product} · ${row.lot} · ${row.finalizedAt.slice(0, 10)}`));
+    }
+    if (transferSummaryRows.length > 0) {
+      map.set('traspasos', transferSummaryRows.map((row) => `${row.product} · ${row.lot} · ${row.origin} → ${row.destination}`));
+    }
+    if (stockSummaryRows.length > 0) {
+      map.set('stock', stockSummaryRows.map((row) => `${row.product} · ${row.lot} · ${row.warehouse}`));
+    }
+    if (salesExitSummaryRows.length > 0) {
+      map.set('ventas_producto_lote', salesExitSummaryRows.map((row) => `${row.product} · ${row.lot} · ${row.inventory}`));
+    }
+    if (returnSummaryRows.length > 0) {
+      map.set('devoluciones_lunaris', returnSummaryRows.map((row) => `${row.date || '-'} · ${row.product || '-'} · ${row.lot || '-'} · ${row.id || '-'}`));
+    }
+    return map;
+  }, [assemblySummaryRows, damageSummaryRows, finalizedAssemblyRows, transferSummaryRows, stockSummaryRows, salesExitSummaryRows, returnSummaryRows]);
+  const automaticTableValues = useMemo(() => {
+    const values: Record<string, string> = {};
+    assemblySummaryRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot} · ${row.warehouse}`;
+      values[fieldKey('ensamblajes', rowLabel, 'Producto ensamblado')] = row.product;
+      values[fieldKey('ensamblajes', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('ensamblajes', rowLabel, 'Cantidad ensamblada en Lunaris')] = String(row.quantity);
+    });
+    damageSummaryRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot}`;
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Producto')] = row.product;
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados origen')] = String(row.origin);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados envío')] = String(row.shipping);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Total dañados')] = String(row.total);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Informe Albaranes adjunto')] = row.documents > 0 ? `${row.documents} evidencia(s)` : 'Sin evidencia adjunta';
+    });
+    finalizedAssemblyRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot} · ${row.finalizedAt.slice(0, 10)}`;
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Producto')] = row.product;
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Fecha finalización')] = row.finalizedAt.slice(0, 10);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad albarán (viales/unid.)')] = row.albaranQuantity > 0 ? formatControlQuantity(row.albaranQuantity) : '-';
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad caja según albarán')] = row.albaranBoxes > 0 ? formatControlQuantity(row.albaranBoxes) : '-';
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad ensamblada Lunaris')] = formatControlQuantity(row.assembled);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet origen')] = formatControlQuantity(row.canetOrigin);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet envío')] = formatControlQuantity(row.canetShipping);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte origen')] = formatControlQuantity(row.huarteOrigin);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte envío')] = formatControlQuantity(row.huarteShipping);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Total dañados')] = formatControlQuantity(row.damageTotal);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Diferencia albarán vs cierre Lunaris')] = formatControlQuantity(row.albaranDifference);
+    });
+    transferSummaryRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot} · ${row.origin} → ${row.destination}`;
+      values[fieldKey('traspasos', rowLabel, 'Producto')] = row.product;
+      values[fieldKey('traspasos', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('traspasos', rowLabel, 'Bodega origen')] = row.origin;
+      values[fieldKey('traspasos', rowLabel, 'Bodega destino')] = row.destination;
+      values[fieldKey('traspasos', rowLabel, 'Cantidad enviada')] = row.sent ? String(row.sent) : '';
+      values[fieldKey('traspasos', rowLabel, 'Cantidad recibida')] = row.received ? String(row.received) : '';
+      values[fieldKey('traspasos', rowLabel, 'Cantidad registrada en Lunaris')] = String(row.lunaris);
+      values[fieldKey('traspasos', rowLabel, 'Movimiento Lunaris')] = row.sources.slice(0, 3).join(' | ');
+    });
+    stockSummaryRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot} · ${row.warehouse}`;
+      values[fieldKey('stock', rowLabel, 'Producto')] = row.product;
+      values[fieldKey('stock', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('stock', rowLabel, 'Bodega')] = row.warehouse;
+      values[fieldKey('stock', rowLabel, 'Stock Lunaris')] = String(row.stock);
+    });
+    salesExitSummaryRows.forEach((row) => {
+      const rowLabel = `${row.product} · ${row.lot} · ${row.inventory}`;
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Producto')] = row.product;
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Lote')] = row.lot;
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Inventario')] = row.inventory;
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Cantidad salida Lunaris')] = String(row.quantity);
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Salidas revisadas por contabilidad')] = row.documents.size > 0
+        ? `Pendiente de revisar (${row.documents.size} doc(s))`
+        : 'Pendiente de revisar';
+    });
+    returnSummaryRows.forEach((row) => {
+      const rowLabel = `${row.date || '-'} · ${row.product || '-'} · ${row.lot || '-'} · ${row.id || '-'}`;
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Fecha')] = row.date || '-';
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Producto')] = row.product || '-';
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Lote')] = row.lot || '-';
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Inventario')] = row.inventory || '-';
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Tipo')] = row.type;
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Cantidad')] = String(row.quantity);
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Movimiento Lunaris')] = row.id ? `ID ${row.id}` : '-';
+      values[fieldKey('devoluciones_lunaris', rowLabel, 'Observaciones')] = row.notes || '-';
+    });
+    return values;
+  }, [assemblySummaryRows, damageSummaryRows, finalizedAssemblyRows, transferSummaryRows, stockSummaryRows, salesExitSummaryRows, returnSummaryRows]);
   const lotOptionsByProduct = useMemo(() => {
     const map = new Map<string, Set<string>>();
     const ensure = (product: string) => {
@@ -1409,6 +2219,47 @@ export default function OperationalControlPage() {
     );
   }, [canetLotes, canetMovements, huarteLotes, huarteMovements]);
 
+  const suggestedNoteUsers = useMemo(() => {
+    const aliases = activeDefinition.users || [];
+    const suggested = USERS.filter((user) => {
+      const name = normalize(user.name);
+      const emailName = normalize(user.email.split('@')[0] || '');
+      return aliases.some((alias) => userMatchesOperationalAlias(name, alias) || userMatchesOperationalAlias(emailName, alias));
+    });
+    return suggested.length > 0 ? suggested : USERS.filter((user) => !user.isRestricted);
+  }, [activeDefinition.users]);
+
+  const noteTargetUrl = getOperationalControlUrl({ process: selectedProcess, year, month });
+
+  useEffect(() => {
+    const process = searchParams.get('process');
+    const nextYear = Number(searchParams.get('year'));
+    const nextMonth = Number(searchParams.get('month'));
+
+    if (process && PROCESS_DEFINITIONS[process as ProcessKey]) {
+      setSelectedProcess(process as ProcessKey);
+    }
+    if (Number.isFinite(nextYear) && nextYear >= 2020 && nextYear <= 2100) {
+      setYear(nextYear);
+    }
+    if (Number.isFinite(nextMonth) && nextMonth >= 1 && nextMonth <= 12) {
+      setMonth(nextMonth);
+    }
+
+    if (searchParams.get('focus') === '1') {
+      setFocusActiveCard(true);
+      const timer = window.setTimeout(() => {
+        const activeCard = document.getElementById('operational-control-active-card');
+        activeCard?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 160);
+      const clearTimer = window.setTimeout(() => setFocusActiveCard(false), 2600);
+      return () => {
+        window.clearTimeout(timer);
+        window.clearTimeout(clearTimer);
+      };
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     setDraftFields(currentRecord?.fields || {});
     setDraftChecklist(currentRecord?.checklist || {});
@@ -1445,6 +2296,57 @@ export default function OperationalControlPage() {
     setDraftAttachments((prev) => ({ ...prev, [item]: files }));
     if (files.length > 0) {
       setDraftChecklist((prev) => ({ ...prev, [item]: true }));
+    }
+  };
+
+  const toggleNoteAssignee = (userId: string) => {
+    setNoteAssigneeIds((prev) => (
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    ));
+  };
+
+  const createOperationalNoteTask = async () => {
+    if (!currentUser || creatingNoteTask) return;
+    if (noteAssigneeIds.length === 0) {
+      alert('Elige al menos una persona para asignarle la nota.');
+      return;
+    }
+    const trimmedNote = noteText.trim();
+    if (!trimmedNote) {
+      alert('Escribe una nota cortita para que la persona sepa qué revisar.');
+      return;
+    }
+
+    setCreatingNoteTask(true);
+    try {
+      const absoluteUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}${noteTargetUrl}`
+        : noteTargetUrl;
+      await createTodo({
+        title: `Revisar control operativo: ${activeDefinition.title}`,
+        description: [
+          trimmedNote,
+          '',
+          `Tarjeta: ${activeDefinition.title}`,
+          `Periodo: ${monthLabel} ${year}`,
+          `Abrir tarjeta: ${absoluteUrl}`,
+        ].join('\n'),
+        assignedTo: noteAssigneeIds,
+        dueDateKey: new Date().toISOString().split('T')[0],
+        attachments: [],
+        tags: [
+          'control operativo',
+          makeOperationalControlTag(selectedProcess, year, month),
+        ],
+      });
+      setNoteText('');
+      setNoteAssigneeIds([]);
+      emitSuccessFeedback('Nota enviada como tarea y notificación.');
+    } catch (error) {
+      console.error('Error creating operational note task:', error);
+      alert('No se pudo crear la tarea de control operativo.');
+    } finally {
+      setCreatingNoteTask(false);
     }
   };
 
@@ -1486,7 +2388,7 @@ export default function OperationalControlPage() {
         month,
         status: nextStatus,
         reviewed: nextReviewed,
-        fields: mergeFields(existing?.fields, draftFields),
+        fields: mergeFields(existing?.fields, { ...draftFields, ...automaticFieldValues, ...automaticTableValues }),
         checklist: mergeChecklist(existing?.checklist, draftChecklist),
         attachments: mergeAttachmentsByField(existing?.attachments, draftAttachments),
         participantProgress,
@@ -1892,7 +2794,10 @@ export default function OperationalControlPage() {
 
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
           <div className="space-y-4">
-            <section className={`rounded-xl border bg-white shadow-sm ${activeDefinition.color.border}`}>
+            <section
+              id="operational-control-active-card"
+              className={`rounded-xl border bg-white shadow-sm transition ${activeDefinition.color.border} ${focusActiveCard ? 'ring-4 ring-red-300 ring-offset-2' : ''}`}
+            >
               <div className={`border-b px-4 py-3 ${activeDefinition.color.border} ${activeDefinition.color.soft}`}>
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-start gap-3">
@@ -1960,6 +2865,61 @@ export default function OperationalControlPage() {
                     Este mes está cerrado. Los datos y adjuntos quedan en lectura hasta que administración lo reabra.
                   </div>
                 )}
+                {!isMonthClosed && (
+                  <section className="mt-3 rounded-xl border border-red-200 bg-white/90 p-3 shadow-sm">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-red-700">
+                          <AtSign size={14} />
+                          Dejar nota y asignar revisión
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          Crea una tarea automática para que la persona abra esta tarjeta, revise y guarde su parte.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={createOperationalNoteTask}
+                        disabled={creatingNoteTask || noteAssigneeIds.length === 0 || !noteText.trim()}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        <Send size={16} />
+                        {creatingNoteTask ? 'Enviando...' : 'Enviar tarea'}
+                      </button>
+                    </div>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,380px)]">
+                      <textarea
+                        value={noteText}
+                        onChange={(event) => setNoteText(event.target.value)}
+                        rows={3}
+                        placeholder="Ej. @Anabella revisa esta diferencia de stock y guarda la sección cuando esté corregida."
+                        className="w-full rounded-xl border border-red-100 bg-red-50/40 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100"
+                      />
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                        <p className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">Personas sugeridas</p>
+                        <div className="flex flex-wrap gap-2">
+                          {suggestedNoteUsers.map((user) => {
+                            const selected = noteAssigneeIds.includes(user.id);
+                            return (
+                              <button
+                                key={user.id}
+                                type="button"
+                                onClick={() => toggleNoteAssignee(user.id)}
+                                className={`rounded-full border px-3 py-1.5 text-xs font-black transition ${
+                                  selected
+                                    ? 'border-red-500 bg-red-600 text-white'
+                                    : 'border-slate-200 bg-white text-slate-700 hover:border-red-300'
+                                }`}
+                              >
+                                @{user.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                )}
               </div>
 
               <div className="space-y-4 p-4">
@@ -2006,26 +2966,131 @@ export default function OperationalControlPage() {
                   </section>
                 )}
 
+                {selectedProcess === 'entradas_canet' && (
+                  <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-black uppercase tracking-[0.16em] text-emerald-800">Recepciones leídas del dossier</h3>
+                        <p className="mt-1 text-xs font-semibold text-emerald-900/70">
+                          Estas líneas vienen de Dossier trazabilidad por fecha de entrada. Sirven como base automática de Entradas del mes.
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-800">{traceabilityEntradasMonth.length} entrada(s)</span>
+                        {traceabilityEntradasWithDifferences.length > 0 && (
+                          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">{traceabilityEntradasWithDifferences.length} con diferencia</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-3 max-h-[330px] overflow-y-auto rounded-xl border border-emerald-100 bg-white">
+                      <table className="w-full min-w-[900px] text-left text-xs">
+                        <thead className="sticky top-0 bg-white text-[11px] font-black uppercase tracking-widest text-slate-500">
+                          <tr>
+                            <th className="px-3 py-2">Fecha</th>
+                            <th className="px-3 py-2">Producto</th>
+                            <th className="px-3 py-2">Lote</th>
+                            <th className="px-3 py-2">Proveedor</th>
+                            <th className="px-3 py-2">Albarán</th>
+                            <th className="px-3 py-2">Factura Solaris</th>
+                            <th className="px-3 py-2">Cant. albarán</th>
+                            <th className="px-3 py-2">Cant. recibida</th>
+                            <th className="px-3 py-2">Estado</th>
+                            <th className="px-3 py-2">Docs</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {traceabilityEntradasMonth.map(({ lot, entry, supplier, supplierProduct, productCode, files }) => {
+                            const hasDifference = entry.quantityMatchesInvoice === 'no' || !!String(entry.quantityDifference || '').trim();
+                            return (
+                              <tr key={`${lot.id}-${entry.id}`} className={hasDifference ? 'bg-red-50/70' : 'bg-white'}>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{entry.deliveryDate || '-'}</td>
+                                <td className="px-3 py-2 font-black text-slate-900">{productCode || lot.productName}</td>
+                                <td className="px-3 py-2 font-black text-slate-900">{lot.lotNumber}</td>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{supplier?.name || '-'}</td>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{entry.albaranNumber || '-'}</td>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{entry.solarisInvoiceNumber || '-'}</td>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{entry.deliveryNoteQuantity || '-'} {supplierProduct?.unit || ''}</td>
+                                <td className="px-3 py-2 font-semibold text-slate-600">{entry.quantity || '-'}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`rounded-full px-2 py-1 font-black ${hasDifference ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'}`}>
+                                    {hasDifference ? 'A corregir' : lot.status || 'abierto'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 font-black text-slate-600">{files}</td>
+                              </tr>
+                            );
+                          })}
+                          {traceabilityEntradasMonth.length === 0 && (
+                            <tr>
+                              <td colSpan={10} className="px-3 py-8 text-center text-sm font-bold text-slate-400">
+                                No hay recepciones del dossier para este mes.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
+
+                {selectedProcess === 'cierre_comun' && (
+                  <section className="rounded-xl border border-red-200 bg-red-50/60 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-black uppercase tracking-[0.16em] text-red-800">Pendiente para cierre común</h3>
+                        <p className="mt-1 text-xs font-semibold text-red-900/70">
+                          Aquí aparecen las secciones marcadas en revisión/incidencia o con campos de diferencia rellenos.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-red-700">{recordsToCorrect.length} punto(s)</span>
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {recordsToCorrect.map((record) => {
+                        const definition = PROCESS_DEFINITIONS[record.process];
+                        return (
+                          <button
+                            key={record.id}
+                            type="button"
+                            onClick={() => setSelectedProcess(record.process)}
+                            className="rounded-xl border border-red-100 bg-white px-3 py-2 text-left text-sm font-bold text-slate-800 hover:bg-red-50"
+                          >
+                            {definition.title}
+                            <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-black text-red-700">{STATUS_META[record.status].short}</span>
+                            <span className="mt-1 block text-xs font-semibold text-slate-500">Última edición: {formatDateTime(record.updatedAt)}</span>
+                          </button>
+                        );
+                      })}
+                      {recordsToCorrect.length === 0 && (
+                        <p className="rounded-xl border border-emerald-100 bg-white px-3 py-3 text-sm font-black text-emerald-800">No hay secciones marcadas para corregir.</p>
+                      )}
+                    </div>
+                  </section>
+                )}
+
                 {activeDefinition.fields && activeDefinition.fields.length > 0 && (
                   <section className="rounded-xl border border-slate-200 bg-white p-3">
                     <h3 className="mb-3 text-sm font-black uppercase tracking-[0.16em] text-slate-700">Campos de control</h3>
                     <div className="grid gap-3 lg:grid-cols-2">
-                      {activeDefinition.fields.map((field) => (
+                      {activeDefinition.fields.map((field) => {
+                        const autoValue = automaticFieldValues[field.id];
+                        const fieldValue = autoValue ?? draftFields[field.id] ?? '';
+                        const isAutomatic = autoValue !== undefined;
+                        return (
                         <label key={field.id} className={field.type === 'textarea' ? 'space-y-1 lg:col-span-2' : 'space-y-1'}>
                           <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">{field.label}</span>
                           {field.type === 'textarea' ? (
                             <textarea
-                              value={draftFields[field.id] || ''}
+                              value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess}
+                              disabled={!canEditActiveProcess || isAutomatic}
                               rows={3}
-                              className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none ${activeDefinition.color.ring} disabled:bg-slate-50`}
+                              className={`w-full rounded-xl border px-3 py-2 text-sm font-semibold outline-none ${isAutomatic ? 'border-teal-100 bg-teal-50 text-teal-900' : `border-slate-200 bg-white ${activeDefinition.color.ring}`} disabled:bg-slate-50`}
                             />
                           ) : field.type === 'status' ? (
                             <select
-                              value={draftFields[field.id] || ''}
+                              value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess}
+                              disabled={!canEditActiveProcess || isAutomatic}
                               className={`h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none ${activeDefinition.color.ring} disabled:bg-slate-50`}
                             >
                               <option value="">Seleccionar estado</option>
@@ -2036,23 +3101,27 @@ export default function OperationalControlPage() {
                           ) : (
                             <input
                               type={inputType(field.type)}
-                              value={draftFields[field.id] || ''}
+                              value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess}
-                              className={`h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none ${activeDefinition.color.ring} disabled:bg-slate-50`}
+                              disabled={!canEditActiveProcess || isAutomatic}
+                              className={`h-10 w-full rounded-xl border px-3 text-sm font-semibold outline-none ${isAutomatic ? 'border-teal-100 bg-teal-50 text-teal-900' : `border-slate-200 bg-white ${activeDefinition.color.ring}`} disabled:bg-slate-50`}
                             />
                           )}
-                          {field.hint && <span className="text-xs font-semibold text-slate-400">{field.hint}</span>}
+                          {isAutomatic ? <span className="text-xs font-semibold text-teal-600">Automático desde movimientos de inventario.</span> : field.hint && <span className="text-xs font-semibold text-slate-400">{field.hint}</span>}
                         </label>
-                      ))}
+                      );
+                      })}
                     </div>
                   </section>
                 )}
 
                 {activeDefinition.tables?.map((table) => {
                   const statusMatrix = isStatusMatrix(table.columns);
-                  const rows = [...table.rows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])];
-                  const canAddRows = tableSupportsExtraRows(table);
+                  const generatedRows = automaticTableRows.get(table.id) || [];
+                  const rows = generatedRows.length > 0
+                    ? [...generatedRows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])]
+                    : [...table.rows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])];
+                  const canAddRows = tableSupportsExtraRows(table) && generatedRows.length === 0;
                   return (
                   <section key={table.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2082,22 +3151,31 @@ export default function OperationalControlPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.map((row) => (
+                          {rows.map((row) => {
+                            const isGeneratedRow = generatedRows.includes(row);
+                            return (
                             <tr key={row} className="border-b border-slate-100 last:border-b-0">
-                              <td className="w-20 px-2 py-1.5 text-xs font-black text-slate-500">{row}</td>
+                              <td className="w-20 px-2 py-1.5 text-xs font-black text-slate-500">{isGeneratedRow ? 'Auto' : row}</td>
                               {table.columns.map((column) => {
                                 const key = fieldKey(table.id, row, column);
                                 const rowStatusKey = fieldKey(table.id, row, 'estado');
+                                const autoValue = automaticTableValues[key];
+                                const cellValue = autoValue ?? draftFields[key] ?? '';
                                 const normalizedColumn = normalize(column);
                                 const isDifferenceColumn = normalizedColumn.includes('diferencia');
                                 const zohoColumn = table.columns.find((item) => normalize(item).includes('zoho'));
                                 const lunarisColumn = table.columns.find((item) => normalize(item).includes('lunaris'));
-                                const zohoValue = zohoColumn ? parseControlNumber(draftFields[fieldKey(table.id, row, zohoColumn)] || '') : null;
-                                const lunarisValue = lunarisColumn ? parseControlNumber(draftFields[fieldKey(table.id, row, lunarisColumn)] || '') : null;
-                                const explicitDiff = parseControlNumber(draftFields[key] || '');
+                                const zohoKey = zohoColumn ? fieldKey(table.id, row, zohoColumn) : '';
+                                const lunarisKey = lunarisColumn ? fieldKey(table.id, row, lunarisColumn) : '';
+                                const zohoValue = zohoColumn ? parseControlNumber(draftFields[zohoKey] || automaticTableValues[zohoKey] || '') : null;
+                                const lunarisValue = lunarisColumn ? parseControlNumber(draftFields[lunarisKey] || automaticTableValues[lunarisKey] || '') : null;
+                                const explicitDiff = parseControlNumber(cellValue);
                                 const hasComparableValues = zohoValue !== null && lunarisValue !== null;
                                 const hasDifference = explicitDiff !== null ? explicitDiff !== 0 : hasComparableValues ? zohoValue !== lunarisValue : false;
                                 const hasMatch = explicitDiff !== null ? explicitDiff === 0 : hasComparableValues ? zohoValue === lunarisValue : false;
+                                const computedDifference = isDifferenceColumn && explicitDiff === null && hasComparableValues
+                                  ? String((zohoValue || 0) - (lunarisValue || 0))
+                                  : cellValue;
                                 const diffTone = isDifferenceColumn
                                   ? hasDifference
                                     ? 'bg-red-50'
@@ -2119,12 +3197,16 @@ export default function OperationalControlPage() {
                                         />
                                         {column}
                                       </label>
+                                    ) : autoValue !== undefined || (isDifferenceColumn && computedDifference) ? (
+                                      <div className={`min-h-9 rounded-lg border px-2 py-2 text-sm font-black ${autoValue !== undefined ? 'border-teal-100 bg-teal-50 text-teal-900' : hasDifference ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
+                                        {computedDifference || '-'}
+                                      </div>
                                     ) : renderCellInput(
                                       key,
                                       row,
                                       table,
                                       column,
-                                      draftFields[key] || '',
+                                      cellValue,
                                       draftFields[`${key}.otro`] || '',
                                       draftFields,
                                       lotOptionsByProduct,
@@ -2136,7 +3218,8 @@ export default function OperationalControlPage() {
                                 );
                               })}
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

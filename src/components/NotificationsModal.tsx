@@ -5,6 +5,7 @@ import { Notification as NotificationType } from '../types';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useAuth } from '../context/AuthContext';
 import { useTodos } from '../hooks/useTodos';
+import { getOperationalControlUrl, parseOperationalControlTask } from '../utils/taskLinks';
 
 /**
  * NotificationsModal component
@@ -56,6 +57,13 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
 
         if (category === 'tasks') {
             const taskId = resolveTaskIdFromNotification(notification);
+            const task = taskId ? todos.find((item) => item.id === taskId) : null;
+            const operationalTarget = parseOperationalControlTask(task);
+            if (operationalTarget) {
+                navigate(getOperationalControlUrl(operationalTarget));
+                onClose();
+                return;
+            }
             if (taskId) {
                 navigate(`/tasks?task=${taskId}`);
             } else {

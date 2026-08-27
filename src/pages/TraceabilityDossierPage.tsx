@@ -8,7 +8,6 @@ import {
   ClipboardList,
   Download,
   Edit2,
-  Factory,
   FileText,
   FolderTree,
   Link as LinkIcon,
@@ -27,6 +26,9 @@ import { useAuth } from '../context/AuthContext';
 import { FileUploader, type Attachment } from '../components/FileUploader';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
+import canetSeed from '../data/inventory_seed.json';
+
+type GenericRow = Record<string, any>;
 
 type SupplierCategory =
   | 'materia_prima'
@@ -58,6 +60,7 @@ type SupplierProduct = {
   category: SupplierCategory;
   unit: string;
   notes: string;
+  finalProductCodes: string[];
   technicalSheets: Attachment[];
   certificates: Attachment[];
 };
@@ -74,6 +77,7 @@ type Supplier = {
   email: string;
   categories: SupplierCategory[];
   notes: string;
+  contracts: Attachment[];
   products: SupplierProduct[];
   createdAt: string;
   updatedAt: string;
@@ -117,11 +121,19 @@ type FinalLot = {
   productName: string;
   lotNumber: string;
   quantity: string;
+  quantityUnit: string;
+  deliveryDate: string;
+  albaranNumber: string;
+  zohoPurchaseOrder: string;
+  zohoInvoiceNumber: string;
+  deliveryNoteQuantity: string;
+  calculatedBoxes: string;
   status: FinalLotStatus;
   manufactureDate: string;
   expiryDate: string;
   processNotes: string;
   processSteps: SupplierCategory[];
+  attachments: Record<DocumentGroupKey, Attachment[]>;
   entries: TraceabilityEntry[];
   analyses: LotAnalysis[];
   createdAt: string;
@@ -148,6 +160,15 @@ type SupplierLotDraft = {
   expiryDate: string;
   notes: string;
   attachments: Record<DocumentGroupKey, Attachment[]>;
+};
+
+type GuidedLotProviderDraft = {
+  supplierId: string;
+  suppliedName: string;
+  reference: string;
+  category: SupplierCategory;
+  unit: string;
+  notes: string;
 };
 
 const TRACEABILITY_STATE_KEY = 'traceability_dossier_v1';
@@ -185,8 +206,43 @@ const DEFAULT_PROCESS: SupplierCategory[] = [
   'acondicionamiento',
 ];
 
+const PRODUCT_LABELS_BY_CODE: Record<string, string> = {
+  SV: 'Solar Vital',
+  ENT: 'Enterovital',
+  AV: 'Aviro Vital',
+  RG: 'Regenerium',
+  ISO: 'Isotónico',
+  KL: 'Khala',
+};
+
+const PRODUCT_ALIASES: Record<string, string> = {
+  SOLARVITAL: 'SV',
+  SOLAR: 'SV',
+  ENTEROVITAL: 'ENT',
+  ENTERO: 'ENT',
+  AVIROVITAL: 'AV',
+  AVIRO: 'AV',
+  REGENERIUM: 'RG',
+  REGEN: 'RG',
+  ISOTONICO: 'ISO',
+  ISOTÓNICO: 'ISO',
+  KHLA: 'KL',
+  KHALA: 'KL',
+  CALA: 'KL',
+};
+
 function clean(value: unknown) {
   return String(value ?? '').trim();
+}
+
+function productKey(value: unknown) {
+  const key = clean(value).toUpperCase().replace(/\s+/g, '');
+  return PRODUCT_ALIASES[key] || key;
+}
+
+function toNumber(value: unknown) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function uid(prefix: string) {
@@ -246,6 +302,37 @@ function emptySupplierFormDraft() {
     phone: '',
     email: '',
     notes: '',
+    contracts: [] as Attachment[],
+  };
+}
+
+function emptyLotFormDraft(productName = '') {
+  return {
+    productName,
+    lotNumber: '',
+    quantity: '',
+    quantityUnit: '',
+    deliveryDate: '',
+    albaranNumber: '',
+    zohoPurchaseOrder: '',
+    zohoInvoiceNumber: '',
+    deliveryNoteQuantity: '',
+    calculatedBoxes: '',
+    manufactureDate: '',
+    expiryDate: '',
+    processNotes: '',
+    attachments: emptyAttachments(),
+  };
+}
+
+function emptyGuidedLotProviderDraft(): GuidedLotProviderDraft {
+  return {
+    supplierId: '',
+    suppliedName: '',
+    reference: '',
+    category: 'materia_prima',
+    unit: '',
+    notes: '',
   };
 }
 
@@ -256,6 +343,7 @@ function emptyProductFormDraft() {
     category: 'materia_prima' as SupplierCategory,
     unit: '',
     notes: '',
+    finalProductCodes: [] as string[],
     technicalSheets: [] as Attachment[],
     certificates: [] as Attachment[],
   };
@@ -297,6 +385,7 @@ function normalizeState(value: any): TraceabilityState {
       email: clean(supplier?.email),
       categories: Array.isArray(supplier?.categories) ? supplier.categories.filter((item: string) => CATEGORY_OPTIONS.some((option) => option.key === item)) : [],
       notes: clean(supplier?.notes),
+      contracts: normalizeAttachments(supplier?.contracts),
       products: Array.isArray(supplier?.products) ? supplier.products.map((product: any) => ({
         id: clean(product?.id) || uid('spr'),
         name: clean(product?.name) || 'Producto suministrado',
@@ -304,6 +393,9 @@ function normalizeState(value: any): TraceabilityState {
         category: CATEGORY_OPTIONS.some((option) => option.key === product?.category) ? product.category : 'otros',
         unit: clean(product?.unit),
         notes: clean(product?.notes),
+        finalProductCodes: Array.isArray(product?.finalProductCodes)
+          ? product.finalProductCodes.map(productKey).filter(Boolean)
+          : [],
         technicalSheets: normalizeAttachments(product?.technicalSheets),
         certificates: normalizeAttachments(product?.certificates),
       })) : [],
@@ -315,11 +407,19 @@ function normalizeState(value: any): TraceabilityState {
       productName: clean(lot?.productName) || 'Producto',
       lotNumber: clean(lot?.lotNumber) || 'Sin lote',
       quantity: clean(lot?.quantity),
+      quantityUnit: clean(lot?.quantityUnit),
+      deliveryDate: clean(lot?.deliveryDate),
+      albaranNumber: clean(lot?.albaranNumber),
+      zohoPurchaseOrder: clean(lot?.zohoPurchaseOrder),
+      zohoInvoiceNumber: clean(lot?.zohoInvoiceNumber),
+      deliveryNoteQuantity: clean(lot?.deliveryNoteQuantity),
+      calculatedBoxes: clean(lot?.calculatedBoxes),
       status: lot?.status === 'completo' || lot?.status === 'revision' ? lot.status : 'abierto',
       manufactureDate: clean(lot?.manufactureDate),
       expiryDate: clean(lot?.expiryDate),
       processNotes: clean(lot?.processNotes),
       processSteps: Array.isArray(lot?.processSteps) && lot.processSteps.length > 0 ? lot.processSteps.filter((item: string) => CATEGORY_OPTIONS.some((option) => option.key === item)) : DEFAULT_PROCESS,
+      attachments: normalizeDocumentGroups(lot?.attachments),
       entries: Array.isArray(lot?.entries) ? lot.entries.map((entry: any) => ({
         id: clean(entry?.id) || uid('ent'),
         supplierId: clean(entry?.supplierId),
@@ -380,6 +480,17 @@ export default function TraceabilityDossierPage() {
       mergeIncomingWithLocal: false,
     },
   );
+  const [canetLotes, setCanetLotes] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_lotes_v1',
+    (canetSeed as any).lotes as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+      preferRemoteSnapshot: true,
+    },
+  );
 
   const normalized = useMemo(() => normalizeState(state), [state]);
   const [query, setQuery] = useState('');
@@ -387,14 +498,7 @@ export default function TraceabilityDossierPage() {
   const [selectedLotId, setSelectedLotId] = useState('');
   const [supplierDraft, setSupplierDraft] = useState(emptySupplierFormDraft());
   const [productDraft, setProductDraft] = useState(emptyProductFormDraft());
-  const [lotDraft, setLotDraft] = useState({
-    productName: '',
-    lotNumber: '',
-    quantity: '',
-    manufactureDate: '',
-    expiryDate: '',
-    processNotes: '',
-  });
+  const [lotDraft, setLotDraft] = useState(emptyLotFormDraft());
   const [entryDraft, setEntryDraft] = useState({
     supplierId: '',
     supplierProductId: '',
@@ -433,9 +537,42 @@ export default function TraceabilityDossierPage() {
   const [editingLotId, setEditingLotId] = useState('');
   const [lotEditContext, setLotEditContext] = useState<{ supplierId: string; productId: string } | null>(null);
   const [lotEditDraft, setLotEditDraft] = useState(emptySupplierLotDraft());
+  const [selectedProductKey, setSelectedProductKey] = useState('');
+  const [showGuidedProviderPanel, setShowGuidedProviderPanel] = useState(false);
+  const [showGuidedLotPanel, setShowGuidedLotPanel] = useState(false);
+  const [selectedGuidedLotId, setSelectedGuidedLotId] = useState('');
+  const [guidedLotProviderDraft, setGuidedLotProviderDraft] = useState(emptyGuidedLotProviderDraft());
+  const [lotProviderDrafts, setLotProviderDrafts] = useState<GuidedLotProviderDraft[]>([emptyGuidedLotProviderDraft()]);
 
   const suppliers = normalized.suppliers;
   const lots = normalized.lots;
+  const productCards = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      label: string;
+      mode: string;
+      vialsPerBox: number;
+      active: boolean;
+      color: string;
+    }>();
+
+    ((canetSeed as any).productos as GenericRow[] || []).forEach((row) => {
+      const key = productKey(row.producto);
+      if (!key) return;
+      map.set(key, {
+        key,
+        label: PRODUCT_LABELS_BY_CODE[key] || clean(row.nombre || row.producto),
+        mode: clean(row.modo_stock || row.tipo_producto || 'DIRECTO').toUpperCase() || 'DIRECTO',
+        vialsPerBox: toNumber(row.viales_por_caja),
+        active: clean(row.activo_si_no).toUpperCase() !== 'NO',
+        color: clean(row.color_hex_opcional),
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'es'));
+  }, []);
+  const selectedProduct = productCards.find((product) => product.key === selectedProductKey) || productCards[0] || null;
+  const activeProductKey = selectedProduct?.key || '';
   const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedSupplierId) || suppliers[0] || null;
   const selectedLot = lots.find((lot) => lot.id === selectedLotId) || lots[0] || null;
   const entrySupplier = suppliers.find((supplier) => supplier.id === entryDraft.supplierId) || null;
@@ -444,6 +581,52 @@ export default function TraceabilityDossierPage() {
     const needle = `${lot.productName} ${lot.lotNumber}`.toLowerCase();
     return !query || needle.includes(query.toLowerCase());
   });
+  const filteredSuppliers = suppliers.filter((supplier) => {
+    if (!query) return true;
+    const needle = [
+      supplier.name,
+      supplier.fiscalName,
+      supplier.sanitaryRegister,
+      ...supplier.products.flatMap((product) => [product.name, product.reference, labelForCategory(product.category)]),
+      ...lots
+        .filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id))
+        .flatMap((lot) => [
+          lot.productName,
+          lot.lotNumber,
+          ...lot.entries.map((entry) => entry.albaranNumber),
+        ]),
+    ].join(' ').toLowerCase();
+    return needle.includes(query.toLowerCase());
+  });
+  const selectedProductLots = lots.filter((lot) => productKey(lot.productName) === activeProductKey);
+  const selectedProductSupplierPairs = suppliers.flatMap((supplier) => (
+    supplier.products
+      .filter((product) => (
+        product.finalProductCodes.includes(activeProductKey)
+        || selectedProductLots.some((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id && entry.supplierProductId === product.id))
+      ))
+      .map((product) => ({ supplier, product }))
+  ));
+  const selectedProductSuppliers = Array.from(
+    new Map(selectedProductSupplierPairs.map(({ supplier }) => [supplier.id, supplier])).values(),
+  );
+  const selectedProductDocumentCount = selectedProductLots.reduce(
+    (total, lot) => (
+      total
+      + DOCUMENT_GROUPS.reduce((docTotal, group) => docTotal + (lot.attachments[group.key]?.length || 0), 0)
+      + lot.entries.reduce((entryTotal, entry) => entryTotal + fileCount(entry), 0)
+      + lot.analyses.reduce((analysisTotal, analysis) => analysisTotal + analysis.attachments.length, 0)
+    ),
+    0,
+  );
+  const selectedProductQuantityUnit = selectedProduct?.mode === 'ENSAMBLAJE'
+    ? 'viales'
+    : selectedProduct?.mode === 'KIT'
+      ? 'kits'
+      : 'unidades';
+  const selectedProductModeLabel = selectedProduct
+    ? `${selectedProduct.mode}${selectedProduct.vialsPerBox > 0 ? ` · ${selectedProduct.vialsPerBox} viales/caja` : ''}`
+    : '-';
 
   const updateSupplierDraft = (key: keyof typeof supplierDraft, value: string) => {
     setSupplierDraft((prev) => ({ ...prev, [key]: value }));
@@ -476,7 +659,9 @@ export default function TraceabilityDossierPage() {
 
   const lotDraftFor = (supplier: Supplier, product: SupplierProduct) => {
     const key = draftKeyFor(supplier.id, product.id);
-    return supplierLotDrafts[key] || emptySupplierLotDraft(product.name);
+    const associatedProductKey = product.finalProductCodes[0] || activeProductKey;
+    const defaultProductName = productCards.find((item) => item.key === associatedProductKey)?.label || selectedProduct?.label || product.name;
+    return supplierLotDrafts[key] || emptySupplierLotDraft(defaultProductName);
   };
 
   const updateSupplierLotDraft = (
@@ -498,6 +683,23 @@ export default function TraceabilityDossierPage() {
     lots.filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id && entry.supplierProductId === product.id))
   );
 
+  const selectedGuidedLot = lots.find((lot) => lot.id === selectedGuidedLotId)
+    || selectedProductLots[0]
+    || null;
+
+  const lotProductMetaFor = (productName: string) => (
+    productCards.find((product) => product.key === productKey(productName))
+    || selectedProduct
+    || null
+  );
+
+  const boxCountFor = (productName: string, quantity: string) => {
+    const meta = lotProductMetaFor(productName);
+    const units = toNumber(quantity);
+    if (!meta || meta.vialsPerBox <= 0 || units <= 0) return '';
+    return String(Math.floor(units / meta.vialsPerBox));
+  };
+
   const scrollToDossierBlock = (id: string) => {
     if (typeof document === 'undefined') return;
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -505,7 +707,8 @@ export default function TraceabilityDossierPage() {
 
   const selectSupplierForProduct = (supplierId: string) => {
     setSelectedSupplierId(supplierId);
-    window.setTimeout(() => scrollToDossierBlock('traceability-product-form'), 50);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplierId])));
+    window.setTimeout(() => scrollToDossierBlock(`traceability-supplier-${supplierId}`), 50);
   };
 
   const selectSupplierForEntry = (supplier: Supplier, product?: SupplierProduct) => {
@@ -519,17 +722,66 @@ export default function TraceabilityDossierPage() {
     window.setTimeout(() => scrollToDossierBlock('traceability-lot-workspace'), 50);
   };
 
+  const buildLinkedProductForActiveProduct = (): SupplierProduct => ({
+    id: uid('spr'),
+    name: clean(productDraft.name) || selectedProduct?.label || 'Suministro',
+    reference: clean(productDraft.reference),
+    category: productDraft.category || 'otros',
+    unit: clean(productDraft.unit) || selectedProductQuantityUnit,
+    notes: clean(productDraft.notes),
+    finalProductCodes: activeProductKey ? [activeProductKey] : [],
+    technicalSheets: productDraft.technicalSheets,
+    certificates: productDraft.certificates,
+  });
+
+  const associateExistingSupplierToProduct = (supplierId: string) => {
+    if (!activeProductKey || !selectedProduct) return;
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    if (!supplier) return;
+    const alreadyLinked = supplier.products.some((product) => product.finalProductCodes.includes(activeProductKey));
+    if (alreadyLinked) {
+      setSelectedSupplierId(supplier.id);
+      setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
+      emitSuccessFeedback('Este proveedor ya estaba asociado al producto.');
+      return;
+    }
+    const now = new Date().toISOString();
+    const linkedProduct = buildLinkedProductForActiveProduct();
+    setState((prev) => {
+      const base = normalizeState(prev);
+      return {
+        ...base,
+        suppliers: base.suppliers.map((item) => item.id === supplier.id
+          ? {
+              ...item,
+              categories: Array.from(new Set([...item.categories, linkedProduct.category])),
+              products: [linkedProduct, ...item.products],
+              updatedAt: now,
+            }
+          : item),
+      };
+    });
+    setSelectedSupplierId(supplier.id);
+    setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
+    setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, linkedProduct.id)])));
+    setProductDraft(emptyProductFormDraft());
+    emitSuccessFeedback('Proveedor asociado al producto.');
+  };
+
   const addSupplier = () => {
     if (!clean(supplierDraft.name)) {
       alert('Pon al menos el nombre del proveedor.');
       return;
     }
     const now = new Date().toISOString();
+    const linkedProduct: SupplierProduct | null = activeProductKey && selectedProduct
+      ? buildLinkedProductForActiveProduct()
+      : null;
     const nextSupplier: Supplier = {
       id: uid('sup'),
       ...supplierDraft,
-      categories: [],
-      products: [],
+      categories: linkedProduct ? [linkedProduct.category] : [],
+      products: linkedProduct ? [linkedProduct] : [],
       createdAt: now,
       updatedAt: now,
     };
@@ -539,17 +791,52 @@ export default function TraceabilityDossierPage() {
     });
     setSelectedSupplierId(nextSupplier.id);
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, nextSupplier.id])));
+    if (linkedProduct) {
+      setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(nextSupplier.id, linkedProduct.id)])));
+    }
     setEntryDraft((prev) => ({ ...prev, supplierId: nextSupplier.id }));
     setSupplierDraft(emptySupplierFormDraft());
+    setProductDraft(emptyProductFormDraft());
     emitSuccessFeedback('Proveedor creado.');
   };
 
   const addInternalSupplier = () => {
     const existing = suppliers.find((supplier) => supplier.name.toLowerCase() === 'solaris interno');
     if (existing) {
+      const alreadyLinked = existing.products.some((product) => activeProductKey && product.finalProductCodes.includes(activeProductKey));
+      if (activeProductKey && !alreadyLinked) {
+        const now = new Date().toISOString();
+        const internalProduct: SupplierProduct = {
+          id: uid('spr'),
+          name: 'Acondicionamiento interno',
+          reference: 'SOLARIS-INTERNO',
+          category: 'acondicionamiento',
+          unit: 'Servicio interno',
+          notes: 'Usar cuando el acondicionamiento o montaje final lo realiza Solaris.',
+          finalProductCodes: [activeProductKey],
+          technicalSheets: [],
+          certificates: [],
+        };
+        setState((prev) => {
+          const base = normalizeState(prev);
+          return {
+            ...base,
+            suppliers: base.suppliers.map((supplier) => supplier.id === existing.id
+              ? {
+                  ...supplier,
+                  categories: Array.from(new Set([...supplier.categories, 'acondicionamiento'])),
+                  products: [internalProduct, ...supplier.products],
+                  updatedAt: now,
+                }
+              : supplier),
+          };
+        });
+        setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(existing.id, internalProduct.id)])));
+      }
       setSelectedSupplierId(existing.id);
       setExpandedSupplierIds((prev) => Array.from(new Set([...prev, existing.id])));
       setEntryDraft((prev) => ({ ...prev, supplierId: existing.id }));
+      emitSuccessFeedback('Solaris interno asociado.');
       return;
     }
     const now = new Date().toISOString();
@@ -565,6 +852,7 @@ export default function TraceabilityDossierPage() {
       email: '',
       categories: ['fabricacion', 'acondicionamiento'],
       notes: 'Responsable interno para fabricación, montaje o acondicionamiento realizados por Solaris.',
+      contracts: [],
       products: [
         {
           id: uid('spr'),
@@ -573,6 +861,7 @@ export default function TraceabilityDossierPage() {
           category: 'acondicionamiento',
           unit: 'Servicio interno',
           notes: 'Usar cuando el acondicionamiento o montaje final lo realiza Solaris.',
+          finalProductCodes: activeProductKey ? [activeProductKey] : [],
           technicalSheets: [],
           certificates: [],
         },
@@ -610,6 +899,10 @@ export default function TraceabilityDossierPage() {
     const nextProduct: SupplierProduct = {
       id: uid('spr'),
       ...productDraft,
+      finalProductCodes: Array.from(new Set([
+        ...productDraft.finalProductCodes.map(productKey).filter(Boolean),
+        activeProductKey,
+      ].filter(Boolean))),
     };
     setState((prev) => {
       const base = normalizeState(prev);
@@ -644,10 +937,26 @@ export default function TraceabilityDossierPage() {
       alert('Pon el producto final y el número de lote.');
       return;
     }
+    const alreadyExists = lots.some((lot) => (
+      productKey(lot.productName) === productKey(lotDraft.productName)
+      && clean(lot.lotNumber).toLowerCase() === clean(lotDraft.lotNumber).toLowerCase()
+    ));
+    if (alreadyExists) {
+      alert('Ese lote ya existe para este producto. Ábrelo y asocia los proveedores ahí.');
+      return;
+    }
     const now = new Date().toISOString();
+    const meta = lotProductMetaFor(lotDraft.productName);
+    const primaryQuantity = clean(lotDraft.deliveryNoteQuantity) || clean(lotDraft.quantity);
+    const calculatedBoxes = clean(lotDraft.calculatedBoxes) || boxCountFor(lotDraft.productName, primaryQuantity);
     const nextLot: FinalLot = {
       id: uid('lot'),
       ...lotDraft,
+      productName: PRODUCT_LABELS_BY_CODE[productKey(lotDraft.productName)] || lotDraft.productName,
+      quantity: primaryQuantity,
+      deliveryNoteQuantity: clean(lotDraft.deliveryNoteQuantity) || primaryQuantity,
+      quantityUnit: lotDraft.quantityUnit || (meta?.mode === 'ENSAMBLAJE' ? 'viales' : meta?.mode === 'KIT' ? 'kits' : 'unidades'),
+      calculatedBoxes,
       status: 'abierto',
       processSteps: DEFAULT_PROCESS,
       entries: [],
@@ -657,11 +966,180 @@ export default function TraceabilityDossierPage() {
     };
     setState((prev) => {
       const base = normalizeState(prev);
-      return { ...base, lots: [nextLot, ...base.lots] };
+      let nextSuppliers = base.suppliers;
+      let lotWithProviders = nextLot;
+      const finalProductCode = productKey(nextLot.productName);
+
+      lotProviderDrafts
+        .filter((draft) => !!clean(draft.supplierId))
+        .forEach((draft) => {
+          const supplier = nextSuppliers.find((item) => item.id === draft.supplierId);
+          if (!supplier) return;
+          const existingProduct = supplier.products.find((product) => (
+            product.finalProductCodes.includes(finalProductCode)
+            && (!draft.category || product.category === draft.category)
+          )) || supplier.products.find((product) => product.finalProductCodes.includes(finalProductCode));
+          const supplierProduct: SupplierProduct = existingProduct || {
+            id: uid('spr'),
+            name: clean(draft.suppliedName) || `Aporte para ${nextLot.productName}`,
+            reference: clean(draft.reference),
+            category: draft.category,
+            unit: clean(draft.unit) || nextLot.quantityUnit || 'unidades',
+            notes: clean(draft.notes),
+            finalProductCodes: [finalProductCode],
+            technicalSheets: [],
+            certificates: [],
+          };
+          const nextEntry: TraceabilityEntry = {
+            id: uid('ent'),
+            supplierId: supplier.id,
+            supplierProductId: supplierProduct.id,
+            stage: supplierProduct.category,
+            deliveryDate: nextLot.deliveryDate,
+            albaranNumber: nextLot.albaranNumber,
+            solarisInvoiceNumber: nextLot.zohoInvoiceNumber,
+            deliveryNoteQuantity: nextLot.deliveryNoteQuantity,
+            quantity: nextLot.quantity,
+            quantityMatchesInvoice: '',
+            quantityDifference: '',
+            quantityCheckNotes: '',
+            supplierLot: nextLot.lotNumber,
+            finalLotId: nextLot.id,
+            expiryDate: nextLot.expiryDate,
+            bestBeforeDate: nextLot.expiryDate,
+            notes: clean(draft.notes),
+            attachments: emptyAttachments(),
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          lotWithProviders = {
+            ...lotWithProviders,
+            processSteps: Array.from(new Set([...lotWithProviders.processSteps, supplierProduct.category])),
+            entries: [nextEntry, ...lotWithProviders.entries],
+          };
+
+          if (!existingProduct) {
+            nextSuppliers = nextSuppliers.map((item) => item.id === supplier.id
+              ? {
+                  ...item,
+                  categories: Array.from(new Set([...item.categories, supplierProduct.category])),
+                  products: [supplierProduct, ...item.products],
+                  updatedAt: now,
+                }
+              : item);
+          }
+        });
+
+      return { ...base, suppliers: nextSuppliers, lots: [lotWithProviders, ...base.lots] };
+    });
+    const inventoryProduct = productKey(lotDraft.productName);
+    const inventoryLot = clean(lotDraft.lotNumber);
+    setCanetLotes((prev) => {
+      const rows = Array.isArray(prev) ? prev : [];
+      const exists = rows.some((row) => (
+        productKey(row?.producto) === inventoryProduct
+        && clean(row?.lote).toLowerCase() === inventoryLot.toLowerCase()
+      ));
+      if (exists) return rows;
+      return [{
+        producto: inventoryProduct,
+        lote: inventoryLot,
+        fecha_alta: clean(lotDraft.deliveryDate),
+        fecha_caducidad: clean(lotDraft.expiryDate),
+        dias_restantes: '',
+        semaforo_caducidad: '',
+        notas: clean(lotDraft.processNotes),
+        viales_recibidos: primaryQuantity,
+        estado: 'ACTIVO',
+        ensamblaje_finalizado: 'NO',
+        lastChangedAt: now,
+      }, ...rows];
     });
     setSelectedLotId(nextLot.id);
-    setLotDraft({ productName: '', lotNumber: '', quantity: '', manufactureDate: '', expiryDate: '', processNotes: '' });
+    setSelectedGuidedLotId(nextLot.id);
+    setExpandedLotIds((prev) => Array.from(new Set([...prev, nextLot.id])));
+    setLotDraft(emptyLotFormDraft(selectedProduct?.label || ''));
+    setLotProviderDrafts([emptyGuidedLotProviderDraft()]);
     emitSuccessFeedback('Lote final creado.');
+  };
+
+  const addProviderToGuidedLot = () => {
+    const lot = selectedGuidedLot;
+    const supplier = suppliers.find((item) => item.id === guidedLotProviderDraft.supplierId);
+    if (!lot || !supplier) {
+      alert('Selecciona un lote y un proveedor.');
+      return;
+    }
+    const now = new Date().toISOString();
+    const finalProductCode = productKey(lot.productName);
+    const existingProduct = supplier.products.find((product) => (
+      product.finalProductCodes.includes(finalProductCode)
+      && (!guidedLotProviderDraft.category || product.category === guidedLotProviderDraft.category)
+    )) || supplier.products.find((product) => product.finalProductCodes.includes(finalProductCode));
+    const supplierProduct: SupplierProduct = existingProduct || {
+      id: uid('spr'),
+      name: clean(guidedLotProviderDraft.suppliedName) || `Aporte para ${lot.productName}`,
+      reference: clean(guidedLotProviderDraft.reference),
+      category: guidedLotProviderDraft.category,
+      unit: clean(guidedLotProviderDraft.unit) || lot.quantityUnit || 'unidades',
+      notes: clean(guidedLotProviderDraft.notes),
+      finalProductCodes: [finalProductCode],
+      technicalSheets: [],
+      certificates: [],
+    };
+    const nextEntry: TraceabilityEntry = {
+      id: uid('ent'),
+      supplierId: supplier.id,
+      supplierProductId: supplierProduct.id,
+      stage: supplierProduct.category,
+      deliveryDate: lot.deliveryDate,
+      albaranNumber: lot.albaranNumber,
+      solarisInvoiceNumber: lot.zohoInvoiceNumber,
+      deliveryNoteQuantity: lot.deliveryNoteQuantity,
+      quantity: lot.quantity,
+      quantityMatchesInvoice: '',
+      quantityDifference: '',
+      quantityCheckNotes: '',
+      supplierLot: lot.lotNumber,
+      finalLotId: lot.id,
+      expiryDate: lot.expiryDate,
+      bestBeforeDate: lot.expiryDate,
+      notes: clean(guidedLotProviderDraft.notes),
+      attachments: emptyAttachments(),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setState((prev) => {
+      const base = normalizeState(prev);
+      return {
+        ...base,
+        suppliers: base.suppliers.map((item) => {
+          if (item.id !== supplier.id) return item;
+          const products = existingProduct
+            ? item.products
+            : [supplierProduct, ...item.products];
+          return {
+            ...item,
+            categories: Array.from(new Set([...item.categories, supplierProduct.category])),
+            products,
+            updatedAt: now,
+          };
+        }),
+        lots: base.lots.map((item) => item.id === lot.id
+          ? {
+              ...item,
+              processSteps: Array.from(new Set([...item.processSteps, supplierProduct.category])),
+              entries: [nextEntry, ...item.entries],
+              updatedAt: now,
+            }
+          : item),
+      };
+    });
+    setGuidedLotProviderDraft(emptyGuidedLotProviderDraft());
+    setSelectedSupplierId(supplier.id);
+    emitSuccessFeedback('Proveedor asociado al lote.');
   };
 
   const addSupplierProductLot = (supplier: Supplier, product: SupplierProduct) => {
@@ -677,59 +1155,95 @@ export default function TraceabilityDossierPage() {
       clean(draft.receivedQuantity) ? `Cantidad entregada: ${clean(draft.receivedQuantity)}` : '',
     ].filter(Boolean).join(' · ');
     const processNotes = [quantityLine, clean(draft.notes)].filter(Boolean).join('\n');
-    const nextLot: FinalLot = {
-      id: uid('lot'),
-      productName,
-      lotNumber: clean(draft.lotNumber),
+    const existingLot = lots.find((lot) => (
+      productKey(lot.productName) === productKey(productName)
+      && clean(lot.lotNumber).toLowerCase() === clean(draft.lotNumber).toLowerCase()
+    ));
+    const nextLotId = existingLot?.id || uid('lot');
+    const nextEntry: TraceabilityEntry = {
+      id: uid('ent'),
+      supplierId: supplier.id,
+      supplierProductId: product.id,
+      stage: product.category,
+      deliveryDate: clean(draft.deliveryDate),
+      albaranNumber: clean(draft.albaranNumber),
+      solarisInvoiceNumber: clean(draft.solarisInvoiceNumber),
+      deliveryNoteQuantity: clean(draft.deliveryNoteQuantity),
       quantity: clean(draft.receivedQuantity),
-      status: 'abierto',
-      manufactureDate: clean(draft.manufactureDate),
+      quantityMatchesInvoice: clean(draft.quantityMatchesInvoice),
+      quantityDifference: clean(draft.quantityDifference),
+      quantityCheckNotes: clean(draft.quantityCheckNotes),
+      supplierLot: clean(draft.lotNumber),
+      finalLotId: nextLotId,
       expiryDate: clean(draft.expiryDate),
-      processNotes,
-      processSteps: [product.category],
-      entries: [{
-        id: uid('ent'),
-        supplierId: supplier.id,
-        supplierProductId: product.id,
-        stage: product.category,
-        deliveryDate: clean(draft.deliveryDate),
-        albaranNumber: clean(draft.albaranNumber),
-        solarisInvoiceNumber: clean(draft.solarisInvoiceNumber),
-        deliveryNoteQuantity: clean(draft.deliveryNoteQuantity),
-        quantity: clean(draft.receivedQuantity),
-        quantityMatchesInvoice: clean(draft.quantityMatchesInvoice),
-        quantityDifference: clean(draft.quantityDifference),
-        quantityCheckNotes: clean(draft.quantityCheckNotes),
-        supplierLot: clean(draft.lotNumber),
-        finalLotId: '',
-        expiryDate: clean(draft.expiryDate),
-        bestBeforeDate: clean(draft.expiryDate),
-        notes: processNotes,
-        attachments: draft.attachments,
-        createdAt: now,
-        updatedAt: now,
-      }],
-      analyses: [],
+      bestBeforeDate: clean(draft.expiryDate),
+      notes: processNotes,
+      attachments: draft.attachments,
       createdAt: now,
       updatedAt: now,
     };
-    nextLot.entries[0].finalLotId = nextLot.id;
 
     setState((prev) => {
       const base = normalizeState(prev);
+      const match = base.lots.find((lot) => (
+        productKey(lot.productName) === productKey(productName)
+        && clean(lot.lotNumber).toLowerCase() === clean(draft.lotNumber).toLowerCase()
+      ));
+      if (match) {
+        return {
+          ...base,
+          lots: base.lots.map((lot) => lot.id === match.id
+            ? {
+                ...lot,
+                productName,
+                quantity: clean(draft.receivedQuantity) || lot.quantity,
+                manufactureDate: clean(draft.manufactureDate) || lot.manufactureDate,
+                expiryDate: clean(draft.expiryDate) || lot.expiryDate,
+                processNotes: [lot.processNotes, processNotes].filter(Boolean).join('\n'),
+                processSteps: Array.from(new Set([...lot.processSteps, product.category])),
+                entries: [nextEntry, ...lot.entries],
+                updatedAt: now,
+              }
+            : lot),
+        };
+      }
+      const nextLot: FinalLot = {
+        id: nextLotId,
+        productName,
+        lotNumber: clean(draft.lotNumber),
+        quantity: clean(draft.receivedQuantity),
+        quantityUnit: product.unit || selectedProductQuantityUnit,
+        deliveryDate: clean(draft.deliveryDate),
+        albaranNumber: clean(draft.albaranNumber),
+        zohoPurchaseOrder: '',
+        zohoInvoiceNumber: clean(draft.solarisInvoiceNumber),
+        deliveryNoteQuantity: clean(draft.deliveryNoteQuantity),
+        calculatedBoxes: boxCountFor(productName, clean(draft.receivedQuantity)),
+        status: 'abierto',
+        manufactureDate: clean(draft.manufactureDate),
+        expiryDate: clean(draft.expiryDate),
+        processNotes,
+        processSteps: [product.category],
+        attachments: draft.attachments,
+        entries: [nextEntry],
+        analyses: [],
+        createdAt: now,
+        updatedAt: now,
+      };
       return { ...base, lots: [nextLot, ...base.lots] };
     });
     setSelectedSupplierId(supplier.id);
-    setSelectedLotId(nextLot.id);
+    setSelectedLotId(nextLotId);
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
     setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(supplier.id, product.id)])));
-    setExpandedLotIds((prev) => Array.from(new Set([...prev, nextLot.id])));
+    setExpandedLotIds((prev) => Array.from(new Set([...prev, nextLotId])));
     setExpandedCreateBlockIds((prev) => prev.filter((id) => id !== documentBlockKeyFor('create-lot', supplier.id, product.id)));
     setSupplierLotDrafts((prev) => ({
       ...prev,
       [draftKeyFor(supplier.id, product.id)]: emptySupplierLotDraft(product.name),
     }));
-    emitSuccessFeedback('Lote añadido al proveedor.');
+    setSelectedGuidedLotId(nextLotId);
+    emitSuccessFeedback(existingLot ? 'Entrada añadida al lote existente.' : 'Lote final creado.');
   };
 
   const addEntry = () => {
@@ -838,6 +1352,7 @@ export default function TraceabilityDossierPage() {
       phone: supplier.phone,
       email: supplier.email,
       notes: supplier.notes,
+      contracts: supplier.contracts,
     });
     setSelectedSupplierId(supplier.id);
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, supplier.id])));
@@ -865,6 +1380,7 @@ export default function TraceabilityDossierPage() {
               phone: clean(supplierEditDraft.phone),
               email: clean(supplierEditDraft.email),
               notes: clean(supplierEditDraft.notes),
+              contracts: supplierEditDraft.contracts,
               updatedAt: new Date().toISOString(),
             }
           : item),
@@ -906,6 +1422,7 @@ export default function TraceabilityDossierPage() {
       category: product.category,
       unit: product.unit,
       notes: product.notes,
+      finalProductCodes: product.finalProductCodes,
       technicalSheets: product.technicalSheets,
       certificates: product.certificates,
     });
@@ -933,6 +1450,7 @@ export default function TraceabilityDossierPage() {
                 unit: clean(productEditDraft.unit),
                 category: productEditDraft.category,
                 notes: clean(productEditDraft.notes),
+                finalProductCodes: productEditDraft.finalProductCodes.map(productKey).filter(Boolean),
                 technicalSheets: productEditDraft.technicalSheets,
                 certificates: productEditDraft.certificates,
               }
@@ -1108,11 +1626,11 @@ export default function TraceabilityDossierPage() {
     });
     const deliveryNoteQuantities = entryDetails
       .map(({ entry, unit }) => [entry.deliveryNoteQuantity || '-', unit].filter(Boolean).join(' '))
-      .join('\n') || '-';
+      .join('\n') || [lot.deliveryNoteQuantity || '-', lot.quantityUnit].filter(Boolean).join(' ');
     const deliveredQuantities = entryDetails
       .map(({ entry, unit }) => [entry.quantity || lot.quantity || '-', unit].filter(Boolean).join(' '))
-      .join('\n') || '-';
-    const receptionFormats = Array.from(new Set(entryDetails.map((detail) => detail.unit).filter(Boolean))).join(', ') || '-';
+      .join('\n') || [lot.quantity || '-', lot.quantityUnit].filter(Boolean).join(' ');
+    const receptionFormats = Array.from(new Set([...entryDetails.map((detail) => detail.unit), lot.quantityUnit].filter(Boolean))).join(', ') || '-';
 
     doc.setFontSize(18);
     doc.text('Dossier de trazabilidad', margin, 42);
@@ -1128,6 +1646,10 @@ export default function TraceabilityDossierPage() {
         ['Lote final', safePdfText(lot.lotNumber)],
         ['Cantidades en albarán', safePdfText(deliveryNoteQuantities) || '-'],
         ['Cantidades entregadas', safePdfText(deliveredQuantities) || '-'],
+        ['Albarán', safePdfText(lot.albaranNumber) || '-'],
+        ['Orden de compra Zoho', safePdfText(lot.zohoPurchaseOrder) || '-'],
+        ['Factura Zoho / Solaris', safePdfText(lot.zohoInvoiceNumber) || '-'],
+        ['Cajas calculadas', safePdfText(lot.calculatedBoxes) || '-'],
         ['Formato de recepción', safePdfText(receptionFormats) || '-'],
         ['Fecha montaje/fabricación', safePdfText(lot.manufactureDate) || '-'],
         ['Caducidad / consumo preferente final', safePdfText(lot.expiryDate) || '-'],
@@ -1176,21 +1698,29 @@ export default function TraceabilityDossierPage() {
       columnStyles: { 10: { cellWidth: 115 } },
     });
 
-    if (lot.entries.length > 0) {
+    const lotBaseFiles = DOCUMENT_GROUPS.flatMap((group) => (lot.attachments[group.key] || []).map((file) => [
+      'Lote base',
+      group.label,
+      file.name,
+      file.url,
+    ]));
+    const entryFiles = lot.entries.flatMap((entry) => {
+      const supplier = suppliers.find((item) => item.id === entry.supplierId);
+      const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
+      const title = `${supplier?.name || '-'} / ${product?.name || '-'} / ${entry.supplierLot || '-'}`;
+      return DOCUMENT_GROUPS.flatMap((group) => (entry.attachments[group.key] || []).map((file) => [
+        title,
+        group.label,
+        file.name,
+        file.url,
+      ]));
+    });
+
+    if (lotBaseFiles.length > 0 || entryFiles.length > 0) {
       autoTable(doc, {
         startY: (doc as any).lastAutoTable.finalY + 18,
         head: [['Entrada', 'Tipo documental', 'Archivo adjunto', 'URL']],
-        body: lot.entries.flatMap((entry) => {
-          const supplier = suppliers.find((item) => item.id === entry.supplierId);
-          const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
-          const title = `${supplier?.name || '-'} / ${product?.name || '-'} / ${entry.supplierLot || '-'}`;
-          return DOCUMENT_GROUPS.flatMap((group) => (entry.attachments[group.key] || []).map((file) => [
-            title,
-            group.label,
-            file.name,
-            file.url,
-          ]));
-        }),
+        body: [...lotBaseFiles, ...entryFiles],
         theme: 'striped',
         styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
         headStyles: { fillColor: [15, 118, 110] },
@@ -1218,7 +1748,6 @@ export default function TraceabilityDossierPage() {
   };
 
   const downloadSupplierPdf = (supplier: Supplier) => {
-    const relatedLots = lots.filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id));
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const margin = 36;
     doc.setFontSize(18);
@@ -1237,6 +1766,7 @@ export default function TraceabilityDossierPage() {
         ['Dirección', safePdfText(supplier.address) || '-'],
         ['Teléfono', safePdfText(supplier.phone) || '-'],
         ['Email', safePdfText(supplier.email) || '-'],
+        ['Contratos adjuntos', String(supplier.contracts.length)],
       ],
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 5 },
@@ -1245,9 +1775,10 @@ export default function TraceabilityDossierPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Producto suministrado', 'Referencia', 'Tipo', 'Unidad/formato', 'Fichas', 'Certificados base']],
+      head: [['Aporte/suministro', 'Producto(s) maestro', 'Referencia', 'Tipo', 'Unidad/formato', 'Fichas', 'Certificados base']],
       body: supplier.products.map((product) => [
         product.name,
+        product.finalProductCodes.map((code) => PRODUCT_LABELS_BY_CODE[code] || code).join(', ') || '-',
         product.reference || '-',
         labelForCategory(product.category),
         product.unit || '-',
@@ -1259,33 +1790,17 @@ export default function TraceabilityDossierPage() {
       headStyles: { fillColor: [31, 41, 55] },
     });
 
-    autoTable(doc, {
-      startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Lote', 'Producto', 'Albarán', 'Factura Solaris', 'Entrega', 'Caducidad', 'Cant. albarán', 'Cant. entregada', 'Corresponde', 'Diferencia', 'Documentos', 'Notas']],
-      body: relatedLots.flatMap((lot) => lot.entries
-        .filter((entry) => entry.supplierId === supplier.id)
-        .map((entry) => {
-          const product = supplier.products.find((item) => item.id === entry.supplierProductId);
-          return [
-            entry.supplierLot || lot.lotNumber,
-            product?.name || lot.productName,
-            entry.albaranNumber || '-',
-            entry.solarisInvoiceNumber || '-',
-            entry.deliveryDate || '-',
-            entry.expiryDate || entry.bestBeforeDate || lot.expiryDate || '-',
-            [entry.deliveryNoteQuantity || '-', product?.unit || ''].filter(Boolean).join(' '),
-            [entry.quantity || lot.quantity || '-', product?.unit || ''].filter(Boolean).join(' '),
-            labelForQuantityMatch(entry.quantityMatchesInvoice),
-            entry.quantityDifference || '-',
-            String(fileCount(entry)),
-            safePdfText(entry.quantityCheckNotes || entry.notes || lot.processNotes) || '-',
-          ];
-        })),
-      theme: 'striped',
-      styles: { fontSize: 6, cellPadding: 3, overflow: 'linebreak' },
-      headStyles: { fillColor: [15, 118, 110] },
-      columnStyles: { 11: { cellWidth: 140 } },
-    });
+    if (supplier.contracts.length > 0) {
+      autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY + 16,
+        head: [['Contrato / documento proveedor', 'URL']],
+        body: supplier.contracts.map((file) => [file.name, file.url]),
+        theme: 'striped',
+        styles: { fontSize: 7, cellPadding: 4, overflow: 'linebreak' },
+        headStyles: { fillColor: [15, 118, 110] },
+        columnStyles: { 1: { cellWidth: 330 } },
+      });
+    }
 
     doc.save(`carpeta-proveedor-${supplier.name}.pdf`.replace(/[^\w.-]+/g, '-').toLowerCase());
   };
@@ -1297,34 +1812,586 @@ export default function TraceabilityDossierPage() {
           <p className="text-xs font-black uppercase tracking-[0.22em] text-teal-700">Centro de mando / Operación</p>
           <h1 className="mt-1 text-2xl font-black text-slate-950">Dossier trazabilidad</h1>
           <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-600">
-            Crea un proveedor y trabaja dentro de su carpeta: productos suministrados, lotes, albaranes, microbiología y documentos.
+            Elige un producto maestro, vincula sus proveedores/etapas y crea un único lote final con albaranes, facturas, microbiología y documentos.
           </p>
+          <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <summary className="cursor-pointer text-sm font-black text-slate-900">FAQ rápido</summary>
+            <div className="mt-3 grid gap-2 text-sm font-semibold text-slate-600 md:grid-cols-2">
+              <p><span className="font-black text-slate-900">Proveedor:</span> datos legales, registro sanitario, notas y contrato Solaris/proveedor.</p>
+              <p><span className="font-black text-slate-900">Lote:</span> producto maestro, lote, albarán, cantidades, caducidad y documentos de recepción.</p>
+              <p><span className="font-black text-slate-900">Proveedor asociado:</span> proveedor que participa en ese lote, como mezcla, envasado, cartonaje o acondicionamiento.</p>
+              <p><span className="font-black text-slate-900">Inventario:</span> al crear un lote aquí, también se da de alta en maestros de Canet si no existía.</p>
+            </div>
+          </details>
         </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <Building2 size={18} className="text-teal-700" />
-            <h2 className="text-sm font-black text-slate-950">Crear proveedor</h2>
+        <section className="rounded-2xl border border-teal-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-teal-700">Vista guiada por producto</p>
+              <h2 className="mt-1 text-xl font-black text-slate-950">Producto → proveedores → recepciones/lotes</h2>
+              <p className="mt-1 text-sm font-semibold text-slate-600">
+                Elige un producto maestro y trabaja desde ahí. Los suministros nuevos quedan asociados a ese producto.
+              </p>
+            </div>
+            {selectedProduct && (
+              <div className="rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-right">
+                <p className="text-[11px] font-black uppercase tracking-widest text-teal-700">Modo maestro</p>
+                <p className="text-sm font-black text-teal-950">{selectedProductModeLabel}</p>
+              </div>
+            )}
           </div>
-          <div className="grid gap-2 md:grid-cols-4">
-            <input value={supplierDraft.name} onChange={(e) => updateSupplierDraft('name', e.target.value)} placeholder="Nombre proveedor" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <input value={supplierDraft.fiscalName} onChange={(e) => updateSupplierDraft('fiscalName', e.target.value)} placeholder="Razón social" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <input value={supplierDraft.taxId} onChange={(e) => updateSupplierDraft('taxId', e.target.value)} placeholder="NIF/CIF" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <input value={supplierDraft.sanitaryRegister} onChange={(e) => updateSupplierDraft('sanitaryRegister', e.target.value)} placeholder="Registro sanitario" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <input value={supplierDraft.phone} onChange={(e) => updateSupplierDraft('phone', e.target.value)} placeholder="Teléfono" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <input value={supplierDraft.email} onChange={(e) => updateSupplierDraft('email', e.target.value)} placeholder="Email" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-            <textarea value={supplierDraft.address} onChange={(e) => updateSupplierDraft('address', e.target.value)} placeholder="Dirección" className="min-h-[40px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {productCards.map((product) => {
+              const isActive = product.key === activeProductKey;
+              const lotCount = lots.filter((lot) => productKey(lot.productName) === product.key).length;
+              const pairCount = suppliers.reduce(
+                (total, supplier) => total + supplier.products.filter((item) => item.finalProductCodes.includes(product.key)).length,
+                0,
+              );
+              const validColor = /^#[0-9a-f]{6}$/i.test(product.color);
+              return (
+                <button
+                  key={product.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedProductKey(product.key);
+                    setSelectedGuidedLotId('');
+                    setShowGuidedLotPanel(false);
+                    setShowGuidedProviderPanel(false);
+                  }}
+                  style={validColor ? { borderColor: product.color } : undefined}
+                  className={`min-h-[96px] rounded-2xl border p-3 text-left transition ${isActive ? 'bg-slate-950 text-white shadow-md' : 'bg-slate-50 text-slate-800 hover:bg-white'}`}
+                >
+                  <span className={`block text-[11px] font-black uppercase tracking-widest ${isActive ? 'text-teal-100' : 'text-slate-500'}`}>{product.mode}</span>
+                  <span className="mt-1 block text-lg font-black">{product.label}</span>
+                  <span className={`mt-1 block text-xs font-bold ${isActive ? 'text-slate-200' : 'text-slate-500'}`}>
+                    {pairCount} suministro(s) · {lotCount} lote(s)
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={addSupplier} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800">
-              <Plus size={16} />
-              Crear proveedor
-            </button>
-            <button type="button" onClick={addInternalSupplier} className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-black text-teal-950 hover:bg-teal-100">
-              <Factory size={16} />
-              Usar Solaris interno
-            </button>
-          </div>
+
+          {selectedProduct && (
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGuidedLotPanel((prev) => !prev);
+                    setShowGuidedProviderPanel(false);
+                    setLotDraft((prev) => ({
+                      ...prev,
+                      productName: prev.productName || selectedProduct.label,
+                      quantityUnit: prev.quantityUnit || selectedProductQuantityUnit,
+                      calculatedBoxes: prev.calculatedBoxes || boxCountFor(selectedProduct.label, prev.quantity),
+                    }));
+                  }}
+                  className="inline-flex items-center justify-between rounded-2xl border border-slate-900 bg-slate-950 px-4 py-3 text-left text-sm font-black text-white shadow-sm hover:bg-slate-800"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Package size={18} />
+                    Dar de alta lote
+                  </span>
+                  {showGuidedLotPanel ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGuidedProviderPanel((prev) => !prev);
+                    setShowGuidedLotPanel(false);
+                  }}
+                  className="inline-flex items-center justify-between rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-left text-sm font-black text-teal-950 shadow-sm hover:bg-teal-100"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Building2 size={18} />
+                    Dar de alta proveedor
+                  </span>
+                  {showGuidedProviderPanel ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                </button>
+              </div>
+
+              {showGuidedProviderPanel && (
+                <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-3">
+                  <div className="rounded-xl border border-teal-100 bg-white p-3">
+                    <p className="text-xs font-black uppercase tracking-widest text-teal-700">Qué aporta este proveedor a {selectedProduct.label}</p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-4">
+                      <input
+                        value={productDraft.name}
+                        onChange={(e) => setProductDraft((prev) => ({ ...prev, name: e.target.value }))}
+                        placeholder="Ej. viales, mezcla líquida, cartonaje"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <input
+                        value={productDraft.reference}
+                        onChange={(e) => setProductDraft((prev) => ({ ...prev, reference: e.target.value }))}
+                        placeholder="Referencia comercial"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                        <select
+                          value={productDraft.category}
+                          onChange={(e) => setProductDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                          aria-label="Tipo de aporte"
+                        >
+                          {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                        </select>
+                      <input
+                        value={productDraft.unit}
+                        onChange={(e) => setProductDraft((prev) => ({ ...prev, unit: e.target.value }))}
+                        placeholder={`Unidad: ${selectedProductQuantityUnit}, litros...`}
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <textarea
+                        value={productDraft.notes}
+                        onChange={(e) => setProductDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                        placeholder="Notas del suministro o etapa"
+                        className="min-h-[44px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-4"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[0.75fr_1.25fr]">
+                    <div className="rounded-xl border border-teal-100 bg-white p-3">
+                      <p className="text-xs font-black uppercase tracking-widest text-teal-700">Asociar proveedor existente</p>
+                      <label className="mt-2 grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Proveedor ya dado de alta</span>
+                        <select
+                          value=""
+                          onChange={(event) => {
+                            if (event.target.value) associateExistingSupplierToProduct(event.target.value);
+                          }}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                        >
+                          <option value="">Elegir proveedor...</option>
+                          {suppliers.map((supplier) => (
+                            <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="rounded-xl border border-teal-100 bg-white p-3">
+                      <p className="text-xs font-black uppercase tracking-widest text-teal-700">Crear proveedor nuevo</p>
+                      <div className="mt-2 grid gap-2 md:grid-cols-4">
+                        <input value={supplierDraft.name} onChange={(e) => updateSupplierDraft('name', e.target.value)} placeholder="Nombre proveedor" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <input value={supplierDraft.fiscalName} onChange={(e) => updateSupplierDraft('fiscalName', e.target.value)} placeholder="Razón social" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <input value={supplierDraft.taxId} onChange={(e) => updateSupplierDraft('taxId', e.target.value)} placeholder="NIF/CIF" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <input value={supplierDraft.sanitaryRegister} onChange={(e) => updateSupplierDraft('sanitaryRegister', e.target.value)} placeholder="Registro sanitario" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <input value={supplierDraft.phone} onChange={(e) => updateSupplierDraft('phone', e.target.value)} placeholder="Teléfono" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <input value={supplierDraft.email} onChange={(e) => updateSupplierDraft('email', e.target.value)} placeholder="Email" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                        <textarea value={supplierDraft.address} onChange={(e) => updateSupplierDraft('address', e.target.value)} placeholder="Dirección" className="min-h-[40px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 md:col-span-4">
+                          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Contrato Solaris con proveedor</p>
+                          <FileUploader
+                            folderPath="traceability/supplier-contracts"
+                            existingFiles={supplierDraft.contracts}
+                            onUploadComplete={(files) => setSupplierDraft((prev) => ({ ...prev, contracts: files }))}
+                            compact
+                            maxSizeMB={20}
+                          />
+                        </div>
+                      </div>
+                      <button type="button" onClick={addSupplier} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800">
+                        <Plus size={16} />
+                        Crear y asociar a {selectedProduct.label}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showGuidedLotPanel && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Crear nuevo lote</p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-4">
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Producto maestro</span>
+                        <select
+                          value={activeProductKey}
+                          onChange={(event) => {
+                            const next = productCards.find((product) => product.key === event.target.value);
+                            if (!next) return;
+                            setSelectedProductKey(next.key);
+                            setLotDraft((prev) => ({
+                              ...prev,
+                              productName: next.label,
+                              quantityUnit: next.mode === 'ENSAMBLAJE' ? 'viales' : next.mode === 'KIT' ? 'kits' : 'unidades',
+                              calculatedBoxes: boxCountFor(next.label, prev.deliveryNoteQuantity || prev.quantity),
+                            }));
+                          }}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                        >
+                          {productCards.map((product) => <option key={product.key} value={product.key}>{product.label}</option>)}
+                        </select>
+                      </label>
+                      <input
+                        value={lotDraft.lotNumber}
+                        onChange={(e) => setLotDraft((prev) => ({ ...prev, lotNumber: e.target.value }))}
+                        placeholder="Nº lote"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <input
+                        value={lotDraft.albaranNumber}
+                        onChange={(e) => setLotDraft((prev) => ({ ...prev, albaranNumber: e.target.value }))}
+                        placeholder="Nº albarán"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrada</span>
+                        <input
+                          type="date"
+                          value={lotDraft.deliveryDate}
+                          onChange={(e) => setLotDraft((prev) => ({ ...prev, deliveryDate: e.target.value }))}
+                          className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                        />
+                      </label>
+                      <input
+                        value={lotDraft.zohoPurchaseOrder}
+                        onChange={(e) => setLotDraft((prev) => ({ ...prev, zohoPurchaseOrder: e.target.value }))}
+                        placeholder="Orden de compra Zoho"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <input
+                        value={lotDraft.zohoInvoiceNumber}
+                        onChange={(e) => setLotDraft((prev) => ({ ...prev, zohoInvoiceNumber: e.target.value }))}
+                        placeholder="Factura Zoho / Solaris"
+                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                      />
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad según albarán ({selectedProductQuantityUnit})</span>
+                        <input
+                          value={lotDraft.deliveryNoteQuantity}
+                          onChange={(e) => {
+                            const quantity = e.target.value;
+                            setLotDraft((prev) => ({
+                              ...prev,
+                              deliveryNoteQuantity: quantity,
+                              quantity,
+                              quantityUnit: selectedProductQuantityUnit,
+                              calculatedBoxes: boxCountFor(selectedProduct.label, quantity),
+                            }));
+                          }}
+                          placeholder={`En ${selectedProductQuantityUnit}`}
+                          className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cajas calculadas</span>
+                        <input
+                          value={lotDraft.calculatedBoxes || boxCountFor(selectedProduct.label, lotDraft.deliveryNoteQuantity || lotDraft.quantity)}
+                          onChange={(e) => setLotDraft((prev) => ({ ...prev, calculatedBoxes: e.target.value }))}
+                          placeholder="Automático si aplica"
+                          className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
+                        <input
+                          type="date"
+                          value={lotDraft.expiryDate}
+                          onChange={(e) => setLotDraft((prev) => ({ ...prev, expiryDate: e.target.value }))}
+                          className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                        />
+                      </label>
+                      <textarea
+                        value={lotDraft.processNotes}
+                        onChange={(e) => setLotDraft((prev) => ({ ...prev, processNotes: e.target.value }))}
+                        placeholder="Notas del lote"
+                        className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-3"
+                      />
+                    </div>
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-600">Proveedores asociados a este lote</p>
+                          <p className="text-xs font-semibold text-slate-500">Puedes asociar uno o varios proveedores ya dados de alta.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setLotProviderDrafts((prev) => [...prev, emptyGuidedLotProviderDraft()])}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
+                        >
+                          <Plus size={14} />
+                          Añadir proveedor
+                        </button>
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        {lotProviderDrafts.map((draft, index) => (
+                          <div key={`new-lot-provider-${index}`} className="grid gap-2 rounded-xl border border-white bg-white p-2 md:grid-cols-[1.2fr_1fr_1fr_auto]">
+                            <label className="grid gap-1">
+                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Proveedor</span>
+                              <select
+                                value={draft.supplierId}
+                                onChange={(event) => setLotProviderDrafts((prev) => prev.map((item, itemIndex) => (
+                                  itemIndex === index ? { ...item, supplierId: event.target.value } : item
+                                )))}
+                                className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                              >
+                                <option value="">Elegir proveedor...</option>
+                                {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="grid gap-1">
+                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Qué aporta</span>
+                              <input
+                                value={draft.suppliedName}
+                                onChange={(event) => setLotProviderDrafts((prev) => prev.map((item, itemIndex) => (
+                                  itemIndex === index ? { ...item, suppliedName: event.target.value } : item
+                                )))}
+                                placeholder="Viales, mezcla, cartonaje..."
+                                className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
+                              />
+                            </label>
+                            <label className="grid gap-1">
+                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Tipo de aporte</span>
+                              <select
+                                value={draft.category}
+                                onChange={(event) => setLotProviderDrafts((prev) => prev.map((item, itemIndex) => (
+                                  itemIndex === index ? { ...item, category: event.target.value as SupplierCategory } : item
+                                )))}
+                                className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                              >
+                                {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setLotProviderDrafts((prev) => prev.length <= 1 ? [emptyGuidedLotProviderDraft()] : prev.filter((_, itemIndex) => itemIndex !== index))}
+                              className="mt-5 inline-flex h-10 items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 text-rose-700 hover:bg-rose-100"
+                              aria-label="Quitar proveedor"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(setExpandedDocumentBlockIds, documentBlockKeyFor('new-lot-docs', activeProductKey))}
+                        className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-white"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          {expandedDocumentBlockIds.includes(documentBlockKeyFor('new-lot-docs', activeProductKey)) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          Documentos del lote
+                        </span>
+                        <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (lotDraft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
+                      </button>
+                      {expandedDocumentBlockIds.includes(documentBlockKeyFor('new-lot-docs', activeProductKey)) && (
+                        <div className="mt-2 grid gap-2 md:grid-cols-3">
+                          {DOCUMENT_GROUPS.map((group) => (
+                            <div key={`lot-base-${group.key}`} className="rounded-xl border border-slate-100 bg-white p-3">
+                              <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
+                              <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
+                              <FileUploader
+                                folderPath={`traceability/lots/${activeProductKey}/${group.key}`}
+                                existingFiles={lotDraft.attachments[group.key]}
+                                onUploadComplete={(files) => setLotDraft((prev) => ({ ...prev, attachments: { ...prev.attachments, [group.key]: files } }))}
+                                compact
+                                maxSizeMB={20}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button type="button" onClick={addLot} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800">
+                      <Plus size={16} />
+                      Crear lote
+                    </button>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-teal-200 bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-widest text-teal-700">Lotes de {selectedProduct.label}</p>
+                        <p className="text-sm font-semibold text-slate-600">Abre un lote para asociar proveedores o revisar su dossier.</p>
+                      </div>
+                      <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-teal-800">{selectedProductLots.length} lote(s)</span>
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {selectedProductLots.map((lot) => {
+                        const isLotSelected = selectedGuidedLotId === lot.id;
+                        const supplierNames = Array.from(new Set(lot.entries.map((entry) => suppliers.find((supplier) => supplier.id === entry.supplierId)?.name).filter(Boolean)));
+                        return (
+                          <div key={`guided-lot-${lot.id}`} className={`rounded-xl border p-3 ${isLotSelected ? 'border-teal-300 bg-teal-50/80' : 'border-slate-200 bg-slate-50'}`}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedGuidedLotId(isLotSelected ? '' : lot.id)}
+                              className="flex w-full items-start justify-between gap-3 text-left"
+                            >
+                              <span>
+                                <span className="flex items-center gap-2 text-sm font-black text-slate-950">
+                                  {isLotSelected ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                                  Lote {lot.lotNumber}
+                                </span>
+                                <span className="mt-1 block text-xs font-semibold text-slate-600">
+                                  Albarán {lot.albaranNumber || '-'} · {lot.quantity || '-'} {lot.quantityUnit || selectedProductQuantityUnit} · {supplierNames.length} proveedor(es)
+                                </span>
+                              </span>
+                              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">{lot.status}</span>
+                            </button>
+                            {isLotSelected && (
+                              <div className="mt-3 space-y-3">
+                                <div className="grid gap-2 md:grid-cols-4">
+                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Orden Zoho: {lot.zohoPurchaseOrder || '-'}</p>
+                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Factura: {lot.zohoInvoiceNumber || '-'}</p>
+                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Cajas calculadas: {lot.calculatedBoxes || '-'}</p>
+                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {lot.expiryDate || '-'}</p>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                  <p className="text-xs font-black uppercase tracking-widest text-slate-500">Proveedores asociados al lote</p>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    {lot.entries.map((entry) => {
+                                      const supplier = suppliers.find((item) => item.id === entry.supplierId);
+                                      const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
+                                      return (
+                                        <div key={entry.id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                          <p className="text-sm font-black text-slate-950">{supplier?.name || 'Proveedor'}</p>
+                                          <p className="text-xs font-semibold text-slate-500">{product?.name || '-'} · {labelForCategory(entry.stage)}</p>
+                                        </div>
+                                      );
+                                    })}
+                                    {lot.entries.length === 0 && (
+                                      <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm font-bold text-slate-500 md:col-span-2">Sin proveedores asociados todavía.</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border border-teal-100 bg-white p-3">
+                                  <p className="text-xs font-black uppercase tracking-widest text-teal-700">Asociar proveedor a este lote</p>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-4">
+                                    <select
+                                      value={guidedLotProviderDraft.supplierId}
+                                      onChange={(e) => setGuidedLotProviderDraft((prev) => ({ ...prev, supplierId: e.target.value }))}
+                                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
+                                    >
+                                      <option value="">Elegir proveedor...</option>
+                                      {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                                    </select>
+                                    <input value={guidedLotProviderDraft.suppliedName} onChange={(e) => setGuidedLotProviderDraft((prev) => ({ ...prev, suppliedName: e.target.value }))} placeholder="Qué aporta" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                                    <select value={guidedLotProviderDraft.category} onChange={(e) => setGuidedLotProviderDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400">
+                                      {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                                    </select>
+                                    <button type="button" onClick={addProviderToGuidedLot} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-black text-white hover:bg-teal-700">
+                                      <Plus size={15} />
+                                      Asociar
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {selectedProductLots.length === 0 && (
+                        <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm font-bold text-slate-500">Todavía no hay lotes de este producto.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Proveedores vinculados</p>
+                    <h3 className="text-lg font-black text-slate-950">{selectedProduct.label}</h3>
+                  </div>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-teal-700">{selectedProductSuppliers.length}</span>
+                </div>
+                <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                  {selectedProductSupplierPairs.map(({ supplier, product }) => (
+                    <div key={`${supplier.id}-${product.id}`} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-slate-950">{supplier.name}</p>
+                          <p className="mt-0.5 text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => selectSupplierForProduct(supplier.id)}
+                          className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-black text-teal-800 hover:bg-teal-100"
+                        >
+                          Abrir
+                        </button>
+                      </div>
+                      <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
+                        <p className="text-xs font-black uppercase tracking-widest text-slate-500">Suministro</p>
+                        <p className="text-sm font-bold text-slate-800">{product.name}</p>
+                        <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'} · {product.unit || selectedProductQuantityUnit}</p>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedProductSupplierPairs.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-center">
+                      <UserRound size={20} className="mx-auto text-slate-400" />
+                      <p className="mt-2 text-sm font-bold text-slate-600">Todavía no hay proveedores asociados a este producto.</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Usa “Dar de alta proveedor” para crear uno o asociar uno existente.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {!showGuidedProviderPanel && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Recepciones y lotes</p>
+                    <h3 className="text-lg font-black text-slate-950">Dossier documental del producto</h3>
+                  </div>
+                  <div className="text-right text-xs font-black text-slate-500">
+                    <p>{selectedProductLots.length} lote(s)</p>
+                    <p>{selectedProductDocumentCount} adjunto(s)</p>
+                  </div>
+                </div>
+                <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  {selectedProductLots.map((lot) => {
+                    const supplierNames = Array.from(new Set(lot.entries.map((entry) => suppliers.find((supplier) => supplier.id === entry.supplierId)?.name).filter(Boolean))).join(', ') || '-';
+                    const albaranes = Array.from(new Set(lot.entries.map((entry) => entry.albaranNumber).filter(Boolean))).join(', ') || '-';
+                    const deliveryNoteQuantity = lot.entries.map((entry) => entry.deliveryNoteQuantity).filter(Boolean).join(', ') || '-';
+                    return (
+                      <div key={lot.id} className="rounded-2xl border border-teal-200 bg-teal-50/60 p-3">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-[11px] font-black uppercase tracking-widest text-teal-700">Lote {lot.lotNumber}</p>
+                            <p className="text-sm font-black text-slate-950">{supplierNames}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => downloadLotPdf(lot)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-50"
+                          >
+                            <Download size={14} />
+                            Descargar lote
+                          </button>
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-4">
+                          <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {albaranes}</p>
+                          <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Cantidad albarán: {deliveryNoteQuantity} {selectedProductQuantityUnit}</p>
+                          <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {lot.expiryDate || '-'}</p>
+                          <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Estado: {lot.status}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {selectedProductLots.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                      <FolderTree size={22} className="mx-auto text-slate-400" />
+                      <p className="mt-2 text-sm font-bold text-slate-600">Este producto todavía no tiene recepciones/lotes en el dossier.</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Usa “Dar de alta lote” cuando quieras crear la recepción documental.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              )}
+              </div>
+            </div>
+          )}
         </section>
 
         {suppliers.length > 0 && (
@@ -1339,13 +2406,26 @@ export default function TraceabilityDossierPage() {
         )}
 
         <main className="grid gap-4">
-          {suppliers.map((supplier) => {
+          <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Carpetas editables por proveedor</p>
+              <p className="text-sm font-semibold text-slate-600">Aquí editas datos, documentos y lotes con todo el detalle.</p>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <Search size={15} className="text-slate-400" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar lote o producto"
+                className="h-8 w-48 bg-transparent text-sm font-semibold outline-none"
+              />
+            </div>
+          </div>
+          {filteredSuppliers.map((supplier) => {
             const isOpen = expandedSupplierIds.includes(supplier.id);
             const relatedLots = lots.filter((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id));
-            const createProductKey = documentBlockKeyFor('create-product', supplier.id);
-            const isCreateProductOpen = expandedCreateBlockIds.includes(createProductKey);
             return (
-              <section key={supplier.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition ${isOpen ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
+              <section id={`traceability-supplier-${supplier.id}`} key={supplier.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition ${isOpen ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <button
                     type="button"
@@ -1394,6 +2474,16 @@ export default function TraceabilityDossierPage() {
                         <input value={supplierEditDraft.email} onChange={(e) => setSupplierEditDraft((prev) => ({ ...prev, email: e.target.value }))} placeholder="Email" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
                         <textarea value={supplierEditDraft.address} onChange={(e) => setSupplierEditDraft((prev) => ({ ...prev, address: e.target.value }))} placeholder="Dirección" className="min-h-[40px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400" />
                         <textarea value={supplierEditDraft.notes} onChange={(e) => setSupplierEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del proveedor" className="min-h-[64px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-4" />
+                        <div className="rounded-xl border border-white bg-white p-3 md:col-span-4">
+                          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Contrato Solaris con proveedor</p>
+                          <FileUploader
+                            folderPath={`traceability/suppliers/${supplier.id}/contracts`}
+                            existingFiles={supplierEditDraft.contracts}
+                            onUploadComplete={(files) => setSupplierEditDraft((prev) => ({ ...prev, contracts: files }))}
+                            compact
+                            maxSizeMB={20}
+                          />
+                        </div>
                         <div className="flex flex-wrap gap-2 md:col-span-4">
                           <button type="button" onClick={saveSupplierEdit} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
                             <Save size={16} />
@@ -1406,368 +2496,30 @@ export default function TraceabilityDossierPage() {
                       </div>
                     )}
 
-                    <div className="rounded-2xl border border-teal-100 bg-teal-50/50 p-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedSupplierId(supplier.id);
-                          toggleExpanded(setExpandedCreateBlockIds, createProductKey);
-                        }}
-                        className="inline-flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-white"
-                      >
-                        <span className="inline-flex items-center gap-2">
-                          {isCreateProductOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          Crear producto suministrado dentro de {supplier.name}
-                        </span>
-                        <Plus size={15} />
-                      </button>
-                      {isCreateProductOpen && selectedSupplierId === supplier.id && (
-                        <div className="mt-2 grid gap-2 md:grid-cols-4">
-                          <input value={productDraft.name} onChange={(e) => setProductDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Producto/material" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                          <input value={productDraft.reference} onChange={(e) => setProductDraft((prev) => ({ ...prev, reference: e.target.value }))} placeholder="Referencia comercial" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                          <select value={productDraft.category} onChange={(e) => setProductDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-bold outline-none focus:border-teal-400">
-                            {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-                          </select>
-                          <input value={productDraft.unit} onChange={(e) => setProductDraft((prev) => ({ ...prev, unit: e.target.value }))} placeholder="Unidad/formato" className="h-10 rounded-xl border border-teal-100 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                          <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                            <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Ficha técnica</p>
-                            <FileUploader folderPath="traceability/supplier-products/technical-sheets" existingFiles={productDraft.technicalSheets} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, technicalSheets: files }))} compact maxSizeMB={15} />
-                          </div>
-                          <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                            <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base</p>
-                            <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productDraft.certificates} onUploadComplete={(files) => setProductDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
-                          </div>
-                          <button type="button" onClick={() => addSupplierProduct(supplier)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700 md:col-span-4">
-                            <Save size={16} />
-                            Guardar producto suministrado
-                          </button>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-500">Contratos del proveedor</p>
+                          <p className="text-sm font-semibold text-slate-600">Contrato Solaris/proveedor y documentos generales de homologación.</p>
+                        </div>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">{supplier.contracts.length} archivo(s)</span>
+                      </div>
+                      {supplier.contracts.length === 0 ? (
+                        <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3 text-sm font-bold text-slate-500">
+                          Sin contratos adjuntos. Usa editar proveedor para subirlos.
+                        </p>
+                      ) : (
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          {supplier.contracts.map((file) => (
+                            <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 truncate rounded-xl border border-white bg-white px-3 py-2 text-xs font-bold text-teal-700 hover:text-teal-900">
+                              <LinkIcon size={13} />
+                              {file.name}
+                            </a>
+                          ))}
                         </div>
                       )}
                     </div>
 
-                    {supplier.products.map((product) => {
-                      const draft = lotDraftFor(supplier, product);
-                      const productLots = supplierProductLots(supplier, product);
-                      const productKey = productKeyFor(supplier.id, product.id);
-                      const isProductOpen = expandedProductIds.includes(productKey);
-                      const newDocumentsKey = documentBlockKeyFor('new-docs', supplier.id, product.id);
-                      const areNewDocumentsOpen = expandedDocumentBlockIds.includes(newDocumentsKey);
-                      const createLotKey = documentBlockKeyFor('create-lot', supplier.id, product.id);
-                      const isCreateLotOpen = expandedCreateBlockIds.includes(createLotKey);
-                      return (
-                        <div key={product.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                            <button
-                              type="button"
-                              onClick={() => toggleExpanded(setExpandedProductIds, productKey)}
-                              className="min-w-0 flex-1 text-left"
-                            >
-                              <p className="flex items-center gap-2 text-base font-black text-slate-950">
-                                {isProductOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                {product.name}
-                              </p>
-                              <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'} · {product.unit || 'Sin unidad'} · {productLots.length} lote(s)</p>
-                            </button>
-                            <div className="flex shrink-0 gap-1">
-                              <button type="button" onClick={() => editSupplierProduct(supplier, product)} className="rounded-lg border border-teal-200 bg-white p-1.5 text-teal-700 hover:bg-teal-50" title="Editar producto">
-                                <Edit2 size={14} />
-                              </button>
-                              <button type="button" onClick={() => deleteSupplierProduct(supplier, product)} className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-700 hover:bg-rose-50" title="Eliminar producto">
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </div>
-
-                          {editingProductKey === productKey && (
-                            <div className="mt-3 grid gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 md:grid-cols-4">
-                              <p className="text-xs font-black uppercase tracking-widest text-amber-800 md:col-span-4">Editar producto suministrado</p>
-                              <input value={productEditDraft.name} onChange={(e) => setProductEditDraft((prev) => ({ ...prev, name: e.target.value }))} placeholder="Producto/material" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                              <input value={productEditDraft.reference} onChange={(e) => setProductEditDraft((prev) => ({ ...prev, reference: e.target.value }))} placeholder="Referencia comercial" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                              <select value={productEditDraft.category} onChange={(e) => setProductEditDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-bold outline-none focus:border-amber-400">
-                                {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-                              </select>
-                              <input value={productEditDraft.unit} onChange={(e) => setProductEditDraft((prev) => ({ ...prev, unit: e.target.value }))} placeholder="Unidad/formato" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                              <textarea value={productEditDraft.notes} onChange={(e) => setProductEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del producto suministrado" className="min-h-[64px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-4" />
-                              <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                                <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Ficha técnica</p>
-                                <FileUploader folderPath="traceability/supplier-products/technical-sheets" existingFiles={productEditDraft.technicalSheets} onUploadComplete={(files) => setProductEditDraft((prev) => ({ ...prev, technicalSheets: files }))} compact maxSizeMB={15} />
-                              </div>
-                              <div className="rounded-xl border border-white bg-white p-3 md:col-span-2">
-                                <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Certificados base</p>
-                                <FileUploader folderPath="traceability/supplier-products/certificates" existingFiles={productEditDraft.certificates} onUploadComplete={(files) => setProductEditDraft((prev) => ({ ...prev, certificates: files }))} compact maxSizeMB={15} />
-                              </div>
-                              <div className="flex flex-wrap gap-2 md:col-span-4">
-                                <button type="button" onClick={() => saveSupplierProductEdit(supplier, product)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
-                                  <Save size={16} />
-                                  Guardar cambios
-                                </button>
-                                <button type="button" onClick={() => setEditingProductKey('')} className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-black text-amber-800 hover:bg-amber-50">
-                                  Cancelar
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {isProductOpen && (
-                            <div className="mt-3 grid gap-2">
-                              {productLots.map((lot) => {
-                                const entry = lot.entries.find((item) => item.supplierId === supplier.id && item.supplierProductId === product.id);
-                                const isLotOpen = expandedLotIds.includes(lot.id);
-                                const isEditingThisLot = editingLotId === lot.id && lotEditContext?.supplierId === supplier.id && lotEditContext?.productId === product.id;
-                                const lotDocumentsKey = documentBlockKeyFor('lot-docs', lot.id, supplier.id, product.id);
-                                const editDocumentsKey = documentBlockKeyFor('edit-docs', lot.id, supplier.id, product.id);
-                                const areLotDocumentsOpen = expandedDocumentBlockIds.includes(lotDocumentsKey);
-                                const areEditDocumentsOpen = expandedDocumentBlockIds.includes(editDocumentsKey);
-                                const lotFileCount = entry ? fileCount(entry) : 0;
-                                return (
-                                  <div key={lot.id} className="rounded-xl border border-teal-300 bg-teal-50/80 p-3 shadow-sm">
-                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                      <button type="button" onClick={() => toggleExpanded(setExpandedLotIds, lot.id)} className="min-w-0 flex-1 text-left">
-                                        <p className="flex items-center gap-2 text-sm font-black text-slate-900">
-                                          {isLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                          Lote {entry?.supplierLot || lot.lotNumber}
-                                        </p>
-                                        <p className="text-xs font-semibold text-slate-600">Albarán {entry?.albaranNumber || '-'} · En albarán {entry?.deliveryNoteQuantity || '-'} · Entregada {entry?.quantity || lot.quantity || '-'} · {lotFileCount} documento(s)</p>
-                                      </button>
-                                      <div className="flex flex-wrap gap-1">
-                                        <button type="button" onClick={() => editLot(lot, supplier, product, entry)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-100">
-                                          <Edit2 size={14} />
-                                          Editar
-                                        </button>
-                                        <button type="button" onClick={() => downloadLotPdf(lot)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
-                                          <Download size={14} />
-                                          Descargar lote
-                                        </button>
-                                      </div>
-                                    </div>
-                                    {isLotOpen && (
-                                      <div className="mt-3 space-y-3">
-                                        {isEditingThisLot && (
-                                          <div className="grid gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 md:grid-cols-4">
-                                            <p className="text-xs font-black uppercase tracking-widest text-amber-800 md:col-span-4">Editar lote</p>
-                                            <input value={lotEditDraft.finalProductName} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, finalProductName: e.target.value }))} placeholder="Producto/lote" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <input value={lotEditDraft.lotNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, lotNumber: e.target.value }))} placeholder="Nº lote" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <input value={lotEditDraft.albaranNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, albaranNumber: e.target.value }))} placeholder="Albarán/factura entrada" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <input value={lotEditDraft.solarisInvoiceNumber} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, solarisInvoiceNumber: e.target.value }))} placeholder="Factura Solaris" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <label className="grid gap-1">
-                                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
-                                              <input type="date" value={lotEditDraft.deliveryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, deliveryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            </label>
-                                            <input value={lotEditDraft.deliveryNoteQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, deliveryNoteQuantity: e.target.value }))} placeholder="Cantidad en albarán" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <input value={lotEditDraft.receivedQuantity} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, receivedQuantity: e.target.value }))} placeholder="Cantidad entregada" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <label className="grid gap-1">
-                                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
-                                              <select value={lotEditDraft.quantityMatchesInvoice} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityMatchesInvoice: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-bold outline-none focus:border-amber-400">
-                                                <option value="">Sin revisar</option>
-                                                <option value="si">Sí corresponde</option>
-                                                <option value="no">No corresponde</option>
-                                              </select>
-                                            </label>
-                                            <input value={lotEditDraft.quantityDifference} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityDifference: e.target.value }))} placeholder="Diferencia" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            <label className="grid gap-1">
-                                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fabricación</span>
-                                              <input type="date" value={lotEditDraft.manufactureDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, manufactureDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            </label>
-                                            <label className="grid gap-1 md:col-span-2">
-                                              <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
-                                              <input type="date" value={lotEditDraft.expiryDate} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, expiryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
-                                            </label>
-                                            <textarea value={lotEditDraft.quantityCheckNotes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, quantityCheckNotes: e.target.value }))} placeholder="Observación de correspondencia de cantidades" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-2" />
-                                            <textarea value={lotEditDraft.notes} onChange={(e) => setLotEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-2" />
-                                            <div className="md:col-span-4">
-                                              <button
-                                                type="button"
-                                                onClick={() => toggleExpanded(setExpandedDocumentBlockIds, editDocumentsKey)}
-                                                className="inline-flex w-full items-center justify-between rounded-xl border border-amber-200 bg-white px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-50"
-                                              >
-                                                <span className="inline-flex items-center gap-2">
-                                                  {areEditDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                  Documentos del lote
-                                                </span>
-                                                <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (lotEditDraft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
-                                              </button>
-                                              {areEditDocumentsOpen && (
-                                                <div className="mt-2 grid gap-2 md:grid-cols-3">
-                                                  {DOCUMENT_GROUPS.map((group) => (
-                                                    <div key={`edit-${lot.id}-${group.key}`} className="rounded-xl border border-white bg-white p-3">
-                                                      <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
-                                                      <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
-                                                      <FileUploader
-                                                        folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
-                                                        existingFiles={lotEditDraft.attachments[group.key]}
-                                                        onUploadComplete={(files) => setLotEditDraft((prev) => ({ ...prev, attachments: { ...prev.attachments, [group.key]: files } }))}
-                                                        compact
-                                                        maxSizeMB={20}
-                                                      />
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              )}
-                                            </div>
-                                            <div className="flex flex-wrap gap-2 md:col-span-4">
-                                              <button type="button" onClick={saveLotEdit} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
-                                                <Save size={16} />
-                                                Guardar cambios
-                                              </button>
-                                              <button type="button" onClick={() => { setEditingLotId(''); setLotEditContext(null); }} className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-black text-amber-800 hover:bg-amber-50">
-                                                Cancelar
-                                              </button>
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        <div className="grid gap-2 md:grid-cols-3">
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Entrega: {entry?.deliveryDate || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {entry?.expiryDate || lot.expiryDate || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Albarán: {entry?.albaranNumber || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Cantidad en albarán: {entry?.deliveryNoteQuantity || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Cantidad entregada: {entry?.quantity || lot.quantity || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Factura Solaris: {entry?.solarisInvoiceNumber || '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Corresponde: {entry ? labelForQuantityMatch(entry.quantityMatchesInvoice) : '-'}</p>
-                                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Diferencia: {entry?.quantityDifference || '-'}</p>
-                                          {entry?.quantityCheckNotes && (
-                                            <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 md:col-span-3">Observación: {entry.quantityCheckNotes}</p>
-                                          )}
-                                        </div>
-
-                                        {entry && (
-                                          <div className="rounded-xl border border-teal-200 bg-white p-2">
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleExpanded(setExpandedDocumentBlockIds, lotDocumentsKey)}
-                                              className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-teal-50"
-                                            >
-                                              <span className="inline-flex items-center gap-2">
-                                                {areLotDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                Documentos adjuntos
-                                              </span>
-                                              <span>{lotFileCount} archivo(s)</span>
-                                            </button>
-                                            {areLotDocumentsOpen && (
-                                              <div className="mt-2 grid gap-2 md:grid-cols-3">
-                                                {DOCUMENT_GROUPS.map((group) => (
-                                                  <div key={`${lot.id}-${group.key}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                                                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">{group.label}</p>
-                                                    {(entry.attachments[group.key] || []).length === 0 ? (
-                                                      <p className="mt-1 text-xs font-semibold text-slate-400">Sin adjuntos</p>
-                                                    ) : (
-                                                      <div className="mt-2 space-y-1">
-                                                        {entry.attachments[group.key].map((file) => (
-                                                          <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 truncate text-xs font-bold text-teal-700 hover:text-teal-900">
-                                                            <LinkIcon size={13} />
-                                                            {file.name}
-                                                          </a>
-                                                        ))}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {isProductOpen && (
-                          <div className="mt-3 rounded-2xl border border-dashed border-teal-200 bg-white p-3">
-                            <button
-                              type="button"
-                              onClick={() => toggleExpanded(setExpandedCreateBlockIds, createLotKey)}
-                              className="inline-flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-teal-50"
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                {isCreateLotOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                Dar de alta nuevo lote de este producto
-                              </span>
-                              <Plus size={15} />
-                            </button>
-                            {isCreateLotOpen && (
-                            <>
-                            <div className="mt-3 grid gap-2 md:grid-cols-4">
-                              <input value={draft.finalProductName} onChange={(e) => updateSupplierLotDraft(supplier, product, { finalProductName: e.target.value })} placeholder="Producto/lote: SolarVital..." className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.lotNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { lotNumber: e.target.value })} placeholder="Nº lote" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.albaranNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { albaranNumber: e.target.value })} placeholder="Albarán/factura entrada" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.solarisInvoiceNumber} onChange={(e) => updateSupplierLotDraft(supplier, product, { solarisInvoiceNumber: e.target.value })} placeholder="Factura Solaris" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <label className="grid gap-1">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrega</span>
-                                <input type="date" value={draft.deliveryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              </label>
-                              <input value={draft.deliveryNoteQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { deliveryNoteQuantity: e.target.value })} placeholder="Cantidad en albarán" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <input value={draft.receivedQuantity} onChange={(e) => updateSupplierLotDraft(supplier, product, { receivedQuantity: e.target.value })} placeholder="Cantidad entregada" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <label className="grid gap-1">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad corresponde</span>
-                                <select value={draft.quantityMatchesInvoice} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityMatchesInvoice: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-400">
-                                  <option value="">Sin revisar</option>
-                                  <option value="si">Sí corresponde</option>
-                                  <option value="no">No corresponde</option>
-                                </select>
-                              </label>
-                              <input value={draft.quantityDifference} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityDifference: e.target.value })} placeholder="Diferencia" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              <label className="grid gap-1">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fabricación</span>
-                                <input type="date" value={draft.manufactureDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { manufactureDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              </label>
-                              <label className="grid gap-1 md:col-span-2">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
-                                <input type="date" value={draft.expiryDate} onChange={(e) => updateSupplierLotDraft(supplier, product, { expiryDate: e.target.value })} className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                              </label>
-                              <textarea value={draft.quantityCheckNotes} onChange={(e) => updateSupplierLotDraft(supplier, product, { quantityCheckNotes: e.target.value })} placeholder="Observación de correspondencia de cantidades" className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
-                              <textarea value={draft.notes} onChange={(e) => updateSupplierLotDraft(supplier, product, { notes: e.target.value })} placeholder="Notas del lote, fabricación, incidencias o aclaraciones" className="min-h-[70px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
-                            </div>
-                            <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50/50 p-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleExpanded(setExpandedDocumentBlockIds, newDocumentsKey)}
-                                className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-teal-800 hover:bg-white"
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  {areNewDocumentsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                  Documentos para adjuntar
-                                </span>
-                                <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (draft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
-                              </button>
-                              {areNewDocumentsOpen && (
-                                <div className="mt-2 grid gap-2 md:grid-cols-3">
-                                  {DOCUMENT_GROUPS.map((group) => (
-                                    <div key={group.key} className="rounded-xl border border-slate-100 bg-white p-3">
-                                      <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
-                                      <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
-                                      <FileUploader
-                                        folderPath={`traceability/suppliers/${supplier.id}/products/${product.id}/${group.key}`}
-                                        existingFiles={draft.attachments[group.key]}
-                                        onUploadComplete={(files) => updateSupplierLotDraft(supplier, product, { attachments: { ...draft.attachments, [group.key]: files } })}
-                                        compact
-                                        maxSizeMB={20}
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <button type="button" onClick={() => addSupplierProductLot(supplier, product)} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-black text-white hover:bg-teal-700">
-                              <Plus size={16} />
-                              Guardar lote en esta carpeta
-                            </button>
-                            </>
-                            )}
-                          </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {supplier.products.length === 0 && (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-                        <Package size={22} className="mx-auto text-slate-400" />
-                        <p className="mt-2 text-sm font-bold text-slate-600">Este proveedor todavía no tiene productos suministrados.</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </section>
@@ -1778,6 +2530,12 @@ export default function TraceabilityDossierPage() {
             <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
               <Building2 size={28} className="mx-auto text-teal-700" />
               <p className="mt-3 text-sm font-bold text-slate-600">Crea un proveedor y aquí aparecerá su carpeta.</p>
+            </section>
+          )}
+          {suppliers.length > 0 && filteredSuppliers.length === 0 && (
+            <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+              <Search size={28} className="mx-auto text-slate-400" />
+              <p className="mt-3 text-sm font-bold text-slate-600">No encontré carpetas con esa búsqueda.</p>
             </section>
           )}
         </main>
