@@ -537,6 +537,9 @@ export default function TraceabilityDossierPage() {
   const [editingLotId, setEditingLotId] = useState('');
   const [lotEditContext, setLotEditContext] = useState<{ supplierId: string; productId: string } | null>(null);
   const [lotEditDraft, setLotEditDraft] = useState(emptySupplierLotDraft());
+  const [guidedLotEditDraft, setGuidedLotEditDraft] = useState(emptyLotFormDraft());
+  const [editingLotProviderEntryId, setEditingLotProviderEntryId] = useState('');
+  const [lotProviderEditDraft, setLotProviderEditDraft] = useState(emptyGuidedLotProviderDraft());
   const [selectedProductKey, setSelectedProductKey] = useState('');
   const [showGuidedProviderPanel, setShowGuidedProviderPanel] = useState(false);
   const [showGuidedLotPanel, setShowGuidedLotPanel] = useState(false);
@@ -1042,7 +1045,22 @@ export default function TraceabilityDossierPage() {
         productKey(row?.producto) === inventoryProduct
         && clean(row?.lote).toLowerCase() === inventoryLot.toLowerCase()
       ));
-      if (exists) return rows;
+      if (exists) {
+        return rows.map((row) => (
+          productKey(row?.producto) === inventoryProduct
+          && clean(row?.lote).toLowerCase() === inventoryLot.toLowerCase()
+            ? {
+                ...row,
+                fecha_alta: clean(lotDraft.deliveryDate) || row.fecha_alta,
+                fecha_caducidad: clean(lotDraft.expiryDate) || row.fecha_caducidad,
+                notas: clean(lotDraft.processNotes) || row.notas,
+                viales_recibidos: primaryQuantity || row.viales_recibidos,
+                origen_dossier_trazabilidad: clean(row?.origen_dossier_trazabilidad) || 'SI',
+                lastChangedAt: now,
+              }
+            : row
+        ));
+      }
       return [{
         producto: inventoryProduct,
         lote: inventoryLot,
@@ -1054,6 +1072,7 @@ export default function TraceabilityDossierPage() {
         viales_recibidos: primaryQuantity,
         estado: 'ACTIVO',
         ensamblaje_finalizado: 'NO',
+        origen_dossier_trazabilidad: 'SI',
         lastChangedAt: now,
       }, ...rows];
     });
@@ -1585,6 +1604,253 @@ export default function TraceabilityDossierPage() {
     emitSuccessFeedback('Lote editado.');
   };
 
+  const startGuidedLotEdit = (lot: FinalLot) => {
+    setEditingLotId(lot.id);
+    setLotEditContext(null);
+    setGuidedLotEditDraft({
+      productName: lot.productName,
+      lotNumber: lot.lotNumber,
+      quantity: lot.quantity,
+      quantityUnit: lot.quantityUnit,
+      deliveryDate: lot.deliveryDate,
+      albaranNumber: lot.albaranNumber,
+      zohoPurchaseOrder: lot.zohoPurchaseOrder,
+      zohoInvoiceNumber: lot.zohoInvoiceNumber,
+      deliveryNoteQuantity: lot.deliveryNoteQuantity,
+      calculatedBoxes: lot.calculatedBoxes,
+      manufactureDate: lot.manufactureDate,
+      expiryDate: lot.expiryDate,
+      processNotes: lot.processNotes,
+      attachments: lot.attachments,
+    });
+    setSelectedLotId(lot.id);
+    setSelectedGuidedLotId(lot.id);
+  };
+
+  const saveGuidedLotEdit = () => {
+    const currentLot = lots.find((lot) => lot.id === editingLotId);
+    if (!currentLot) return;
+    if (!clean(guidedLotEditDraft.productName) || !clean(guidedLotEditDraft.lotNumber)) {
+      alert('El lote necesita producto y número de lote.');
+      return;
+    }
+    const now = new Date().toISOString();
+    const duplicatedLot = lots.some((lot) => (
+      lot.id !== currentLot.id
+      && productKey(lot.productName) === productKey(guidedLotEditDraft.productName)
+      && clean(lot.lotNumber).toLowerCase() === clean(guidedLotEditDraft.lotNumber).toLowerCase()
+    ));
+    if (duplicatedLot) {
+      alert('Ya existe otro lote con ese producto y número de lote.');
+      return;
+    }
+    const previousProduct = productKey(currentLot.productName);
+    const previousLot = clean(currentLot.lotNumber).toLowerCase();
+    const nextProductCode = productKey(guidedLotEditDraft.productName);
+    const nextProductName = PRODUCT_LABELS_BY_CODE[nextProductCode] || guidedLotEditDraft.productName;
+    const meta = lotProductMetaFor(nextProductName);
+    const primaryQuantity = clean(guidedLotEditDraft.deliveryNoteQuantity) || clean(guidedLotEditDraft.quantity);
+    const quantityUnit = clean(guidedLotEditDraft.quantityUnit)
+      || (meta?.mode === 'ENSAMBLAJE' ? 'viales' : meta?.mode === 'KIT' ? 'kits' : 'unidades');
+    const calculatedBoxes = clean(guidedLotEditDraft.calculatedBoxes) || boxCountFor(nextProductName, primaryQuantity);
+
+    setState((prev) => {
+      const base = normalizeState(prev);
+      return {
+        ...base,
+        lots: base.lots.map((lot) => lot.id === currentLot.id
+          ? {
+              ...lot,
+              productName: nextProductName,
+              lotNumber: clean(guidedLotEditDraft.lotNumber),
+              quantity: primaryQuantity,
+              quantityUnit,
+              deliveryDate: clean(guidedLotEditDraft.deliveryDate),
+              albaranNumber: clean(guidedLotEditDraft.albaranNumber),
+              zohoPurchaseOrder: clean(guidedLotEditDraft.zohoPurchaseOrder),
+              zohoInvoiceNumber: clean(guidedLotEditDraft.zohoInvoiceNumber),
+              deliveryNoteQuantity: clean(guidedLotEditDraft.deliveryNoteQuantity) || primaryQuantity,
+              calculatedBoxes,
+              manufactureDate: clean(guidedLotEditDraft.manufactureDate),
+              expiryDate: clean(guidedLotEditDraft.expiryDate),
+              processNotes: clean(guidedLotEditDraft.processNotes),
+              attachments: guidedLotEditDraft.attachments,
+              entries: lot.entries.map((entry) => ({
+                ...entry,
+                deliveryDate: clean(guidedLotEditDraft.deliveryDate) || entry.deliveryDate,
+                albaranNumber: clean(guidedLotEditDraft.albaranNumber) || entry.albaranNumber,
+                solarisInvoiceNumber: clean(guidedLotEditDraft.zohoInvoiceNumber) || entry.solarisInvoiceNumber,
+                deliveryNoteQuantity: clean(guidedLotEditDraft.deliveryNoteQuantity) || entry.deliveryNoteQuantity,
+                quantity: primaryQuantity || entry.quantity,
+                supplierLot: clean(guidedLotEditDraft.lotNumber) || entry.supplierLot,
+                finalLotId: lot.id,
+                expiryDate: clean(guidedLotEditDraft.expiryDate) || entry.expiryDate,
+                bestBeforeDate: clean(guidedLotEditDraft.expiryDate) || entry.bestBeforeDate,
+                updatedAt: now,
+              })),
+              updatedAt: now,
+            }
+          : lot),
+      };
+    });
+
+    setCanetLotes((prev) => {
+      const rows = Array.isArray(prev) ? prev : [];
+      let updated = false;
+      const nextRows = rows.map((row) => {
+        const samePrevious = productKey(row?.producto) === previousProduct
+          && clean(row?.lote).toLowerCase() === previousLot;
+        const sameNext = productKey(row?.producto) === nextProductCode
+          && clean(row?.lote).toLowerCase() === clean(guidedLotEditDraft.lotNumber).toLowerCase();
+        if (!samePrevious && !sameNext) return row;
+        updated = true;
+        return {
+          ...row,
+          producto: nextProductCode,
+          lote: clean(guidedLotEditDraft.lotNumber),
+          fecha_alta: clean(guidedLotEditDraft.deliveryDate),
+          fecha_caducidad: clean(guidedLotEditDraft.expiryDate),
+          notas: clean(guidedLotEditDraft.processNotes),
+          viales_recibidos: primaryQuantity,
+          estado: clean(row?.estado) || 'ACTIVO',
+          origen_dossier_trazabilidad: clean(row?.origen_dossier_trazabilidad) || 'SI',
+          lastChangedAt: now,
+        };
+      });
+      if (updated) return nextRows;
+      return [{
+        producto: nextProductCode,
+        lote: clean(guidedLotEditDraft.lotNumber),
+        fecha_alta: clean(guidedLotEditDraft.deliveryDate),
+        fecha_caducidad: clean(guidedLotEditDraft.expiryDate),
+        dias_restantes: '',
+        semaforo_caducidad: '',
+        notas: clean(guidedLotEditDraft.processNotes),
+        viales_recibidos: primaryQuantity,
+        estado: 'ACTIVO',
+        ensamblaje_finalizado: 'NO',
+        origen_dossier_trazabilidad: 'SI',
+        lastChangedAt: now,
+      }, ...rows];
+    });
+
+    setEditingLotId('');
+    setGuidedLotEditDraft(emptyLotFormDraft(selectedProduct?.label || ''));
+    if (nextProductCode) setSelectedProductKey(nextProductCode);
+    setSelectedGuidedLotId(currentLot.id);
+    emitSuccessFeedback('Lote editado y sincronizado con maestros.');
+  };
+
+  const startLotProviderEntryEdit = (entry: TraceabilityEntry) => {
+    const supplier = suppliers.find((item) => item.id === entry.supplierId);
+    const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
+    setEditingLotProviderEntryId(entry.id);
+    setLotProviderEditDraft({
+      supplierId: entry.supplierId,
+      suppliedName: product?.name || entry.notes,
+      reference: product?.reference || '',
+      category: product?.category || entry.stage,
+      unit: product?.unit || '',
+      notes: entry.notes,
+    });
+  };
+
+  const saveLotProviderEntryEdit = (lot: FinalLot, entry: TraceabilityEntry) => {
+    const supplier = suppliers.find((item) => item.id === lotProviderEditDraft.supplierId);
+    if (!supplier) {
+      alert('Selecciona un proveedor.');
+      return;
+    }
+    const now = new Date().toISOString();
+    const finalProductCode = productKey(lot.productName);
+    const existingProduct = supplier.products.find((product) => (
+      product.id === entry.supplierProductId
+      || (
+        product.finalProductCodes.includes(finalProductCode)
+        && product.category === lotProviderEditDraft.category
+        && clean(product.name).toLowerCase() === clean(lotProviderEditDraft.suppliedName).toLowerCase()
+      )
+    ));
+    const supplierProduct: SupplierProduct = existingProduct || {
+      id: uid('spr'),
+      name: clean(lotProviderEditDraft.suppliedName) || `Aporte para ${lot.productName}`,
+      reference: clean(lotProviderEditDraft.reference),
+      category: lotProviderEditDraft.category,
+      unit: clean(lotProviderEditDraft.unit) || lot.quantityUnit || 'unidades',
+      notes: clean(lotProviderEditDraft.notes),
+      finalProductCodes: [finalProductCode],
+      technicalSheets: [],
+      certificates: [],
+    };
+
+    setState((prev) => {
+      const base = normalizeState(prev);
+      return {
+        ...base,
+        suppliers: base.suppliers.map((item) => {
+          if (item.id !== supplier.id) return item;
+          const products = existingProduct
+            ? item.products.map((product) => product.id === existingProduct.id
+              ? {
+                  ...product,
+                  name: clean(lotProviderEditDraft.suppliedName) || product.name,
+                  reference: clean(lotProviderEditDraft.reference),
+                  category: lotProviderEditDraft.category,
+                  unit: clean(lotProviderEditDraft.unit) || product.unit,
+                  notes: clean(lotProviderEditDraft.notes),
+                  finalProductCodes: Array.from(new Set([...product.finalProductCodes, finalProductCode])),
+                }
+              : product)
+            : [supplierProduct, ...item.products];
+          return {
+            ...item,
+            categories: Array.from(new Set([...item.categories, supplierProduct.category])),
+            products,
+            updatedAt: now,
+          };
+        }),
+        lots: base.lots.map((item) => item.id === lot.id
+          ? {
+              ...item,
+              processSteps: Array.from(new Set([...item.processSteps, supplierProduct.category])),
+              entries: item.entries.map((candidate) => candidate.id === entry.id
+                ? {
+                    ...candidate,
+                    supplierId: supplier.id,
+                    supplierProductId: supplierProduct.id,
+                    stage: supplierProduct.category,
+                    notes: clean(lotProviderEditDraft.notes),
+                    updatedAt: now,
+                  }
+                : candidate),
+              updatedAt: now,
+            }
+          : item),
+      };
+    });
+    setEditingLotProviderEntryId('');
+    setLotProviderEditDraft(emptyGuidedLotProviderDraft());
+    emitSuccessFeedback('Proveedor del lote editado.');
+  };
+
+  const deleteLotProviderEntry = (lot: FinalLot, entry: TraceabilityEntry) => {
+    if (!window.confirm('¿Quitar este proveedor de este lote?')) return;
+    setState((prev) => {
+      const base = normalizeState(prev);
+      return {
+        ...base,
+        lots: base.lots.map((item) => item.id === lot.id
+          ? {
+              ...item,
+              entries: item.entries.filter((candidate) => candidate.id !== entry.id),
+              updatedAt: new Date().toISOString(),
+            }
+          : item),
+      };
+    });
+    emitSuccessFeedback('Proveedor quitado del lote.');
+  };
+
   const deleteLot = (lot: FinalLot) => {
     if (!window.confirm(`¿Eliminar completamente ${lot.productName} · lote ${lot.lotNumber}?`)) return;
     setState((prev) => {
@@ -1595,6 +1861,15 @@ export default function TraceabilityDossierPage() {
       };
     });
     if (selectedLotId === lot.id) setSelectedLotId('');
+    if (selectedGuidedLotId === lot.id) setSelectedGuidedLotId('');
+    setCanetLotes((prev) => {
+      const rows = Array.isArray(prev) ? prev : [];
+      return rows.filter((row) => {
+        const sameLot = productKey(row?.producto) === productKey(lot.productName)
+          && clean(row?.lote).toLowerCase() === clean(lot.lotNumber).toLowerCase();
+        return !(sameLot && clean(row?.origen_dossier_trazabilidad).toUpperCase() === 'SI');
+      });
+    });
     emitSuccessFeedback('Lote eliminado.');
   };
 
@@ -1895,6 +2170,12 @@ export default function TraceabilityDossierPage() {
                     setSelectedGuidedLotId('');
                     setShowGuidedLotPanel(false);
                     setShowGuidedProviderPanel(false);
+                    setLotDraft((prev) => ({
+                      ...prev,
+                      productName: product.label,
+                      quantityUnit: product.mode === 'ENSAMBLAJE' ? 'viales' : product.mode === 'KIT' ? 'kits' : 'unidades',
+                      calculatedBoxes: boxCountFor(product.label, prev.deliveryNoteQuantity || prev.quantity),
+                    }));
                   }}
                   style={validColor ? { borderColor: product.color } : undefined}
                   className={`min-h-[96px] rounded-2xl border p-3 text-left transition ${isActive ? 'bg-slate-950 text-white shadow-md' : 'bg-slate-50 text-slate-800 hover:bg-white'}`}
@@ -1918,9 +2199,9 @@ export default function TraceabilityDossierPage() {
                     setShowGuidedLotPanel((prev) => !prev);
                     setLotDraft((prev) => ({
                       ...prev,
-                      productName: prev.productName || selectedProduct.label,
+                      productName: selectedProduct.label,
                       quantityUnit: prev.quantityUnit || selectedProductQuantityUnit,
-                      calculatedBoxes: prev.calculatedBoxes || boxCountFor(selectedProduct.label, prev.quantity),
+                      calculatedBoxes: prev.calculatedBoxes || boxCountFor(selectedProduct.label, prev.deliveryNoteQuantity || prev.quantity),
                     }));
                   }}
                   className="inline-flex items-center justify-between rounded-2xl border border-slate-900 bg-slate-950 px-4 py-3 text-left text-sm font-black text-white shadow-sm hover:bg-slate-800"
@@ -2155,21 +2436,135 @@ export default function TraceabilityDossierPage() {
                               onClick={() => setSelectedGuidedLotId(isLotSelected ? '' : lot.id)}
                               className="flex w-full items-start justify-between gap-3 text-left"
                             >
-                              <span>
-                                <span className="flex items-center gap-2 text-sm font-black text-slate-950">
-                                  {isLotSelected ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                                  Lote {lot.lotNumber}
-                                </span>
-                                <span className="mt-1 block text-xs font-semibold text-slate-600">
-                                  Albarán {lot.albaranNumber || '-'} · {lot.quantity || '-'} {lot.quantityUnit || selectedProductQuantityUnit} · {supplierNames.length} proveedor(es)
-                                </span>
-                              </span>
-                              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">{lot.status}</span>
-                            </button>
-                            {isLotSelected && (
-                              <div className="mt-3 space-y-3">
-                                <div className="grid gap-2 md:grid-cols-4">
-                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Orden Zoho: {lot.zohoPurchaseOrder || '-'}</p>
+	                              <span>
+	                                <span className="flex items-center gap-2 text-sm font-black text-slate-950">
+	                                  {isLotSelected ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+	                                  Lote {lot.lotNumber}
+	                                </span>
+	                                <span className="mt-1 block text-xs font-semibold text-slate-600">
+	                                  Albarán {lot.albaranNumber || '-'} · {lot.quantity || '-'} {lot.quantityUnit || selectedProductQuantityUnit} · {supplierNames.length} proveedor(es)
+	                                </span>
+	                              </span>
+	                              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">{lot.status}</span>
+	                            </button>
+	                            {isLotSelected && (
+	                              <div className="mt-3 space-y-3">
+	                                <div className="flex flex-wrap gap-2">
+	                                  <button
+	                                    type="button"
+	                                    onClick={() => startGuidedLotEdit(lot)}
+	                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800 hover:bg-amber-100"
+	                                  >
+	                                    <Edit2 size={14} />
+	                                    Editar lote
+	                                  </button>
+	                                  <button
+	                                    type="button"
+	                                    onClick={() => deleteLot(lot)}
+	                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 hover:bg-rose-100"
+	                                  >
+	                                    <Trash2 size={14} />
+	                                    Eliminar lote
+	                                  </button>
+	                                </div>
+	                                {editingLotId === lot.id && !lotEditContext && (
+	                                  <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+	                                    <p className="text-xs font-black uppercase tracking-widest text-amber-800">Editar datos del lote</p>
+	                                    <div className="mt-3 grid gap-2 md:grid-cols-4">
+	                                      <label className="grid gap-1">
+	                                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Producto maestro</span>
+	                                        <select
+	                                          value={productKey(guidedLotEditDraft.productName)}
+	                                          onChange={(event) => {
+	                                            const next = productCards.find((product) => product.key === event.target.value);
+	                                            if (!next) return;
+	                                            setGuidedLotEditDraft((prev) => ({
+	                                              ...prev,
+	                                              productName: next.label,
+	                                              quantityUnit: next.mode === 'ENSAMBLAJE' ? 'viales' : next.mode === 'KIT' ? 'kits' : 'unidades',
+	                                              calculatedBoxes: boxCountFor(next.label, prev.deliveryNoteQuantity || prev.quantity),
+	                                            }));
+	                                          }}
+	                                          className="h-10 rounded-xl border border-amber-100 bg-white px-3 text-sm font-bold outline-none focus:border-amber-400"
+	                                        >
+	                                          {productCards.map((product) => <option key={product.key} value={product.key}>{product.label}</option>)}
+	                                        </select>
+	                                      </label>
+	                                      <input value={guidedLotEditDraft.lotNumber} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, lotNumber: e.target.value }))} placeholder="Nº lote" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      <input value={guidedLotEditDraft.albaranNumber} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, albaranNumber: e.target.value }))} placeholder="Nº albarán" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      <label className="grid gap-1">
+	                                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Fecha entrada</span>
+	                                        <input type="date" value={guidedLotEditDraft.deliveryDate} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, deliveryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      </label>
+	                                      <input value={guidedLotEditDraft.zohoPurchaseOrder} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, zohoPurchaseOrder: e.target.value }))} placeholder="Orden de compra Zoho" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      <input value={guidedLotEditDraft.zohoInvoiceNumber} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, zohoInvoiceNumber: e.target.value }))} placeholder="Factura Zoho / Solaris" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      <label className="grid gap-1">
+	                                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Cantidad según albarán ({guidedLotEditDraft.quantityUnit || selectedProductQuantityUnit})</span>
+	                                        <input
+	                                          value={guidedLotEditDraft.deliveryNoteQuantity}
+	                                          onChange={(e) => {
+	                                            const quantity = e.target.value;
+	                                            setGuidedLotEditDraft((prev) => ({
+	                                              ...prev,
+	                                              deliveryNoteQuantity: quantity,
+	                                              quantity,
+	                                              calculatedBoxes: boxCountFor(prev.productName || selectedProduct.label, quantity),
+	                                            }));
+	                                          }}
+	                                          placeholder="Cantidad"
+	                                          className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400"
+	                                        />
+	                                      </label>
+	                                      <input value={guidedLotEditDraft.calculatedBoxes || boxCountFor(guidedLotEditDraft.productName || selectedProduct.label, guidedLotEditDraft.deliveryNoteQuantity || guidedLotEditDraft.quantity)} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, calculatedBoxes: e.target.value }))} placeholder="Cajas calculadas" className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      <label className="grid gap-1">
+	                                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Caducidad/consumo pref.</span>
+	                                        <input type="date" value={guidedLotEditDraft.expiryDate} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, expiryDate: e.target.value }))} className="h-10 rounded-xl border border-amber-100 px-3 text-sm font-semibold outline-none focus:border-amber-400" />
+	                                      </label>
+	                                      <textarea value={guidedLotEditDraft.processNotes} onChange={(e) => setGuidedLotEditDraft((prev) => ({ ...prev, processNotes: e.target.value }))} placeholder="Notas del lote" className="min-h-[70px] rounded-xl border border-amber-100 px-3 py-2 text-sm font-semibold outline-none focus:border-amber-400 md:col-span-3" />
+	                                    </div>
+	                                    <div className="mt-3 rounded-xl border border-amber-100 bg-white p-2">
+	                                      <button
+	                                        type="button"
+	                                        onClick={() => toggleExpanded(setExpandedDocumentBlockIds, documentBlockKeyFor('edit-lot-docs', lot.id))}
+	                                        className="inline-flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-50"
+	                                      >
+	                                        <span className="inline-flex items-center gap-2">
+	                                          {expandedDocumentBlockIds.includes(documentBlockKeyFor('edit-lot-docs', lot.id)) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+	                                          Documentos del lote
+	                                        </span>
+	                                        <span>{DOCUMENT_GROUPS.reduce((total, group) => total + (guidedLotEditDraft.attachments[group.key]?.length || 0), 0)} adjunto(s)</span>
+	                                      </button>
+	                                      {expandedDocumentBlockIds.includes(documentBlockKeyFor('edit-lot-docs', lot.id)) && (
+	                                        <div className="mt-2 grid gap-2 md:grid-cols-3">
+	                                          {DOCUMENT_GROUPS.map((group) => (
+	                                            <div key={`edit-lot-${lot.id}-${group.key}`} className="rounded-xl border border-slate-100 bg-white p-3">
+	                                              <p className="text-xs font-black uppercase tracking-widest text-slate-600">{group.label}</p>
+	                                              <p className="mb-2 text-xs font-semibold text-slate-500">{group.hint}</p>
+	                                              <FileUploader
+	                                                folderPath={`traceability/lots/${productKey(guidedLotEditDraft.productName) || activeProductKey}/${lot.id}/${group.key}`}
+	                                                existingFiles={guidedLotEditDraft.attachments[group.key]}
+	                                                onUploadComplete={(files) => setGuidedLotEditDraft((prev) => ({ ...prev, attachments: { ...prev.attachments, [group.key]: files } }))}
+	                                                compact
+	                                                maxSizeMB={20}
+	                                              />
+	                                            </div>
+	                                          ))}
+	                                        </div>
+	                                      )}
+	                                    </div>
+	                                    <div className="mt-3 flex flex-wrap gap-2">
+	                                      <button type="button" onClick={saveGuidedLotEdit} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">
+	                                        <Save size={16} />
+	                                        Guardar lote
+	                                      </button>
+	                                      <button type="button" onClick={() => setEditingLotId('')} className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-black text-amber-800 hover:bg-amber-50">
+	                                        Cancelar
+	                                      </button>
+	                                    </div>
+	                                  </div>
+	                                )}
+	                                <div className="grid gap-2 md:grid-cols-4">
+	                                  <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Orden Zoho: {lot.zohoPurchaseOrder || '-'}</p>
                                   <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Factura: {lot.zohoInvoiceNumber || '-'}</p>
                                   <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Cajas calculadas: {lot.calculatedBoxes || '-'}</p>
                                   <p className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600">Caducidad: {lot.expiryDate || '-'}</p>
@@ -2177,16 +2572,57 @@ export default function TraceabilityDossierPage() {
                                 <div className="rounded-xl border border-slate-200 bg-white p-3">
                                   <p className="text-xs font-black uppercase tracking-widest text-slate-500">Proveedores asociados al lote</p>
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                    {lot.entries.map((entry) => {
-                                      const supplier = suppliers.find((item) => item.id === entry.supplierId);
-                                      const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
-                                      return (
-                                        <div key={entry.id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                                          <p className="text-sm font-black text-slate-950">{supplier?.name || 'Proveedor'}</p>
-                                          <p className="text-xs font-semibold text-slate-500">{product?.name || '-'} · {labelForCategory(entry.stage)}</p>
-                                        </div>
-                                      );
-                                    })}
+	                                    {lot.entries.map((entry) => {
+	                                      const supplier = suppliers.find((item) => item.id === entry.supplierId);
+	                                      const product = supplier?.products.find((item) => item.id === entry.supplierProductId);
+	                                      return (
+	                                        <div key={entry.id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+	                                          {editingLotProviderEntryId === entry.id ? (
+	                                            <div className="space-y-2">
+	                                              <select
+	                                                value={lotProviderEditDraft.supplierId}
+	                                                onChange={(e) => setLotProviderEditDraft((prev) => ({ ...prev, supplierId: e.target.value }))}
+	                                                className="h-9 w-full rounded-lg border border-amber-100 bg-white px-2 text-xs font-bold outline-none focus:border-amber-400"
+	                                              >
+	                                                <option value="">Elegir proveedor...</option>
+	                                                {suppliers.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+	                                              </select>
+	                                              <div className="grid gap-2 sm:grid-cols-2">
+	                                                <input value={lotProviderEditDraft.suppliedName} onChange={(e) => setLotProviderEditDraft((prev) => ({ ...prev, suppliedName: e.target.value }))} placeholder="Qué aporta" className="h-9 rounded-lg border border-amber-100 px-2 text-xs font-semibold outline-none focus:border-amber-400" />
+	                                                <select value={lotProviderEditDraft.category} onChange={(e) => setLotProviderEditDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))} className="h-9 rounded-lg border border-amber-100 bg-white px-2 text-xs font-bold outline-none focus:border-amber-400">
+	                                                  {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+	                                                </select>
+	                                              </div>
+	                                              <textarea value={lotProviderEditDraft.notes} onChange={(e) => setLotProviderEditDraft((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Notas de este proveedor en el lote" className="min-h-[52px] w-full rounded-lg border border-amber-100 px-2 py-2 text-xs font-semibold outline-none focus:border-amber-400" />
+	                                              <div className="flex flex-wrap gap-2">
+	                                                <button type="button" onClick={() => saveLotProviderEntryEdit(lot, entry)} className="inline-flex items-center justify-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700">
+	                                                  <Save size={13} />
+	                                                  Guardar
+	                                                </button>
+	                                                <button type="button" onClick={() => setEditingLotProviderEntryId('')} className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-black text-amber-800 hover:bg-amber-50">
+	                                                  Cancelar
+	                                                </button>
+	                                              </div>
+	                                            </div>
+	                                          ) : (
+	                                            <div className="flex items-start justify-between gap-2">
+	                                              <div>
+	                                                <p className="text-sm font-black text-slate-950">{supplier?.name || 'Proveedor'}</p>
+	                                                <p className="text-xs font-semibold text-slate-500">{product?.name || entry.notes || '-'} · {labelForCategory(entry.stage)}</p>
+	                                              </div>
+	                                              <div className="flex shrink-0 items-center gap-1">
+	                                                <button type="button" onClick={() => startLotProviderEntryEdit(entry)} className="rounded-lg border border-amber-200 bg-white p-1.5 text-amber-700 hover:bg-amber-50" title="Editar proveedor del lote">
+	                                                  <Edit2 size={13} />
+	                                                </button>
+	                                                <button type="button" onClick={() => deleteLotProviderEntry(lot, entry)} className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-700 hover:bg-rose-50" title="Quitar proveedor del lote">
+	                                                  <Trash2 size={13} />
+	                                                </button>
+	                                              </div>
+	                                            </div>
+	                                          )}
+	                                        </div>
+	                                      );
+	                                    })}
                                     {lot.entries.length === 0 && (
                                       <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-sm font-bold text-slate-500 md:col-span-2">Sin proveedores asociados todavía.</p>
                                     )}
