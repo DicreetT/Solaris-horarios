@@ -241,7 +241,17 @@ function productKey(value: unknown) {
 }
 
 function toNumber(value: unknown) {
-  const parsed = Number(String(value ?? '').replace(',', '.'));
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+  const compact = raw.replace(/\s/g, '');
+  const hasComma = compact.includes(',');
+  const hasDot = compact.includes('.');
+  const normalized = hasComma && hasDot
+    ? compact.replace(/\./g, '').replace(',', '.')
+    : hasDot && /^\d{1,3}(?:\.\d{3})+$/.test(compact)
+      ? compact.replace(/\./g, '')
+      : compact.replace(',', '.');
+  const parsed = Number(normalized.replace(/[^\d.-]/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -790,7 +800,8 @@ export default function TraceabilityDossierPage() {
     const meta = lotProductMetaFor(productName);
     const units = toNumber(quantity);
     if (!meta || meta.vialsPerBox <= 0 || units <= 0) return '';
-    return String(Math.floor(units / meta.vialsPerBox));
+    const boxes = units / meta.vialsPerBox;
+    return String(Number(boxes.toFixed(2)));
   };
 
   const dossierMasterLotRows = useMemo(() => {

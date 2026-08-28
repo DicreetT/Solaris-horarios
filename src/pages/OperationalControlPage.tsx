@@ -30,10 +30,19 @@ import { emitSuccessFeedback } from '../utils/uiFeedback';
 import { getOperationalControlUrl, makeOperationalControlTag } from '../utils/taskLinks';
 import { FileUploader, type Attachment } from '../components/FileUploader';
 import {
+  buildMissingTransferEntryMovements,
+  CANET_MASTER_WAREHOUSES,
   calculateInventoryStockSnapshot,
   formatInventoryWarehouseLabel,
   getInventorySignedQuantity,
+  normalizeInventoryWarehouse,
 } from '../utils/inventoryStock';
+import {
+  INVENTORY_MONTHLY_CLOSURES_KEY,
+  mergeInventoryMonthlyCloseSnapshots,
+  type InventoryMonthlyCloseScope,
+  type InventoryMonthlyCloseSnapshot,
+} from '../utils/inventoryMonthlyClose';
 import canetSeed from '../data/inventory_seed.json';
 import huarteSeed from '../data/inventory_facturacion_seed.json';
 
@@ -205,24 +214,105 @@ type AlbaranesState = {
   products?: Array<{
     id: string;
     name: string;
+    createdAt?: string;
+    damageHistory?: Array<{
+      id: string;
+      documentId?: string;
+      quantity?: number;
+      cantidad?: number;
+      kind?: 'origen' | 'envio';
+      comment?: string;
+      comentario?: string;
+      createdAt?: string;
+      fecha?: string;
+      updatedAt?: string;
+      createdBy?: string;
+      attachments?: Attachment[];
+    }>;
+    documents?: Array<{
+      id: string;
+      title?: string;
+      damageHistory?: Array<{
+        id: string;
+        documentId?: string;
+        quantity?: number;
+        cantidad?: number;
+        kind?: 'origen' | 'envio';
+        comment?: string;
+        comentario?: string;
+        createdAt?: string;
+        fecha?: string;
+        updatedAt?: string;
+        createdBy?: string;
+        attachments?: Attachment[];
+      }>;
+    }>;
     tags?: Array<{
       id: string;
       name: string;
+      createdAt?: string;
+      damageHistory?: Array<{
+        id: string;
+        documentId?: string;
+        quantity?: number;
+        cantidad?: number;
+        kind?: 'origen' | 'envio';
+        comment?: string;
+        comentario?: string;
+        createdAt?: string;
+        fecha?: string;
+        updatedAt?: string;
+        createdBy?: string;
+        attachments?: Attachment[];
+      }>;
       documents?: Array<{
         id: string;
         title?: string;
         damageHistory?: Array<{
           id: string;
-          quantity: number;
+          documentId?: string;
+          quantity?: number;
+          cantidad?: number;
           kind?: 'origen' | 'envio';
           comment?: string;
+          comentario?: string;
           createdAt?: string;
+          fecha?: string;
+          updatedAt?: string;
           createdBy?: string;
           attachments?: Attachment[];
         }>;
       }>;
     }>;
   }>;
+};
+
+type InventoryStockControlSnapshot = {
+  updatedAt?: string;
+  canetVisibleStockSource?: string;
+  canetVisibleStockRows?: Array<{
+    producto: string;
+    lote: string;
+    bodega: string;
+    stock: number;
+  }>;
+  canetRows?: Array<{
+    producto: string;
+    lote: string;
+    stockCanet: number;
+  }>;
+  canetHuarteRows?: Array<{
+    producto: string;
+    lote: string;
+    stockHuarte: number;
+  }>;
+};
+
+type HuarteVisualStockByLotCache = {
+  monthKey?: string;
+  updatedAt?: string;
+  byLot?: Record<string, number>;
+  byLotBodega?: Record<string, number>;
 };
 
 type LotAssemblyFinalizationEntry = {
@@ -235,6 +325,17 @@ type LotAssemblyFinalizationEntry = {
 };
 
 const INVENTORY_CANET_LOT_FINALIZATIONS_KEY = 'inventory_canet_lot_finalizations_v1';
+const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
+const STORAGE_HUARTE_VISUAL_STOCK_BY_LOT = 'inventory_huarte_visual_stock_by_lot_v2';
+const AUTOMATIC_DATA_TABLE_IDS = new Set([
+  'ensamblajes',
+  'danados_ensamblaje',
+  'ensamblajes_finalizados',
+  'traspasos',
+  'stock',
+  'ventas_producto_lote',
+  'devoluciones_lunaris',
+]);
 
 const EMPTY_STATE: OperationalMonthlyState = {
   records: [],
@@ -303,10 +404,13 @@ const BASE_LOTS_BY_PRODUCT: Record<string, string[]> = {
   KL: ['260101'],
 };
 
+const productLookupKey = (value: unknown) => normalize(String(value || '')).replace(/[^a-z0-9]+/g, '');
 const PRODUCT_CODE_BY_LABEL = new Map(
   PRODUCT_OPTIONS.flatMap((product) => [
     [normalize(product.code), product.code],
     [normalize(product.label), product.code],
+    [productLookupKey(product.code), product.code],
+    [productLookupKey(product.label), product.code],
   ]),
 );
 
@@ -314,13 +418,45 @@ const operationalProductCode = (value: unknown) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
   const normalized = normalize(raw);
-  return PRODUCT_CODE_BY_LABEL.get(normalized) || raw.toUpperCase();
+  return PRODUCT_CODE_BY_LABEL.get(normalized) || PRODUCT_CODE_BY_LABEL.get(productLookupKey(raw)) || raw.toUpperCase();
 };
 
-const operationalLotCode = (value: unknown) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+const operationalLotCode = (value: unknown) => {
+  const compact = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!compact) return '';
+  const longMatch = compact.match(/2[3-9]\d{2}A\d{2}|2[3-9]\d{4}/);
+  if (longMatch) return longMatch[0];
+  const shortLotMatch = compact.match(/[A-Z]\d{2}$/) || compact.match(/[A-Z]\d{2}/);
+  if (shortLotMatch) return shortLotMatch[0];
+  return compact.replace(/^LOTE/, '');
+};
+const operationalLotCodeFromText = (value: unknown) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const compact = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const longMatch = compact.match(/2[3-9]\d{2}A\d{2}|2[3-9]\d{4}/);
+  if (longMatch) return longMatch[0];
+  const explicitALot = compact.match(/A\d{2}/);
+  if (explicitALot) return explicitALot[0];
+  const lotWord = raw.match(/\b(?:LOTE|LOT)\s*([A-Z]?\d{2})\b/i);
+  if (lotWord) {
+    const token = lotWord[1].toUpperCase();
+    return /^[A-Z]\d{2}$/.test(token) ? token : `A${token}`;
+  }
+  const productLot = raw.match(/\b(?:SV|SOLAR\s*VITAL|SOLARVITAL|ENT|ENTERO\s*VITAL|ENTEROVITAL|AV|AVIRO\s*VITAL|VIROVITAL)\D*([A-Z]?\d{2})\b/i);
+  if (productLot) {
+    const token = productLot[1].toUpperCase();
+    return /^[A-Z]\d{2}$/.test(token) ? token : `A${token}`;
+  }
+  return operationalLotCode(value);
+};
 const isLongOperationalLot = (value: string) => {
   const lot = operationalLotCode(value);
   return /^2[3-9]\d{2}A\d{2}$/.test(lot) || /^2[3-9]\d{4}$/.test(lot);
+};
+const isLikelyOperationalLotCode = (value: unknown) => {
+  const lot = operationalLotCode(value);
+  return /^A\d{2}$/i.test(lot) || /^\d{2}$/.test(lot) || /^2[3-9]\d{2}A\d{2}$/.test(lot) || /^2[3-9]\d{4}$/.test(lot);
 };
 const isActiveOperationalLot = (row: GenericRow) => {
   const state = normalize(String(row.estado || row.activo_si_no || row.activo || 'ACTIVO'));
@@ -336,6 +472,29 @@ const operationalLotMatches = (left: unknown, right: unknown) => {
   if (!a || !b) return false;
   return a === b || a.endsWith(b) || b.endsWith(a);
 };
+const operationalLotCompareToken = (value: unknown) =>
+  String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/O/g, '0');
+const canonicalOperationalLotForProduct = (knownLots: GenericRow[], productRaw: unknown, lotRaw: unknown) => {
+  const product = operationalProductCode(productRaw);
+  const lot = operationalLotCode(lotRaw);
+  const token = operationalLotCompareToken(lot);
+  if (!product || !lot || !token) return lot;
+  const candidates = [
+    ...(BASE_LOTS_BY_PRODUCT[product] || []),
+    ...knownLots
+      .filter((row) => operationalProductCode(row?.producto || row?.product) === product)
+      .map((row) => operationalLotCode(row?.lote || row?.lot))
+      .filter(Boolean),
+  ];
+  const uniqueCandidates = Array.from(new Set(candidates));
+  const best = uniqueCandidates
+    .filter((candidate) => {
+      const candidateToken = operationalLotCompareToken(candidate);
+      return candidateToken === token || candidateToken.endsWith(token) || token.endsWith(candidateToken);
+    })
+    .sort((a, b) => operationalLotCompareToken(b).length - operationalLotCompareToken(a).length)[0];
+  return best || lot;
+};
 const numberFromControlValue = (value: unknown) => parseControlNumber(String(value || '')) || 0;
 const formatControlQuantity = (value: number, decimals = 2) => {
   if (!Number.isFinite(value)) return '-';
@@ -343,28 +502,155 @@ const formatControlQuantity = (value: number, decimals = 2) => {
   return rounded.toLocaleString('es-ES', { maximumFractionDigits: decimals });
 };
 const traceabilityDateInMonth = (value: unknown, targetYear: number, targetMonth: number) => {
-  const raw = String(value || '').trim();
-  if (!raw) return false;
-  const date = new Date(raw);
+  const date = parseOperationalDate(value);
   if (Number.isNaN(date.getTime())) return false;
   return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
 };
 const traceabilityFilesCount = (attachments?: Record<string, Attachment[]>) => (
   Object.values(attachments || {}).reduce((total, files) => total + (Array.isArray(files) ? files.length : 0), 0)
 );
+const parseOperationalDate = (value: unknown): Date => {
+  const raw = String(value || '').trim();
+  if (!raw) return new Date(Number.NaN);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    const date = new Date(`${raw.slice(0, 10)}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? new Date(Number.NaN) : date;
+  }
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (slash) {
+    const date = new Date(
+      Number(slash[3]),
+      Number(slash[2]) - 1,
+      Number(slash[1]),
+      Number(slash[4] || 0),
+      Number(slash[5] || 0),
+      Number(slash[6] || 0),
+      0,
+    );
+    return Number.isNaN(date.getTime()) ? new Date(Number.NaN) : date;
+  }
+  const normalizedNumber = Number(raw.replace(',', '.'));
+  if (Number.isFinite(normalizedNumber) && normalizedNumber > 20000 && normalizedNumber < 80000) {
+    const date = new Date((normalizedNumber - 25569) * 86400 * 1000);
+    return Number.isNaN(date.getTime()) ? new Date(Number.NaN) : date;
+  }
+  const fallback = new Date(raw);
+  return Number.isNaN(fallback.getTime()) ? new Date(Number.NaN) : fallback;
+};
 const movementDateInMonth = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
-  const raw = String((movement as any).fecha || (movement as any).date || (movement as any).created_at || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return false;
-  const date = new Date(raw);
+  const date = parseOperationalDate((movement as any).fecha || (movement as any).date || (movement as any).created_at);
   if (Number.isNaN(date.getTime())) return false;
   return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
 };
 const isoDateInMonth = (value: unknown, targetYear: number, targetMonth: number) => {
-  const raw = String(value || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return false;
-  const date = new Date(raw);
+  const date = parseOperationalDate(value);
   if (Number.isNaN(date.getTime())) return false;
   return date.getFullYear() === targetYear && date.getMonth() + 1 === targetMonth;
+};
+const isTransferLikeMovement = (movement: InventoryMovementRow) => {
+  const haystack = normalize([
+    movement.tipo_movimiento,
+    (movement as any).cliente,
+    (movement as any).destino,
+    (movement as any).source,
+    (movement as any).notas,
+  ].filter(Boolean).join(' '));
+  return haystack.includes('traspas') || haystack.includes('transfer') || haystack.includes('traslado');
+};
+const isMonthlyOutputMovement = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
+  if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
+  if (!movementDateInMonth(movement, targetYear, targetMonth)) return false;
+  const type = normalize(String(movement.tipo_movimiento || ''));
+  if (type.includes('inicio') || type.includes('cierre') || type.includes('ensambl')) return false;
+  const signed = getInventorySignedQuantity(movement as any);
+  if (signed >= 0) return false;
+  return (
+    type.includes('venta') ||
+    type.includes('envio') ||
+    type.includes('salida') ||
+    type.includes('traspas')
+  );
+};
+const isSpainAssemblyMovement = (movement: InventoryMovementRow) => {
+  if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
+  const type = normalize(String(movement.tipo_movimiento || '')).replace(/[\s-]+/g, '_');
+  if (!type.includes('ensamblaje')) return false;
+  if (type.includes('col') || type.includes('colombia')) return false;
+  if (type.includes('traspas') || type.includes('cierre') || type.includes('inicio')) return false;
+  return type.includes('ensamblaje_esp') || type.includes('espana');
+};
+const HUARTE_OPERATIONAL_WAREHOUSES = new Set(['HUARTE', 'BARCELONA', 'BILBAO', 'LOGROÑO', 'PAMPLONA']);
+const isOperationalHuarteWarehouse = (value: unknown) =>
+  HUARTE_OPERATIONAL_WAREHOUSES.has(normalizeInventoryWarehouse(value));
+const isInvalidOperationalLegacyLot = (product: unknown, lot: unknown) =>
+  operationalProductCode(product) === 'KL' && operationalLotCompareToken(lot) === '030';
+const monthEndDateForOperationalPeriod = (targetYear: number, targetMonth: number) =>
+  new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+const monthEndDateFromOperationalKey = (monthKey: string) => {
+  const [targetYear, targetMonth] = String(monthKey || '').split('-').map(Number);
+  if (!Number.isFinite(targetYear) || !Number.isFinite(targetMonth)) return null;
+  return monthEndDateForOperationalPeriod(targetYear, targetMonth);
+};
+const monthlyCloseRowsAsOperationalMovements = (snapshot: InventoryMonthlyCloseSnapshot | null | undefined): InventoryMovementRow[] => {
+  if (!snapshot) return [];
+  return (snapshot.rows || []).map((row, index) => ({
+    id: Number.MAX_SAFE_INTEGER - index,
+    inventory_id: snapshot.scope,
+    fecha: `${snapshot.monthKey}-01`,
+    tipo_movimiento: 'cierre_base',
+    producto: String(row.producto || '').trim(),
+    lote: String(row.lote || '').trim(),
+    cantidad: Math.max(0, numberFromControlValue(row.stock)),
+    cantidad_signed: Math.max(0, numberFromControlValue(row.stock)),
+    signo: 1,
+    bodega: formatInventoryWarehouseLabel(row.bodega),
+    cliente: '',
+    destino: '',
+    notas: `Base congelada ${snapshot.monthLabel}`,
+    afecta_stock: 'SI',
+    source: 'monthly_close_base',
+    created_at: snapshot.closedAt,
+    updated_at: snapshot.closedAt,
+    updated_by: snapshot.closedBy,
+  }));
+};
+const buildOperationalStockBase = (
+  movements: InventoryMovementRow[],
+  monthlyClosures: InventoryMonthlyCloseSnapshot[] | null | undefined,
+  scope: InventoryMonthlyCloseScope,
+  targetYear: number,
+  targetMonth: number,
+) => {
+  const targetEnd = monthEndDateForOperationalPeriod(targetYear, targetMonth);
+  const previousClosures = (Array.isArray(monthlyClosures) ? monthlyClosures : [])
+    .filter((snapshot) => snapshot.scope === scope && !snapshot.deletedAt)
+    .filter((snapshot) => {
+      const snapshotEnd = monthEndDateFromOperationalKey(snapshot.monthKey);
+      return !!snapshotEnd && snapshotEnd.getTime() < targetEnd.getTime();
+    })
+    .sort((a, b) => String(a.monthKey || '').localeCompare(String(b.monthKey || '')));
+  const previousClose = previousClosures.length > 0 ? previousClosures[previousClosures.length - 1] : undefined;
+  const previousEnd = previousClose ? monthEndDateFromOperationalKey(previousClose.monthKey) : null;
+  const movementRows = (Array.isArray(movements) ? movements : []).filter((movement) => {
+    if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
+    const date = parseOperationalDate((movement as any).fecha || (movement as any).date || (movement as any).created_at);
+    if (Number.isNaN(date.getTime())) return !previousClose;
+    if (date.getTime() > targetEnd.getTime()) return false;
+    if (previousEnd && date.getTime() <= previousEnd.getTime()) return false;
+    return true;
+  });
+  return [...monthlyCloseRowsAsOperationalMovements(previousClose), ...movementRows];
+};
+const operationalSignedQuantity = (movement: InventoryMovementRow) => {
+  const signedRaw = (movement as any).cantidad_signed;
+  if (signedRaw !== undefined && signedRaw !== null && String(signedRaw).trim() !== '') {
+    return numberFromControlValue(signedRaw);
+  }
+  const quantity = Math.abs(numberFromControlValue((movement as any).cantidad));
+  const explicitSign = numberFromControlValue((movement as any).signo);
+  if (explicitSign !== 0) return quantity * explicitSign;
+  const inferred = getInventorySignedQuantity(movement as any);
+  return inferred < 0 ? -quantity : quantity;
 };
 
 const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
@@ -506,9 +792,12 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
         columns: [
           'Producto',
           'Lote',
-          'Dañados origen',
-          'Dañados envío',
-          'Total dañados',
+          'Dañados origen (viales/unid.)',
+          'Pérdida origen (cajas)',
+          'Dañados envío (viales/unid.)',
+          'Pérdida envío (cajas)',
+          'Total dañados (viales/unid.)',
+          'Total pérdida (cajas)',
           'Informe Albaranes adjunto',
           'Observaciones',
         ],
@@ -525,11 +814,16 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
           'Cantidad albarán (viales/unid.)',
           'Cantidad caja según albarán',
           'Cantidad ensamblada Lunaris',
-          'Dañados Canet origen',
-          'Dañados Canet envío',
-          'Dañados Huarte origen',
-          'Dañados Huarte envío',
-          'Total dañados',
+          'Dañados Canet origen (viales/unid.)',
+          'Pérdida Canet origen (cajas)',
+          'Dañados Canet envío (viales/unid.)',
+          'Pérdida Canet envío (cajas)',
+          'Dañados Huarte origen (viales/unid.)',
+          'Pérdida Huarte origen (cajas)',
+          'Dañados Huarte envío (viales/unid.)',
+          'Pérdida Huarte envío (cajas)',
+          'Total dañados (viales/unid.)',
+          'Total pérdida (cajas)',
           'Diferencia albarán vs cierre Lunaris',
           'Cantidad final según Zoho',
           'Diferencia Zoho vs Lunaris',
@@ -570,7 +864,7 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       {
         id: 'stock',
         title: 'Stock por producto, lote y bodega',
-        subtitle: 'Prellenado desde el stock vivo del inventario Canet.',
+        subtitle: 'Prellenado desde la foto publicada por el dashboard de Inventario: Canet, Huarte y subbodegas.',
         columns: [
           'Producto',
           'Lote',
@@ -628,7 +922,7 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       {
         id: 'ventas_producto_lote',
         title: 'Salidas por producto, lote e inventario',
-        subtitle: 'Lunaris prellena las salidas por venta/envío; Zoho se completa para comparar por línea.',
+        subtitle: 'Lunaris prellena movimientos negativos del mes por producto, lote e inventario; Zoho se completa para comparar por línea.',
         columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad salida Lunaris', 'Diferencia', 'Salidas revisadas por contabilidad', 'Motivo diferencia', 'Observaciones'],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
       },
@@ -667,14 +961,12 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-orange-600 hover:bg-orange-700',
       ring: 'focus:ring-orange-100 focus:border-orange-500',
     },
-    summary: 'Conciliación mensual de facturas de proveedor, facturas cliente, Caixa, BBVA y cobros pendientes.',
+    summary: 'Resumen financiero mensual: gastos, ingresos, objetivos de colchón y cobros pendientes.',
     fields: [
-      { id: 'facturas_proveedor_revisadas', label: 'Nº facturas proveedor revisadas', type: 'number' },
-      { id: 'facturas_cliente_revisadas', label: 'Nº facturas cliente revisadas', type: 'number' },
+      { id: 'gastos_proveedores', label: 'Gastos en proveedores', type: 'money' },
+      { id: 'gastos_fijos_mensuales', label: 'Gastos fijos mensuales de la empresa', type: 'money' },
+      { id: 'ingreso_mensual', label: 'Ingreso mensual', type: 'money' },
       { id: 'deuda_clientes_zoho', label: 'Por cobrar según Zoho', type: 'money' },
-      { id: 'cobros_vencidos_mas_un_mes', label: 'Cobros vencidos de más de un mes', type: 'textarea' },
-      { id: 'caixa_conciliada', label: 'Caixa conciliada', type: 'status' },
-      { id: 'bbva_conciliada', label: 'BBVA conciliada', type: 'status' },
       { id: 'estado_financiero', label: 'Estado financiero del mes', type: 'status' },
       { id: 'objetivo_caixa', label: 'Objetivo colchón Caixa', type: 'money' },
       { id: 'diferencia_objetivo_caixa', label: 'Diferencia frente a objetivo Caixa', type: 'money' },
@@ -693,16 +985,15 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       },
     ],
     attachments: [
-      'Informe de facturas proveedor revisadas',
-      'Informe de facturas cliente revisadas',
-      'Informe de conciliación bancaria Caixa',
-      'Informe de conciliación bancaria BBVA',
+      'Informe de gastos en proveedores',
+      'Informe de gastos fijos mensuales',
+      'Informe de ingresos mensuales',
       'Informe de cobros vencidos',
     ],
     validations: [
-      'Facturas cliente deben ser coherentes con ventas/salidas.',
-      'Facturas proveedor deben ser coherentes con entradas/albaranes del dossier.',
-      'Caixa y BBVA deben revisarse por separado.',
+      'Ingresos y gastos deben dejar claro el resultado del mes.',
+      'Por cobrar según Zoho debe revisarse junto con los cobros pendientes y vencidos.',
+      'Los objetivos de colchón de Caixa y BBVA deben actualizarse al cierre.',
     ],
   },
   sistemas_analytics: {
@@ -872,6 +1163,8 @@ const MONTHS = Array.from({ length: 12 }, (_, index) => ({
   label: new Intl.DateTimeFormat('es-ES', { month: 'long' }).format(new Date(2026, index, 1)),
 }));
 
+const MANUAL_OVERRIDE_KEYS_FIELD = '__manualOverrideKeys';
+
 function createId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `op-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -982,6 +1275,15 @@ function timestampMs(value?: string) {
   if (!value) return 0;
   const ts = new Date(value).getTime();
   return Number.isFinite(ts) ? ts : 0;
+}
+
+function mergeLatestInventoryStockSnapshot(
+  remote?: InventoryStockControlSnapshot | null,
+  local?: InventoryStockControlSnapshot | null,
+) {
+  if (!remote) return local || null;
+  if (!local) return remote;
+  return timestampMs(local.updatedAt) > timestampMs(remote.updatedAt) ? local : remote;
 }
 
 function mergeParticipantProgress(
@@ -1174,6 +1476,36 @@ function tableRowsKey(tableId: string) {
   return `__tableRows.${tableId}`;
 }
 
+function parseManualOverrideKeys(fields?: Record<string, string>) {
+  try {
+    const raw = fields?.[MANUAL_OVERRIDE_KEYS_FIELD];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map((key) => String(key)).filter(Boolean) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function serializeManualOverrideKeys(keys: Set<string>) {
+  return JSON.stringify(Array.from(keys).sort());
+}
+
+function shouldForceAutomaticTableValue(tableId: string, column: string) {
+  const normalizedColumn = normalize(column);
+  if (!AUTOMATIC_DATA_TABLE_IDS.has(tableId)) return false;
+  if (['producto', 'producto ensamblado', 'lote', 'bodega', 'inventario', 'bodega origen', 'bodega destino'].includes(normalizedColumn)) return true;
+  if (normalizedColumn.includes('lunaris')) return true;
+  if (normalizedColumn.includes('cantidad registrada')) return true;
+  if (normalizedColumn.includes('cantidad ensamblada')) return true;
+  if (normalizedColumn.includes('cantidad danada') || normalizedColumn.includes('danados')) return true;
+  if (normalizedColumn.includes('perdida') || normalizedColumn.includes('total danados')) return true;
+  if (normalizedColumn.includes('cantidad albaran') || normalizedColumn.includes('cantidad caja')) return true;
+  if (normalizedColumn.includes('fecha finalizacion')) return true;
+  if (normalizedColumn.includes('movimiento lunaris')) return true;
+  if (normalizedColumn.includes('informe albaranes')) return true;
+  return false;
+}
+
 function parseExtraRows(value: string | undefined) {
   if (!value) return [] as string[];
   try {
@@ -1280,9 +1612,19 @@ function ProcessStatusIcon({ status }: { status: StatusKey }) {
 }
 
 function parseControlNumber(value: string) {
-  const normalized = String(value || '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const compact = raw.replace(/\s/g, '');
+  const hasComma = compact.includes(',');
+  const hasDot = compact.includes('.');
+  const normalized = hasComma && hasDot
+    ? compact.replace(/\./g, '').replace(',', '.')
+    : hasDot && /^\d{1,3}(?:\.\d{3})+$/.test(compact)
+      ? compact.replace(/\./g, '')
+      : compact.replace(',', '.');
+  const numeric = normalized.replace(/[^\d.-]/g, '');
+  if (!numeric) return null;
+  const parsed = Number(numeric);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -1498,6 +1840,17 @@ export default function OperationalControlPage() {
       mergeBeforePersist: true,
     },
   );
+  const [inventoryMonthlyClosures] = useSharedJsonState<InventoryMonthlyCloseSnapshot[]>(
+    INVENTORY_MONTHLY_CLOSURES_KEY,
+    [],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+      mergeStrategy: mergeInventoryMonthlyCloseSnapshots,
+    },
+  );
   const [lotAssemblyFinalizations] = useSharedJsonState<LotAssemblyFinalizationEntry[]>(
     INVENTORY_CANET_LOT_FINALIZATIONS_KEY,
     [],
@@ -1527,6 +1880,27 @@ export default function OperationalControlPage() {
       initializeIfMissing: false,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      preferRemoteSnapshot: true,
+    },
+  );
+  const [inventoryStockControlSnapshot] = useSharedJsonState<InventoryStockControlSnapshot | null>(
+    INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY,
+    null,
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
+      mergeIncomingWithLocal: true,
+      mergeStrategy: mergeLatestInventoryStockSnapshot,
+    },
+  );
+  const [huarteVisualStockByLotCache] = useSharedJsonState<HuarteVisualStockByLotCache | null>(
+    STORAGE_HUARTE_VISUAL_STOCK_BY_LOT,
+    null,
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: false,
+      protectFromEmptyOverwrite: true,
       preferRemoteSnapshot: true,
     },
   );
@@ -1560,6 +1934,7 @@ export default function OperationalControlPage() {
   const activeDefinition = PROCESS_DEFINITIONS[selectedProcess];
   const currentRecord = getRecord(records, selectedProcess, year, month);
   const [draftFields, setDraftFields] = useState<Record<string, string>>({});
+  const [draftManualOverrideKeys, setDraftManualOverrideKeys] = useState<Set<string>>(new Set());
   const [draftChecklist, setDraftChecklist] = useState<Record<string, boolean>>({});
   const [draftAttachments, setDraftAttachments] = useState<Record<string, Attachment[]>>({});
   const [draftStatus, setDraftStatus] = useState<StatusKey>('pendiente');
@@ -1643,35 +2018,108 @@ export default function OperationalControlPage() {
     (Array.isArray(canetProductos) ? canetProductos : []).forEach(push);
     return map;
   }, [canetProductos]);
+  const canonicalOperationalLotRows = useMemo(() => (
+    [
+      ...(Array.isArray(canetLotes) ? canetLotes : []),
+      ...Object.entries(BASE_LOTS_BY_PRODUCT).flatMap(([producto, lots]) => (
+        lots.map((lote) => ({ producto, lote }))
+      )),
+    ]
+  ), [canetLotes]);
+  const canetMovementSignByType = useMemo(() => {
+    const map = new Map<string, number>();
+    (((canetSeed as any).tipos_movimiento as GenericRow[]) || []).forEach((row) => {
+      const type = String(row?.tipo_movimiento || '').trim();
+      const sign = numberFromControlValue(row?.signo_1_1);
+      if (type && sign !== 0) map.set(normalize(type), sign);
+    });
+    return map;
+  }, []);
+  const canetDashboardStockMovements = useMemo(() => {
+    const normalizeMovement = (movement: InventoryMovementRow): InventoryMovementRow => {
+      const type = String((movement as any).tipo_movimiento || '').trim();
+      const product = operationalProductCode((movement as any).producto);
+      const lot = canonicalOperationalLotForProduct(canonicalOperationalLotRows, product, (movement as any).lote);
+      const quantity = Math.abs(numberFromControlValue((movement as any).cantidad));
+      const rowSign = numberFromControlValue((movement as any).signo);
+      const configuredSign = numberFromControlValue(canetMovementSignByType.get(normalize(type)));
+      const hasSigned = (movement as any).cantidad_signed !== undefined
+        && (movement as any).cantidad_signed !== null
+        && String((movement as any).cantidad_signed).trim() !== '';
+      const signedFromRow = numberFromControlValue((movement as any).cantidad_signed);
+      const inferredSigned = getInventorySignedQuantity({ ...movement, cantidad: quantity, cantidad_signed: undefined } as any);
+      const sign = rowSign !== 0
+        ? rowSign
+        : configuredSign !== 0
+          ? configuredSign
+          : hasSigned && signedFromRow !== 0
+            ? signedFromRow < 0 ? -1 : 1
+            : inferredSigned < 0 ? -1 : 1;
+      const signed = quantity * sign;
+      return {
+        ...movement,
+        producto: product,
+        lote: lot,
+        bodega: normalizeInventoryWarehouse((movement as any).bodega),
+        cantidad: quantity,
+        cantidad_signed: signed,
+        signo: signed < 0 ? -1 : 1,
+        afecta_stock: String((movement as any).afecta_stock || 'SI').trim() || 'SI',
+      };
+    };
+    const canetBase = (canetMovements || [])
+      .map(normalizeMovement)
+      .filter((movement) => !isInvalidOperationalLegacyLot(movement.producto, movement.lote));
+    const legacyTransferEntries = buildMissingTransferEntryMovements(canetBase, {
+      existingMovements: canetBase,
+      allowedDestinations: CANET_MASTER_WAREHOUSES,
+      idOffset: 1700000000,
+      source: 'legacy_transfer_auto_in',
+      normalizeProduct: (value) => operationalProductCode(value),
+      normalizeLot: (value, movement) => canonicalOperationalLotForProduct(canonicalOperationalLotRows, (movement as any).producto, value),
+      normalizeWarehouse: (value) => normalizeInventoryWarehouse(value),
+    }) as InventoryMovementRow[];
+    const huarteTransferEntries = buildMissingTransferEntryMovements(huarteMovements || [], {
+      existingMovements: [...canetBase, ...legacyTransferEntries],
+      allowedDestinations: CANET_MASTER_WAREHOUSES,
+      idOffset: 1800000000,
+      source: 'huarte_transfer_auto_in',
+      normalizeProduct: (value) => operationalProductCode(value),
+      normalizeLot: (value, movement) => canonicalOperationalLotForProduct(canonicalOperationalLotRows, (movement as any).producto, value),
+      normalizeWarehouse: (value) => normalizeInventoryWarehouse(value),
+    }) as InventoryMovementRow[];
+    return [...canetBase, ...legacyTransferEntries, ...huarteTransferEntries]
+      .filter((movement) => !isInvalidOperationalLegacyLot(movement.producto, movement.lote));
+  }, [canetMovementSignByType, canetMovements, canonicalOperationalLotRows, huarteMovements]);
   const assemblyAccumulatedByLot = useMemo(() => {
     const map = new Map<string, number>();
-    [...(canetMovements || []), ...(huarteMovements || [])]
-      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('ensamblaje'))
+    (canetMovements || [])
+      .filter((movement) => isSpainAssemblyMovement(movement))
       .forEach((movement) => {
         const product = operationalProductCode(movement.producto);
-        const lot = operationalLotCode(movement.lote);
-        const quantity = Math.abs(getInventorySignedQuantity(movement as any) || 0);
+        const lot = canonicalOperationalLotForProduct(canonicalOperationalLotRows, product, movement.lote);
+        const quantity = Math.abs(operationalSignedQuantity(movement) || 0);
         if (!product || !lot || quantity <= 0) return;
         const key = `${product}::${lot}`;
         map.set(key, (map.get(key) || 0) + quantity);
       });
     return map;
-  }, [canetMovements, huarteMovements]);
+  }, [canetMovements, canonicalOperationalLotRows]);
   const assemblyMovementsMonth = useMemo(() => (
-    [...(canetMovements || []), ...(huarteMovements || [])]
-      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('ensamblaje'))
+    (canetMovements || [])
+      .filter((movement) => isSpainAssemblyMovement(movement))
       .filter((movement) => movementDateInMonth(movement, year, month))
       .map((movement) => ({
         id: String((movement as any).id || `${movement.fecha}-${movement.producto}-${movement.lote}-${movement.bodega}`),
         date: String((movement as any).fecha || ''),
         product: operationalProductCode(movement.producto),
-        lot: operationalLotCode(movement.lote),
+        lot: canonicalOperationalLotForProduct(canonicalOperationalLotRows, movement.producto, movement.lote),
         warehouse: String((movement as any).bodega || '').trim() || '-',
         type: String(movement.tipo_movimiento || '').trim(),
-        quantity: Math.abs(parseControlNumber(String((movement as any).cantidad_signed ?? movement.cantidad ?? '0')) || 0),
+        quantity: Math.abs(operationalSignedQuantity(movement) || 0),
       }))
       .filter((movement) => movement.product && movement.lot && movement.quantity > 0)
-  ), [canetMovements, huarteMovements, year, month]);
+  ), [canetMovements, canonicalOperationalLotRows, year, month]);
   const assemblySummaryRows = useMemo(() => {
     const map = new Map<string, { product: string; lot: string; warehouse: string; quantity: number; count: number }>();
     assemblyMovementsMonth.forEach((movement) => {
@@ -1703,7 +2151,7 @@ export default function OperationalControlPage() {
       sources: string[];
     }>();
     [...(canetMovements || []), ...(huarteMovements || [])]
-      .filter((movement) => normalize(String(movement.tipo_movimiento || '')).includes('traspaso') || normalize(String(movement.tipo_movimiento || '')).includes('transfer'))
+      .filter((movement) => isTransferLikeMovement(movement))
       .filter((movement) => movementDateInMonth(movement, year, month))
       .forEach((movement) => {
         const product = operationalProductCode(movement.producto);
@@ -1713,7 +2161,7 @@ export default function OperationalControlPage() {
         const quantity = Math.abs(signed || 0);
         if (quantity <= 0) return;
         const movementType = normalize(String(movement.tipo_movimiento || ''));
-        const isIncoming = (movementType.includes('entrada') && movementType.includes('traspaso')) || signed > 0;
+        const isIncoming = (movementType.includes('entrada') && (movementType.includes('traspas') || movementType.includes('transfer') || movementType.includes('traslado'))) || signed > 0;
         const rawWarehouse = formatInventoryWarehouseLabel((movement as any).bodega || '').trim();
         const rawCounterparty = formatInventoryWarehouseLabel(
           isIncoming
@@ -1756,28 +2204,100 @@ export default function OperationalControlPage() {
       || a.destination.localeCompare(b.destination, 'es')
     ));
   }, [canetMovements, huarteMovements, year, month]);
-  const stockSummaryRows = useMemo(() => (
-    calculateInventoryStockSnapshot(canetMovements as any[], {
-      scope: 'canet',
-      normalizeProduct: (value) => operationalProductCode(value),
-      normalizeLot: (value) => operationalLotCode(value),
-      excludeMirrorSources: true,
-      clampNegative: true,
-      round: true,
-    }).positiveRows
-      .map((row) => ({
-        product: row.producto,
-        lot: row.lote,
+  const stockSummaryRows = useMemo(() => {
+    const exactRows = new Map<string, { product: string; lot: string; warehouse: string; stock: number }>();
+    const putExactRow = (row: { product: string; lot: string; warehouse: string; stock: number }, replace = false) => {
+      if (!row.product || !row.lot || !row.warehouse || row.stock <= 0) return;
+      const key = `${row.product}::${row.lot}::${row.warehouse}`;
+      if (replace || !exactRows.has(key)) exactRows.set(key, row);
+    };
+
+    const stockPeriodEnd = monthEndDateForOperationalPeriod(year, month);
+    const keepMovementUntilStockPeriod = (movement: InventoryMovementRow) => {
+      const date = parseOperationalDate((movement as any).fecha || (movement as any).date || (movement as any).created_at);
+      return Number.isNaN(date.getTime()) || date.getTime() <= stockPeriodEnd.getTime();
+    };
+
+    const canUseCanetPublishedStock =
+      Array.isArray(inventoryStockControlSnapshot?.canetVisibleStockRows)
+      && inventoryStockControlSnapshot.canetVisibleStockRows.length > 0;
+    if (canUseCanetPublishedStock) {
+      (inventoryStockControlSnapshot?.canetVisibleStockRows || []).forEach((row) => {
+        putExactRow({
+          product: operationalProductCode(row.producto),
+          lot: operationalLotCode(row.lote),
+          warehouse: formatInventoryWarehouseLabel(row.bodega),
+          stock: Math.max(0, Math.round(numberFromControlValue(row.stock) || 0)),
+        }, true);
+      });
+    }
+    Object.entries(huarteVisualStockByLotCache?.byLotBodega || {}).forEach(([key, value]) => {
+      const [productRaw, lotRaw, warehouseRaw] = key.split('|');
+      const warehouse = formatInventoryWarehouseLabel(warehouseRaw);
+      if (warehouse === 'CANET') return;
+      putExactRow({
+        product: operationalProductCode(productRaw),
+        lot: operationalLotCode(lotRaw),
+        warehouse,
+        stock: Math.max(0, Math.round(numberFromControlValue(value) || 0)),
+      }, true);
+    });
+
+    const canetStockBase = buildOperationalStockBase(
+      canetDashboardStockMovements,
+      inventoryMonthlyClosures,
+      'canet',
+      year,
+      month,
+    );
+    const huarteStockBase = buildOperationalStockBase(
+      huarteMovements || [],
+      inventoryMonthlyClosures,
+      'huarte',
+      year,
+      month,
+    );
+
+    const calculatedRows = [
+      ...calculateInventoryStockSnapshot(canetStockBase.filter(keepMovementUntilStockPeriod), {
+        scope: 'canet',
+        normalizeProduct: (value) => operationalProductCode(value),
+        normalizeLot: (value, movement) => canonicalOperationalLotForProduct(canonicalOperationalLotRows, (movement as any).producto, value),
+        normalizeWarehouse: (value) => formatInventoryWarehouseLabel(value),
+        includeMovement: (movement) => !isOperationalHuarteWarehouse((movement as any).bodega),
+        floorNegativeRunningBalance: true,
+        rowTransform: (row) => ({ ...row, stock: Math.max(0, numberFromControlValue(row.stock)) }),
+        rowFilter: (row) => numberFromControlValue(row.stock) > 0,
+      }).rows,
+      ...calculateInventoryStockSnapshot(huarteStockBase.filter(keepMovementUntilStockPeriod), {
+        scope: 'huarte',
+        normalizeProduct: (value) => operationalProductCode(value),
+        normalizeLot: (value, movement) => canonicalOperationalLotForProduct(canonicalOperationalLotRows, (movement as any).producto, value),
+        normalizeWarehouse: (value) => formatInventoryWarehouseLabel(value),
+        floorNegativeRunningBalance: false,
+        rowTransform: (row) => ({ ...row, stock: Math.max(0, numberFromControlValue(row.stock)) }),
+        rowFilter: (row) => numberFromControlValue(row.stock) > 0,
+      }).rows,
+    ];
+    calculatedRows.forEach((row) => {
+      putExactRow({
+        product: operationalProductCode(row.producto),
+        lot: operationalLotCode(row.lote),
         warehouse: formatInventoryWarehouseLabel(row.bodega),
-        stock: row.stock,
-      }))
-      .filter((row) => row.product && row.lot && row.warehouse && row.stock > 0)
-      .sort((a, b) => (
-        a.product.localeCompare(b.product, 'es')
-        || a.lot.localeCompare(b.lot, 'es')
-        || a.warehouse.localeCompare(b.warehouse, 'es')
-      ))
-  ), [canetMovements]);
+        stock: Math.max(0, Math.round(numberFromControlValue(row.stock) || 0)),
+      });
+    });
+
+    if (exactRows.size > 0) {
+      return Array.from(exactRows.values())
+        .sort((a, b) => (
+          a.product.localeCompare(b.product, 'es')
+          || a.lot.localeCompare(b.lot, 'es')
+          || a.warehouse.localeCompare(b.warehouse, 'es')
+        ));
+    }
+    return [];
+  }, [canetDashboardStockMovements, canonicalOperationalLotRows, huarteMovements, huarteVisualStockByLotCache, inventoryMonthlyClosures, inventoryStockControlSnapshot, year, month]);
   const salesExitSummaryRows = useMemo(() => {
     const map = new Map<string, {
       product: string;
@@ -1787,14 +2307,11 @@ export default function OperationalControlPage() {
       documents: Set<string>;
     }>();
     const pushMovement = (movement: InventoryMovementRow, fallbackInventory: string) => {
-      const type = normalize(String(movement.tipo_movimiento || ''));
-      if ((!type.includes('venta') && !type.includes('envio')) || type.includes('traspaso') || type.includes('entrada')) return;
-      if (!movementDateInMonth(movement, year, month)) return;
+      if (!isMonthlyOutputMovement(movement, year, month)) return;
       const signed = getInventorySignedQuantity(movement as any);
-      if (signed >= 0) return;
       const quantity = Math.abs(signed);
       const product = operationalProductCode(movement.producto);
-      const lot = operationalLotCode(movement.lote);
+      const lot = canonicalOperationalLotForProduct(canonicalOperationalLotRows, product, movement.lote);
       const inventory = formatInventoryWarehouseLabel((movement as any).bodega || fallbackInventory);
       if (!product || !lot || !inventory || quantity <= 0) return;
       const key = `${product}::${lot}::${inventory}`;
@@ -1819,7 +2336,7 @@ export default function OperationalControlPage() {
       || a.lot.localeCompare(b.lot, 'es')
       || a.inventory.localeCompare(b.inventory, 'es')
     ));
-  }, [canetMovements, huarteMovements, year, month]);
+  }, [canetMovements, canonicalOperationalLotRows, huarteMovements, year, month]);
   const returnSummaryRows = useMemo(() => (
     [...(canetMovements || []), ...(huarteMovements || [])]
       .filter((movement) => {
@@ -1837,7 +2354,7 @@ export default function OperationalControlPage() {
         id: String((movement as any).id || ''),
         date: String((movement as any).fecha || ''),
         product: operationalProductCode(movement.producto),
-        lot: operationalLotCode(movement.lote),
+        lot: canonicalOperationalLotForProduct(canonicalOperationalLotRows, movement.producto, movement.lote),
         inventory: formatInventoryWarehouseLabel((movement as any).bodega || ''),
         type: String(movement.tipo_movimiento || '').trim() || '-',
         quantity: Math.abs(getInventorySignedQuantity(movement as any) || 0),
@@ -1848,7 +2365,7 @@ export default function OperationalControlPage() {
         || a.product.localeCompare(b.product, 'es')
         || a.lot.localeCompare(b.lot, 'es')
       ))
-  ), [canetMovements, huarteMovements, year, month]);
+  ), [canetMovements, canonicalOperationalLotRows, huarteMovements, year, month]);
   const returnSummary = useMemo(() => ({
     count: returnSummaryRows.length,
     quantity: returnSummaryRows.reduce((total, movement) => total + movement.quantity, 0),
@@ -1884,51 +2401,146 @@ export default function OperationalControlPage() {
       traspasos_por_bodega_lunaris: transferTotalsByWarehouse.join('\n') || 'Sin traspasos registrados.',
     } as Record<string, string>;
   }, [returnSummary, salesExitSummaryRows, salesTotalsByWarehouse, transferSummaryRows, transferTotalsByWarehouse]);
+  const albaranDamageEvents = useMemo(() => {
+    const rows: Array<{
+      id: string;
+      product: string;
+      lot: string;
+      quantity: number;
+      kind: 'origen' | 'envio';
+      createdAt: string;
+      createdBy: string;
+      comment: string;
+      attachments: Attachment[];
+    }> = [];
+    const seen = new Set<string>();
+
+    (Array.isArray(albaranesState?.products) ? albaranesState.products : []).forEach((product) => {
+      const productCode = operationalProductCode(product.name);
+      const productLegacyDocuments = Array.isArray((product as any).documents) ? (product as any).documents : [];
+      const productLegacyDamages = Array.isArray((product as any).damageHistory) ? (product as any).damageHistory : [];
+      const tags = [
+        ...(Array.isArray(product.tags) ? product.tags : []),
+        ...(productLegacyDocuments.length > 0 || productLegacyDamages.length > 0
+          ? [{
+              id: `${product.id || product.name || 'product'}-general`,
+              name: 'General',
+              createdAt: product.createdAt,
+              documents: productLegacyDocuments,
+              damageHistory: productLegacyDamages,
+            }]
+          : []),
+      ];
+
+      tags.forEach((tag) => {
+        const tagDocuments = Array.isArray(tag.documents) ? tag.documents : [];
+        const tagLot = isLikelyOperationalLotCode(tag.name) ? operationalLotCodeFromText(tag.name) : '';
+        const documentLotHints = tagDocuments
+          .map((document: any) => document?.title)
+          .filter(Boolean);
+        const pushDamage = (damage: any, document?: { id?: string; title?: string; createdAt?: string }) => {
+          const quantity = Math.abs(numberFromControlValue(damage?.quantity ?? damage?.cantidad ?? damage?.amount ?? damage?.qty) || 0);
+          if (quantity <= 0) return;
+          const id = String(damage?.id || `${product.id}-${tag.id}-${document?.id || 'tag'}-${rows.length}`).trim();
+          if (seen.has(id)) return;
+          seen.add(id);
+          const comment = String(damage?.comment ?? damage?.comentario ?? damage?.notes ?? '').trim();
+          const lot = [
+            damage?.lote,
+            damage?.lot,
+            tagLot,
+            comment,
+            document?.title,
+            ...documentLotHints,
+          ].find((candidate) => isLikelyOperationalLotCode(operationalLotCodeFromText(candidate)));
+          const normalizedLot = lot
+            ? canonicalOperationalLotForProduct(canonicalOperationalLotRows, productCode || product.name, operationalLotCodeFromText(lot))
+            : 'SINLOTE';
+          const createdAt = String(damage?.createdAt || damage?.fecha || damage?.date || damage?.updatedAt || document?.createdAt || tag.createdAt || product.createdAt || '').trim();
+          rows.push({
+            id,
+            product: productCode || product.name,
+            lot: normalizedLot,
+            quantity,
+            kind: damage?.kind === 'envio' ? 'envio' : 'origen',
+            createdAt,
+            createdBy: String(damage?.createdBy || damage?.updatedBy || '').trim(),
+            comment,
+            attachments: Array.isArray(damage?.attachments) ? damage.attachments : [],
+          });
+        };
+
+        (Array.isArray(tag.damageHistory) ? tag.damageHistory : []).forEach((damage: any) => pushDamage(damage, tagDocuments[0]));
+        tagDocuments.forEach((document: any) => {
+          (document.damageHistory || []).forEach((damage: any) => pushDamage(damage, document));
+        });
+      });
+    });
+
+    return rows;
+  }, [albaranesState, canonicalOperationalLotRows]);
+
   const damageSummaryRows = useMemo(() => {
     const map = new Map<string, {
       product: string;
       lot: string;
       origin: number;
+      originBoxes: number;
       shipping: number;
+      shippingBoxes: number;
       total: number;
+      totalBoxes: number;
       documents: number;
       notes: string[];
     }>();
 
-    (Array.isArray(albaranesState?.products) ? albaranesState.products : []).forEach((product) => {
-      const productCode = operationalProductCode(product.name);
-      (product.tags || []).forEach((tag) => {
-        const lot = operationalLotCode(tag.name);
-        (tag.documents || []).forEach((document) => {
-          (document.damageHistory || []).forEach((damage) => {
-            if (!isoDateInMonth(damage.createdAt, year, month)) return;
-            const key = `${productCode}::${lot || operationalLotCode(document.title) || 'SINLOTE'}`;
-            const existing = map.get(key) || {
-              product: productCode || product.name,
-              lot: lot || operationalLotCode(document.title) || '-',
-              origin: 0,
-              shipping: 0,
-              total: 0,
-              documents: 0,
-              notes: [],
-            };
-            const quantity = Math.abs(Number(damage.quantity) || 0);
-            if ((damage.kind || 'origen') === 'envio') {
-              existing.shipping += quantity;
-            } else {
-              existing.origin += quantity;
-            }
-            existing.total += quantity;
-            existing.documents += Array.isArray(damage.attachments) ? damage.attachments.length : 0;
-            if (damage.comment) existing.notes.push(String(damage.comment));
-            map.set(key, existing);
-          });
-        });
-      });
+    albaranDamageEvents.forEach((damage) => {
+      if (!isoDateInMonth(damage.createdAt, year, month)) return;
+      const key = `${damage.product}::${damage.lot || 'SINLOTE'}`;
+      const existing = map.get(key) || {
+        product: damage.product,
+        lot: damage.lot || '-',
+        origin: 0,
+        originBoxes: 0,
+        shipping: 0,
+        shippingBoxes: 0,
+        total: 0,
+        totalBoxes: 0,
+        documents: 0,
+        notes: [],
+      };
+      if (damage.kind === 'envio') {
+        existing.shipping += damage.quantity;
+      } else {
+        existing.origin += damage.quantity;
+      }
+      existing.total += damage.quantity;
+      existing.documents += damage.attachments.length;
+      if (damage.comment) existing.notes.push(damage.comment);
+      map.set(key, existing);
     });
 
-    return Array.from(map.values()).sort((a, b) => a.product.localeCompare(b.product, 'es') || a.lot.localeCompare(b.lot, 'es'));
-  }, [albaranesState, year, month]);
+    return Array.from(map.values())
+      .map((row) => {
+        const meta = productMetaByCode.get(row.product) || { mode: 'DIRECTO', vialsPerBox: 0 };
+        const divisor = meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0 ? meta.vialsPerBox : 1;
+        return {
+          ...row,
+          originBoxes: row.origin / divisor,
+          shippingBoxes: row.shipping / divisor,
+          totalBoxes: row.total / divisor,
+        };
+      })
+      .sort((a, b) => a.product.localeCompare(b.product, 'es') || a.lot.localeCompare(b.lot, 'es'));
+  }, [albaranDamageEvents, productMetaByCode, year, month]);
+  const monthlyDamageByProductLot = useMemo(() => {
+    const map = new Map<string, { total: number; totalBoxes: number }>();
+    damageSummaryRows.forEach((row) => {
+      const key = `${row.product}::${row.lot}`;
+      map.set(key, { total: row.total, totalBoxes: row.totalBoxes });
+    });
+    return map;
+  }, [damageSummaryRows]);
   const damageByProductLot = useMemo(() => {
     const map = new Map<string, {
       canetOrigin: number;
@@ -1937,39 +2549,27 @@ export default function OperationalControlPage() {
       huarteShipping: number;
       total: number;
     }>();
-    (Array.isArray(albaranesState?.products) ? albaranesState.products : []).forEach((product) => {
-      const productCode = operationalProductCode(product.name);
-      (product.tags || []).forEach((tag) => {
-        const tagLot = operationalLotCode(tag.name);
-        (tag.documents || []).forEach((document) => {
-          const documentLot = operationalLotCode(document.title);
-          const lot = tagLot || documentLot || 'SINLOTE';
-          const key = `${productCode}::${lot}`;
-          const existing = map.get(key) || {
-            canetOrigin: 0,
-            canetShipping: 0,
-            huarteOrigin: 0,
-            huarteShipping: 0,
-            total: 0,
-          };
-          (document.damageHistory || []).forEach((damage) => {
-            const quantity = Math.abs(Number(damage.quantity) || 0);
-            if (quantity <= 0) return;
-            const ownerText = normalize([damage.createdBy, damage.comment].filter(Boolean).join(' '));
-            const isHuarte = ownerText.includes('huarte') || ownerText.includes('guarte') || ownerText.includes('itzi') || ownerText.includes('ichi');
-            const isShipping = (damage.kind || 'origen') === 'envio';
-            if (isHuarte && isShipping) existing.huarteShipping += quantity;
-            else if (isHuarte) existing.huarteOrigin += quantity;
-            else if (isShipping) existing.canetShipping += quantity;
-            else existing.canetOrigin += quantity;
-            existing.total += quantity;
-          });
-          map.set(key, existing);
-        });
-      });
+    albaranDamageEvents.forEach((damage) => {
+      const key = `${damage.product}::${damage.lot || 'SINLOTE'}`;
+      const existing = map.get(key) || {
+        canetOrigin: 0,
+        canetShipping: 0,
+        huarteOrigin: 0,
+        huarteShipping: 0,
+        total: 0,
+      };
+      const ownerText = normalize([damage.createdBy, damage.comment].filter(Boolean).join(' '));
+      const isHuarte = ownerText.includes('huarte') || ownerText.includes('guarte') || ownerText.includes('itzi') || ownerText.includes('ichi');
+      const isShipping = damage.kind === 'envio';
+      if (isHuarte && isShipping) existing.huarteShipping += damage.quantity;
+      else if (isHuarte) existing.huarteOrigin += damage.quantity;
+      else if (isShipping) existing.canetShipping += damage.quantity;
+      else existing.canetOrigin += damage.quantity;
+      existing.total += damage.quantity;
+      map.set(key, existing);
     });
     return map;
-  }, [albaranesState]);
+  }, [albaranDamageEvents]);
   const finalizedAssemblyRows = useMemo(() => {
     const latest = new Map<string, {
       product: string;
@@ -2047,15 +2647,15 @@ export default function OperationalControlPage() {
           || traceLot?.entries?.find((entry) => entry.deliveryNoteQuantity)?.deliveryNoteQuantity
           || (masterLot as any)?.viales_recibidos,
         );
-        const albaranBoxes = numberFromControlValue(traceLot?.calculatedBoxes)
-          || (meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0 && albaranQuantity > 0
-            ? albaranQuantity / meta.vialsPerBox
-            : albaranQuantity);
+        const albaranBoxes = meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0 && albaranQuantity > 0
+          ? albaranQuantity / meta.vialsPerBox
+          : numberFromControlValue(traceLot?.calculatedBoxes) || albaranQuantity;
         const assembled = accumulatedFor(finalized.product, finalized.lot);
         const damage = findDamage(finalized.product, finalized.lot);
         const damagedAsOutputUnits = meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0
           ? damage.total / meta.vialsPerBox
           : damage.total;
+        const damageDivisor = meta.mode === 'ENSAMBLAJE' && meta.vialsPerBox > 0 ? meta.vialsPerBox : 1;
         const albaranDifference = albaranBoxes - assembled - damagedAsOutputUnits;
         return {
           ...finalized,
@@ -2063,10 +2663,15 @@ export default function OperationalControlPage() {
           albaranBoxes,
           assembled,
           canetOrigin: damage.canetOrigin,
+          canetOriginBoxes: damage.canetOrigin / damageDivisor,
           canetShipping: damage.canetShipping,
+          canetShippingBoxes: damage.canetShipping / damageDivisor,
           huarteOrigin: damage.huarteOrigin,
+          huarteOriginBoxes: damage.huarteOrigin / damageDivisor,
           huarteShipping: damage.huarteShipping,
+          huarteShippingBoxes: damage.huarteShipping / damageDivisor,
           damageTotal: damage.total,
+          damageTotalBoxes: damagedAsOutputUnits,
           albaranDifference,
         };
       })
@@ -2110,17 +2715,24 @@ export default function OperationalControlPage() {
     const values: Record<string, string> = {};
     assemblySummaryRows.forEach((row) => {
       const rowLabel = `${row.product} · ${row.lot} · ${row.warehouse}`;
+      const monthlyDamage = monthlyDamageByProductLot.get(`${row.product}::${row.lot}`);
       values[fieldKey('ensamblajes', rowLabel, 'Producto ensamblado')] = row.product;
       values[fieldKey('ensamblajes', rowLabel, 'Lote')] = row.lot;
       values[fieldKey('ensamblajes', rowLabel, 'Cantidad ensamblada en Lunaris')] = String(row.quantity);
+      values[fieldKey('ensamblajes', rowLabel, 'Cantidad dañada o perdida')] = monthlyDamage
+        ? `${formatControlQuantity(monthlyDamage.total)} viales/unid. (${formatControlQuantity(monthlyDamage.totalBoxes)} cajas)`
+        : '0';
     });
     damageSummaryRows.forEach((row) => {
       const rowLabel = `${row.product} · ${row.lot}`;
       values[fieldKey('danados_ensamblaje', rowLabel, 'Producto')] = row.product;
       values[fieldKey('danados_ensamblaje', rowLabel, 'Lote')] = row.lot;
-      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados origen')] = String(row.origin);
-      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados envío')] = String(row.shipping);
-      values[fieldKey('danados_ensamblaje', rowLabel, 'Total dañados')] = String(row.total);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados origen (viales/unid.)')] = formatControlQuantity(row.origin);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Pérdida origen (cajas)')] = formatControlQuantity(row.originBoxes);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Dañados envío (viales/unid.)')] = formatControlQuantity(row.shipping);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Pérdida envío (cajas)')] = formatControlQuantity(row.shippingBoxes);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Total dañados (viales/unid.)')] = formatControlQuantity(row.total);
+      values[fieldKey('danados_ensamblaje', rowLabel, 'Total pérdida (cajas)')] = formatControlQuantity(row.totalBoxes);
       values[fieldKey('danados_ensamblaje', rowLabel, 'Informe Albaranes adjunto')] = row.documents > 0 ? `${row.documents} evidencia(s)` : 'Sin evidencia adjunta';
     });
     finalizedAssemblyRows.forEach((row) => {
@@ -2131,11 +2743,16 @@ export default function OperationalControlPage() {
       values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad albarán (viales/unid.)')] = row.albaranQuantity > 0 ? formatControlQuantity(row.albaranQuantity) : '-';
       values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad caja según albarán')] = row.albaranBoxes > 0 ? formatControlQuantity(row.albaranBoxes) : '-';
       values[fieldKey('ensamblajes_finalizados', rowLabel, 'Cantidad ensamblada Lunaris')] = formatControlQuantity(row.assembled);
-      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet origen')] = formatControlQuantity(row.canetOrigin);
-      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet envío')] = formatControlQuantity(row.canetShipping);
-      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte origen')] = formatControlQuantity(row.huarteOrigin);
-      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte envío')] = formatControlQuantity(row.huarteShipping);
-      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Total dañados')] = formatControlQuantity(row.damageTotal);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet origen (viales/unid.)')] = formatControlQuantity(row.canetOrigin);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Pérdida Canet origen (cajas)')] = formatControlQuantity(row.canetOriginBoxes);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Canet envío (viales/unid.)')] = formatControlQuantity(row.canetShipping);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Pérdida Canet envío (cajas)')] = formatControlQuantity(row.canetShippingBoxes);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte origen (viales/unid.)')] = formatControlQuantity(row.huarteOrigin);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Pérdida Huarte origen (cajas)')] = formatControlQuantity(row.huarteOriginBoxes);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Dañados Huarte envío (viales/unid.)')] = formatControlQuantity(row.huarteShipping);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Pérdida Huarte envío (cajas)')] = formatControlQuantity(row.huarteShippingBoxes);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Total dañados (viales/unid.)')] = formatControlQuantity(row.damageTotal);
+      values[fieldKey('ensamblajes_finalizados', rowLabel, 'Total pérdida (cajas)')] = formatControlQuantity(row.damageTotalBoxes);
       values[fieldKey('ensamblajes_finalizados', rowLabel, 'Diferencia albarán vs cierre Lunaris')] = formatControlQuantity(row.albaranDifference);
     });
     transferSummaryRows.forEach((row) => {
@@ -2178,7 +2795,7 @@ export default function OperationalControlPage() {
       values[fieldKey('devoluciones_lunaris', rowLabel, 'Observaciones')] = row.notes || '-';
     });
     return values;
-  }, [assemblySummaryRows, damageSummaryRows, finalizedAssemblyRows, transferSummaryRows, stockSummaryRows, salesExitSummaryRows, returnSummaryRows]);
+  }, [assemblySummaryRows, damageSummaryRows, finalizedAssemblyRows, monthlyDamageByProductLot, transferSummaryRows, stockSummaryRows, salesExitSummaryRows, returnSummaryRows]);
   const lotOptionsByProduct = useMemo(() => {
     const map = new Map<string, Set<string>>();
     const ensure = (product: string) => {
@@ -2262,6 +2879,7 @@ export default function OperationalControlPage() {
 
   useEffect(() => {
     setDraftFields(currentRecord?.fields || {});
+    setDraftManualOverrideKeys(parseManualOverrideKeys(currentRecord?.fields));
     setDraftChecklist(currentRecord?.checklist || {});
     setDraftAttachments(currentRecord?.attachments || {});
     setDraftStatus(currentRecord?.status || 'pendiente');
@@ -2270,6 +2888,9 @@ export default function OperationalControlPage() {
 
   const setFieldValue = (key: string, value: string) => {
     if (!canEditActiveProcess) return;
+    if (Object.prototype.hasOwnProperty.call(automaticFieldValues, key) || Object.prototype.hasOwnProperty.call(automaticTableValues, key)) {
+      setDraftManualOverrideKeys((prev) => new Set(prev).add(key));
+    }
     setDraftFields((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -2297,6 +2918,72 @@ export default function OperationalControlPage() {
     if (files.length > 0) {
       setDraftChecklist((prev) => ({ ...prev, [item]: true }));
     }
+  };
+
+  const automaticRefreshKeys = () => new Set([
+    ...Object.keys(automaticFieldValues),
+    ...Object.keys(automaticTableValues),
+    ...Array.from(AUTOMATIC_DATA_TABLE_IDS).map((tableId) => tableRowsKey(tableId)),
+  ]);
+
+  const reloadSuggestedValues = () => {
+    if (!canEditActiveProcess) return;
+    const suggestedKeys = automaticRefreshKeys();
+    if (suggestedKeys.size === 0) {
+      emitSuccessFeedback('No hay sugeridos automáticos para recargar en esta sección.');
+      return;
+    }
+    const cleanFields = (fields: Record<string, string>, overrideKeys: Set<string>) => {
+      const nextFields = { ...fields };
+      const nextOverrides = new Set(overrideKeys);
+      suggestedKeys.forEach((key) => {
+        delete nextFields[key];
+        nextOverrides.delete(key);
+      });
+      return {
+        fields: {
+          ...nextFields,
+          ...automaticFieldValues,
+          ...automaticTableValues,
+          [MANUAL_OVERRIDE_KEYS_FIELD]: serializeManualOverrideKeys(nextOverrides),
+        },
+        overrideKeys: nextOverrides,
+      };
+    };
+    const cleanedDraft = cleanFields(draftFields, draftManualOverrideKeys);
+    setDraftFields(cleanedDraft.fields);
+    setDraftManualOverrideKeys(cleanedDraft.overrideKeys);
+    const now = new Date().toISOString();
+    setState((prev) => {
+      const base = safeState(prev);
+      const existing = getRecord(base.records, selectedProcess, year, month);
+      const existingOverrides = parseManualOverrideKeys(existing?.fields);
+      const cleanedExisting = cleanFields(existing?.fields || {}, existingOverrides);
+      const nextRecord: ProcessRecord = {
+        id: existing?.id || createId(),
+        process: selectedProcess,
+        year,
+        month,
+        status: existing?.status || draftStatus,
+        reviewed: existing?.reviewed ?? draftReviewed,
+        fields: cleanedExisting.fields,
+        checklist: mergeChecklist(existing?.checklist, draftChecklist),
+        attachments: mergeAttachmentsByField(existing?.attachments, draftAttachments),
+        participantProgress: existing?.participantProgress || {},
+        updatedAt: now,
+        updatedBy: currentUser?.id || '',
+        updatedByName: currentUser?.name || currentUser?.email || '',
+      };
+      const key = getRecordKey(selectedProcess, year, month);
+      return {
+        ...base,
+        records: [
+          ...base.records.filter((record) => getRecordKey(record.process, record.year, record.month) !== key),
+          nextRecord,
+        ],
+      };
+    });
+    emitSuccessFeedback('Sugeridos recargados y guardados desde Inventario, Albaranes y movimientos.');
   };
 
   const toggleNoteAssignee = (userId: string) => {
@@ -2378,9 +3065,19 @@ export default function OperationalControlPage() {
                 reviewedBy: currentUser?.id || '',
                 reviewedByName: currentUser?.name || currentUser?.email || '',
               }
-            : {}),
+          : {}),
         },
       };
+      const automaticKeys = automaticRefreshKeys();
+      const cleanedExistingFields = { ...(existing?.fields || {}) };
+      automaticKeys.forEach((key) => {
+        delete cleanedExistingFields[key];
+      });
+      const persistedOverrideKeys = new Set(draftManualOverrideKeys);
+      automaticKeys.forEach((key) => persistedOverrideKeys.delete(key));
+      const manualDraftFields = Object.fromEntries(
+        Object.entries(draftFields).filter(([key]) => !automaticKeys.has(key) || persistedOverrideKeys.has(key)),
+      );
       const nextRecord: ProcessRecord = {
         id: existing?.id || createId(),
         process: selectedProcess,
@@ -2388,7 +3085,12 @@ export default function OperationalControlPage() {
         month,
         status: nextStatus,
         reviewed: nextReviewed,
-        fields: mergeFields(existing?.fields, { ...draftFields, ...automaticFieldValues, ...automaticTableValues }),
+        fields: mergeFields(cleanedExistingFields, {
+          ...automaticFieldValues,
+          ...automaticTableValues,
+          ...manualDraftFields,
+          [MANUAL_OVERRIDE_KEYS_FIELD]: serializeManualOverrideKeys(persistedOverrideKeys),
+        }),
         checklist: mergeChecklist(existing?.checklist, draftChecklist),
         attachments: mergeAttachmentsByField(existing?.attachments, draftAttachments),
         participantProgress,
@@ -2816,6 +3518,15 @@ export default function OperationalControlPage() {
                     <span className={`rounded-full px-3 py-1.5 text-xs font-black uppercase ${activeStatusMeta.badge}`}>{activeStatusMeta.label}</span>
                     <button
                       type="button"
+                      onClick={reloadSuggestedValues}
+                      disabled={!canEditActiveProcess || (Object.keys(automaticFieldValues).length === 0 && Object.keys(automaticTableValues).length === 0)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2 text-sm font-black text-teal-800 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RotateCcw size={17} />
+                      Recargar sugeridos
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => saveProcess(false)}
                       disabled={!canEditActiveProcess}
                       className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-black text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 ${activeDefinition.color.button}`}
@@ -3073,8 +3784,12 @@ export default function OperationalControlPage() {
                     <div className="grid gap-3 lg:grid-cols-2">
                       {activeDefinition.fields.map((field) => {
                         const autoValue = automaticFieldValues[field.id];
-                        const fieldValue = autoValue ?? draftFields[field.id] ?? '';
-                        const isAutomatic = autoValue !== undefined;
+                        const hasStoredValue = Object.prototype.hasOwnProperty.call(draftFields, field.id);
+                        const hasManualValue = autoValue !== undefined
+                          ? draftManualOverrideKeys.has(field.id) && hasStoredValue
+                          : hasStoredValue;
+                        const fieldValue = hasManualValue ? draftFields[field.id] : autoValue ?? '';
+                        const isAutomatic = autoValue !== undefined && !hasManualValue;
                         return (
                         <label key={field.id} className={field.type === 'textarea' ? 'space-y-1 lg:col-span-2' : 'space-y-1'}>
                           <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">{field.label}</span>
@@ -3082,7 +3797,7 @@ export default function OperationalControlPage() {
                             <textarea
                               value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess || isAutomatic}
+                              disabled={!canEditActiveProcess}
                               rows={3}
                               className={`w-full rounded-xl border px-3 py-2 text-sm font-semibold outline-none ${isAutomatic ? 'border-teal-100 bg-teal-50 text-teal-900' : `border-slate-200 bg-white ${activeDefinition.color.ring}`} disabled:bg-slate-50`}
                             />
@@ -3090,7 +3805,7 @@ export default function OperationalControlPage() {
                             <select
                               value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess || isAutomatic}
+                              disabled={!canEditActiveProcess}
                               className={`h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none ${activeDefinition.color.ring} disabled:bg-slate-50`}
                             >
                               <option value="">Seleccionar estado</option>
@@ -3103,11 +3818,11 @@ export default function OperationalControlPage() {
                               type={inputType(field.type)}
                               value={fieldValue}
                               onChange={(event) => setFieldValue(field.id, event.target.value)}
-                              disabled={!canEditActiveProcess || isAutomatic}
+                              disabled={!canEditActiveProcess}
                               className={`h-10 w-full rounded-xl border px-3 text-sm font-semibold outline-none ${isAutomatic ? 'border-teal-100 bg-teal-50 text-teal-900' : `border-slate-200 bg-white ${activeDefinition.color.ring}`} disabled:bg-slate-50`}
                             />
                           )}
-                          {isAutomatic ? <span className="text-xs font-semibold text-teal-600">Automático desde movimientos de inventario.</span> : field.hint && <span className="text-xs font-semibold text-slate-400">{field.hint}</span>}
+                          {isAutomatic ? <span className="text-xs font-semibold text-teal-600">Sugerido automáticamente. Editable si hace falta corregirlo.</span> : field.hint && <span className="text-xs font-semibold text-slate-400">{field.hint}</span>}
                         </label>
                       );
                       })}
@@ -3118,9 +3833,12 @@ export default function OperationalControlPage() {
                 {activeDefinition.tables?.map((table) => {
                   const statusMatrix = isStatusMatrix(table.columns);
                   const generatedRows = automaticTableRows.get(table.id) || [];
+                  const isAutomaticDataTable = AUTOMATIC_DATA_TABLE_IDS.has(table.id);
+                  const extraRows = parseExtraRows(draftFields[tableRowsKey(table.id)])
+                    .filter((row) => !generatedRows.includes(row));
                   const rows = generatedRows.length > 0
-                    ? [...generatedRows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])]
-                    : [...table.rows, ...parseExtraRows(draftFields[tableRowsKey(table.id)])];
+                    ? [...generatedRows, ...extraRows]
+                    : [...(isAutomaticDataTable ? [] : table.rows), ...extraRows];
                   const canAddRows = tableSupportsExtraRows(table) && generatedRows.length === 0;
                   return (
                   <section key={table.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -3160,15 +3878,38 @@ export default function OperationalControlPage() {
                                 const key = fieldKey(table.id, row, column);
                                 const rowStatusKey = fieldKey(table.id, row, 'estado');
                                 const autoValue = automaticTableValues[key];
-                                const cellValue = autoValue ?? draftFields[key] ?? '';
                                 const normalizedColumn = normalize(column);
+                                const forceAutoValue = isGeneratedRow
+                                  && shouldForceAutomaticTableValue(table.id, column)
+                                  && autoValue !== undefined;
+                                const hasStoredValue = Object.prototype.hasOwnProperty.call(draftFields, key);
+                                const hasManualValue = forceAutoValue
+                                  ? false
+                                  : autoValue !== undefined
+                                    ? draftManualOverrideKeys.has(key) && hasStoredValue
+                                    : hasStoredValue;
+                                const cellValue = hasManualValue ? draftFields[key] : autoValue ?? '';
                                 const isDifferenceColumn = normalizedColumn.includes('diferencia');
                                 const zohoColumn = table.columns.find((item) => normalize(item).includes('zoho'));
                                 const lunarisColumn = table.columns.find((item) => normalize(item).includes('lunaris'));
                                 const zohoKey = zohoColumn ? fieldKey(table.id, row, zohoColumn) : '';
                                 const lunarisKey = lunarisColumn ? fieldKey(table.id, row, lunarisColumn) : '';
-                                const zohoValue = zohoColumn ? parseControlNumber(draftFields[zohoKey] || automaticTableValues[zohoKey] || '') : null;
-                                const lunarisValue = lunarisColumn ? parseControlNumber(draftFields[lunarisKey] || automaticTableValues[lunarisKey] || '') : null;
+                                const valueForComparison = (targetKey: string) => {
+                                  const targetAutoValue = automaticTableValues[targetKey];
+                                  const targetColumn = table.columns.find((item) => fieldKey(table.id, row, item) === targetKey) || '';
+                                  const targetForceAuto = isGeneratedRow
+                                    && shouldForceAutomaticTableValue(table.id, targetColumn)
+                                    && targetAutoValue !== undefined;
+                                  const targetHasStoredValue = Object.prototype.hasOwnProperty.call(draftFields, targetKey);
+                                  const targetHasManualValue = targetForceAuto
+                                    ? false
+                                    : targetAutoValue !== undefined
+                                      ? draftManualOverrideKeys.has(targetKey) && targetHasStoredValue
+                                      : targetHasStoredValue;
+                                  return targetHasManualValue ? draftFields[targetKey] : targetAutoValue ?? '';
+                                };
+                                const zohoValue = zohoColumn ? parseControlNumber(valueForComparison(zohoKey)) : null;
+                                const lunarisValue = lunarisColumn ? parseControlNumber(valueForComparison(lunarisKey)) : null;
                                 const explicitDiff = parseControlNumber(cellValue);
                                 const hasComparableValues = zohoValue !== null && lunarisValue !== null;
                                 const hasDifference = explicitDiff !== null ? explicitDiff !== 0 : hasComparableValues ? zohoValue !== lunarisValue : false;
@@ -3197,7 +3938,7 @@ export default function OperationalControlPage() {
                                         />
                                         {column}
                                       </label>
-                                    ) : autoValue !== undefined || (isDifferenceColumn && computedDifference) ? (
+                                    ) : isDifferenceColumn && computedDifference && !hasManualValue ? (
                                       <div className={`min-h-9 rounded-lg border px-2 py-2 text-sm font-black ${autoValue !== undefined ? 'border-teal-100 bg-teal-50 text-teal-900' : hasDifference ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
                                         {computedDifference || '-'}
                                       </div>
@@ -3220,6 +3961,13 @@ export default function OperationalControlPage() {
                             </tr>
                             );
                           })}
+                          {rows.length === 0 && (
+                            <tr>
+                              <td colSpan={table.columns.length + 1} className="px-3 py-8 text-center text-sm font-bold text-slate-400">
+                                Sin datos automáticos para este mes. Puedes añadir una línea manual si necesitas dejar una corrección.
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>

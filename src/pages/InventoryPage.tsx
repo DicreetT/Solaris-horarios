@@ -3865,6 +3865,7 @@ function InventoryPage() {
     // Prevent write saturation: only admins publish shared dashboard snapshots.
     if (!actorIsAdmin) return;
     const payload = {
+      canetVisibleStockSource: 'dashboard_stock_by_plb_v2',
       criticalProducts: riskyProductsSummary.slice(0, 12).map((r) => ({
         producto: r.producto,
         stockTotal: Number(r.stockTotal.toFixed(2)),
@@ -3956,6 +3957,12 @@ function InventoryPage() {
         coberturaMeses: Number(r.coberturaMeses.toFixed(2)),
         semaforo: r.semaforo,
       })),
+      canetVisibleStockRows: stockByPLB.slice(0, 1200).map((r) => ({
+        producto: r.producto,
+        lote: r.lote,
+        bodega: r.bodega,
+        stock: Number(toNum(r.stock).toFixed(2)),
+      })),
     };
     const fingerprint = JSON.stringify(payload);
     if (fingerprint === inventoryAlertsFingerprintRef.current) return;
@@ -3964,12 +3971,15 @@ function InventoryPage() {
     setInventoryAlertsShared(payloadWithTimestamp);
     setInventoryStockControlSnapshotShared({
       updatedAt: payloadWithTimestamp.updatedAt,
+      canetVisibleStockSource: payload.canetVisibleStockSource,
       potentialRows: payload.potentialControlRows || [],
       potentialLotRows: payload.potentialControlLotRows || [],
       canetHuarteRows: payload.canetHuarteControlRows || [],
       canetRows: payload.canetControlRows || [],
+      canetVisibleStockRows: payload.canetVisibleStockRows || [],
     });
   }, [
+    stockByPLB,
     riskyProductsSummary,
     caducityAlerts,
     mountedAndPotentialAlerts,
