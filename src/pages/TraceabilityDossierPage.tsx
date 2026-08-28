@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Beaker,
@@ -245,6 +245,72 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function rowTimestampMs(row: GenericRow) {
+  const candidates = [
+    clean(row?.lastChangedAt),
+    clean(row?.updatedAt),
+    clean(row?.updated_at),
+    clean(row?.createdAt),
+    clean(row?.created_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return 0;
+}
+
+function normalizeLotCompareToken(value: unknown) {
+  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/O/g, '0');
+}
+
+function masterLotKey(producto: unknown, lote: unknown) {
+  return `${productKey(producto)}|${normalizeLotCompareToken(lote)}`;
+}
+
+function mergeCanetLotRows(base: GenericRow, incoming: GenericRow) {
+  const baseTs = rowTimestampMs(base);
+  const incomingTs = rowTimestampMs(incoming);
+  const merged = incomingTs >= baseTs ? { ...base, ...incoming } : { ...incoming, ...base };
+  const keepRichField = (field: string) => {
+    if (!clean(merged[field]) && clean(base[field])) merged[field] = base[field];
+    if (!clean(merged[field]) && clean(incoming[field])) merged[field] = incoming[field];
+  };
+  keepRichField('fecha_alta');
+  keepRichField('fecha_caducidad');
+  keepRichField('dias_restantes');
+  keepRichField('semaforo_caducidad');
+  keepRichField('notas');
+  keepRichField('viales_recibidos');
+  keepRichField('estado');
+  keepRichField('ensamblaje_finalizado');
+  return merged;
+}
+
+function mergeCanetLotesForDossier(remotePayload: any, localPayload: any) {
+  if (!Array.isArray(remotePayload) || !Array.isArray(localPayload)) return localPayload;
+
+  const byKey = new Map<string, GenericRow>();
+  const order: string[] = [];
+  const upsert = (row: GenericRow) => {
+    if (!row || typeof row !== 'object') return;
+    const producto = productKey(row.producto);
+    const lote = clean(row.lote);
+    if (!producto || !lote) return;
+    const key = masterLotKey(producto, lote);
+    if (!order.includes(key)) order.push(key);
+    const normalized = { ...row, producto, lote };
+    const previous = byKey.get(key);
+    byKey.set(key, previous ? mergeCanetLotRows(previous, normalized) : normalized);
+  };
+
+  remotePayload.forEach(upsert);
+  localPayload.forEach(upsert);
+
+  return order.map((key) => byKey.get(key)).filter((row): row is GenericRow => !!row);
+}
+
 function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -480,7 +546,18 @@ export default function TraceabilityDossierPage() {
       mergeIncomingWithLocal: false,
     },
   );
-  const [canetLotes, setCanetLotes] = useSharedJsonState<GenericRow[]>(
+  const [canetProductos] = useSharedJsonState<GenericRow[]>(
+    'inventory_canet_productos_v1',
+    (canetSeed as any).productos as GenericRow[],
+    {
+      userId: currentUser?.id,
+      initializeIfMissing: true,
+      protectFromEmptyOverwrite: true,
+      mergeBeforePersist: true,
+      preferRemoteSnapshot: true,
+    },
+  );
+  const [canetLotes, setCanetLotes, canetLotesLoading] = useSharedJsonState<GenericRow[]>(
     'inventory_canet_lotes_v1',
     (canetSeed as any).lotes as GenericRow[],
     {
@@ -489,6 +566,7 @@ export default function TraceabilityDossierPage() {
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
       preferRemoteSnapshot: true,
+      mergeStrategy: mergeCanetLotesForDossier,
     },
   );
 
@@ -559,7 +637,11 @@ export default function TraceabilityDossierPage() {
       color: string;
     }>();
 
-    ((canetSeed as any).productos as GenericRow[] || []).forEach((row) => {
+    const productRows = Array.isArray(canetProductos) && canetProductos.length > 0
+      ? canetProductos
+      : ((canetSeed as any).productos as GenericRow[] || []);
+
+    productRows.forEach((row) => {
       const key = productKey(row.producto);
       if (!key) return;
       map.set(key, {
@@ -573,7 +655,7 @@ export default function TraceabilityDossierPage() {
     });
 
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'es'));
-  }, []);
+  }, [canetProductos]);
   const selectedProduct = productCards.find((product) => product.key === selectedProductKey) || productCards[0] || null;
   const activeProductKey = selectedProduct?.key || '';
   const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedSupplierId) || suppliers[0] || null;
@@ -710,6 +792,85 @@ export default function TraceabilityDossierPage() {
     if (!meta || meta.vialsPerBox <= 0 || units <= 0) return '';
     return String(Math.floor(units / meta.vialsPerBox));
   };
+
+  const dossierMasterLotRows = useMemo(() => {
+    const now = new Date().toISOString();
+    return lots
+      .map((lot) => {
+        const producto = productKey(lot.productName);
+        const lote = clean(lot.lotNumber);
+        if (!producto || !lote) return null;
+        const primaryQuantity = clean(lot.deliveryNoteQuantity) || clean(lot.quantity);
+        return {
+          producto,
+          lote,
+          fecha_alta: clean(lot.deliveryDate),
+          fecha_caducidad: clean(lot.expiryDate),
+          dias_restantes: '',
+          semaforo_caducidad: '',
+          notas: clean(lot.processNotes),
+          viales_recibidos: primaryQuantity,
+          estado: 'ACTIVO',
+          ensamblaje_finalizado: 'NO',
+          origen_dossier_trazabilidad: 'SI',
+          lastChangedAt: clean(lot.updatedAt) || now,
+        } satisfies GenericRow;
+      })
+      .filter(Boolean) as GenericRow[];
+  }, [lots]);
+
+  const canetLotesSignature = useMemo(
+    () => (Array.isArray(canetLotes) ? canetLotes : [])
+      .map((row) => masterLotKey(row?.producto, row?.lote))
+      .filter((key) => !key.endsWith('|'))
+      .sort()
+      .join('||'),
+    [canetLotes],
+  );
+
+  useEffect(() => {
+    if (loading || canetLotesLoading || dossierMasterLotRows.length === 0) return;
+
+    setCanetLotes((prev) => {
+      const rows = Array.isArray(prev) ? prev : [];
+      const nextRows = [...rows];
+      let changed = false;
+
+      dossierMasterLotRows.forEach((syncRow) => {
+        const key = masterLotKey(syncRow.producto, syncRow.lote);
+        if (!key || key.endsWith('|')) return;
+        const index = nextRows.findIndex((row) => masterLotKey(row?.producto, row?.lote) === key);
+
+        if (index < 0) {
+          nextRows.unshift(syncRow);
+          changed = true;
+          return;
+        }
+
+        const current = nextRows[index];
+        const repaired = {
+          ...current,
+          producto: syncRow.producto,
+          lote: clean(current.lote) || syncRow.lote,
+          fecha_alta: clean(current.fecha_alta) || syncRow.fecha_alta,
+          fecha_caducidad: clean(current.fecha_caducidad) || syncRow.fecha_caducidad,
+          notas: clean(current.notas) || syncRow.notas,
+          viales_recibidos: clean(current.viales_recibidos) || syncRow.viales_recibidos,
+          estado: clean(current.estado) || 'ACTIVO',
+          ensamblaje_finalizado: clean(current.ensamblaje_finalizado) || 'NO',
+          origen_dossier_trazabilidad: clean(current.origen_dossier_trazabilidad) || 'SI',
+          lastChangedAt: clean(current.lastChangedAt) || syncRow.lastChangedAt,
+        };
+
+        if (JSON.stringify(repaired) !== JSON.stringify(current)) {
+          nextRows[index] = repaired;
+          changed = true;
+        }
+      });
+
+      return changed ? nextRows : prev;
+    });
+  }, [canetLotesLoading, canetLotesSignature, dossierMasterLotRows, loading, setCanetLotes]);
 
   const scrollToDossierBlock = (id: string) => {
     if (typeof document === 'undefined') return;
