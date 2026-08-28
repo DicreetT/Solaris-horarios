@@ -599,16 +599,24 @@ export default function TraceabilityDossierPage() {
     return needle.includes(query.toLowerCase());
   });
   const selectedProductLots = lots.filter((lot) => productKey(lot.productName) === activeProductKey);
-  const selectedProductSupplierPairs = suppliers.flatMap((supplier) => (
-    supplier.products
-      .filter((product) => (
-        product.finalProductCodes.includes(activeProductKey)
-        || selectedProductLots.some((lot) => lot.entries.some((entry) => entry.supplierId === supplier.id && entry.supplierProductId === product.id))
-      ))
-      .map((product) => ({ supplier, product }))
-  ));
-  const selectedProductSuppliers = Array.from(
-    new Map(selectedProductSupplierPairs.map(({ supplier }) => [supplier.id, supplier])).values(),
+  const selectedProductSupplierSummary = Array.from(
+    selectedProductLots.reduce((map, lot) => {
+      lot.entries.forEach((entry) => {
+        const supplier = suppliers.find((item) => item.id === entry.supplierId);
+        if (!supplier) return;
+        const product = supplier.products.find((item) => item.id === entry.supplierProductId);
+        const current = map.get(supplier.id) || {
+          supplier,
+          lotNumbers: new Set<string>(),
+          contributions: new Set<string>(),
+        };
+        current.lotNumbers.add(lot.lotNumber);
+        current.contributions.add(`${product?.name || entry.notes || 'Aporte'} · ${labelForCategory(entry.stage)}`);
+        map.set(supplier.id, current);
+      });
+      return map;
+    }, new Map<string, { supplier: Supplier; lotNumbers: Set<string>; contributions: Set<string> }>())
+      .values(),
   );
   const selectedProductDocumentCount = selectedProductLots.reduce(
     (total, lot) => (
@@ -774,14 +782,11 @@ export default function TraceabilityDossierPage() {
       return;
     }
     const now = new Date().toISOString();
-    const linkedProduct: SupplierProduct | null = activeProductKey && selectedProduct
-      ? buildLinkedProductForActiveProduct()
-      : null;
     const nextSupplier: Supplier = {
       id: uid('sup'),
       ...supplierDraft,
-      categories: linkedProduct ? [linkedProduct.category] : [],
-      products: linkedProduct ? [linkedProduct] : [],
+      categories: [],
+      products: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -791,12 +796,8 @@ export default function TraceabilityDossierPage() {
     });
     setSelectedSupplierId(nextSupplier.id);
     setExpandedSupplierIds((prev) => Array.from(new Set([...prev, nextSupplier.id])));
-    if (linkedProduct) {
-      setExpandedProductIds((prev) => Array.from(new Set([...prev, productKeyFor(nextSupplier.id, linkedProduct.id)])));
-    }
     setEntryDraft((prev) => ({ ...prev, supplierId: nextSupplier.id }));
     setSupplierDraft(emptySupplierFormDraft());
-    setProductDraft(emptyProductFormDraft());
     emitSuccessFeedback('Proveedor creado.');
   };
 
@@ -1773,23 +1774,6 @@ export default function TraceabilityDossierPage() {
       headStyles: { fillColor: [15, 118, 110] },
     });
 
-    autoTable(doc, {
-      startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [['Aporte/suministro', 'Producto(s) maestro', 'Referencia', 'Tipo', 'Unidad/formato', 'Fichas', 'Certificados base']],
-      body: supplier.products.map((product) => [
-        product.name,
-        product.finalProductCodes.map((code) => PRODUCT_LABELS_BY_CODE[code] || code).join(', ') || '-',
-        product.reference || '-',
-        labelForCategory(product.category),
-        product.unit || '-',
-        String(product.technicalSheets.length),
-        String(product.certificates.length),
-      ]),
-      theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 4 },
-      headStyles: { fillColor: [31, 41, 55] },
-    });
-
     if (supplier.contracts.length > 0) {
       autoTable(doc, {
         startY: (doc as any).lastAutoTable.finalY + 16,
@@ -1812,7 +1796,7 @@ export default function TraceabilityDossierPage() {
           <p className="text-xs font-black uppercase tracking-[0.22em] text-teal-700">Centro de mando / Operación</p>
           <h1 className="mt-1 text-2xl font-black text-slate-950">Dossier trazabilidad</h1>
           <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-600">
-            Elige un producto maestro, vincula sus proveedores/etapas y crea un único lote final con albaranes, facturas, microbiología y documentos.
+            Crea proveedores en una bolsa general y después entra a cada producto maestro para dar de alta sus lotes con los proveedores que correspondan.
           </p>
           <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <summary className="cursor-pointer text-sm font-black text-slate-900">FAQ rápido</summary>
@@ -1825,13 +1809,66 @@ export default function TraceabilityDossierPage() {
           </details>
         </div>
 
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Bolsa general</p>
+              <h2 className="mt-1 text-xl font-black text-slate-950">Proveedores independientes</h2>
+              <p className="mt-1 text-sm font-semibold text-slate-600">
+                Da de alta proveedores una vez. Luego podrás asociarlos a uno o varios lotes dentro de cualquier producto.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGuidedProviderPanel((prev) => !prev)}
+              className="inline-flex items-center justify-between gap-3 rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-left text-sm font-black text-teal-950 shadow-sm hover:bg-teal-100"
+            >
+              <span className="inline-flex items-center gap-2">
+                <Building2 size={18} />
+                Crear proveedor
+              </span>
+              {showGuidedProviderPanel ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+            </button>
+          </div>
+
+          {showGuidedProviderPanel && (
+            <div className="mt-3 rounded-2xl border border-teal-200 bg-teal-50/60 p-3">
+              <p className="text-xs font-black uppercase tracking-widest text-teal-700">Datos del proveedor</p>
+              <div className="mt-2 grid gap-2 md:grid-cols-4">
+                <input value={supplierDraft.name} onChange={(e) => updateSupplierDraft('name', e.target.value)} placeholder="Nombre proveedor" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <input value={supplierDraft.fiscalName} onChange={(e) => updateSupplierDraft('fiscalName', e.target.value)} placeholder="Razón social" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <input value={supplierDraft.taxId} onChange={(e) => updateSupplierDraft('taxId', e.target.value)} placeholder="NIF/CIF" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <input value={supplierDraft.sanitaryRegister} onChange={(e) => updateSupplierDraft('sanitaryRegister', e.target.value)} placeholder="Registro sanitario" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <input value={supplierDraft.phone} onChange={(e) => updateSupplierDraft('phone', e.target.value)} placeholder="Teléfono" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <input value={supplierDraft.email} onChange={(e) => updateSupplierDraft('email', e.target.value)} placeholder="Email" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
+                <textarea value={supplierDraft.address} onChange={(e) => updateSupplierDraft('address', e.target.value)} placeholder="Dirección" className="min-h-[40px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
+                <textarea value={supplierDraft.notes} onChange={(e) => updateSupplierDraft('notes', e.target.value)} placeholder="Notas del proveedor" className="min-h-[58px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-4" />
+                <div className="rounded-xl border border-slate-100 bg-white p-3 md:col-span-4">
+                  <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Contrato Solaris con proveedor</p>
+                  <FileUploader
+                    folderPath="traceability/supplier-contracts"
+                    existingFiles={supplierDraft.contracts}
+                    onUploadComplete={(files) => setSupplierDraft((prev) => ({ ...prev, contracts: files }))}
+                    compact
+                    maxSizeMB={20}
+                  />
+                </div>
+              </div>
+              <button type="button" onClick={addSupplier} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800">
+                <Plus size={16} />
+                Crear proveedor
+              </button>
+            </div>
+          )}
+        </section>
+
         <section className="rounded-2xl border border-teal-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.2em] text-teal-700">Vista guiada por producto</p>
-              <h2 className="mt-1 text-xl font-black text-slate-950">Producto → proveedores → recepciones/lotes</h2>
+              <h2 className="mt-1 text-xl font-black text-slate-950">Productos → lotes → proveedores asociados</h2>
               <p className="mt-1 text-sm font-semibold text-slate-600">
-                Elige un producto maestro y trabaja desde ahí. Los suministros nuevos quedan asociados a ese producto.
+                Elige un producto maestro, crea sus lotes y vincula los proveedores que participaron en cada lote.
               </p>
             </div>
             {selectedProduct && (
@@ -1845,11 +1882,9 @@ export default function TraceabilityDossierPage() {
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {productCards.map((product) => {
               const isActive = product.key === activeProductKey;
-              const lotCount = lots.filter((lot) => productKey(lot.productName) === product.key).length;
-              const pairCount = suppliers.reduce(
-                (total, supplier) => total + supplier.products.filter((item) => item.finalProductCodes.includes(product.key)).length,
-                0,
-              );
+              const productLots = lots.filter((lot) => productKey(lot.productName) === product.key);
+              const lotCount = productLots.length;
+              const supplierCount = new Set(productLots.flatMap((lot) => lot.entries.map((entry) => entry.supplierId).filter(Boolean))).size;
               const validColor = /^#[0-9a-f]{6}$/i.test(product.color);
               return (
                 <button
@@ -1867,7 +1902,7 @@ export default function TraceabilityDossierPage() {
                   <span className={`block text-[11px] font-black uppercase tracking-widest ${isActive ? 'text-teal-100' : 'text-slate-500'}`}>{product.mode}</span>
                   <span className="mt-1 block text-lg font-black">{product.label}</span>
                   <span className={`mt-1 block text-xs font-bold ${isActive ? 'text-slate-200' : 'text-slate-500'}`}>
-                    {pairCount} suministro(s) · {lotCount} lote(s)
+                    {supplierCount} proveedor(es) · {lotCount} lote(s)
                   </span>
                 </button>
               );
@@ -1876,12 +1911,11 @@ export default function TraceabilityDossierPage() {
 
           {selectedProduct && (
             <div className="mt-3 space-y-3">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setShowGuidedLotPanel((prev) => !prev);
-                    setShowGuidedProviderPanel(false);
                     setLotDraft((prev) => ({
                       ...prev,
                       productName: prev.productName || selectedProduct.label,
@@ -1897,110 +1931,7 @@ export default function TraceabilityDossierPage() {
                   </span>
                   {showGuidedLotPanel ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowGuidedProviderPanel((prev) => !prev);
-                    setShowGuidedLotPanel(false);
-                  }}
-                  className="inline-flex items-center justify-between rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-left text-sm font-black text-teal-950 shadow-sm hover:bg-teal-100"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <Building2 size={18} />
-                    Dar de alta proveedor
-                  </span>
-                  {showGuidedProviderPanel ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                </button>
               </div>
-
-              {showGuidedProviderPanel && (
-                <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-3">
-                  <div className="rounded-xl border border-teal-100 bg-white p-3">
-                    <p className="text-xs font-black uppercase tracking-widest text-teal-700">Qué aporta este proveedor a {selectedProduct.label}</p>
-                    <div className="mt-2 grid gap-2 md:grid-cols-4">
-                      <input
-                        value={productDraft.name}
-                        onChange={(e) => setProductDraft((prev) => ({ ...prev, name: e.target.value }))}
-                        placeholder="Ej. viales, mezcla líquida, cartonaje"
-                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
-                      />
-                      <input
-                        value={productDraft.reference}
-                        onChange={(e) => setProductDraft((prev) => ({ ...prev, reference: e.target.value }))}
-                        placeholder="Referencia comercial"
-                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
-                      />
-                        <select
-                          value={productDraft.category}
-                          onChange={(e) => setProductDraft((prev) => ({ ...prev, category: e.target.value as SupplierCategory }))}
-                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
-                          aria-label="Tipo de aporte"
-                        >
-                          {CATEGORY_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
-                        </select>
-                      <input
-                        value={productDraft.unit}
-                        onChange={(e) => setProductDraft((prev) => ({ ...prev, unit: e.target.value }))}
-                        placeholder={`Unidad: ${selectedProductQuantityUnit}, litros...`}
-                        className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400"
-                      />
-                      <textarea
-                        value={productDraft.notes}
-                        onChange={(e) => setProductDraft((prev) => ({ ...prev, notes: e.target.value }))}
-                        placeholder="Notas del suministro o etapa"
-                        className="min-h-[44px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-4"
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-3 lg:grid-cols-[0.75fr_1.25fr]">
-                    <div className="rounded-xl border border-teal-100 bg-white p-3">
-                      <p className="text-xs font-black uppercase tracking-widest text-teal-700">Asociar proveedor existente</p>
-                      <label className="mt-2 grid gap-1">
-                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-500">Proveedor ya dado de alta</span>
-                        <select
-                          value=""
-                          onChange={(event) => {
-                            if (event.target.value) associateExistingSupplierToProduct(event.target.value);
-                          }}
-                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-teal-400"
-                        >
-                          <option value="">Elegir proveedor...</option>
-                          {suppliers.map((supplier) => (
-                            <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="rounded-xl border border-teal-100 bg-white p-3">
-                      <p className="text-xs font-black uppercase tracking-widest text-teal-700">Crear proveedor nuevo</p>
-                      <div className="mt-2 grid gap-2 md:grid-cols-4">
-                        <input value={supplierDraft.name} onChange={(e) => updateSupplierDraft('name', e.target.value)} placeholder="Nombre proveedor" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <input value={supplierDraft.fiscalName} onChange={(e) => updateSupplierDraft('fiscalName', e.target.value)} placeholder="Razón social" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <input value={supplierDraft.taxId} onChange={(e) => updateSupplierDraft('taxId', e.target.value)} placeholder="NIF/CIF" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <input value={supplierDraft.sanitaryRegister} onChange={(e) => updateSupplierDraft('sanitaryRegister', e.target.value)} placeholder="Registro sanitario" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <input value={supplierDraft.phone} onChange={(e) => updateSupplierDraft('phone', e.target.value)} placeholder="Teléfono" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <input value={supplierDraft.email} onChange={(e) => updateSupplierDraft('email', e.target.value)} placeholder="Email" className="h-10 rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-teal-400" />
-                        <textarea value={supplierDraft.address} onChange={(e) => updateSupplierDraft('address', e.target.value)} placeholder="Dirección" className="min-h-[40px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none focus:border-teal-400 md:col-span-2" />
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 md:col-span-4">
-                          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Contrato Solaris con proveedor</p>
-                          <FileUploader
-                            folderPath="traceability/supplier-contracts"
-                            existingFiles={supplierDraft.contracts}
-                            onUploadComplete={(files) => setSupplierDraft((prev) => ({ ...prev, contracts: files }))}
-                            compact
-                            maxSizeMB={20}
-                          />
-                        </div>
-                      </div>
-                      <button type="button" onClick={addSupplier} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-slate-800">
-                        <Plus size={16} />
-                        Crear y asociar a {selectedProduct.label}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {showGuidedLotPanel && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -2299,18 +2230,18 @@ export default function TraceabilityDossierPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Proveedores vinculados</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Proveedores usados en lotes</p>
                     <h3 className="text-lg font-black text-slate-950">{selectedProduct.label}</h3>
                   </div>
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-teal-700">{selectedProductSuppliers.length}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-teal-700">{selectedProductSupplierSummary.length}</span>
                 </div>
                 <div className="mt-3 max-h-[360px] space-y-2 overflow-y-auto pr-1">
-                  {selectedProductSupplierPairs.map(({ supplier, product }) => (
-                    <div key={`${supplier.id}-${product.id}`} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                  {selectedProductSupplierSummary.map(({ supplier, lotNumbers, contributions }) => (
+                    <div key={supplier.id} className="rounded-xl border border-white bg-white p-3 shadow-sm">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black text-slate-950">{supplier.name}</p>
-                          <p className="mt-0.5 text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'}</p>
+                          <p className="mt-0.5 text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'} · {lotNumbers.size} lote(s)</p>
                         </div>
                         <button
                           type="button"
@@ -2321,23 +2252,22 @@ export default function TraceabilityDossierPage() {
                         </button>
                       </div>
                       <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-500">Suministro</p>
-                        <p className="text-sm font-bold text-slate-800">{product.name}</p>
-                        <p className="text-xs font-semibold text-slate-500">{labelForCategory(product.category)} · {product.reference || 'Sin ref.'} · {product.unit || selectedProductQuantityUnit}</p>
+                        <p className="text-xs font-black uppercase tracking-widest text-slate-500">Aportes registrados</p>
+                        <p className="text-sm font-bold text-slate-800">{Array.from(contributions).join(', ')}</p>
+                        <p className="text-xs font-semibold text-slate-500">Lotes: {Array.from(lotNumbers).join(', ')}</p>
                       </div>
                     </div>
                   ))}
-                  {selectedProductSupplierPairs.length === 0 && (
+                  {selectedProductSupplierSummary.length === 0 && (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-center">
                       <UserRound size={20} className="mx-auto text-slate-400" />
-                      <p className="mt-2 text-sm font-bold text-slate-600">Todavía no hay proveedores asociados a este producto.</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">Usa “Dar de alta proveedor” para crear uno o asociar uno existente.</p>
+                      <p className="mt-2 text-sm font-bold text-slate-600">Todavía no hay proveedores usados en lotes de este producto.</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Crea un lote y asocia uno o varios proveedores desde la bolsa general.</p>
                     </div>
                   )}
                 </div>
               </div>
 
-              {!showGuidedProviderPanel && (
               <div className="rounded-2xl border border-slate-200 bg-white p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2388,7 +2318,6 @@ export default function TraceabilityDossierPage() {
                   )}
                 </div>
               </div>
-              )}
               </div>
             </div>
           )}
@@ -2409,14 +2338,14 @@ export default function TraceabilityDossierPage() {
           <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Carpetas editables por proveedor</p>
-              <p className="text-sm font-semibold text-slate-600">Aquí editas datos, documentos y lotes con todo el detalle.</p>
+              <p className="text-sm font-semibold text-slate-600">Aquí editas datos legales, contacto, notas y contratos generales.</p>
             </div>
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <Search size={15} className="text-slate-400" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Buscar lote o producto"
+                placeholder="Buscar proveedor"
                 className="h-8 w-48 bg-transparent text-sm font-semibold outline-none"
               />
             </div>
@@ -2443,7 +2372,7 @@ export default function TraceabilityDossierPage() {
                         {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                         {supplier.name}
                       </span>
-                      <span className="mt-1 block text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'} · {supplier.products.length} producto(s) · {relatedLots.length} lote(s)</span>
+                      <span className="mt-1 block text-xs font-semibold text-slate-500">{supplier.sanitaryRegister || 'Sin registro sanitario'} · {supplier.contracts.length} contrato(s) · usado en {relatedLots.length} lote(s)</span>
                       <span className="mt-1 block text-xs font-semibold text-slate-500">{supplier.phone || 'Sin teléfono'} · {supplier.email || 'Sin email'}</span>
                     </span>
                   </button>
