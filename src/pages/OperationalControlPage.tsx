@@ -3159,6 +3159,48 @@ export default function OperationalControlPage() {
     emitSuccessFeedback(markReviewed ? 'Sección marcada como revisada.' : 'Sección guardada correctamente.');
   };
 
+  const unreviewProcess = () => {
+    if (!canEditActiveProcess) return;
+    const now = new Date().toISOString();
+    const nextStatus: StatusKey = draftStatus === 'correcto' ? 'revision' : draftStatus;
+    setState((prev) => {
+      const base = safeState(prev);
+      const existing = getRecord(base.records, selectedProcess, year, month);
+      const participantProgress = Object.fromEntries(
+        Object.entries(existing?.participantProgress || {}).map(([key, progress]) => {
+          const { reviewedAt, reviewedBy, reviewedByName, ...rest } = progress;
+          return [key, rest];
+        }),
+      );
+      const nextRecord: ProcessRecord = {
+        id: existing?.id || createId(),
+        process: selectedProcess,
+        year,
+        month,
+        status: nextStatus,
+        reviewed: false,
+        fields: existing?.fields || draftFields,
+        checklist: existing?.checklist || draftChecklist,
+        attachments: existing?.attachments || draftAttachments,
+        participantProgress,
+        updatedAt: now,
+        updatedBy: currentUser?.id || '',
+        updatedByName: currentUser?.name || currentUser?.email || '',
+      };
+      const key = getRecordKey(selectedProcess, year, month);
+      return {
+        ...base,
+        records: [
+          ...base.records.filter((record) => getRecordKey(record.process, record.year, record.month) !== key),
+          nextRecord,
+        ],
+      };
+    });
+    setDraftStatus(nextStatus);
+    setDraftReviewed(false);
+    emitSuccessFeedback('Se quitó el completado/revisado de esta sección.');
+  };
+
   const closeMonth = () => {
     if (!isAdmin || isMonthClosed) return;
     const confirmed = window.confirm(`¿Cerrar ${monthLabel} de ${year}? Se guardará una foto de cierre del mes.`);
@@ -3387,6 +3429,7 @@ export default function OperationalControlPage() {
   const activeProgress = progressForLabels(currentRecord, activeDefinition);
   const activeReviewedCount = activeProgress.filter((item) => !!item.reviewedAt).length;
   const activeSavedCount = activeProgress.filter((item) => !!item.savedAt).length;
+  const activeHasReview = !!currentRecord?.reviewed || draftReviewed || activeReviewedCount > 0;
 
   return (
     <main className="min-h-screen bg-[#f7f3ec] px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
@@ -3590,6 +3633,17 @@ export default function OperationalControlPage() {
                       <Check size={17} />
                       Marcar revisado
                     </button>
+                    {activeHasReview && (
+                      <button
+                        type="button"
+                        onClick={unreviewProcess}
+                        disabled={!canEditActiveProcess}
+                        className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-black text-amber-800 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RotateCcw size={17} />
+                        Quitar completado
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
