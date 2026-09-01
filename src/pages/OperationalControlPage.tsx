@@ -925,12 +925,22 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
     },
     summary: 'Comparación de salidas por venta entre Zoho y Lunaris por producto, lote e inventario.',
     fields: [
-      { id: 'ventas_mes_lunaris', label: 'Cantidad ventas/salidas por venta del mes', type: 'number' },
-      { id: 'traspasos_mes_lunaris', label: 'Cantidad traspasos del mes', type: 'number' },
-      { id: 'total_salidas_mes_lunaris', label: 'Total salidas del mes', type: 'number' },
-      { id: 'devoluciones_mes_lunaris', label: 'Devoluciones o rectificativas del mes' },
+      { id: 'ventas_mes_lunaris', label: 'Ventas/salidas por venta del mes en Lunaris', type: 'number' },
+      { id: 'ventas_mes_zoho', label: 'Ventas/salidas por venta del mes en Zoho', type: 'number' },
+      { id: 'diferencia_ventas_mes', label: 'Diferencia ventas Zoho - Lunaris', type: 'number' },
+      { id: 'traspasos_mes_lunaris', label: 'Traspasos del mes en Lunaris', type: 'number' },
+      { id: 'traspasos_mes_zoho', label: 'Traspasos del mes en Zoho', type: 'number' },
+      { id: 'diferencia_traspasos_mes', label: 'Diferencia traspasos Zoho - Lunaris', type: 'number' },
+      { id: 'total_salidas_mes_lunaris', label: 'Total salidas del mes en Lunaris', type: 'number' },
+      { id: 'total_salidas_mes_zoho', label: 'Total salidas del mes en Zoho', type: 'number' },
+      { id: 'diferencia_total_salidas_mes', label: 'Diferencia total salidas Zoho - Lunaris', type: 'number' },
+      { id: 'devoluciones_mes_lunaris', label: 'Devoluciones/rectificativas en Lunaris' },
+      { id: 'devoluciones_mes_zoho', label: 'Devoluciones/rectificativas en Zoho' },
+      { id: 'diferencia_devoluciones_mes', label: 'Diferencia devoluciones Zoho - Lunaris' },
       { id: 'ventas_por_bodega_lunaris', label: 'Ventas por bodega en Lunaris', type: 'textarea' },
+      { id: 'ventas_por_bodega_zoho', label: 'Ventas por bodega en Zoho', type: 'textarea' },
       { id: 'traspasos_por_bodega_lunaris', label: 'Traspasos por bodega en Lunaris', type: 'textarea' },
+      { id: 'traspasos_por_bodega_zoho', label: 'Traspasos por bodega en Zoho', type: 'textarea' },
       { id: 'estado_ventas_salidas', label: 'Estado ventas vs salidas', type: 'status' },
       { id: 'comentario_ventas', label: 'Comentario de ventas/salidas', type: 'textarea' },
     ],
@@ -2404,15 +2414,39 @@ export default function OperationalControlPage() {
   const automaticFieldValues = useMemo(() => {
     const salesTotal = salesExitSummaryRows.reduce((total, row) => total + row.quantity, 0);
     const transferTotal = transferSummaryRows.reduce((total, row) => total + (row.sent || row.received || row.lunaris), 0);
-    return {
+    const totalExits = salesTotal + transferTotal;
+    const salesZoho = parseControlNumber(draftFields.ventas_mes_zoho || '');
+    const transferZoho = parseControlNumber(draftFields.traspasos_mes_zoho || '');
+    const totalZoho = parseControlNumber(draftFields.total_salidas_mes_zoho || '');
+    const comparableTotalZoho = totalZoho ?? (
+      salesZoho !== null && transferZoho !== null ? salesZoho + transferZoho : null
+    );
+    const parseReturnSummary = (value: string) => {
+      const numbers = String(value || '')
+        .match(/-?\d+(?:[.,]\d+)?/g)
+        ?.map((item) => parseControlNumber(item))
+        .filter((item): item is number => item !== null) || [];
+      return { count: numbers[0] ?? null, quantity: numbers[1] ?? null };
+    };
+    const zohoReturns = parseReturnSummary(draftFields.devoluciones_mes_zoho || '');
+    const returnDifferenceParts = [
+      zohoReturns.count !== null ? `${formatControlQuantity(zohoReturns.count - returnSummary.count, 0)} mov.` : '',
+      zohoReturns.quantity !== null ? `${formatControlQuantity(zohoReturns.quantity - returnSummary.quantity)} unidades` : '',
+    ].filter(Boolean);
+    const values: Record<string, string> = {
       ventas_mes_lunaris: String(salesTotal),
       traspasos_mes_lunaris: String(transferTotal),
-      total_salidas_mes_lunaris: String(salesTotal + transferTotal),
+      total_salidas_mes_lunaris: String(totalExits),
       devoluciones_mes_lunaris: returnSummary.count > 0 ? `${returnSummary.count} mov. / ${returnSummary.quantity} unidades` : '0',
       ventas_por_bodega_lunaris: salesTotalsByWarehouse.join('\n') || 'Sin ventas/salidas por venta registradas.',
       traspasos_por_bodega_lunaris: transferTotalsByWarehouse.join('\n') || 'Sin traspasos registrados.',
-    } as Record<string, string>;
-  }, [returnSummary, salesExitSummaryRows, salesTotalsByWarehouse, transferSummaryRows, transferTotalsByWarehouse]);
+    };
+    if (salesZoho !== null) values.diferencia_ventas_mes = String(Math.round(salesZoho - salesTotal));
+    if (transferZoho !== null) values.diferencia_traspasos_mes = String(Math.round(transferZoho - transferTotal));
+    if (comparableTotalZoho !== null) values.diferencia_total_salidas_mes = String(Math.round(comparableTotalZoho - totalExits));
+    if (returnDifferenceParts.length > 0) values.diferencia_devoluciones_mes = returnDifferenceParts.join(' / ');
+    return values;
+  }, [draftFields, returnSummary, salesExitSummaryRows, salesTotalsByWarehouse, transferSummaryRows, transferTotalsByWarehouse]);
   const albaranDamageEvents = useMemo(() => {
     const rows: Array<{
       id: string;
