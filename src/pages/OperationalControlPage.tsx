@@ -557,6 +557,22 @@ const isTransferLikeMovement = (movement: InventoryMovementRow) => {
   ].filter(Boolean).join(' '));
   return haystack.includes('traspas') || haystack.includes('transfer') || haystack.includes('traslado');
 };
+const transferOriginFromNotes = (movement: InventoryMovementRow) => {
+  const notes = String((movement as any).notas || '');
+  const match = notes.match(/desde\s+([^|]+)/i);
+  return formatInventoryWarehouseLabel(match?.[1] || '').trim();
+};
+const isIncomingTransferMovement = (movement: InventoryMovementRow) => {
+  const type = normalize(String(movement.tipo_movimiento || '')).replace(/[\s-]+/g, '_');
+  const source = normalize(String((movement as any).source || ''));
+  const notes = normalize(String((movement as any).notas || ''));
+  return (
+    type.includes('entrada_traspas')
+    || type.includes('entrada_transfer')
+    || source.includes('auto_in')
+    || notes.includes('auto entrada por traspaso')
+  );
+};
 const isMonthlyOutputMovement = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
   if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
   if (!movementDateInMonth(movement, targetYear, targetMonth)) return false;
@@ -1490,19 +1506,7 @@ function serializeManualOverrideKeys(keys: Set<string>) {
   return JSON.stringify(Array.from(keys).sort());
 }
 
-function shouldForceAutomaticTableValue(tableId: string, column: string) {
-  const normalizedColumn = normalize(column);
-  if (!AUTOMATIC_DATA_TABLE_IDS.has(tableId)) return false;
-  if (['producto', 'producto ensamblado', 'lote', 'bodega', 'inventario', 'bodega origen', 'bodega destino'].includes(normalizedColumn)) return true;
-  if (normalizedColumn.includes('lunaris')) return true;
-  if (normalizedColumn.includes('cantidad registrada')) return true;
-  if (normalizedColumn.includes('cantidad ensamblada')) return true;
-  if (normalizedColumn.includes('cantidad danada') || normalizedColumn.includes('danados')) return true;
-  if (normalizedColumn.includes('perdida') || normalizedColumn.includes('total danados')) return true;
-  if (normalizedColumn.includes('cantidad albaran') || normalizedColumn.includes('cantidad caja')) return true;
-  if (normalizedColumn.includes('fecha finalizacion')) return true;
-  if (normalizedColumn.includes('movimiento lunaris')) return true;
-  if (normalizedColumn.includes('informe albaranes')) return true;
+function shouldForceAutomaticTableValue(_tableId: string, _column: string) {
   return false;
 }
 
@@ -1551,10 +1555,8 @@ function buildEntradasSummary(table: TableDefinition, rows: string[], fields: Re
   };
 }
 
-function canUserEditProcess(definition: ProcessDefinition, currentUserName: string, isAdmin: boolean) {
-  if (isAdmin) return true;
-  if (definition.key === 'cierre_comun') return false;
-  return definition.users.some((userName) => currentUserName.includes(userName));
+function canUserEditProcess(_definition: ProcessDefinition, _currentUserName: string, _isAdmin: boolean) {
+  return true;
 }
 
 function splitResponsibleLabels(definition: ProcessDefinition) {
@@ -1950,7 +1952,7 @@ export default function OperationalControlPage() {
   const [recoveringAttachments, setRecoveringAttachments] = useState(false);
 
   const monthLabel = MONTHS.find((item) => item.value === month)?.label || '';
-  const canEditActiveProcess = canUserEditProcess(activeDefinition, currentUserName, isAdmin) && !isMonthClosed;
+  const canEditActiveProcess = canUserEditProcess(activeDefinition, currentUserName, isAdmin);
   const recordsForMonth = useMemo(
     () => PROCESS_ORDER.map((process) => getRecord(records, process, year, month)).filter(Boolean) as ProcessRecord[],
     [records, year, month],
@@ -2150,53 +2152,63 @@ export default function OperationalControlPage() {
       count: number;
       sources: string[];
     }>();
-    [...(canetMovements || []), ...(huarteMovements || [])]
+    const registerTransferMovement = (movement: InventoryMovementRow, inventorySource: string) => {
+      const product = operationalProductCode(movement.producto);
+      const lot = operationalLotCode(movement.lote);
+      if (!product || !lot) return;
+      const signed = operationalSignedQuantity(movement);
+      const quantity = Math.abs(signed || 0);
+      if (quantity <= 0) return;
+      const isIncoming = isIncomingTransferMovement(movement);
+      const rawWarehouse = formatInventoryWarehouseLabel((movement as any).bodega || '').trim();
+      const rawDestination = formatInventoryWarehouseLabel((movement as any).destino || '').trim();
+      const rawClient = formatInventoryWarehouseLabel((movement as any).cliente || '').trim();
+      const originFromNotes = transferOriginFromNotes(movement);
+      const incomingOrigin =
+        originFromNotes
+        || (rawClient && rawClient !== rawWarehouse ? rawClient : '')
+        || (rawDestination && rawDestination !== rawWarehouse ? rawDestination : '');
+      const outgoingDestination =
+        (rawDestination && rawDestination !== rawWarehouse ? rawDestination : '')
+        || (rawClient && rawClient !== rawWarehouse ? rawClient : '');
+      const origin = isIncoming ? (incomingOrigin || '-') : (rawWarehouse || inventorySource || '-');
+      const destination = isIncoming ? (rawWarehouse || rawDestination || '-') : (outgoingDestination || '-');
+      const key = `${product}::${lot}::${origin}::${destination}`;
+      const existing = map.get(key) || {
+        product,
+        lot,
+        origin,
+        destination,
+        sent: 0,
+        received: 0,
+        lunaris: 0,
+        count: 0,
+        sources: [],
+      };
+      if (isIncoming) {
+        existing.received += quantity;
+      } else {
+        existing.sent += quantity;
+      }
+      existing.lunaris = Math.max(existing.sent, existing.received);
+      existing.count += 1;
+      existing.sources.push([
+        `ID ${(movement as any).id || '-'}`,
+        String((movement as any).fecha || '-'),
+        String((movement as any).tipo_movimiento || 'Traspaso'),
+        inventorySource,
+        `${origin || '-'} -> ${destination || '-'}`,
+      ].join(' · '));
+      map.set(key, existing);
+    };
+    (canetMovements || [])
       .filter((movement) => isTransferLikeMovement(movement))
       .filter((movement) => movementDateInMonth(movement, year, month))
-      .forEach((movement) => {
-        const product = operationalProductCode(movement.producto);
-        const lot = operationalLotCode(movement.lote);
-        if (!product || !lot) return;
-        const signed = getInventorySignedQuantity(movement as any);
-        const quantity = Math.abs(signed || 0);
-        if (quantity <= 0) return;
-        const movementType = normalize(String(movement.tipo_movimiento || ''));
-        const isIncoming = (movementType.includes('entrada') && (movementType.includes('traspas') || movementType.includes('transfer') || movementType.includes('traslado'))) || signed > 0;
-        const rawWarehouse = formatInventoryWarehouseLabel((movement as any).bodega || '').trim();
-        const rawCounterparty = formatInventoryWarehouseLabel(
-          isIncoming
-            ? ((movement as any).cliente || (movement as any).destino || '')
-            : ((movement as any).destino || (movement as any).cliente || ''),
-        ).trim();
-        const origin = isIncoming ? (rawCounterparty || '-') : (rawWarehouse || '-');
-        const destination = isIncoming ? (rawWarehouse || '-') : (rawCounterparty || '-');
-        const key = `${product}::${lot}::${origin}::${destination}`;
-        const existing = map.get(key) || {
-          product,
-          lot,
-          origin,
-          destination,
-          sent: 0,
-          received: 0,
-          lunaris: 0,
-          count: 0,
-          sources: [],
-        };
-        if (isIncoming) {
-          existing.received += quantity;
-        } else {
-          existing.sent += quantity;
-        }
-        existing.lunaris = Math.max(existing.sent, existing.received);
-        existing.count += 1;
-        existing.sources.push([
-          `ID ${(movement as any).id || '-'}`,
-          String((movement as any).fecha || '-'),
-          String((movement as any).tipo_movimiento || 'Traspaso'),
-          `${origin || '-'} -> ${destination || '-'}`,
-        ].join(' · '));
-        map.set(key, existing);
-      });
+      .forEach((movement) => registerTransferMovement(movement, 'Canet'));
+    (huarteMovements || [])
+      .filter((movement) => isTransferLikeMovement(movement))
+      .filter((movement) => movementDateInMonth(movement, year, month))
+      .forEach((movement) => registerTransferMovement(movement, 'Huarte'));
     return Array.from(map.values()).sort((a, b) => (
       a.product.localeCompare(b.product, 'es')
       || a.lot.localeCompare(b.lot, 'es')
@@ -3074,10 +3086,16 @@ export default function OperationalControlPage() {
         delete cleanedExistingFields[key];
       });
       const persistedOverrideKeys = new Set(draftManualOverrideKeys);
-      automaticKeys.forEach((key) => persistedOverrideKeys.delete(key));
       const manualDraftFields = Object.fromEntries(
         Object.entries(draftFields).filter(([key]) => !automaticKeys.has(key) || persistedOverrideKeys.has(key)),
       );
+      const nextFields = {
+        ...cleanedExistingFields,
+        ...automaticFieldValues,
+        ...automaticTableValues,
+        ...manualDraftFields,
+        [MANUAL_OVERRIDE_KEYS_FIELD]: serializeManualOverrideKeys(persistedOverrideKeys),
+      };
       const nextRecord: ProcessRecord = {
         id: existing?.id || createId(),
         process: selectedProcess,
@@ -3085,12 +3103,7 @@ export default function OperationalControlPage() {
         month,
         status: nextStatus,
         reviewed: nextReviewed,
-        fields: mergeFields(cleanedExistingFields, {
-          ...automaticFieldValues,
-          ...automaticTableValues,
-          ...manualDraftFields,
-          [MANUAL_OVERRIDE_KEYS_FIELD]: serializeManualOverrideKeys(persistedOverrideKeys),
-        }),
+        fields: nextFields,
         checklist: mergeChecklist(existing?.checklist, draftChecklist),
         attachments: mergeAttachmentsByField(existing?.attachments, draftAttachments),
         participantProgress,
@@ -3114,7 +3127,7 @@ export default function OperationalControlPage() {
 
   const closeMonth = () => {
     if (!isAdmin || isMonthClosed) return;
-    const confirmed = window.confirm(`¿Cerrar ${monthLabel} de ${year}? El mes quedará bloqueado en modo lectura.`);
+    const confirmed = window.confirm(`¿Cerrar ${monthLabel} de ${year}? Se guardará una foto de cierre del mes.`);
     if (!confirmed) return;
     const now = new Date().toISOString();
     setState((prev) => {
@@ -3573,7 +3586,7 @@ export default function OperationalControlPage() {
                 )}
                 {isMonthClosed && (
                   <div className="mt-3 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700">
-                    Este mes está cerrado. Los datos y adjuntos quedan en lectura hasta que administración lo reabra.
+                    Este mes está cerrado como referencia de cierre. Puedes guardar correcciones si hace falta; administración puede reabrirlo para cambiar el estado del cierre.
                   </div>
                 )}
                 {!isMonthClosed && (
@@ -4098,7 +4111,7 @@ export default function OperationalControlPage() {
                         <p className="text-sm font-semibold text-slate-600">
                           {isMonthClosed
                             ? `Cerrado por ${monthClosure?.closedByName || 'administración'} el ${formatDateTime(monthClosure?.closedAt)}.`
-                            : 'Al cerrar, todas las secciones quedan en modo lectura y los adjuntos se conservan para descarga.'}
+                            : 'Al cerrar, se guarda una foto del mes y los adjuntos se conservan para descarga.'}
                         </p>
                       </div>
                       {isMonthClosed ? (

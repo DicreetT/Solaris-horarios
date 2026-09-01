@@ -215,8 +215,15 @@ export function FileUploader({
             {files.length > 0 && (
                 <div className="grid gap-2">
                     {files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-xl group hover:border-gray-200 transition-colors">
-                            <div className="flex items-center gap-3 overflow-hidden">
+                        <div key={index} className="flex items-center justify-between gap-2 p-3 bg-gray-50 border border-gray-100 rounded-xl group hover:border-gray-200 transition-colors">
+                            <a
+                                href={file.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-lg transition-colors hover:bg-white/70 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                title={`Abrir ${file.name}`}
+                                aria-label={`Abrir ${file.name}`}
+                            >
                                 <div className="p-2 bg-white rounded-lg border border-gray-100 text-gray-500 shrink-0">
                                     {file.type.startsWith('image/') ? <ImageIcon size={16} /> : <FileText size={16} />}
                                 </div>
@@ -224,7 +231,7 @@ export function FileUploader({
                                     <p className="text-sm font-bold text-gray-700 truncate" title={file.name}>{file.name}</p>
                                     <p className="text-xs text-gray-400">{formatSize(file.size)}</p>
                                 </div>
-                            </div>
+                            </a>
                             <div className="flex items-center gap-2">
                                 <a
                                     href={file.url}
