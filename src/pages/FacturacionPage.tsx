@@ -3587,7 +3587,9 @@ export default function FacturacionPage() {
     const isMimedicoDispatch = isMimedicoDispatchOrder(order);
     const transferOrigin = normalizeTransferNode(order.transferOrigin || order.sourceWarehouse || '');
     const transferDestination = normalizeTransferDestination(order.transferDestination || '');
-    const sourceInventory: InventoryBranch = isTransfer
+    const sourceInventory: InventoryBranch = isMimedicoDispatch
+      ? 'canet'
+      : isTransfer
       ? inventoryBranchForTransferNode(transferOrigin, order.inventoryTarget === 'canet' ? 'canet' : 'huarte')
       : order.inventoryTarget === 'canet' ? 'canet' : 'huarte';
     const pending = order.lines.filter((line) => !isKitProduct(sourceInventory, line.productCode) && !clean(line.lote));
@@ -3613,7 +3615,7 @@ export default function FacturacionPage() {
 
     const movementSource = sourceInventory === 'canet' ? canetMovements : huarteMovements;
     const mutation = sourceInventory === 'canet' ? canetMutations.addMovement : huarteMutations.addMovement;
-    const dispatchWarehouse = isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || clean(order.sourceWarehouse).toUpperCase();
+    const dispatchWarehouse = isMimedicoDispatch ? 'CANET' : transferOrigin || clean(order.sourceWarehouse).toUpperCase();
     if (isTransfer && !transferOrigin) {
       alert('Este traspaso necesita una bodega origen. Selecciónala antes de despachar.');
       return;
@@ -3674,7 +3676,7 @@ export default function FacturacionPage() {
               cantidad: part.quantity,
               cantidad_signed: -part.quantity,
               signo: -1,
-              bodega: isTransfer ? (isMimedicoDispatch ? 'MIMEDICO' : transferOrigin || order.sourceWarehouse) : dispatchWarehouse,
+              bodega: isTransfer ? (transferOrigin || order.sourceWarehouse) : dispatchWarehouse,
               cliente: isMimedicoDispatch ? 'MIMEDICO' : isTransfer ? transferDestination || order.customerName : order.customerName,
               destino: isTransfer ? transferDestination : '',
               notas: `${marker} | ${stableMarker} | ${stableDispatchMarker} | Factura ${order.invoiceNumber}${part.isKitComponent ? ` | Kit ${part.sourceProductCode}` : ''}${order.orderNote ? ` | ${order.orderNote}` : ''}`,

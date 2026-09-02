@@ -75,6 +75,31 @@ const cleanInventoryId = (value: unknown): 'canet' | 'huarte' | '' => {
     return '';
 };
 
+const normalizesToMimedicoWarehouse = (value: unknown) => {
+    const text = String(value ?? '')
+        .trim()
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ');
+    return text === 'MIMEDICO' || text === 'MI MEDICO';
+};
+
+const isMimedicoBillingMovementStoredAsWarehouse = (row: InventoryMovementRow) => {
+    if (!normalizesToMimedicoWarehouse(row.bodega)) return false;
+    const type = String(row.tipo_movimiento ?? '').toLowerCase();
+    const source = String(row.source ?? '').toLowerCase();
+    const client = String(row.cliente ?? '').toUpperCase();
+    const notes = String(row.notas ?? '').toUpperCase();
+    const hasMimedicoTrace = normalizesToMimedicoWarehouse(client) || notes.includes('MIMEDICO') || notes.includes('MI MEDICO');
+    const looksLikeBillingDispatch =
+        source.includes('facturacion') ||
+        notes.includes('ORDER:') ||
+        notes.includes('DOC:') ||
+        notes.includes('FACTURA');
+    return type.includes('venta') && hasMimedicoTrace && looksLikeBillingDispatch;
+};
+
 export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const cacheKey = `inventory_movements_cache_${inventoryId}_v1`;
     const readCachedMovements = (): InventoryMovementRow[] => {
@@ -104,6 +129,7 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
     const lastTrustedServerMutationAtRef = useRef<number>(0);
     const pendingUpsertsRef = useRef<Map<number, { row: InventoryMovementRow; at: number }>>(new Map());
     const pendingDeletesRef = useRef<Map<number, number>>(new Map());
+    const mimedicoWarehouseRepairRunningRef = useRef(false);
     const consecutiveEmptyReadsRef = useRef<number>(0);
     const READ_TIMEOUT_MS = 12000;
     const WRITE_TIMEOUT_MS = 45000;
@@ -694,6 +720,42 @@ export function useInventoryMovementsDB(inventoryId: 'canet' | 'huarte') {
         setLastError(describeConnectionError(lastError, `No se pudo actualizar movimiento en ${inventoryId}.`));
         throw lastError;
     }, [getMissingColumn, inventoryId, isTimeoutLikeError, loadMovements, markPendingUpsert, persistMovementsCache, recoverUpdatedAfterTimeout, unwrapMaybeData, withTimeout]);
+
+    useEffect(() => {
+        if (inventoryId !== 'canet') return;
+        if (isLoading) return;
+        if (mimedicoWarehouseRepairRunningRef.current) return;
+
+        const pending = movementsRef.current.filter(isMimedicoBillingMovementStoredAsWarehouse);
+        if (pending.length === 0) return;
+
+        mimedicoWarehouseRepairRunningRef.current = true;
+        let cancelled = false;
+
+        (async () => {
+            try {
+                for (const movement of pending) {
+                    if (cancelled) return;
+                    const notes = String(movement.notas ?? '');
+                    await updateMovement(movement.id, {
+                        bodega: 'CANET',
+                        cliente: 'MIMEDICO',
+                        notas: notes.includes('Mi Médico como cliente')
+                            ? notes
+                            : `${notes}${notes ? ' | ' : ''}Normalizado: Mi Médico como cliente; bodega real CANET`,
+                    });
+                }
+            } catch (error) {
+                console.warn('No se pudo normalizar bodega MIMEDICO en inventario Canet:', error);
+            } finally {
+                mimedicoWarehouseRepairRunningRef.current = false;
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [inventoryId, isLoading, updateMovement]);
 
     const deleteMovement = useCallback(async (id: number) => {
         const commitLocalDelete = () => {
