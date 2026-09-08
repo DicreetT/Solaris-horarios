@@ -204,8 +204,10 @@ type DashboardCashMovement = {
 
 type DailyInventoryControlRow = {
     physicalStock?: string;
+    physicalOk?: boolean;
     sohoStock?: string;
     sohoOk?: boolean;
+    observation?: string;
 };
 
 type DailyControlMovementSnapshot = {
@@ -226,9 +228,11 @@ type DailyControlStockSnapshot = {
     bodega: string;
     lunaris: number;
     physical: string;
+    physicalOk: boolean;
     zoho: string;
     zohoOk: boolean;
     difference: number | null;
+    observation: string;
 };
 
 type DailyInventoryControlReport = {
@@ -1527,6 +1531,7 @@ function Dashboard() {
         let createdEventId: number | undefined = activeDailyInventoryControl?.eventId;
         let createdCalendarEvent: any = null;
         try {
+            await loadLatestCanetMovementsForDailyControl();
             if (!createdEventId) {
                 const event = await createEvent({
                     date_key: dateKey,
@@ -1605,18 +1610,24 @@ function Dashboard() {
         }));
     };
 
+    const loadLatestCanetMovementsForDailyControl = async () => {
+        const { data, error } = await supabase
+            .from('inventory_movements')
+            .select('*')
+            .eq('inventory_id', 'canet')
+            .order('fecha', { ascending: false })
+            .order('id', { ascending: false })
+            .limit(10000);
+        if (error) throw error;
+        const rows = Array.isArray(data) ? data : [];
+        setDailyControlCanetMovementsOverride(rows);
+        return rows;
+    };
+
     const handleRefreshDailyInventoryControl = async () => {
         setDailyInventoryRefreshing(true);
         try {
-            const { data, error } = await supabase
-                .from('inventory_movements')
-                .select('*')
-                .eq('inventory_id', 'canet')
-                .order('fecha', { ascending: false })
-                .order('id', { ascending: false })
-                .limit(10000);
-            if (error) throw error;
-            setDailyControlCanetMovementsOverride(Array.isArray(data) ? data : []);
+            await loadLatestCanetMovementsForDailyControl();
             upsertDailyInventoryControl(inventoryControlDateKey, (existing) => ({
                 ...(existing || buildEmptyDailyControlReport(inventoryControlDateKey)),
                 updatedAt: new Date().toISOString(),
@@ -1640,9 +1651,11 @@ function Dashboard() {
             bodega: row.bodega,
             lunaris: toNum(row.lunaris),
             physical: clean(row.physical),
+            physicalOk: !!row.physicalOk,
             zoho: clean(row.soho),
             zohoOk: !!row.sohoOk,
             difference: clean(row.physical) === '' ? null : toNum(row.physical) - toNum(row.lunaris),
+            observation: clean(row.observation),
         }));
 
         upsertDailyInventoryControl(inventoryControlDateKey, (existing) => ({
@@ -2804,11 +2817,16 @@ function Dashboard() {
                 bodega: row.bodega,
                 lunaris: row.stockTotal,
                 physical: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.physicalStock || '',
+                physicalOk: !!activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.physicalOk,
                 soho: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.sohoStock || '',
                 sohoOk: !!activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.sohoOk,
+                observation: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.observation || '',
             }))
             .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega))
     ), [activeDailyInventoryControl, canetStockRowsWithBodega]);
+    const dailyCustomerRows = useMemo(() => (
+        Array.from(new Set(dailyShipmentRows.map((row) => clean(row.cliente)).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+    ), [dailyShipmentRows]);
     const dailyStockDiffCount = useMemo(() => (
         dailyStockControlRows.filter((row) => {
             if (clean(row.physical) === '') return false;
@@ -5692,7 +5710,7 @@ function Dashboard() {
                                     <div className="grid gap-3 lg:grid-cols-3">
                                         <div className="rounded-xl border border-white bg-white p-3">
                                             <div className="mb-2 flex items-center justify-between gap-2">
-                                                <p className="text-xs font-black uppercase tracking-widest text-slate-600">Envíos y traspasos</p>
+                                                <p className="text-xs font-black uppercase tracking-widest text-slate-600">Ventas, envíos y traspasos</p>
                                                 <label className="inline-flex items-center gap-1 text-xs font-black text-teal-700">
                                                     <input
                                                         type="checkbox"
@@ -5702,7 +5720,7 @@ function Dashboard() {
                                                     Visto
                                                 </label>
                                             </div>
-                                            <p className="text-[11px] font-black text-slate-500">Envíos</p>
+                                            <p className="text-[11px] font-black text-slate-500">Ventas / envíos</p>
                                             <div className="mt-1 space-y-1">
                                                 {dailyShipmentRows.slice(0, 8).map((row) => (
                                                     <p key={`ship-${row.id}`} className="text-xs font-semibold text-slate-700">
@@ -5710,6 +5728,15 @@ function Dashboard() {
                                                     </p>
                                                 ))}
                                                 {dailyShipmentRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin envíos registrados.</p>}
+                                            </div>
+                                            <p className="mt-3 text-[11px] font-black text-slate-500">Clientes del día</p>
+                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                {dailyCustomerRows.slice(0, 12).map((cliente) => (
+                                                    <span key={cliente} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                                                        {cliente}
+                                                    </span>
+                                                ))}
+                                                {dailyCustomerRows.length === 0 && <span className="text-xs font-semibold text-slate-400">Sin clientes registrados.</span>}
                                             </div>
                                             <p className="mt-3 text-[11px] font-black text-slate-500">Traspasos</p>
                                             <div className="mt-1 space-y-1">
@@ -5775,9 +5802,11 @@ function Dashboard() {
                                                     <th className="px-3 py-2">Bodega</th>
                                                     <th className="px-3 py-2">Lunaris</th>
                                                     <th className="px-3 py-2">Físico</th>
+                                                    <th className="px-3 py-2">Ok físico</th>
                                                     <th className="px-3 py-2">Zoho</th>
                                                     <th className="px-3 py-2">Ok Zoho</th>
                                                     <th className="px-3 py-2">Dif.</th>
+                                                    <th className="px-3 py-2">Observación</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -5799,6 +5828,16 @@ function Dashboard() {
                                                             </td>
                                                             <td className="px-3 py-2">
                                                                 <input
+                                                                    type="checkbox"
+                                                                    checked={row.physicalOk}
+                                                                    onChange={(e) => updateDailyStockRow(row.key, {
+                                                                        physicalOk: e.target.checked,
+                                                                        physicalStock: e.target.checked ? String(row.lunaris) : row.physical,
+                                                                    })}
+                                                                />
+                                                            </td>
+                                                            <td className="px-3 py-2">
+                                                                <input
                                                                     value={row.soho}
                                                                     onChange={(e) => updateDailyStockRow(row.key, { sohoStock: e.target.value })}
                                                                     className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs font-bold outline-none focus:border-teal-400"
@@ -5815,12 +5854,20 @@ function Dashboard() {
                                                             <td className={`px-3 py-2 font-black ${Math.abs(diff) > 0.000001 ? 'text-amber-700' : 'text-emerald-700'}`}>
                                                                 {clean(row.physical) === '' ? '-' : formatQty(diff)}
                                                             </td>
+                                                            <td className="px-3 py-2">
+                                                                <input
+                                                                    value={row.observation}
+                                                                    onChange={(e) => updateDailyStockRow(row.key, { observation: e.target.value })}
+                                                                    className="h-8 w-40 rounded-lg border border-slate-200 px-2 text-xs font-semibold outline-none focus:border-teal-400"
+                                                                    placeholder="Observación"
+                                                                />
+                                                            </td>
                                                         </tr>
                                                     );
                                                 })}
                                                 {dailyStockControlRows.length === 0 && (
                                                     <tr>
-                                                        <td colSpan={8} className="px-3 py-4 text-center font-semibold text-slate-400">Sin stock Canet para mostrar.</td>
+                                                        <td colSpan={10} className="px-3 py-4 text-center font-semibold text-slate-400">Sin stock Canet para mostrar.</td>
                                                     </tr>
                                                 )}
                                             </tbody>

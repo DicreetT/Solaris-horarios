@@ -15,7 +15,7 @@ export function useAbsences(currentUser: User | null) {
                 .select('*')
                 .order('created_at', { ascending: false });
 
-            if (!currentUser.isAdmin) {
+            if (!currentUser.isAdmin && !currentUser.canManageVacations) {
                 // Users see their own requests OR any approved request
                 query = query.or(`created_by.eq.${currentUser.id},status.eq.approved`);
             }

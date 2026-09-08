@@ -11,7 +11,11 @@ for select
 to authenticated
 using (
   created_by = auth.uid()::text
-  or auth.uid()::text = any(coalesce(assigned_to, '{}'::text[]))
+  or exists (
+    select 1
+    from jsonb_array_elements_text(coalesce(to_jsonb(assigned_to), '[]'::jsonb)) as assigned_user(user_id)
+    where assigned_user.user_id = auth.uid()::text
+  )
 );
 
 create policy "todos_update_member"
@@ -20,11 +24,19 @@ for update
 to authenticated
 using (
   created_by = auth.uid()::text
-  or auth.uid()::text = any(coalesce(assigned_to, '{}'::text[]))
+  or exists (
+    select 1
+    from jsonb_array_elements_text(coalesce(to_jsonb(assigned_to), '[]'::jsonb)) as assigned_user(user_id)
+    where assigned_user.user_id = auth.uid()::text
+  )
 )
 with check (
   created_by = auth.uid()::text
-  or auth.uid()::text = any(coalesce(assigned_to, '{}'::text[]))
+  or exists (
+    select 1
+    from jsonb_array_elements_text(coalesce(to_jsonb(assigned_to), '[]'::jsonb)) as assigned_user(user_id)
+    where assigned_user.user_id = auth.uid()::text
+  )
 );
 
 do $$

@@ -16,6 +16,7 @@ import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 export default function TimeTrackingPage() {
     const { currentUser } = useAuth();
     const isAdmin = currentUser?.isAdmin;
+    const canManageVacationBalances = !!currentUser?.isAdmin || !!currentUser?.canManageVacations;
     const [searchParams, setSearchParams] = useSearchParams();
     const { absenceRequests, createAbsence, deleteAbsenceByDate } = useAbsences(currentUser);
     const { userProfiles, updateProfile } = useWorkProfile();
@@ -245,8 +246,8 @@ export default function TimeTrackingPage() {
         });
         const displayLogs = limit ? logs.slice(0, limit) : logs;
 
-        // Permission Check: Can edit if Admin OR (User AND Current Month)
-        const canEdit = isAdmin || isCurrentMonth();
+        // Permission Check: Can edit if Admin OR own current month.
+        const canEdit = isAdmin || (userId === currentUser?.id && isCurrentMonth());
 
         const handleSaveLog = async (id: number, dateKey: string) => {
             try {
@@ -558,6 +559,10 @@ export default function TimeTrackingPage() {
     };
 
     const renderAdminTable = () => {
+        const canEditWorkProfile = !!isAdmin;
+        const canEditVacationProfile = canManageVacationBalances;
+        const canExpandUserLogs = !!isAdmin;
+
         return (
             <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden min-h-[400px]">
                 <div className="overflow-x-auto">
@@ -605,7 +610,7 @@ export default function TimeTrackingPage() {
 
                                             {/* Weekly Hours */}
                                             <td className="px-6 py-4 text-center">
-                                                {isEditing ? (
+                                                {isEditing && canEditWorkProfile ? (
                                                     <input
                                                         type="number"
                                                         className="w-16 p-1 border rounded text-center bg-white border-blue-400"
@@ -621,7 +626,7 @@ export default function TimeTrackingPage() {
 
                                             {/* Worked Hours (Now Editable via Adjustment) */}
                                             <td className="px-6 py-4 text-center text-indigo-600 font-bold">
-                                                {isEditing ? (
+                                                {isEditing && canEditWorkProfile ? (
                                                     <input
                                                         type="number"
                                                         step="0.1"
@@ -640,7 +645,7 @@ export default function TimeTrackingPage() {
 
                                             {/* Vacation Total */}
                                             <td className="px-6 py-4 text-center border-l border-gray-100">
-                                                {isEditing ? (
+                                                {isEditing && canEditVacationProfile ? (
                                                     <input
                                                         type="number"
                                                         className="w-16 p-1 border rounded text-center bg-white border-blue-400"
@@ -654,7 +659,7 @@ export default function TimeTrackingPage() {
 
                                             {/* Vacation Used (Now Editable via Adjustment) */}
                                             <td className="px-6 py-4 text-center text-teal-600 font-bold">
-                                                {isEditing ? (
+                                                {isEditing && canEditVacationProfile ? (
                                                     <input
                                                         type="number"
                                                         className="w-16 p-1 border rounded text-center bg-white border-blue-400"
@@ -675,14 +680,21 @@ export default function TimeTrackingPage() {
                                                             // Calculate adjustments
                                                             const newHoursAdjustment = editForm.displayed_worked_hours - workedCalculated;
                                                             const newVacationAdjustment = editForm.displayed_vacation_used - vacationUsedCalculated;
-
-                                                            updateProfile({
-                                                                userId: user.id, updates: {
+                                                            const updates = canEditWorkProfile
+                                                                ? {
                                                                     weekly_hours: editForm.weekly_hours,
                                                                     vacation_days_total: editForm.vacation_days_total,
                                                                     hours_adjustment: newHoursAdjustment,
                                                                     vacation_adjustment: newVacationAdjustment
                                                                 }
+                                                                : {
+                                                                    vacation_days_total: editForm.vacation_days_total,
+                                                                    vacation_adjustment: newVacationAdjustment
+                                                                };
+
+                                                            updateProfile({
+                                                                userId: user.id,
+                                                                updates,
                                                             });
                                                             setEditingProfileId(null);
                                                         }}
@@ -692,29 +704,37 @@ export default function TimeTrackingPage() {
                                                     </button>
                                                 ) : (
                                                     <div className="flex justify-center gap-2">
-                                                        <button
-                                                            onClick={() => {
-                                                                setEditingProfileId(user.id);
-                                                                setEditForm({
-                                                                    weekly_hours: profile.weekly_hours,
-                                                                    vacation_days_total: profile.vacation_days_total,
-                                                                    displayed_worked_hours: parseFloat(workedTotal.toFixed(1)),
-                                                                    displayed_vacation_used: vacationUsedTotal
-                                                                });
-                                                            }}
-                                                            className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
-                                                        >
-                                                            <Edit2 size={16} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
-                                                            className={`p-2 rounded-full transition-all ${isExpanded
-                                                                ? 'text-indigo-600 bg-indigo-100 rotate-180'
-                                                                : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
-                                                                }`}
-                                                        >
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-                                                        </button>
+                                                        {(canEditWorkProfile || canEditVacationProfile) && (
+                                                            <button
+                                                                onClick={() => {
+                                                                    setEditingProfileId(user.id);
+                                                                    setEditForm({
+                                                                        weekly_hours: profile.weekly_hours,
+                                                                        vacation_days_total: profile.vacation_days_total,
+                                                                        displayed_worked_hours: parseFloat(workedTotal.toFixed(1)),
+                                                                        displayed_vacation_used: vacationUsedTotal
+                                                                    });
+                                                                }}
+                                                                className="text-gray-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-all"
+                                                                title={canEditWorkProfile ? 'Editar perfil' : 'Editar vacaciones'}
+                                                                aria-label={canEditWorkProfile ? 'Editar perfil' : 'Editar vacaciones'}
+                                                            >
+                                                                <Edit2 size={16} />
+                                                            </button>
+                                                        )}
+                                                        {canExpandUserLogs && (
+                                                            <button
+                                                                onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
+                                                                className={`p-2 rounded-full transition-all ${isExpanded
+                                                                    ? 'text-indigo-600 bg-indigo-100 rotate-180'
+                                                                    : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                                                    }`}
+                                                                title="Ver registros"
+                                                                aria-label="Ver registros"
+                                                            >
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 )}
                                             </td>
@@ -771,7 +791,7 @@ export default function TimeTrackingPage() {
                 </div>
             </div>
 
-            {isAdmin ? renderAdminTable() : renderUserDashboard(currentUser.id)}
+            {canManageVacationBalances ? renderAdminTable() : renderUserDashboard(currentUser.id)}
         </div>
     );
 }

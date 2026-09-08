@@ -227,7 +227,19 @@ function mergeArchiveEntries(base: BillingArchiveEntry[], incoming: BillingArchi
 
 function archiveSignature(entries: BillingArchiveEntry[]) {
   return (Array.isArray(entries) ? entries : [])
-    .map((day) => `${clean(day.dateKey)}:${(day.orders || []).map((order) => clean(order.id)).join(',')}`)
+    .map((day) => `${clean(day.dateKey)}:${(day.orders || []).map((order) => [
+      clean(order.id),
+      clean(order.status),
+      clean(order.lastChangedAt),
+      clean(order.requiredPackages),
+      (order.lines || []).map((line) => [
+        clean(line.id),
+        clean(line.productCode),
+        clean(line.lote),
+        clean(line.quantity),
+        clean(line.lotePending),
+      ].join('~')).join(';'),
+    ].join('~')).join(',')}`)
     .join('|');
 }
 
@@ -2742,7 +2754,6 @@ export default function FacturacionPage() {
       const todayKey = toLocalDateKey(now);
       if (!todayKey) return;
 
-      const archivedKeys = new Set((archives || []).map((entry) => entry.dateKey));
       const queueDateKeys = Array.from(
         new Set(
           queue
@@ -2752,7 +2763,6 @@ export default function FacturacionPage() {
       ).sort();
 
       const dueKeys = queueDateKeys.filter((dateKey) => {
-        if (archivedKeys.has(dateKey)) return false;
         if (dateKey < todayKey) return true;
         if (dateKey === todayKey && now.getHours() >= 21) return true;
         return false;
@@ -2784,8 +2794,9 @@ export default function FacturacionPage() {
       if (snapshots.length === 0) return;
 
       setArchives((prev) => {
-        const filtered = (prev || []).filter((entry) => !dueKeys.includes(entry.dateKey));
-        return [...snapshots, ...filtered].sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+        const current = prev || [];
+        const merged = mergeArchiveEntries(current, snapshots);
+        return archiveSignature(merged) === archiveSignature(current) ? current : merged;
       });
       // No vaciar la cola automáticamente: solo generar snapshot en carpeta interna.
       // Evita que desaparezcan pedidos activos por fallos de lectura o por corte horario.
@@ -3794,23 +3805,6 @@ export default function FacturacionPage() {
       if (dateKey) {
         setArchives((prev) => {
           const current = prev || [];
-          const idx = current.findIndex((entry) => entry.dateKey === dateKey);
-          if (idx >= 0) {
-            const existing = current[idx];
-            const nextOrders = [dispatchedSnapshot, ...(existing.orders || [])];
-            const nextEntry: BillingArchiveEntry = {
-              ...existing,
-              archivedAt: new Date().toISOString(),
-              orders: nextOrders,
-              totalOrders: nextOrders.length,
-              totalLines: nextOrders.reduce((acc, item) => acc + item.lines.length, 0),
-              totalQuantity: nextOrders.reduce(
-                (acc, item) => acc + item.lines.reduce((lineAcc, line) => lineAcc + Math.max(0, Number(line.quantity) || 0), 0),
-                0,
-              ),
-            };
-            return current.map((entry, entryIdx) => (entryIdx === idx ? nextEntry : entry));
-          }
           const newEntry: BillingArchiveEntry = {
             dateKey,
             archivedAt: new Date().toISOString(),
@@ -3819,7 +3813,7 @@ export default function FacturacionPage() {
             totalLines: dispatchedSnapshot.lines.length,
             totalQuantity: dispatchedSnapshot.lines.reduce((acc, line) => acc + Math.max(0, Number(line.quantity) || 0), 0),
           };
-          return [newEntry, ...current].sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+          return mergeArchiveEntries(current, [newEntry]);
         });
       }
       alert(`Pedido ${order.invoiceNumber} despachado y convertido en movimientos (${order.movementType}).`);

@@ -21,6 +21,7 @@ export const USERS: User[] = [
         name: "Heidy",
         email: "heidy.m.solaris@gmail.com",
         isTrainingManager: false,
+        canManageVacations: true,
     },
     {
         id: "6bafcb97-6a1b-4224-adbb-1340b86ffeb9", // anabella
