@@ -5,6 +5,7 @@ import { CARLOS_EMAIL, DRIVE_FOLDERS } from '../constants';
 import { Download, ExternalLink, FileSpreadsheet, FileText, Folder, Printer, Trash2 } from 'lucide-react';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { supabase } from '../lib/supabase';
+import { formatInventoryWarehouseLabel } from '../utils/inventoryStock';
 import {
     INVENTORY_MONTHLY_CLOSURES_KEY,
     monthlyCloseRowsForExport,
@@ -37,6 +38,10 @@ type ArchiveOrder = {
     requiredPackages?: number;
     labels?: Array<unknown>;
     movementType?: string;
+    sourceWarehouse?: string;
+    transferOrigin?: string;
+    transferDestination?: string;
+    inventoryTarget?: string;
     lastChangedAt?: string;
     lines: ArchiveOrderLine[];
 };
@@ -228,6 +233,40 @@ function dispatchArchiveReason(order: ArchiveOrder) {
     if (status === 'EN_PREPARACION') return 'En preparación: no se completó el despacho o hubo despacho parcial.';
     if (status === 'CANCELADO') return 'Cancelado.';
     return status ? `No consta como despachado real (${status}).` : 'Snapshot diario: no consta como despachado real.';
+}
+
+function formatArchiveWarehouse(value: unknown, fallbackInventory?: unknown) {
+    const label = formatInventoryWarehouseLabel(value);
+    if (label) return label;
+    const fallback = clean(fallbackInventory).toLowerCase();
+    if (fallback === 'canet') return 'CANET';
+    if (fallback === 'huarte') return 'HUARTE';
+    return '';
+}
+
+function getDispatchWarehouseLabel(order: ArchiveOrder) {
+    const movementType = clean(order.movementType).toLowerCase();
+    const origin = formatArchiveWarehouse(
+        movementType === 'traspaso'
+            ? order.transferOrigin || order.sourceWarehouse
+            : order.sourceWarehouse || order.transferOrigin,
+        order.inventoryTarget,
+    );
+    const destination = formatArchiveWarehouse(order.transferDestination);
+    if (movementType === 'traspaso') {
+        return origin || destination
+            ? `Desde ${origin || 'bodega sin registrar'}${destination ? ` → ${destination}` : ''}`
+            : 'Bodega sin registrar';
+    }
+    return origin ? `Desde ${origin}` : 'Bodega sin registrar';
+}
+
+function getDispatchWarehouseBadgeClass(order: ArchiveOrder) {
+    const label = getDispatchWarehouseLabel(order).toUpperCase();
+    if (label.includes('CANET')) return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+    if (label.includes('HUARTE')) return 'border-sky-200 bg-sky-50 text-sky-800';
+    if (label.includes('SIN REGISTRAR')) return 'border-amber-200 bg-amber-50 text-amber-800';
+    return 'border-violet-200 bg-violet-50 text-violet-800';
 }
 
 const appendTotalRow = (headers: string[], rows: Array<Array<string | number>>) => [
@@ -501,6 +540,9 @@ function FoldersPage() {
                         <p className="text-sm font-black text-gray-900">
                             Factura {order.invoiceNumber} · {order.customerName || 'Cliente sin detectar'}
                         </p>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${getDispatchWarehouseBadgeClass(order)}`}>
+                            {getDispatchWarehouseLabel(order)}
+                        </span>
                         <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
                                 isRealDispatch
@@ -514,6 +556,8 @@ function FoldersPage() {
                     <p className="text-xs font-semibold text-gray-500">
                         Factura: {formatDate(order.invoiceDate)}
                         {isRealDispatch && order.lastChangedAt ? ` · Despacho: ${formatDate(order.lastChangedAt)}` : ''}
+                        {' · '}
+                        {getDispatchWarehouseLabel(order)}
                         {' · '}
                         {order.sourceFileName}
                     </p>
