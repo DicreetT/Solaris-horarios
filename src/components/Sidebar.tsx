@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -8,24 +8,49 @@ import {
     LogOut,
     Lock,
     Bell,
+    Briefcase,
+    CalendarClock,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
+    Clock,
     Search,
     Boxes,
     Wrench,
-    ClipboardCheck
+    ClipboardCheck,
+    X
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { RoleBadge } from './RoleBadge';
 import { SidebarMoodBackground } from './SidebarMoodBackground';
+import { FileUploader, Attachment } from './FileUploader';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useTodos } from '../hooks/useTodos';
+import { useTimeData } from '../hooks/useTimeData';
+import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { CARLOS_EMAIL } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
+import { calculateHours, formatHours } from '../utils/timeUtils';
+
+type UserLaborDocumentProfile = {
+    contract: Attachment[];
+    medical: Attachment[];
+    payroll: Attachment[];
+    updatedAt?: string;
+};
+
+type UserLaborDocumentsState = {
+    profiles: Record<string, UserLaborDocumentProfile>;
+};
+
+const EMPTY_LABOR_DOCUMENT_PROFILE: UserLaborDocumentProfile = {
+    contract: [],
+    medical: [],
+    payroll: [],
+};
 
 /**
  * Sidebar navigation component
@@ -57,11 +82,37 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const navigate = useNavigate();
     const location = useLocation();
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [showLaborCard, setShowLaborCard] = useState(false);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const userMenuRef = useRef(null);
+    const currentMonthStart = useMemo(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+    }, []);
+    const currentMonthEnd = useMemo(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    }, []);
+    const { timeData } = useTimeData({ from: currentMonthStart, to: currentMonthEnd });
+    const [laborDocuments, setLaborDocuments] = useSharedJsonState<UserLaborDocumentsState>(
+        'user_labor_documents_v1',
+        { profiles: {} },
+    );
 
     const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const unreadCount = notifications.filter((n) => !n.read).length;
+    const currentLaborProfile = currentUser
+        ? laborDocuments.profiles[currentUser.id] || EMPTY_LABOR_DOCUMENT_PROFILE
+        : EMPTY_LABOR_DOCUMENT_PROFILE;
+    const monthHours = useMemo(() => {
+        if (!currentUser) return 0;
+        const monthPrefix = toDateKey(currentMonthStart).slice(0, 7);
+        return Object.entries(timeData).reduce((total, [dateKey, dayData]) => {
+            if (!dateKey.startsWith(monthPrefix)) return total;
+            const entries = dayData[currentUser.id] || [];
+            return total + entries.reduce((sum, entry) => sum + calculateHours(entry.entry, entry.exit), 0);
+        }, 0);
+    }, [currentMonthStart, currentUser, timeData]);
 
     // --- BADGE CALCULATIONS ---
 
@@ -161,6 +212,25 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         } finally {
             setIsLoggingOut(false);
         }
+    };
+
+    const updateLaborDocuments = (section: keyof UserLaborDocumentProfile, files: Attachment[]) => {
+        if (!currentUser || section === 'updatedAt') return;
+        setLaborDocuments((prev) => {
+            const base = prev || { profiles: {} };
+            const profile = base.profiles[currentUser.id] || EMPTY_LABOR_DOCUMENT_PROFILE;
+            return {
+                ...base,
+                profiles: {
+                    ...base.profiles,
+                    [currentUser.id]: {
+                        ...profile,
+                        [section]: files,
+                        updatedAt: new Date().toISOString(),
+                    },
+                },
+            };
+        });
     };
 
     return (
@@ -292,25 +362,41 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                 {/* User Profile (Footer) */}
                                 <div className="p-4 border-t border-gray-100/10 shrink-0">
                                     <div className="relative" ref={userMenuRef}>
-                                        <button
-                                            onClick={() => setShowUserMenu(!showUserMenu)}
-                                            className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-all duration-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-gray-100 dark:border-gray-700 hover:border-blue-200 hover:shadow-md`}
+                                        <div
+                                            className={`w-full flex items-center gap-2 p-2 rounded-xl border transition-all duration-200 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-gray-100 dark:border-gray-700 hover:border-blue-200 hover:shadow-md`}
                                         >
-                                            <UserAvatar name={currentUser?.name || 'User'} size="sm" />
-                                            {!isCollapsed && (
-                                                <div className="flex-1 min-w-0 text-left">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-sm font-black truncate ${isMoodActive ? 'text-gray-900' : 'text-gray-900 dark:text-white'}`}>{currentUser?.name}</p>
-                                                        {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
-                                                        {currentUser?.isTrainingManager && !currentUser?.isAdmin && <RoleBadge role="trainingManager" size="xs" />}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setShowUserMenu(false);
+                                                    setShowLaborCard(true);
+                                                }}
+                                                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                                aria-label="Abrir ficha laboral"
+                                            >
+                                                <UserAvatar name={currentUser?.name || 'User'} size="sm" />
+                                                {!isCollapsed && (
+                                                    <div className="flex-1 min-w-0 text-left">
+                                                        <div className="flex items-center gap-2">
+                                                            <p className={`text-sm font-black truncate ${isMoodActive ? 'text-gray-900' : 'text-gray-900 dark:text-white'}`}>{currentUser?.name}</p>
+                                                            {currentUser?.isAdmin && <RoleBadge role="admin" size="xs" />}
+                                                            {currentUser?.isTrainingManager && !currentUser?.isAdmin && <RoleBadge role="trainingManager" size="xs" />}
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <p className={`text-xs truncate font-medium ${isMoodActive ? 'text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>{currentUser?.email}</p>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-xs truncate font-medium ${isMoodActive ? 'text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>{currentUser?.email}</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <ChevronDown size={16} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
-                                        </button>
+                                                )}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowUserMenu(!showUserMenu)}
+                                                className="rounded-lg p-1 text-gray-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-gray-700"
+                                                aria-label="Abrir menú de usuario"
+                                            >
+                                                <ChevronDown size={16} className={`transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+                                            </button>
+                                        </div>
 
                                         <AnimatePresence>
                                             {showUserMenu && !isCollapsed && (
@@ -391,6 +477,102 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </button>
             </aside >
+
+            <AnimatePresence>
+                {showLaborCard && currentUser && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[420] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm"
+                        onClick={() => setShowLaborCard(false)}
+                    >
+                        <motion.div
+                            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+                            className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className="mb-4 flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                    <UserAvatar name={currentUser.name} size="md" />
+                                    <div>
+                                        <p className="text-lg font-black text-slate-950 dark:text-white">{currentUser.name}</p>
+                                        <p className="text-sm font-semibold text-slate-500 dark:text-gray-400">{currentUser.email}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLaborCard(false)}
+                                    className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                                    aria-label="Cerrar ficha laboral"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="mb-2 flex items-center gap-2">
+                                        <Briefcase size={16} className="text-teal-700" />
+                                        <h3 className="text-sm font-black text-slate-900 dark:text-white">Contrato de trabajo</h3>
+                                    </div>
+                                    <FileUploader
+                                        folderPath={`user-labor-documents/${currentUser.id}/contract`}
+                                        existingFiles={currentLaborProfile.contract}
+                                        onUploadComplete={(files) => updateLaborDocuments('contract', files)}
+                                        compact
+                                        maxSizeMB={20}
+                                    />
+                                </section>
+
+                                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="mb-2 flex items-center gap-2">
+                                        <CalendarClock size={16} className="text-teal-700" />
+                                        <h3 className="text-sm font-black text-slate-900 dark:text-white">Citas médicas empresa</h3>
+                                    </div>
+                                    <FileUploader
+                                        folderPath={`user-labor-documents/${currentUser.id}/medical`}
+                                        existingFiles={currentLaborProfile.medical}
+                                        onUploadComplete={(files) => updateLaborDocuments('medical', files)}
+                                        compact
+                                        maxSizeMB={20}
+                                    />
+                                </section>
+
+                                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="mb-2 flex items-center gap-2">
+                                        <FileText size={16} className="text-teal-700" />
+                                        <h3 className="text-sm font-black text-slate-900 dark:text-white">Nóminas y comprobantes</h3>
+                                    </div>
+                                    <FileUploader
+                                        folderPath={`user-labor-documents/${currentUser.id}/payroll`}
+                                        existingFiles={currentLaborProfile.payroll}
+                                        onUploadComplete={(files) => updateLaborDocuments('payroll', files)}
+                                        compact
+                                        maxSizeMB={20}
+                                    />
+                                </section>
+
+                                <section className="rounded-2xl border border-teal-200 bg-teal-50 p-3 dark:border-teal-900/60 dark:bg-teal-950/30">
+                                    <div className="mb-3 flex items-center gap-2">
+                                        <Clock size={16} className="text-teal-700" />
+                                        <h3 className="text-sm font-black text-slate-900 dark:text-white">Resumen jornada del mes</h3>
+                                    </div>
+                                    <div className="rounded-2xl bg-white p-4 text-center shadow-sm dark:bg-gray-900">
+                                        <p className="text-xs font-black uppercase tracking-widest text-slate-500">Horas registradas</p>
+                                        <p className="mt-1 text-3xl font-black text-teal-700">{formatHours(monthHours)}</p>
+                                        <p className="mt-2 text-xs font-semibold text-slate-500">
+                                            {currentMonthStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                                        </p>
+                                    </div>
+                                </section>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
         </>
     );

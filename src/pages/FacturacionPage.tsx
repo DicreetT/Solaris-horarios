@@ -74,6 +74,10 @@ type BillingOrder = {
   createdAt: string;
   lastChangedAt?: string;
   requiredPackagesUpdatedAt?: string;
+  shippingDetailsUpdatedAt?: string;
+  dispatchManualConfirmed?: boolean;
+  dispatchManualConfirmedAt?: string;
+  dispatchManualConfirmedBy?: string;
   detachedLabelIds?: string[];
   createdBy: string;
   documentType: BillingDocumentType;
@@ -91,6 +95,7 @@ type BillingOrder = {
   sourcePdfDataUrl?: string;
   orderNote?: string;
   requiredPackages: number;
+  shippingWeightKg?: number;
   labels: BillingLabelAttachment[];
   labelFileName?: string;
   labelPdfDataUrl?: string;
@@ -232,6 +237,8 @@ function archiveSignature(entries: BillingArchiveEntry[]) {
       clean(order.status),
       clean(order.lastChangedAt),
       clean(order.requiredPackages),
+      clean((order as any).shippingWeightKg),
+      clean((order as any).dispatchManualConfirmed),
       (order.lines || []).map((line) => [
         clean(line.id),
         clean(line.productCode),
@@ -1866,6 +1873,12 @@ function getOrderRequiredPackages(order: BillingOrder) {
   return Math.max(0, Math.floor(raw));
 }
 
+function getOrderShippingWeightKg(order: BillingOrder) {
+  const raw = Number((order as any).shippingWeightKg);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, raw);
+}
+
 function orderRequiresLabels(order: BillingOrder) {
   const dispatchTarget = clean((order as any).inventoryTarget).toLowerCase();
   if (dispatchTarget === 'canet') return true;
@@ -3233,6 +3246,27 @@ export default function FacturacionPage() {
       ...order,
       requiredPackages: normalized,
       requiredPackagesUpdatedAt: nowIso(),
+      shippingDetailsUpdatedAt: nowIso(),
+    }));
+  };
+
+  const setShippingWeightKg = (orderId: string, value: number) => {
+    const normalized = Math.max(0, Math.round((Number(value) || 0) * 100) / 100);
+    updateOrder(orderId, (order) => ({
+      ...order,
+      shippingWeightKg: normalized,
+      shippingDetailsUpdatedAt: nowIso(),
+    }));
+  };
+
+  const setDispatchManualConfirmed = (orderId: string, confirmed: boolean) => {
+    const changedAt = nowIso();
+    updateOrder(orderId, (order) => ({
+      ...order,
+      dispatchManualConfirmed: confirmed,
+      dispatchManualConfirmedAt: confirmed ? changedAt : undefined,
+      dispatchManualConfirmedBy: confirmed ? currentUser?.id || '' : undefined,
+      shippingDetailsUpdatedAt: changedAt,
     }));
   };
 
@@ -3611,17 +3645,23 @@ export default function FacturacionPage() {
 
     const requiresLabels = orderRequiresLabels(order);
     const requiredPackages = getOrderRequiredPackages(order);
+    const shippingWeightKg = getOrderShippingWeightKg(order);
     const attachedLabels = getOrderLabels(order);
-    if (requiresLabels && requiredPackages > 0 && attachedLabels.length < requiredPackages) {
-      const continueWithoutLabels = window.confirm(
-        `Faltan etiquetas para despachar (${attachedLabels.length}/${requiredPackages}). ¿Quieres despachar igualmente sin completar etiquetas?`,
-      );
-      if (!continueWithoutLabels) return;
-    } else if (requiresLabels && requiredPackages <= 0) {
-      const continueWithoutLabels = window.confirm(
-        'Este pedido no tiene bultos/etiquetas definidos. ¿Quieres despachar igualmente sin etiquetas?',
-      );
-      if (!continueWithoutLabels) return;
+    if (requiredPackages <= 0) {
+      alert('Completa la cantidad de bultos/paquetes antes de despachar.');
+      return;
+    }
+    if (shippingWeightKg <= 0) {
+      alert('Completa el peso del envío antes de despachar.');
+      return;
+    }
+    if (requiresLabels && attachedLabels.length < requiredPackages) {
+      alert(`Faltan etiquetas para despachar (${attachedLabels.length}/${requiredPackages}). Asocia las etiquetas correspondientes antes de confirmar.`);
+      return;
+    }
+    if (!order.dispatchManualConfirmed) {
+      alert('Marca la revisión manual OK antes de despachar.');
+      return;
     }
 
     const movementSource = sourceInventory === 'canet' ? canetMovements : huarteMovements;
@@ -4145,8 +4185,17 @@ export default function FacturacionPage() {
                 ) || [];
               };
               const requiredPackages = getOrderRequiredPackages(order);
+              const shippingWeightKg = getOrderShippingWeightKg(order);
               const attachedLabels = getOrderLabels(order);
               const requiresLabels = orderRequiresLabels(order);
+              const canDispatchOrder =
+                order.status !== 'DESPACHADO' &&
+                order.status !== 'CANCELADO' &&
+                !dispatchingOrderIds.includes(order.id) &&
+                requiredPackages > 0 &&
+                shippingWeightKg > 0 &&
+                (!requiresLabels || attachedLabels.length >= requiredPackages) &&
+                !!order.dispatchManualConfirmed;
 
               return (
                 <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -4242,7 +4291,7 @@ export default function FacturacionPage() {
 
                   <div className="mt-2 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
                     <label className="text-[11px] font-black uppercase tracking-wide text-slate-600">
-                      Bultos requeridos
+                      Bultos / paquetes
                       <input
                         type="number"
                         min={0}
@@ -4252,9 +4301,29 @@ export default function FacturacionPage() {
                         className="mt-1 w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
                       />
                     </label>
+                    <label className="text-[11px] font-black uppercase tracking-wide text-slate-600">
+                      Peso kg
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={shippingWeightKg || ''}
+                        onChange={(e) => setShippingWeightKg(order.id, Number(e.target.value || 0))}
+                        className="mt-1 w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-900"
+                        placeholder="0.00"
+                      />
+                    </label>
                     <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-black text-sky-800">
                       Etiquetas: {attachedLabels.length}/{requiredPackages || 0}
                     </div>
+                    <label className={`inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs font-black ${order.dispatchManualConfirmed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                      <input
+                        type="checkbox"
+                        checked={!!order.dispatchManualConfirmed}
+                        onChange={(e) => setDispatchManualConfirmed(order.id, e.target.checked)}
+                      />
+                      Revisión manual OK
+                    </label>
                     {!requiresLabels && (
                       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-800">
                         Huarte: etiquetas opcionales
@@ -4435,11 +4504,8 @@ export default function FacturacionPage() {
 
                     <button
                       onClick={() => void dispatchOrder(order)}
-                      disabled={
-                        order.status === 'DESPACHADO' ||
-                        order.status === 'CANCELADO' ||
-                        dispatchingOrderIds.includes(order.id)
-                      }
+                      disabled={!canDispatchOrder}
+                      title={!canDispatchOrder && order.status !== 'DESPACHADO' && order.status !== 'CANCELADO' ? 'Completa bultos, peso, etiquetas requeridas y revisión manual.' : undefined}
                       className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700 disabled:opacity-50"
                     >
                       <Truck size={12} /> {dispatchingOrderIds.includes(order.id) ? 'Despachando...' : 'Despachar (crear movimientos)'}

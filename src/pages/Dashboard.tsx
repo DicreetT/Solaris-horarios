@@ -239,6 +239,7 @@ type DailyInventoryControlReport = {
     id: string;
     dateKey: string;
     eventId?: number;
+    manualMode?: boolean;
     checks: {
         shipments: boolean;
         assemblies: boolean;
@@ -247,6 +248,13 @@ type DailyInventoryControlReport = {
     rows: Record<string, DailyInventoryControlRow>;
     attachments: Attachment[];
     notes: string;
+    manualSections?: {
+        shipments?: string;
+        clients?: string;
+        transfers?: string;
+        assemblies?: string;
+        stock?: string;
+    };
     snapshot?: {
         shipments: DailyControlMovementSnapshot[];
         transfers: DailyControlMovementSnapshot[];
@@ -394,6 +402,7 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                 id: clean(report?.id) || uid('ctrl'),
                 dateKey: clean(report?.dateKey),
                 eventId: Number.isFinite(Number(report?.eventId)) ? Number(report.eventId) : undefined,
+                manualMode: !!report?.manualMode,
                 checks: {
                     shipments: !!report?.checks?.shipments,
                     assemblies: !!report?.checks?.assemblies,
@@ -402,6 +411,15 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                 rows: report?.rows && typeof report.rows === 'object' ? report.rows : {},
                 attachments: normalizeAttachmentsList(report?.attachments),
                 notes: clean(report?.notes),
+                manualSections: report?.manualSections && typeof report.manualSections === 'object'
+                    ? {
+                        shipments: clean(report.manualSections.shipments),
+                        clients: clean(report.manualSections.clients),
+                        transfers: clean(report.manualSections.transfers),
+                        assemblies: clean(report.manualSections.assemblies),
+                        stock: clean(report.manualSections.stock),
+                    }
+                    : undefined,
                 snapshot: report?.snapshot && typeof report.snapshot === 'object'
                     ? {
                         shipments: Array.isArray(report.snapshot.shipments) ? report.snapshot.shipments : [],
@@ -1497,9 +1515,17 @@ function Dashboard() {
             dateKey,
             eventId,
             checks: { shipments: false, assemblies: false, stock: false },
+            manualMode: true,
             rows: {},
             attachments: [],
             notes: '',
+            manualSections: {
+                shipments: '',
+                clients: '',
+                transfers: '',
+                assemblies: '',
+                stock: '',
+            },
             createdAt: now,
             updatedAt: now,
             updatedBy: currentUser?.id || '',
@@ -1531,12 +1557,11 @@ function Dashboard() {
         let createdEventId: number | undefined = activeDailyInventoryControl?.eventId;
         let createdCalendarEvent: any = null;
         try {
-            await loadLatestCanetMovementsForDailyControl();
             if (!createdEventId) {
                 const event = await createEvent({
                     date_key: dateKey,
                     title: 'Control inventario diario',
-                    description: 'Parte diario generado desde Lunaris: envíos/traspasos, ensamblajes y stock físico/Lunaris/Zoho.',
+                    description: 'Parte diario manual: envíos/traspasos, ensamblajes, clientes del día y stock físico/Lunaris/Zoho.',
                     created_by: currentUser.id,
                 });
                 createdCalendarEvent = event;
@@ -1545,6 +1570,14 @@ function Dashboard() {
             upsertDailyInventoryControl(dateKey, (existing) => ({
                 ...(existing || buildEmptyDailyControlReport(dateKey, createdEventId)),
                 eventId: createdEventId || existing?.eventId,
+                manualMode: true,
+                manualSections: existing?.manualSections || {
+                    shipments: '',
+                    clients: '',
+                    transfers: '',
+                    assemblies: '',
+                    stock: '',
+                },
                 updatedAt: new Date().toISOString(),
                 updatedBy: currentUser?.id || '',
             }));
@@ -1608,6 +1641,25 @@ function Dashboard() {
             updatedAt: new Date().toISOString(),
             updatedBy: currentUser?.id || '',
         }));
+    };
+
+    const updateDailyManualSection = (
+        key: keyof NonNullable<DailyInventoryControlReport['manualSections']>,
+        value: string,
+    ) => {
+        const dateKey = inventoryControlDateKey;
+        upsertDailyInventoryControl(dateKey, (existing) => {
+            const base = existing || buildEmptyDailyControlReport(dateKey);
+            return {
+                ...base,
+                manualSections: {
+                    ...(base.manualSections || {}),
+                    [key]: value,
+                },
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            };
+        });
     };
 
     const loadLatestCanetMovementsForDailyControl = async () => {
@@ -2754,17 +2806,19 @@ function Dashboard() {
         () => dailyInventoryControls.reports.find((report) => report.dateKey === inventoryControlDateKey) || null,
         [dailyInventoryControls, inventoryControlDateKey],
     );
+    const activeDailyControlIsManual = !!activeDailyInventoryControl?.manualMode;
     const selectedCalendarDailyControl = useMemo(
         () => dailyInventoryControls.reports.find((report) => report.dateKey === selectedCalendarDateKey) || null,
         [dailyInventoryControls, selectedCalendarDateKey],
     );
     const selectedCalendarItemCount = selectedCalendarEvents.length + (selectedCalendarDailyControl ? 1 : 0);
     const canetMovementsForControlDate = useMemo(() => {
+        if (activeDailyControlIsManual) return [];
         return canetMovementsEffectiveSource.filter((movement: any) => {
             const movementDate = dateFromAny(clean(movement?.fecha));
             return movementDate ? toDateKey(movementDate) === inventoryControlDateKey : clean(movement?.fecha) === inventoryControlDateKey;
         });
-    }, [canetMovementsEffectiveSource, inventoryControlDateKey]);
+    }, [activeDailyControlIsManual, canetMovementsEffectiveSource, inventoryControlDateKey]);
     const dailyTransferRows = useMemo(() => (
         canetMovementsForControlDate
             .filter((movement: any) => normalizeInventorySearch(movement?.tipo_movimiento).includes('traspaso'))
@@ -2809,6 +2863,9 @@ function Dashboard() {
             .filter((row) => row.producto && row.lote && row.cantidad > 0)
     ), [canetMovementsForControlDate]);
     const dailyStockControlRows = useMemo(() => (
+        activeDailyControlIsManual
+            ? []
+            :
         canetStockRowsWithBodega
             .map((row) => ({
                 key: `${row.producto}|${row.lote}|${row.bodega}`,
@@ -2823,7 +2880,7 @@ function Dashboard() {
                 observation: activeDailyInventoryControl?.rows?.[`${row.producto}|${row.lote}|${row.bodega}`]?.observation || '',
             }))
             .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote) || a.bodega.localeCompare(b.bodega))
-    ), [activeDailyInventoryControl, canetStockRowsWithBodega]);
+    ), [activeDailyControlIsManual, activeDailyInventoryControl, canetStockRowsWithBodega]);
     const dailyCustomerRows = useMemo(() => (
         Array.from(new Set(dailyShipmentRows.map((row) => clean(row.cliente)).filter(Boolean))).sort((a, b) => a.localeCompare(b))
     ), [dailyShipmentRows]);
@@ -5674,20 +5731,27 @@ function Dashboard() {
                                             <span className={`rounded-full border px-3 py-1 text-xs font-black ${dailyStockDiffCount > 0 ? 'border-amber-200 bg-amber-100 text-amber-800' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
                                                 {dailyStockDiffCount > 0 ? `${dailyStockDiffCount} diferencias` : 'Sin diferencias marcadas'}
                                             </span>
+                                            {activeDailyControlIsManual && (
+                                                <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-black text-sky-700">
+                                                    Plantilla manual
+                                                </span>
+                                            )}
                                             {activeDailyInventoryControl.savedAt && (
                                                 <span className="rounded-full border border-teal-200 bg-white px-3 py-1 text-xs font-black text-teal-700">
                                                     Guardado {new Date(activeDailyInventoryControl.savedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                                                 </span>
                                             )}
-                                            <button
-                                                type="button"
-                                                onClick={handleRefreshDailyInventoryControl}
-                                                disabled={dailyInventoryRefreshing}
-                                                className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-white px-3 py-1.5 text-xs font-black text-teal-700 hover:bg-teal-50 disabled:opacity-60"
-                                            >
-                                                <RotateCcw size={13} className={dailyInventoryRefreshing ? 'animate-spin' : ''} />
-                                                {dailyInventoryRefreshing ? 'Refrescando' : 'Refrescar'}
-                                            </button>
+                                            {!activeDailyControlIsManual && (
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRefreshDailyInventoryControl}
+                                                    disabled={dailyInventoryRefreshing}
+                                                    className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-white px-3 py-1.5 text-xs font-black text-teal-700 hover:bg-teal-50 disabled:opacity-60"
+                                                >
+                                                    <RotateCcw size={13} className={dailyInventoryRefreshing ? 'animate-spin' : ''} />
+                                                    {dailyInventoryRefreshing ? 'Refrescando' : 'Refrescar'}
+                                                </button>
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={handleSaveDailyInventoryControl}
@@ -5720,33 +5784,67 @@ function Dashboard() {
                                                     Visto
                                                 </label>
                                             </div>
-                                            <p className="text-[11px] font-black text-slate-500">Ventas / envíos</p>
-                                            <div className="mt-1 space-y-1">
-                                                {dailyShipmentRows.slice(0, 8).map((row) => (
-                                                    <p key={`ship-${row.id}`} className="text-xs font-semibold text-slate-700">
-                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.cliente || 'Sin destino'}
-                                                    </p>
-                                                ))}
-                                                {dailyShipmentRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin envíos registrados.</p>}
-                                            </div>
-                                            <p className="mt-3 text-[11px] font-black text-slate-500">Clientes del día</p>
-                                            <div className="mt-1 flex flex-wrap gap-1">
-                                                {dailyCustomerRows.slice(0, 12).map((cliente) => (
-                                                    <span key={cliente} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
-                                                        {cliente}
-                                                    </span>
-                                                ))}
-                                                {dailyCustomerRows.length === 0 && <span className="text-xs font-semibold text-slate-400">Sin clientes registrados.</span>}
-                                            </div>
-                                            <p className="mt-3 text-[11px] font-black text-slate-500">Traspasos</p>
-                                            <div className="mt-1 space-y-1">
-                                                {dailyTransferRows.slice(0, 8).map((row) => (
-                                                    <p key={`transfer-${row.id}`} className="text-xs font-semibold text-slate-700">
-                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.bodega || '-'} → {row.destino || '-'}
-                                                    </p>
-                                                ))}
-                                                {dailyTransferRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin traspasos registrados.</p>}
-                                            </div>
+                                            {activeDailyControlIsManual ? (
+                                                <div className="space-y-3">
+                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
+                                                        Ventas / envíos
+                                                        <textarea
+                                                            value={activeDailyInventoryControl.manualSections?.shipments || ''}
+                                                            onChange={(e) => updateDailyManualSection('shipments', e.target.value)}
+                                                            placeholder="Producto · lote · cantidad · cliente"
+                                                            className="mt-1 min-h-[88px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                                        />
+                                                    </label>
+                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
+                                                        Clientes del día
+                                                        <textarea
+                                                            value={activeDailyInventoryControl.manualSections?.clients || ''}
+                                                            onChange={(e) => updateDailyManualSection('clients', e.target.value)}
+                                                            placeholder="Cliente 1, cliente 2..."
+                                                            className="mt-1 min-h-[64px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                                        />
+                                                    </label>
+                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
+                                                        Traspasos
+                                                        <textarea
+                                                            value={activeDailyInventoryControl.manualSections?.transfers || ''}
+                                                            onChange={(e) => updateDailyManualSection('transfers', e.target.value)}
+                                                            placeholder="Producto · lote · cantidad · origen → destino"
+                                                            className="mt-1 min-h-[88px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                                        />
+                                                    </label>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <p className="text-[11px] font-black text-slate-500">Ventas / envíos</p>
+                                                    <div className="mt-1 space-y-1">
+                                                        {dailyShipmentRows.slice(0, 8).map((row) => (
+                                                            <p key={`ship-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                                {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.cliente || 'Sin destino'}
+                                                            </p>
+                                                        ))}
+                                                        {dailyShipmentRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin envíos registrados.</p>}
+                                                    </div>
+                                                    <p className="mt-3 text-[11px] font-black text-slate-500">Clientes del día</p>
+                                                    <div className="mt-1 flex flex-wrap gap-1">
+                                                        {dailyCustomerRows.slice(0, 12).map((cliente) => (
+                                                            <span key={cliente} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                                                                {cliente}
+                                                            </span>
+                                                        ))}
+                                                        {dailyCustomerRows.length === 0 && <span className="text-xs font-semibold text-slate-400">Sin clientes registrados.</span>}
+                                                    </div>
+                                                    <p className="mt-3 text-[11px] font-black text-slate-500">Traspasos</p>
+                                                    <div className="mt-1 space-y-1">
+                                                        {dailyTransferRows.slice(0, 8).map((row) => (
+                                                            <p key={`transfer-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                                {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {row.bodega || '-'} → {row.destino || '-'}
+                                                            </p>
+                                                        ))}
+                                                        {dailyTransferRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin traspasos registrados.</p>}
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
 
                                         <div className="rounded-xl border border-white bg-white p-3">
@@ -5761,14 +5859,23 @@ function Dashboard() {
                                                     Visto
                                                 </label>
                                             </div>
-                                            <div className="space-y-1">
-                                                {dailyAssemblyRows.slice(0, 10).map((row) => (
-                                                    <p key={`asm-${row.id}`} className="text-xs font-semibold text-slate-700">
-                                                        {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {formatInventoryWarehouseLabel(row.bodega)}
-                                                    </p>
-                                                ))}
-                                                {dailyAssemblyRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin ensamblajes registrados.</p>}
-                                            </div>
+                                            {activeDailyControlIsManual ? (
+                                                <textarea
+                                                    value={activeDailyInventoryControl.manualSections?.assemblies || ''}
+                                                    onChange={(e) => updateDailyManualSection('assemblies', e.target.value)}
+                                                    placeholder="Producto · lote · cantidad · bodega"
+                                                    className="min-h-[180px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                                />
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    {dailyAssemblyRows.slice(0, 10).map((row) => (
+                                                        <p key={`asm-${row.id}`} className="text-xs font-semibold text-slate-700">
+                                                            {row.producto} · {row.lote} · {formatQty(row.cantidad)} · {formatInventoryWarehouseLabel(row.bodega)}
+                                                        </p>
+                                                    ))}
+                                                    {dailyAssemblyRows.length === 0 && <p className="text-xs font-semibold text-slate-400">Sin ensamblajes registrados.</p>}
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="rounded-xl border border-white bg-white p-3">
@@ -5783,6 +5890,17 @@ function Dashboard() {
                                                     Stock visto
                                                 </label>
                                             </div>
+                                            {activeDailyControlIsManual && (
+                                                <label className="mb-3 block text-[11px] font-black uppercase tracking-wide text-slate-500">
+                                                    Stock del día
+                                                    <textarea
+                                                        value={activeDailyInventoryControl.manualSections?.stock || ''}
+                                                        onChange={(e) => updateDailyManualSection('stock', e.target.value)}
+                                                        placeholder="Producto · lote · bodega · Lunaris · físico · Zoho · diferencia/observación"
+                                                        className="mt-1 min-h-[118px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                                    />
+                                                </label>
+                                            )}
                                             <FileUploader
                                                 folderPath={`daily-inventory-control/${inventoryControlDateKey}`}
                                                 existingFiles={activeDailyInventoryControl.attachments}
@@ -5793,6 +5911,7 @@ function Dashboard() {
                                         </div>
                                     </div>
 
+                                    {!activeDailyControlIsManual && (
                                     <div className="mt-3 overflow-x-auto rounded-xl border border-white bg-white">
                                         <table className="min-w-full text-left text-xs">
                                             <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
@@ -5873,6 +5992,7 @@ function Dashboard() {
                                             </tbody>
                                         </table>
                                     </div>
+                                    )}
                                 </div>
                             )}
                             {summaryModal.items.length === 0 && !(summaryModal.kind === 'events' && activeDailyInventoryControl) && (

@@ -791,7 +791,14 @@ export default function TimeTrackingPage() {
                 </div>
             </div>
 
-            {canManageVacationBalances ? renderAdminTable() : renderUserDashboard(currentUser.id)}
+            {canManageVacationBalances ? (
+                <div className="space-y-8">
+                    {!isAdmin && renderUserDashboard(currentUser.id)}
+                    {renderAdminTable()}
+                </div>
+            ) : (
+                renderUserDashboard(currentUser.id)
+            )}
         </div>
     );
 }

@@ -222,6 +222,27 @@ function mergeEntitiesByHeuristic(base: Record<string, any>, incoming: Record<st
     }
   }
 
+  // Shipping details share the same field-level timestamp so package count,
+  // weight and the manual review checkbox move together across open clients.
+  const baseShippingTs = parseTimestampMs(base.shippingDetailsUpdatedAt);
+  const incomingShippingTs = parseTimestampMs(incoming.shippingDetailsUpdatedAt);
+  if (baseShippingTs > 0 || incomingShippingTs > 0) {
+    const keepIncomingShipping = incomingShippingTs >= baseShippingTs;
+    const source = keepIncomingShipping ? incoming : base;
+    const shippingFields = [
+      'shippingWeightKg',
+      'dispatchManualConfirmed',
+      'dispatchManualConfirmedAt',
+      'dispatchManualConfirmedBy',
+      'shippingDetailsUpdatedAt',
+    ];
+    shippingFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(source, field)) {
+        merged[field] = source[field];
+      }
+    });
+  }
+
   // Detached labels should stay detached until someone explicitly reattaches
   // them. This prevents a stale sync from resurrecting labels that were
   // manually removed from a despacho and sent back to pending state.
