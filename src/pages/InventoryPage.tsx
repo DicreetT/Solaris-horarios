@@ -30,7 +30,7 @@ import {
   upsertInventoryMonthlyCloseSnapshot,
   type InventoryMonthlyCloseSnapshot,
 } from '../utils/inventoryMonthlyClose';
-import { formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
+import { formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, normalizeKitUnit, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
 import { openTableXlsx } from '../utils/tableExport';
 import { describeConnectionError } from '../utils/connectionErrors';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
@@ -2569,6 +2569,35 @@ function InventoryPage() {
     return map;
   }, [productos]);
 
+  const convertKitComponentQuantity = useCallback((componentProductRaw: unknown, componentQuantityRaw: unknown, componentUnitRaw: unknown, kitQuantityRaw: unknown) => {
+    const componentProduct = clean(componentProductRaw).toUpperCase();
+    const componentQuantity = Math.max(0, toNum(componentQuantityRaw));
+    const kitQuantity = Math.max(0, toNum(kitQuantityRaw));
+    const baseQuantity = componentQuantity * kitQuantity;
+    if (normalizeKitUnit(componentUnitRaw) !== 'vial') return baseQuantity;
+    const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
+    return vialesPorCaja > 0 ? baseQuantity / vialesPorCaja : 0;
+  }, [inventoryProductMetaByCode]);
+
+  const formatKitComponentQuantityHelp = useCallback((componentProductRaw: unknown, componentQuantityRaw: unknown, componentUnitRaw: unknown, kitQuantityRaw: unknown) => {
+    const componentProduct = clean(componentProductRaw).toUpperCase();
+    const componentQuantity = Math.max(0, toNum(componentQuantityRaw));
+    const kitQuantity = Math.max(0, toNum(kitQuantityRaw));
+    const totalUnits = componentQuantity * kitQuantity;
+    const unit = normalizeKitUnit(componentUnitRaw);
+    if (unit === 'vial') {
+      const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
+      if (vialesPorCaja <= 0) return `${componentQuantity.toLocaleString('es-ES')} vial(es) por kit · falta viales/caja en ${componentProduct}`;
+      const boxes = totalUnits / vialesPorCaja;
+      return totalUnits > 0
+        ? `Descontará ${totalUnits.toLocaleString('es-ES')} vial(es) = ${boxes.toLocaleString('es-ES', { maximumFractionDigits: 4 })} caja(s)`
+        : `${componentQuantity.toLocaleString('es-ES')} vial(es) por kit`;
+    }
+    return totalUnits > 0
+      ? `Descontará ${totalUnits.toLocaleString('es-ES')} caja(s)`
+      : `${componentQuantity.toLocaleString('es-ES')} caja(s) por kit`;
+  }, [inventoryProductMetaByCode]);
+
   const stockByProductLotToken = useMemo(() => {
     const map = new Map<string, number>();
     for (const m of normalizedMovements) {
@@ -4762,18 +4791,30 @@ function InventoryPage() {
           const componentLot = transferOriginIsHuarte
             ? rawComponentLot
             : canonicalLotForProduct(canonicalKnownCanetLotRows, componentProduct, rawComponentLot);
-          const componentQty = qty * Math.max(0, toNum(component.cantidad));
+          const componentUnit = normalizeKitUnit(component.unidad);
+          const componentRawQty = Math.max(0, toNum(component.cantidad)) * qty;
+          const componentQty = convertKitComponentQuantity(componentProduct, component.cantidad, componentUnit, qty);
+          const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
           return {
             componentProduct,
             componentLot,
+            componentUnit,
+            componentRawQty,
             componentQty,
             componentSignedQty: componentQty * sign,
+            conversionError: componentUnit === 'vial' && vialesPorCaja <= 0
+              ? `El componente ${componentProduct} está en viales, pero no tiene viales/caja configurado en Maestros.`
+              : '',
           };
         })
       : [];
 
     if (isKitMovement) {
       for (const part of kitParts) {
+        if (part.conversionError) {
+          window.alert(part.conversionError);
+          return;
+        }
         if (!part.componentProduct || !part.componentLot || part.componentQty <= 0) {
           window.alert(`Revisa la receta del kit ${producto}: hay un componente incompleto.`);
           return;
@@ -4961,6 +5002,7 @@ function InventoryPage() {
           const notes = [
             clean(movementForm.notas),
             `Kit ${producto} · ${qty.toLocaleString('es-ES')} unidad(es)`,
+            part.componentUnit === 'vial' ? `${part.componentRawQty.toLocaleString('es-ES')} vial(es) de ${part.componentProduct}` : '',
             isTransfer ? pairMarker : '',
           ].filter(Boolean).join(' | ');
           const nextPayload = {
@@ -5629,7 +5671,7 @@ function InventoryPage() {
     const mode = clean(newProductForm.modo_stock).toUpperCase();
     const kitComponents = parseKitComponentsText(newProductForm.kit_componentes_text);
     if (mode === 'KIT' && kitComponents.length === 0) {
-      window.alert('Un kit necesita al menos un componente. Ejemplo: SV:1:caja');
+      window.alert('Un kit necesita al menos un componente. Ejemplo: SV:2:vial');
       return;
     }
     const now = nowIso();
@@ -7575,8 +7617,6 @@ function InventoryPage() {
                         {movementKitComponents.map((component, index) => {
                           const product = clean(component.producto).toUpperCase();
                           const key = movementKitComponentKey(component, index);
-                          const unitQty = Math.max(0, toNum(component.cantidad));
-                          const totalQty = unitQty * Math.abs(toNum(movementForm.cantidad));
                           return (
                             <AutocompleteInput
                               key={key}
@@ -7586,11 +7626,7 @@ function InventoryPage() {
                               options={movementKitLotOptionsByProduct.get(product) || []}
                               placeholder="Selecciona lote"
                               emptyMessage={`Sin lotes activos con stock para ${product} en esta bodega.`}
-                              helperText={
-                                totalQty > 0
-                                  ? `Descontará ${totalQty.toLocaleString('es-ES')} caja(s)`
-                                  : `${unitQty.toLocaleString('es-ES')} caja(s) por kit`
-                              }
+                              helperText={formatKitComponentQuantityHelp(product, component.cantidad, component.unidad, Math.abs(toNum(movementForm.cantidad)))}
                             />
                           );
                         })}

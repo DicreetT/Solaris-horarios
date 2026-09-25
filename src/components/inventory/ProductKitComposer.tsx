@@ -105,7 +105,7 @@ export default function ProductKitComposer({ value, onChange, productOptions }: 
         ))}
         {components.length === 0 && (
           <p className="rounded-lg border border-dashed border-violet-200 bg-white px-2 py-2 text-xs font-semibold text-violet-500">
-            Añade los subproductos del kit. Ejemplo: SV · 1 caja, ENT · 1 caja.
+            Añade los subproductos del kit. Ejemplo: SV · 2 vial, ENT · 2 vial, ISO · 1 vial.
           </p>
         )}
       </div>

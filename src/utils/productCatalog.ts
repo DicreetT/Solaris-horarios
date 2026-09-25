@@ -4,7 +4,7 @@ export type ProductKitComponent = {
   unidad?: string;
 };
 
-export const KIT_COMPONENT_UNITS = ['caja'] as const;
+export const KIT_COMPONENT_UNITS = ['caja', 'vial'] as const;
 export const RETIRED_PRODUCT_CODES = ['TESTING KIT'] as const;
 
 export const DEFAULT_KIT_PRODUCTS = [
@@ -58,8 +58,8 @@ export function parseKitComponentsText(value: unknown): ProductKitComponent[] {
         };
       }
 
-      const qtyUnitCode = normalized.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(unidad|unidades|caja|cajas)?\s*(?:x|\*)?\s*([A-Za-z0-9._-]+)$/i);
-      const codeQtyUnit = normalized.match(/^([A-Za-z0-9._-]+)\s*(?::|x|\*)?\s*([0-9]+(?:[.,][0-9]+)?)?\s*(unidad|unidades|caja|cajas)?$/i);
+      const qtyUnitCode = normalized.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(unidad|unidades|caja|cajas|vial|viales)?\s*(?:x|\*)?\s*([A-Za-z0-9._-]+)$/i);
+      const codeQtyUnit = normalized.match(/^([A-Za-z0-9._-]+)\s*(?::|x|\*)?\s*([0-9]+(?:[.,][0-9]+)?)?\s*(unidad|unidades|caja|cajas|vial|viales)?$/i);
 
       if (qtyUnitCode) {
         return {
@@ -88,6 +88,7 @@ export function parseKitComponentsText(value: unknown): ProductKitComponent[] {
 
 export function normalizeKitUnit(value: unknown) {
   const unit = clean(value).toLowerCase();
+  if (unit.startsWith('vial')) return 'vial';
   if (unit.startsWith('caja')) return 'caja';
   return 'caja';
 }

@@ -7,7 +7,7 @@ import canetInventorySeed from '../data/inventory_seed.json';
 import huarteInventorySeed from '../data/inventory_facturacion_seed.json';
 import { supabase } from '../lib/supabase';
 import { CANET_MASTER_WAREHOUSES, HUARTE_STOCK_WAREHOUSES, calculateInventoryStockSnapshot, normalizeInventoryWarehouse } from '../utils/inventoryStock';
-import { DEFAULT_KIT_PRODUCTS, isRetiredProductCode, normalizeKitComponents } from '../utils/productCatalog';
+import { DEFAULT_KIT_PRODUCTS, isRetiredProductCode, normalizeKitComponents, normalizeKitUnit } from '../utils/productCatalog';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -2259,10 +2259,14 @@ export default function FacturacionPage() {
   );
 
   const convertKitComponentQuantity = useCallback(
-    (_inventory: 'canet' | 'huarte', _componentProduct: string, componentQuantity: number, _componentUnit: unknown, kitQuantity: number) => {
-      return Math.max(0, componentQuantity) * Math.max(0, kitQuantity);
+    (inventory: 'canet' | 'huarte', componentProductRaw: string, componentQuantity: number, componentUnit: unknown, kitQuantity: number) => {
+      const baseQuantity = Math.max(0, componentQuantity) * Math.max(0, kitQuantity);
+      if (normalizeKitUnit(componentUnit) !== 'vial') return baseQuantity;
+      const row = getProductCatalogRow(inventory, componentProductRaw);
+      const vialesPorCaja = Math.max(0, Number(row?.viales_por_caja) || 0);
+      return vialesPorCaja > 0 ? baseQuantity / vialesPorCaja : baseQuantity;
     },
-    [],
+    [getProductCatalogRow],
   );
 
   const allocateStockParts = useCallback(
