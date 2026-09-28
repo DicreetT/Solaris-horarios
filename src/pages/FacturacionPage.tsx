@@ -1891,15 +1891,14 @@ function recomputeOrderStatus(order: BillingOrder): BillingOrderStatus {
   if (order.status === 'CANCELADO' || order.status === 'DESPACHADO') return order.status;
   const hasPendingLot = order.lines.some((line) => line.lotePending || !clean(line.lote));
   if (hasPendingLot) return 'PENDIENTE_MANUAL';
+  if (order.status === 'EN_PREPARACION') return 'EN_PREPARACION';
   if (!orderRequiresLabels(order)) {
-    if (order.status === 'EN_PREPARACION') return 'EN_PREPARACION';
     return 'PENDIENTE_PREPARACION';
   }
   const requiredPackages = getOrderRequiredPackages(order);
   if (requiredPackages <= 0) return 'PENDIENTE_BULTOS';
   const labelsAttached = getOrderLabels(order).length;
   if (labelsAttached < requiredPackages) return 'PENDIENTE_ETIQUETAS';
-  if (order.status === 'EN_PREPARACION') return 'EN_PREPARACION';
   return 'PENDIENTE_PREPARACION';
 }
 
@@ -4195,11 +4194,13 @@ export default function FacturacionPage() {
               const canDispatchOrder =
                 order.status !== 'DESPACHADO' &&
                 order.status !== 'CANCELADO' &&
-                !dispatchingOrderIds.includes(order.id) &&
-                requiredPackages > 0 &&
-                shippingWeightKg > 0 &&
-                (!requiresLabels || attachedLabels.length >= requiredPackages) &&
-                !!order.dispatchManualConfirmed;
+                !dispatchingOrderIds.includes(order.id);
+              const dispatchChecklist = [
+                requiredPackages <= 0 ? 'bultos/paquetes' : '',
+                shippingWeightKg <= 0 ? 'peso' : '',
+                requiresLabels && attachedLabels.length < requiredPackages ? `etiquetas (${attachedLabels.length}/${requiredPackages || 0})` : '',
+                !order.dispatchManualConfirmed ? 'revisión manual OK' : '',
+              ].filter(Boolean);
 
               return (
                 <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -4509,7 +4510,7 @@ export default function FacturacionPage() {
                     <button
                       onClick={() => void dispatchOrder(order)}
                       disabled={!canDispatchOrder}
-                      title={!canDispatchOrder && order.status !== 'DESPACHADO' && order.status !== 'CANCELADO' ? 'Completa bultos, peso, etiquetas requeridas y revisión manual.' : undefined}
+                      title={dispatchChecklist.length > 0 ? `Falta completar: ${dispatchChecklist.join(', ')}.` : undefined}
                       className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700 disabled:opacity-50"
                     >
                       <Truck size={12} /> {dispatchingOrderIds.includes(order.id) ? 'Despachando...' : 'Despachar (crear movimientos)'}
@@ -4529,6 +4530,11 @@ export default function FacturacionPage() {
                     >
                       <Trash2 size={12} /> Eliminar pedido
                     </button>
+                    {dispatchChecklist.length > 0 && order.status !== 'DESPACHADO' && order.status !== 'CANCELADO' && (
+                      <div className="basis-full text-[11px] font-bold text-amber-700">
+                        Para despachar falta: {dispatchChecklist.join(', ')}.
+                      </div>
+                    )}
                   </div>
                 </article>
               );
