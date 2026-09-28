@@ -1898,7 +1898,7 @@ function recomputeOrderStatus(order: BillingOrder): BillingOrderStatus {
   const requiredPackages = getOrderRequiredPackages(order);
   if (requiredPackages <= 0) return 'PENDIENTE_BULTOS';
   const labelsAttached = getOrderLabels(order).length;
-  if (labelsAttached < requiredPackages) return 'PENDIENTE_ETIQUETAS';
+  if (labelsAttached < 1) return 'PENDIENTE_ETIQUETAS';
   return 'PENDIENTE_PREPARACION';
 }
 
@@ -2664,9 +2664,6 @@ export default function FacturacionPage() {
           .map((order, idx) => ({ order, idx }))
           .filter(({ order }) => {
             if (order.status === 'DESPACHADO' || order.status === 'CANCELADO') return false;
-            const requiredPackages = getOrderRequiredPackages(order);
-            const attachedLabels = getOrderLabels(order);
-            if (requiredPackages > 0 && attachedLabels.length >= requiredPackages) return false;
             const orderKey = normalizeCustomerKey(order.customerName || '');
             return !!orderKey;
           })
@@ -2693,12 +2690,6 @@ export default function FacturacionPage() {
 
         const orderIdx = best.idx;
         const currentLabels = getOrderLabels(nextOrders[orderIdx]);
-        const requiredPackages = getOrderRequiredPackages(nextOrders[orderIdx]);
-        if (requiredPackages > 0 && currentLabels.length >= requiredPackages) {
-          labelsNext.push(label);
-          continue;
-        }
-
         const duplicate = currentLabels.some((existing) => clean(existing.id) === clean(label.id));
         if (duplicate) {
           const changedAt = nowIso();
@@ -3281,11 +3272,6 @@ export default function FacturacionPage() {
     if (!currentOrder) return;
 
     const labels = getOrderLabels(currentOrder);
-    const requiredPackages = getOrderRequiredPackages(currentOrder);
-    if (requiredPackages > 0 && labels.length >= requiredPackages) {
-      alert('Este pedido ya tiene todas las etiquetas requeridas por bultos.');
-      return;
-    }
     if (labels.some((item) => clean(item.id) === clean(label.id))) {
       const changedAt = nowIso();
       setLabelQueue((prev) =>
@@ -3658,8 +3644,8 @@ export default function FacturacionPage() {
       alert('Completa el peso del envío antes de despachar.');
       return;
     }
-    if (requiresLabels && attachedLabels.length < requiredPackages) {
-      alert(`Faltan etiquetas para despachar (${attachedLabels.length}/${requiredPackages}). Asocia las etiquetas correspondientes antes de confirmar.`);
+    if (requiresLabels && attachedLabels.length < 1) {
+      alert('Asocia al menos una etiqueta antes de despachar.');
       return;
     }
     if (!order.dispatchManualConfirmed) {
@@ -4198,7 +4184,7 @@ export default function FacturacionPage() {
               const dispatchChecklist = [
                 requiredPackages <= 0 ? 'bultos/paquetes' : '',
                 shippingWeightKg <= 0 ? 'peso' : '',
-                requiresLabels && attachedLabels.length < requiredPackages ? `etiquetas (${attachedLabels.length}/${requiredPackages || 0})` : '',
+                requiresLabels && attachedLabels.length < 1 ? 'al menos una etiqueta' : '',
                 !order.dispatchManualConfirmed ? 'revisión manual OK' : '',
               ].filter(Boolean);
 
@@ -4319,7 +4305,7 @@ export default function FacturacionPage() {
                       />
                     </label>
                     <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-black text-sky-800">
-                      Etiquetas: {attachedLabels.length}/{requiredPackages || 0}
+                      Etiquetas: {attachedLabels.length} asociada(s)
                     </div>
                     <label className={`inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs font-black ${order.dispatchManualConfirmed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                       <input
