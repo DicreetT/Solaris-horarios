@@ -15,6 +15,8 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import * as XLSX from 'xlsx';
 import { USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
@@ -23,6 +25,8 @@ import { useSharedJsonState } from '../hooks/useSharedJsonState';
 
 const PAYMENT_REQUESTS_KEY = 'facturacion_payment_requests_v1';
 const CASH_MOVEMENTS_KEY = 'facturacion_cash_movements_v1';
+
+(pdfjsLib as any).GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 type PaymentStatus = 'PENDIENTE' | 'PAGADO' | 'CANCELADO';
 type CashMovementType = 'INGRESO' | 'SALIDA';
@@ -50,11 +54,13 @@ type PaymentRequest = {
   createdByEmail: string;
   updatedById?: string;
   updatedByName?: string;
-  sourceType: 'excel' | 'manual';
+  sourceType: 'excel' | 'pdf' | 'manual';
   sourceFileName?: string;
   providerName: string;
   invoiceRef: string;
+  concept?: string;
   amount: number;
+  vatAmount?: number;
   iban: string;
   notes: string;
   comments?: string;
@@ -313,6 +319,8 @@ const AMOUNT_ALIASES = [
 ];
 const IBAN_ALIASES = ['iban', 'cuenta', 'cuentabancaria', 'bankaccount'];
 const NOTES_ALIASES = ['nota', 'notas', 'observaciones', 'descripcion', 'detalle'];
+const CONCEPT_ALIASES = ['concepto', 'descripcion', 'detalle', 'servicio'];
+const VAT_ALIASES = ['iva', 'vat', 'impuesto'];
 
 function pickField(row: Record<string, unknown>, aliases: string[]) {
   const entries = Object.entries(row);
@@ -323,6 +331,193 @@ function pickField(row: Record<string, unknown>, aliases: string[]) {
     }
   }
   return '';
+}
+
+function stripExtension(fileName: string) {
+  return clean(fileName).replace(/\.[^.]+$/, '');
+}
+
+function isSpreadsheetFile(file: File) {
+  const name = file.name.toLowerCase();
+  return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+}
+
+function isPdfFile(file: File) {
+  const name = file.name.toLowerCase();
+  return file.type === 'application/pdf' || name.endsWith('.pdf');
+}
+
+function normalizePdfLine(value: string) {
+  return clean(value).replace(/\s+/g, ' ');
+}
+
+function extractMoneyValues(value: string) {
+  const matches = value.match(/-?\d{1,3}(?:[.\s]\d{3})*(?:,\d{2}|\.\d{2})|-?\d+(?:,\d{2}|\.\d{2})/g) || [];
+  return matches
+    .map((match) => parseAmount(match))
+    .filter((amount) => Number.isFinite(amount) && amount > 0);
+}
+
+function lineHasAny(line: string, labels: string[]) {
+  const key = normalizeKey(line);
+  return labels.some((label) => key.includes(normalizeKey(label)));
+}
+
+function valueAfterLabel(line: string, labels: string[]) {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`${escaped}\\s*[:#\\-]?\\s*(.+)$`, 'i');
+    const match = line.match(regex);
+    if (match?.[1]) return normalizePdfLine(match[1]);
+  }
+  return '';
+}
+
+function findTextValue(lines: string[], labels: string[]) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!lineHasAny(line, labels)) continue;
+    const direct = valueAfterLabel(line, labels);
+    if (direct && direct.length > 2 && !extractMoneyValues(direct).length) return direct;
+    const next = normalizePdfLine(lines[i + 1] || '');
+    if (next && next.length > 2 && !lineHasAny(next, ['fecha', 'factura', 'importe', 'total', 'iva'])) return next;
+  }
+  return '';
+}
+
+function findAmountNearLabels(lines: string[], labels: string[]) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!lineHasAny(line, labels)) continue;
+    const amounts = extractMoneyValues(line);
+    if (amounts.length > 0) return amounts[amounts.length - 1];
+    const nextAmounts = extractMoneyValues(lines[i + 1] || '');
+    if (nextAmounts.length > 0) return nextAmounts[nextAmounts.length - 1];
+  }
+  return 0;
+}
+
+function findInvoiceRef(lines: string[], fileName: string) {
+  for (const line of lines.slice(0, 40)) {
+    const match =
+      line.match(/(?:factura|invoice)\s*(?:n[ºo]\.?|num(?:ero)?\.?)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i) ||
+      line.match(/(?:n[ºo]\.?|num(?:ero)?\.?|ref(?:erencia)?)\s*(?:de\s+factura)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9./_-]{2,})/i);
+    const value = clean(match?.[1]);
+    if (value && !normalizeKey(value).includes('factura')) return value;
+  }
+  return stripExtension(fileName);
+}
+
+function findLikelyProvider(lines: string[], fileName: string) {
+  const labelled = findTextValue(lines, ['proveedor', 'beneficiario', 'emisor', 'persona', 'razón social', 'razon social', 'nombre']);
+  if (labelled) return labelled;
+  const noise = ['factura', 'invoice', 'nif', 'cif', 'fecha', 'total', 'importe', 'iva', 'base imponible', 'iban', 'direccion', 'dirección'];
+  const candidate = lines.slice(0, 18).find((line) => {
+    const value = normalizePdfLine(line);
+    if (value.length < 4 || value.length > 90) return false;
+    if (!/[a-záéíóúñ]/i.test(value)) return false;
+    if (extractMoneyValues(value).length > 0) return false;
+    return !lineHasAny(value, noise);
+  });
+  return candidate || stripExtension(fileName);
+}
+
+function findLikelyConcept(lines: string[], fileName: string) {
+  const labelled = findTextValue(lines, ['concepto', 'descripción', 'descripcion', 'detalle', 'servicio']);
+  if (labelled) return labelled;
+  const noise = ['factura', 'invoice', 'nif', 'cif', 'fecha', 'total', 'importe', 'iva', 'base imponible', 'iban'];
+  const candidate = lines.find((line) => {
+    const value = normalizePdfLine(line);
+    if (value.length < 8 || value.length > 140) return false;
+    if (!/[a-záéíóúñ]/i.test(value)) return false;
+    if (extractMoneyValues(value).length > 0) return false;
+    return !lineHasAny(value, noise);
+  });
+  return candidate || stripExtension(fileName);
+}
+
+async function extractPdfTextFromArrayBuffer(buffer: ArrayBuffer): Promise<string> {
+  const loadingTask = (pdfjsLib as any).getDocument({
+    data: new Uint8Array(buffer),
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
+  const pagesText: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const byY = new Map<number, string[]>();
+
+    for (const item of (textContent.items || []) as any[]) {
+      const str = normalizePdfLine(item?.str || '');
+      if (!str) continue;
+      const yRaw = Number(item?.transform?.[5] ?? 0);
+      const y = Number.isFinite(yRaw) ? Math.round(yRaw * 10) / 10 : 0;
+      if (!byY.has(y)) byY.set(y, []);
+      byY.get(y)!.push(str);
+    }
+
+    const pageLines = Array.from(byY.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([, parts]) => normalizePdfLine(parts.join(' ')))
+      .filter(Boolean);
+    pagesText.push(pageLines.join('\n'));
+  }
+
+  return clean(pagesText.join('\n'));
+}
+
+function parsePaymentRequestFromPdfText(
+  fileName: string,
+  text: string,
+  fileDataUrl: string,
+  currentUser: { id?: string; name?: string; email?: string } | null,
+): PaymentRequest {
+  const lines = text
+    .split(/\r?\n/)
+    .map(normalizePdfLine)
+    .filter(Boolean);
+  const amount =
+    findAmountNearLabels(lines, ['total factura', 'total a pagar', 'importe total', 'total']) ||
+    Math.max(0, ...lines.flatMap((line) => (/€|eur|total|importe/i.test(line) ? extractMoneyValues(line) : [])));
+  const vatAmount = findAmountNearLabels(lines, ['cuota iva', 'iva', 'vat']);
+  const taxableBase = findAmountNearLabels(lines, ['base imponible', 'subtotal', 'importe neto']);
+  const providerName = findLikelyProvider(lines, fileName);
+  const invoiceRef = findInvoiceRef(lines, fileName);
+  const concept = findLikelyConcept(lines, fileName);
+  const ibanMatch = text.match(/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){10,30}\b/i);
+  const now = new Date().toISOString();
+  const notes = [
+    text.length < 40 ? 'PDF con poco texto detectable; revisar manualmente.' : '',
+    taxableBase > 0 ? `Base imponible detectada: ${formatCurrency(taxableBase)}` : '',
+  ].filter(Boolean).join('\n');
+
+  return {
+    id: uid('pay'),
+    createdAt: now,
+    updatedAt: now,
+    lastChangedAt: now,
+    createdById: clean(currentUser?.id),
+    createdByName: clean(currentUser?.name) || 'Sistema',
+    createdByEmail: clean(currentUser?.email).toLowerCase(),
+    updatedById: clean(currentUser?.id),
+    updatedByName: clean(currentUser?.name) || 'Sistema',
+    sourceType: 'pdf',
+    sourceFileName: fileName,
+    providerName: providerName || 'Proveedor sin detectar',
+    invoiceRef: invoiceRef || stripExtension(fileName),
+    concept,
+    amount,
+    vatAmount,
+    iban: normalizeIban(ibanMatch?.[0] || ''),
+    notes,
+    requestFileName: fileName,
+    requestFileDataUrl: fileDataUrl,
+    status: 'PENDIENTE' as PaymentStatus,
+  };
 }
 
 function buildPaymentSignature(input: {
@@ -363,6 +558,8 @@ function parsePaymentRequestsFromWorkbook(
       const amountRaw = pickField(row, AMOUNT_ALIASES);
       const iban = normalizeIban(pickField(row, IBAN_ALIASES));
       const notes = pickField(row, NOTES_ALIASES);
+      const concept = pickField(row, CONCEPT_ALIASES);
+      const vatAmount = parseAmount(pickField(row, VAT_ALIASES));
       const amount = parseAmount(amountRaw);
 
       const possibleTotal =
@@ -386,7 +583,9 @@ function parsePaymentRequestsFromWorkbook(
         sourceFileName: fileName,
         providerName: providerName || 'Proveedor sin detectar',
         invoiceRef: invoiceRef || '-',
+        concept,
         amount,
+        vatAmount,
         iban,
         notes,
         status: 'PENDIENTE',
@@ -443,7 +642,9 @@ export default function BillingPaymentsPage() {
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [editProvider, setEditProvider] = useState('');
   const [editInvoice, setEditInvoice] = useState('');
+  const [editConcept, setEditConcept] = useState('');
   const [editAmount, setEditAmount] = useState('');
+  const [editVatAmount, setEditVatAmount] = useState('');
   const [editIban, setEditIban] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editComments, setEditComments] = useState('');
@@ -524,6 +725,7 @@ export default function BillingPaymentsPage() {
       const haystack = [
         item.providerName,
         item.invoiceRef,
+        item.concept,
         item.iban,
         item.notes,
         item.comments,
@@ -535,6 +737,10 @@ export default function BillingPaymentsPage() {
         amountEs,
         item.amount.toFixed(2),
       ];
+      if (typeof item.vatAmount === 'number') {
+        haystack.push(item.vatAmount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        haystack.push(item.vatAmount.toFixed(2));
+      }
       return haystack.some((value) => normalizeKey(value || '').includes(q));
     });
   }, [monthFilteredRequests, searchText]);
@@ -625,7 +831,9 @@ export default function BillingPaymentsPage() {
     setEditingRequestId(null);
     setEditProvider('');
     setEditInvoice('');
+    setEditConcept('');
     setEditAmount('');
+    setEditVatAmount('');
     setEditIban('');
     setEditNotes('');
     setEditComments('');
@@ -635,7 +843,9 @@ export default function BillingPaymentsPage() {
     setEditingRequestId(item.id);
     setEditProvider(item.providerName || '');
     setEditInvoice(item.invoiceRef || '');
+    setEditConcept(item.concept || '');
     setEditAmount(item.amount ? String(item.amount) : '');
+    setEditVatAmount(item.vatAmount ? String(item.vatAmount) : '');
     setEditIban(item.iban || '');
     setEditNotes(item.notes || '');
     setEditComments(item.comments || '');
@@ -705,10 +915,7 @@ export default function BillingPaymentsPage() {
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
-    const accepted = Array.from(files).filter((f) => {
-      const name = f.name.toLowerCase();
-      return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
-    });
+    const accepted = Array.from(files).filter((f) => isSpreadsheetFile(f) || isPdfFile(f));
     setPendingFiles(accepted);
   };
 
@@ -716,21 +923,30 @@ export default function BillingPaymentsPage() {
     setPendingFiles((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  const loadExcelRequests = async () => {
+  const loadPaymentRequestsFromFiles = async () => {
     if (pendingFiles.length === 0) {
-      alert('Selecciona al menos un Excel/CSV.');
+      alert('Selecciona al menos un Excel, CSV o PDF.');
       return;
     }
     setIsProcessingFiles(true);
     try {
       const parsed: PaymentRequest[] = [];
       for (const file of pendingFiles) {
-        const buffer = await file.arrayBuffer();
-        parsed.push(...parsePaymentRequestsFromWorkbook(file.name, buffer, currentUser));
+        if (isPdfFile(file)) {
+          const buffer = await file.arrayBuffer();
+          const text = await extractPdfTextFromArrayBuffer(buffer);
+          const fileDataUrl = await readFileAsDataUrl(file);
+          parsed.push(parsePaymentRequestFromPdfText(file.name, text, fileDataUrl, currentUser));
+          continue;
+        }
+        if (isSpreadsheetFile(file)) {
+          const buffer = await file.arrayBuffer();
+          parsed.push(...parsePaymentRequestsFromWorkbook(file.name, buffer, currentUser));
+        }
       }
 
       if (parsed.length === 0) {
-        alert('No se pudieron extraer filas de pago desde los archivos seleccionados.');
+        alert('No se pudieron extraer solicitudes de pago desde los archivos seleccionados.');
         return;
       }
 
@@ -762,10 +978,10 @@ export default function BillingPaymentsPage() {
         return [...newRows, ...current];
       });
       setPendingFiles([]);
-      alert(`${parsed.length} petición(es) detectada(s) desde Excel.`);
+      alert(`${parsed.length} petición(es) detectada(s) desde los archivos.`);
     } catch (error) {
-      console.error('Error leyendo Excel de pagos:', error);
-      alert('No se pudieron procesar los archivos Excel/CSV.');
+      console.error('Error leyendo archivos de pagos:', error);
+      alert('No se pudieron procesar los archivos. Revisa que el PDF tenga texto seleccionable o carga la solicitud manual.');
     } finally {
       setIsProcessingFiles(false);
     }
@@ -839,7 +1055,9 @@ export default function BillingPaymentsPage() {
       ...item,
       providerName,
       invoiceRef: invoiceRef || '-',
+      concept: clean(editConcept),
       amount: parseAmount(editAmount),
+      vatAmount: parseAmount(editVatAmount),
       iban,
       notes: clean(editNotes),
       comments: clean(editComments),
@@ -1191,16 +1409,16 @@ export default function BillingPaymentsPage() {
       </section>
 
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-violet-950">Carga Excel de pagos</h2>
+        <h2 className="text-lg font-black text-violet-950">Carga Excel/PDF de pagos</h2>
         <p className="mt-1 text-xs font-semibold text-violet-600">
-          Formatos soportados: <span className="font-black">.xlsx</span>, <span className="font-black">.xls</span>, <span className="font-black">.csv</span>.
+          Formatos soportados: <span className="font-black">.xlsx</span>, <span className="font-black">.xls</span>, <span className="font-black">.csv</span>, <span className="font-black">.pdf</span>.
         </p>
         <div className="mt-3 grid gap-3 md:grid-cols-5">
           <label className="md:col-span-4 text-xs font-black uppercase tracking-wide text-violet-700">
-            Archivo(s) Excel/CSV
+            Archivo(s) Excel/CSV/PDF
             <input
               type="file"
-              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+              accept=".xlsx,.xls,.csv,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/pdf"
               multiple
               onChange={(e) => handleFilesSelected(e.target.files)}
               className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
@@ -1225,7 +1443,7 @@ export default function BillingPaymentsPage() {
           <div className="flex items-end">
             <button
               type="button"
-              onClick={() => void loadExcelRequests()}
+              onClick={() => void loadPaymentRequestsFromFiles()}
               disabled={isProcessingFiles || pendingFiles.length === 0}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-300 bg-violet-700 px-3 py-2 text-sm font-black text-white disabled:opacity-50"
             >
@@ -1320,7 +1538,7 @@ export default function BillingPaymentsPage() {
       <section className="rounded-3xl border border-violet-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-black text-violet-950">Filtros</h2>
         <p className="mt-1 text-xs font-semibold text-violet-600">
-          Busca por proveedor, factura, importe, IBAN, notas, estado o nombre de archivo.
+          Busca por proveedor, factura, concepto, importe, IVA, IBAN, notas, estado o nombre de archivo.
         </p>
         <div className="mt-3 grid gap-3 md:grid-cols-5">
           <input
@@ -1382,7 +1600,9 @@ export default function BillingPaymentsPage() {
                   <th className="px-2 py-2">Estado</th>
                   <th className="px-2 py-2">Proveedor</th>
                   <th className="px-2 py-2">Factura</th>
+                  <th className="px-2 py-2">Concepto</th>
                   <th className="px-2 py-2">Importe</th>
+                  <th className="px-2 py-2">IVA</th>
                   <th className="px-2 py-2">IBAN</th>
                   <th className="px-2 py-2">Solicita</th>
                   <th className="px-2 py-2">Documento</th>
@@ -1419,8 +1639,14 @@ export default function BillingPaymentsPage() {
                           <div className="mt-1 text-[11px] font-semibold text-violet-500">{item.sourceFileName}</div>
                         )}
                       </td>
+                      <td className="max-w-[220px] px-2 py-2 text-xs font-semibold text-violet-700">
+                        {item.concept || '-'}
+                      </td>
                       <td className="px-2 py-2 font-black text-violet-900">
-                        {item.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                        {formatCurrency(item.amount)}
+                      </td>
+                      <td className="px-2 py-2 font-semibold text-violet-800">
+                        {item.vatAmount ? formatCurrency(item.vatAmount) : '-'}
                       </td>
                       <td className="px-2 py-2 font-mono text-xs font-semibold text-violet-800">{item.iban || '-'}</td>
                       <td className="px-2 py-2 text-xs font-semibold text-violet-700">
@@ -1917,9 +2143,21 @@ export default function BillingPaymentsPage() {
                 className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
               />
               <input
+                value={editConcept}
+                onChange={(e) => setEditConcept(e.target.value)}
+                placeholder="Concepto"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+              <input
                 value={editAmount}
                 onChange={(e) => setEditAmount(e.target.value)}
-                placeholder="Importe"
+                placeholder="Importe total"
+                className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              />
+              <input
+                value={editVatAmount}
+                onChange={(e) => setEditVatAmount(e.target.value)}
+                placeholder="IVA"
                 className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
               />
               <input
