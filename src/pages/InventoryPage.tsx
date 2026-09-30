@@ -513,6 +513,20 @@ const recordTimestampMs = (row: GenericRow) => {
   return 0;
 };
 
+const lotVialesUpdatedAtMs = (row: GenericRow) => {
+  const candidates = [
+    clean((row as any).viales_recibidos_updated_at),
+    clean((row as any).vialesRecibidosUpdatedAt),
+    clean((row as any).viales_updated_at),
+  ];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return recordTimestampMs(row);
+};
+
 const lotDeletedAtMs = (row: GenericRow) => {
   const candidates = [
     clean((row as any).deletedAt),
@@ -596,13 +610,18 @@ const mergeLotRows = (prev: GenericRow, normalizedIncoming: GenericRow) => {
   const incomingNotLessSpecific = incomingSpecificity >= prevSpecificity;
   merged.lote = incomingMoreSpecific ? incomingLotLabel : prevLotLabel || incomingLotLabel;
 
-  // Nunca degradar viales por una variante corta/ruidosa: conserva el mayor valor disponible.
-  const prevViales = toVialesNum((prev as any).viales_recibidos);
-  const incomingViales = toVialesNum((normalizedIncoming as any).viales_recibidos);
-  if (incomingViales > prevViales) {
-    merged.viales_recibidos = (normalizedIncoming as any).viales_recibidos;
-  } else if (prevViales > incomingViales) {
-    merged.viales_recibidos = (prev as any).viales_recibidos;
+  const prevHasViales = hasMeaningfulValue((prev as any).viales_recibidos);
+  const incomingHasViales = hasMeaningfulValue((normalizedIncoming as any).viales_recibidos);
+  if (prevHasViales || incomingHasViales) {
+    const prevVialesTs = lotVialesUpdatedAtMs(prev);
+    const incomingVialesTs = lotVialesUpdatedAtMs(normalizedIncoming);
+    if (incomingHasViales && (!prevHasViales || incomingVialesTs >= prevVialesTs)) {
+      merged.viales_recibidos = (normalizedIncoming as any).viales_recibidos;
+      (merged as any).viales_recibidos_updated_at = clean((normalizedIncoming as any).viales_recibidos_updated_at) || clean((normalizedIncoming as any).lastChangedAt) || clean((normalizedIncoming as any).updated_at);
+    } else if (prevHasViales) {
+      merged.viales_recibidos = (prev as any).viales_recibidos;
+      (merged as any).viales_recibidos_updated_at = clean((prev as any).viales_recibidos_updated_at) || clean((prev as any).lastChangedAt) || clean((prev as any).updated_at);
+    }
   }
 
   // Conserva campos no vacíos para evitar "resets" por payloads incompletos.
@@ -4246,7 +4265,7 @@ function InventoryPage() {
       let next = lote !== clean(row.lote) ? { ...row, lote } : row;
       let rowChanged = false;
 
-      if (correctedViales > 0 && currentViales !== correctedViales) {
+      if (correctedViales > 0 && currentViales <= 0) {
         next = { ...next, viales_recibidos: String(correctedViales) };
         rowChanged = true;
       }
@@ -5287,11 +5306,12 @@ function InventoryPage() {
   const openLotEditModal = (l: GenericRow) => {
     if (!canEditNow) return;
     setEditingLotKey(`${clean(l.producto)}|${clean(l.lote)}`);
+    const storedViales = toVialesNum((l as any).viales_recibidos);
     setLotForm({
       producto: clean(l.producto),
       lote: clean(l.lote),
       viales_recibidos: normalizeVialesDigits(
-        String(effectiveLotVialesByKey.get(lotKeyOf(l.producto, l.lote)) || clean(l.viales_recibidos)),
+        String(storedViales || effectiveLotVialesByKey.get(lotKeyOf(l.producto, l.lote)) || ''),
       ),
       fecha_caducidad: normalizeDateForInput(
         effectiveLotCaducityByKey.get(lotKeyOf(l.producto, l.lote)) || clean(l.fecha_caducidad),
@@ -5328,6 +5348,7 @@ function InventoryPage() {
     const lotPatch = {
       ...lotForm,
       viales_recibidos: normalizeVialesDigits(lotForm.viales_recibidos),
+      viales_recibidos_updated_at: nowIso(),
       estado: normalizedState,
       ensamblaje_finalizado: nextAsm,
       ...(assemblyFinalizedAt ? { ensamblaje_finalizado_at: assemblyFinalizedAt } : {}),
@@ -7356,7 +7377,8 @@ function InventoryPage() {
                 const lotFinalizado =
                   lotAssemblyFinalizedByProductLot.get(lotKey) === 'SI' ||
                   normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
-                const vialesDisplay = effectiveLotVialesByKey.get(lotKey) || toVialesNum(l.viales_recibidos);
+                const storedViales = toVialesNum((l as any).viales_recibidos);
+                const vialesDisplay = storedViales || effectiveLotVialesByKey.get(lotKey);
                 const caducityDisplay = effectiveLotCaducityByKey.get(lotKey) || clean(l.fecha_caducidad);
                 const archivedEntry = archivedLotEntryByKey.get(lotKey);
                 return [
@@ -7408,7 +7430,8 @@ function InventoryPage() {
               const lotFinalizado =
                 lotAssemblyFinalizedByProductLot.get(lotKey) === 'SI' ||
                 normalizeEnsamblajeFinalizado((l as any).ensamblaje_finalizado) === 'SI';
-              const vialesDisplay = effectiveLotVialesByKey.get(lotKey) || toVialesNum(l.viales_recibidos);
+              const storedViales = toVialesNum((l as any).viales_recibidos);
+              const vialesDisplay = storedViales || effectiveLotVialesByKey.get(lotKey);
               const caducityDisplay = effectiveLotCaducityByKey.get(lotKey) || clean(l.fecha_caducidad);
               return [
                 <ProductPill key={`${clean(l.producto)}-${clean(l.lote)}-${idx}`} code={clean(l.producto)} colorMap={productColorMap} />,

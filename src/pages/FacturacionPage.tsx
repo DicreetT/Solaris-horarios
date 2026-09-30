@@ -681,10 +681,18 @@ function buildLabelDisplayFileName(fileName: string, customerName: string, pageN
   const customerKey = normalizeCustomerKey(customer);
   const pageSuffix = pageNumber && pageNumber > 0 ? ` · p${pageNumber}` : '';
   const dotIdx = original.lastIndexOf('.');
-  const base = sanitizeLabelFileSegment(dotIdx > 0 ? original.slice(0, dotIdx) : original) || 'Etiqueta';
+  let base = sanitizeLabelFileSegment(dotIdx > 0 ? original.slice(0, dotIdx) : original) || 'Etiqueta';
   const ext = dotIdx > 0 ? original.slice(dotIdx) : '';
+  const baseKey = normalizeCustomerKey(base);
+  const prefixedParts = base.split(/\s+-\s+/).map((part) => sanitizeLabelFileSegment(part)).filter(Boolean);
+  if (customerKey && !baseKey.startsWith(customerKey) && prefixedParts.length >= 2) {
+    const tail = prefixedParts[prefixedParts.length - 1];
+    if (/\d{5,}|[A-Z]{1,5}\d{3,}/i.test(tail)) {
+      base = tail;
+    }
+  }
   const baseWithPage = `${base}${pageSuffix}`;
-  if (!customerKey || customerKey === normalizeCustomerKey('CLIENTE SIN DETECTAR') || originalKey === customerKey) {
+  if (!customerKey || customerKey === normalizeCustomerKey('CLIENTE SIN DETECTAR') || originalKey === customerKey || normalizeCustomerKey(baseWithPage).startsWith(customerKey)) {
     return `${baseWithPage}${ext}`;
   }
   return `${customer} - ${baseWithPage}${ext}`;
@@ -903,6 +911,10 @@ function isLikelyLabelRecipientCandidate(value: string, rawValue = value) {
   if (/\b(VIZCAYA|BIZKAIA|VALENCIA|MADRID|BARCELONA|CUENCA|NAVARRA|GIPUZKOA|GUIPUZCOA|ARABA|ALAVA)\b/i.test(raw)) {
     return false;
   }
+  if (/^[A-ZÁÉÍÓÚÑÜ\s]+,\s*(LOS|LAS|EL|LA)$/i.test(candidate)) return false;
+  const tokenCount = normalizeCustomerTokens(candidate).length;
+  const hasBusinessCue = /\b(SL|S\.L|S\.L\.|SA|S\.A|S\.A\.|CB|C\.B|SCP|FARMACIA|CLINICA|CLÍNICA|CENTRO|LABORATORIO|LOGISTIC|LOGISTICA|LOGÍSTICA)\b/i.test(raw);
+  if (tokenCount < 2 && !hasBusinessCue) return false;
   return true;
 }
 
