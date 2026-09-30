@@ -886,6 +886,26 @@ function isLikelyRecipient(value: string) {
   return letters >= 3;
 }
 
+function isLikelyLabelRecipientCandidate(value: string, rawValue = value) {
+  const candidate = clean(value);
+  const raw = clean(rawValue).toUpperCase();
+  if (!isLikelyRecipient(candidate)) return false;
+  if (
+    /(OFICINA\s+MRW|MRW\s+ENTREGA|ENTREGA\s+TEL|BULTO|PESO|PORTES|KM\.?\s*ENT|APC|REMITENTE|EXPEDICI[OÓ]N)/i.test(raw)
+  ) {
+    return false;
+  }
+  if (
+    /\b(POL[ÍI]GONO|P\.?\s*G\.?|NAVE|CALLE|C\/|PLAZA|PZA|AV\.?|AVENIDA|CARRETERA|CTRA|ENTRESUELO|BAJO|LOCAL|PUERTA|PISO)\b/i.test(raw)
+  ) {
+    return false;
+  }
+  if (/\b(VIZCAYA|BIZKAIA|VALENCIA|MADRID|BARCELONA|CUENCA|NAVARRA|GIPUZKOA|GUIPUZCOA|ARABA|ALAVA)\b/i.test(raw)) {
+    return false;
+  }
+  return true;
+}
+
 function extractRecipientFromLabelText(text: string) {
   const normalized = clean(text).replace(/\r/g, '\n');
   if (!normalized) return '';
@@ -908,16 +928,17 @@ function extractRecipientFromLabelText(text: string) {
     if (!anchorRegexes.some((regex) => regex.test(line))) continue;
 
     const inline = sanitizeRecipientCandidate(line);
-    if (isLikelyRecipient(inline)) return inline;
+    if (isLikelyLabelRecipientCandidate(inline, line)) return inline;
 
-    for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j++) {
-      const nextCandidate = sanitizeRecipientCandidate(lines[j]);
-      if (!isLikelyRecipient(nextCandidate)) continue;
+    for (let j = i + 1; j <= Math.min(lines.length - 1, i + 12); j++) {
+      const rawNext = clean(lines[j]);
+      const nextCandidate = sanitizeRecipientCandidate(rawNext);
+      if (!isLikelyLabelRecipientCandidate(nextCandidate, rawNext)) continue;
       return nextCandidate;
     }
 
     const merged = sanitizeRecipientCandidate(`${line} ${clean(lines[i + 1] || '')}`);
-    if (isLikelyRecipient(merged)) return merged;
+    if (isLikelyLabelRecipientCandidate(merged, `${line} ${clean(lines[i + 1] || '')}`)) return merged;
   }
 
   const compactText = clean(normalized.replace(/\s+/g, ' '));
@@ -930,7 +951,7 @@ function extractRecipientFromLabelText(text: string) {
   for (const regex of recipientRegexes) {
     const match = compactText.match(regex);
     const candidate = sanitizeRecipientCandidate(clean(match?.[1] || ''));
-    if (isLikelyRecipient(candidate)) return candidate;
+    if (isLikelyLabelRecipientCandidate(candidate, clean(match?.[1] || ''))) return candidate;
   }
 
   const heuristicLine = lines.find((line) => /(FARMACIA|ITZIAR|ELIZAR)/i.test(line));
@@ -2385,9 +2406,20 @@ export default function FacturacionPage() {
     [allocateStockParts, convertKitComponentQuantity, getKitComponentsForProduct],
   );
 
+  const attachedLabelIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    for (const order of orders || []) {
+      for (const label of getOrderLabels(order)) {
+        const id = clean(label.id);
+        if (id) ids.add(id);
+      }
+    }
+    return ids;
+  }, [orders]);
+
   const activeLabelQueue = useMemo(
-    () => (labelQueue || []).filter((item) => isLabelDocVisibleInQueue(item)),
-    [labelQueue],
+    () => (labelQueue || []).filter((item) => isLabelDocVisibleInQueue(item) && !attachedLabelIdSet.has(clean(item.id))),
+    [attachedLabelIdSet, labelQueue],
   );
 
   const transferNodeOptions = useMemo(() => {
@@ -2733,13 +2765,15 @@ export default function FacturacionPage() {
         }
 
         const changedAt = nowIso();
+        const matchedOrder = nextOrders[orderIdx];
+        const attachmentCustomerName = clean(matchedOrder.customerName) || label.customerName;
         const mergedLabels: BillingLabelAttachment[] = [
           ...currentLabels,
           {
             id: label.id,
-            sourceFileName: getLabelDisplayFileName(label),
+            sourceFileName: buildLabelDisplayFileName(label.sourceFileName, attachmentCustomerName),
             sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
-            customerName: label.customerName,
+            customerName: attachmentCustomerName,
             attachedAt: changedAt,
           },
         ];
@@ -3326,6 +3360,7 @@ export default function FacturacionPage() {
       const detachedIds = new Set((Array.isArray(current.detachedLabelIds) ? current.detachedLabelIds : []).map((id) => clean(id)).filter(Boolean));
       detachedIds.delete(clean(label.id));
       const attachedAt = nowIso();
+      const attachmentCustomerName = clean(current.customerName) || label.customerName;
       return {
         ...current,
         detachedLabelIds: Array.from(detachedIds),
@@ -3333,9 +3368,9 @@ export default function FacturacionPage() {
           ...currentLabels,
           {
             id: label.id,
-            sourceFileName: getLabelDisplayFileName(label),
+            sourceFileName: buildLabelDisplayFileName(label.sourceFileName, attachmentCustomerName),
             sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
-            customerName: label.customerName,
+            customerName: attachmentCustomerName,
             attachedAt,
           },
         ],
@@ -4128,7 +4163,7 @@ export default function FacturacionPage() {
               {activeLabelQueue.slice(0, 8).map((label) => (
                 <div key={label.id} className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-white px-2 py-1">
                   <div className="truncate text-xs font-semibold text-slate-700">
-                    {label.customerName} · {getLabelDisplayFileName(label)}
+                    {getLabelDisplayFileName(label)}
                   </div>
                   <div className="flex items-center gap-1">
                     <button
@@ -4364,7 +4399,7 @@ export default function FacturacionPage() {
                       </option>
                       {activeLabelQueue.map((label) => (
                         <option key={label.id} value={label.id}>
-                          {label.customerName} · {getLabelDisplayFileName(label)}
+                          {getLabelDisplayFileName(label)}
                         </option>
                       ))}
                     </select>
@@ -4375,7 +4410,7 @@ export default function FacturacionPage() {
                       {attachedLabels.map((label, idx) => (
                         <div key={label.id} className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-black text-slate-700">
-                            Etiqueta {idx + 1}: {getLabelDisplayFileName(label)}
+                            Etiqueta {idx + 1}: {buildLabelDisplayFileName(label.sourceFileName, order.customerName || label.customerName)}
                           </span>
                           <button
                             onClick={() => void openLabelPdf(label, 'No hay etiqueta asociada.')}
