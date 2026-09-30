@@ -5,9 +5,28 @@ export type ProductKitComponent = {
 };
 
 export const KIT_COMPONENT_UNITS = ['caja', 'vial'] as const;
-export const RETIRED_PRODUCT_CODES = ['TESTING KIT'] as const;
+export const RETIRED_PRODUCT_CODES = [] as const;
 
 export const DEFAULT_KIT_PRODUCTS = [
+  {
+    producto: 'TESTING KIT',
+    nombre: 'Testing Kit',
+    descripcion: 'Testing Kit con 2 SV, 2 ENT y 1 AV',
+    aliases: ['TESTING KIT', 'TK'],
+    tipo_producto: 'KIT',
+    modo_stock: 'KIT',
+    activo_si_no: 'SI',
+    kit_componentes: [
+      { producto: 'SV', cantidad: 2, unidad: 'vial' },
+      { producto: 'ENT', cantidad: 2, unidad: 'vial' },
+      { producto: 'AV', cantidad: 1, unidad: 'vial' },
+    ],
+    componentes_kit: [
+      { producto: 'SV', cantidad: 2, unidad: 'vial' },
+      { producto: 'ENT', cantidad: 2, unidad: 'vial' },
+      { producto: 'AV', cantidad: 1, unidad: 'vial' },
+    ],
+  },
   {
     producto: 'KIT BELLEZA',
     nombre: 'Kit Belleza',

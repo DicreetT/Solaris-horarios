@@ -666,6 +666,30 @@ function inferCustomerFromFileName(fileName: string) {
   return normalizeCustomerName(norm);
 }
 
+function sanitizeLabelFileSegment(value: unknown) {
+  return clean(value)
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .slice(0, 90)
+    .trim();
+}
+
+function buildLabelDisplayFileName(fileName: string, customerName: string, pageNumber?: number) {
+  const original = clean(fileName) || 'Etiqueta.pdf';
+  const originalKey = normalizeCustomerKey(inferCustomerFromFileName(original));
+  const customer = sanitizeLabelFileSegment(customerName);
+  const customerKey = normalizeCustomerKey(customer);
+  const pageSuffix = pageNumber && pageNumber > 0 ? ` · p${pageNumber}` : '';
+  const dotIdx = original.lastIndexOf('.');
+  const base = sanitizeLabelFileSegment(dotIdx > 0 ? original.slice(0, dotIdx) : original) || 'Etiqueta';
+  const ext = dotIdx > 0 ? original.slice(dotIdx) : '';
+  const baseWithPage = `${base}${pageSuffix}`;
+  if (!customerKey || customerKey === normalizeCustomerKey('CLIENTE SIN DETECTAR') || originalKey === customerKey) {
+    return `${baseWithPage}${ext}`;
+  }
+  return `${customer} - ${baseWithPage}${ext}`;
+}
+
 function inferUploadDocType(text: string, fileName: string): BillingUploadDocType {
   const upperText = clean(text).toUpperCase();
   const upperName = clean(fileName).toUpperCase();
@@ -1635,7 +1659,7 @@ function parseLabelsFromExtractedPages(
       const parsed = parseLabelFromText(pageText, fileName, sourcePdfRef);
       return {
         ...parsed,
-        sourceFileName: `${fileName} · p${idx + 1}`,
+        sourceFileName: buildLabelDisplayFileName(fileName, parsed.customerName, idx + 1),
       };
     });
 
@@ -1814,7 +1838,7 @@ function parseLabelFromText(text: string, fileName: string, sourcePdfRef?: strin
     id,
     createdAt,
     lastChangedAt: createdAt,
-    sourceFileName: fileName,
+    sourceFileName: buildLabelDisplayFileName(fileName, customerName),
     sourcePdfRef: clean(sourcePdfRef) || `label_${id}`,
     customerName,
     customerKey: normalizeCustomerKey(customerName),
@@ -1865,6 +1889,10 @@ function getOrderLabels(order: BillingOrder): BillingLabelAttachment[] {
     ];
   }
   return [];
+}
+
+function getLabelDisplayFileName(label: Pick<BillingLabelDoc | BillingLabelAttachment, 'sourceFileName' | 'customerName'>) {
+  return buildLabelDisplayFileName(clean(label.sourceFileName) || 'Etiqueta.pdf', clean(label.customerName));
 }
 
 function getOrderRequiredPackages(order: BillingOrder) {
@@ -2709,7 +2737,7 @@ export default function FacturacionPage() {
           ...currentLabels,
           {
             id: label.id,
-            sourceFileName: label.sourceFileName,
+            sourceFileName: getLabelDisplayFileName(label),
             sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
             customerName: label.customerName,
             attachedAt: changedAt,
@@ -3125,7 +3153,7 @@ export default function FacturacionPage() {
           ...updated,
           requiredPackages: getOrderRequiredPackages(updated),
           labels,
-          labelFileName: labels[0]?.sourceFileName,
+          labelFileName: labels[0] ? getLabelDisplayFileName(labels[0]) : undefined,
           status: recomputeOrderStatus({ ...updated, labels } as BillingOrder),
         };
       }),
@@ -3305,7 +3333,7 @@ export default function FacturacionPage() {
           ...currentLabels,
           {
             id: label.id,
-            sourceFileName: label.sourceFileName,
+            sourceFileName: getLabelDisplayFileName(label),
             sourcePdfRef: clean(label.sourcePdfRef) || `label_${label.id}`,
             customerName: label.customerName,
             attachedAt,
@@ -3333,7 +3361,7 @@ export default function FacturacionPage() {
       ...order,
       labelFileName: getOrderLabels(order)
         .filter((item) => item.id !== labelId)
-        .map((item) => item.sourceFileName)[0],
+        .map((item) => getLabelDisplayFileName(item))[0],
       labelPdfDataUrl: undefined,
       detachedLabelIds: Array.from(
         new Set([...(Array.isArray(order.detachedLabelIds) ? order.detachedLabelIds : []), clean(labelId)]),
@@ -3866,7 +3894,7 @@ export default function FacturacionPage() {
             ...order,
             requiredPackages,
             labels,
-            labelFileName: primaryLabel?.sourceFileName,
+            labelFileName: primaryLabel ? getLabelDisplayFileName(primaryLabel) : undefined,
             status,
           } as BillingOrder;
         }),
@@ -4100,7 +4128,7 @@ export default function FacturacionPage() {
               {activeLabelQueue.slice(0, 8).map((label) => (
                 <div key={label.id} className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-white px-2 py-1">
                   <div className="truncate text-xs font-semibold text-slate-700">
-                    {label.customerName} · {label.sourceFileName}
+                    {label.customerName} · {getLabelDisplayFileName(label)}
                   </div>
                   <div className="flex items-center gap-1">
                     <button
@@ -4336,7 +4364,7 @@ export default function FacturacionPage() {
                       </option>
                       {activeLabelQueue.map((label) => (
                         <option key={label.id} value={label.id}>
-                          {label.customerName} · {label.sourceFileName}
+                          {label.customerName} · {getLabelDisplayFileName(label)}
                         </option>
                       ))}
                     </select>
@@ -4347,7 +4375,7 @@ export default function FacturacionPage() {
                       {attachedLabels.map((label, idx) => (
                         <div key={label.id} className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-black text-slate-700">
-                            Etiqueta {idx + 1}: {label.sourceFileName}
+                            Etiqueta {idx + 1}: {getLabelDisplayFileName(label)}
                           </span>
                           <button
                             onClick={() => void openLabelPdf(label, 'No hay etiqueta asociada.')}

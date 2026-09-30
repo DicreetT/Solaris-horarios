@@ -37,7 +37,7 @@ export const normalizeInventorySearch = (value: unknown) =>
 
 export type InventoryStockScope = 'general' | 'canet' | 'huarte';
 
-export const CANET_STOCK_WAREHOUSES = ['CANET', 'ENSAMBLAJE COLOMBIA', 'MAS BORRAS', 'VALENCIA'];
+export const CANET_STOCK_WAREHOUSES = ['CANET', 'ENSAMBLAJE COLOMBIA', 'MAS BORRAS', 'VALENCIA', 'TESTING KITS'];
 export const CANET_MASTER_WAREHOUSES = CANET_STOCK_WAREHOUSES;
 export const HUARTE_STOCK_WAREHOUSES = ['HUARTE', 'BARCELONA', 'BILBAO', 'LOGROÑO', 'PAMPLONA'];
 
@@ -57,6 +57,7 @@ export const normalizeInventoryWarehouse = (value: unknown) => {
   if (token.includes('ENSAMBLAJE ESP') || token.includes('ESPANA')) return 'ENSAMBLAJE ESPAÑA';
   if (token.includes('MAS BORRAS') || token.includes('MASBORRAS')) return 'MAS BORRAS';
   if (token.includes('MI MEDICO') || token.includes('MIMEDICO')) return 'MI MEDICO';
+  if (token.includes('TESTING KIT') || token.includes('TEST KITS') || token.includes('TESTKIT')) return 'TESTING KITS';
   if (token.includes('VALENCIA')) return 'VALENCIA';
   if (token.includes('BARCELONA')) return 'BARCELONA';
   if (token.includes('BILBAO')) return 'BILBAO';
@@ -106,7 +107,7 @@ export const isInventoryMirrorSource = (sourceRaw: unknown) => {
 export function inferInventoryMovementSign(typeRaw: unknown, quantityRaw: unknown) {
   const type = normalizeInventorySearch(typeRaw);
   if (type.includes('nota credito') || type.includes('nota_credito')) return 1;
-  if (type.includes('venta') || type.includes('envio') || type.includes('traspaso')) return -1;
+  if (type.includes('venta') || type.includes('envio') || type.includes('traspaso') || (type.includes('preparacion') && type.includes('kit'))) return -1;
   if (/ajuste[\s_-]*negativ/.test(type) || /ajuste\s*-/.test(type) || type.includes('ajuste-')) return -1;
   if (/ajuste[\s_-]*positiv/.test(type) || type.includes('ajuste+')) return 1;
   return toInventoryNumber(quantityRaw) < 0 ? -1 : 1;
@@ -127,7 +128,7 @@ export function getInventorySignedQuantity(movement: Pick<InventoryStockMovement
 
 export const isInventoryTransferOutType = (typeRaw: unknown) => {
   const type = normalizeInventorySearch(typeRaw);
-  return type.includes('traspaso') && !type.includes('entrada');
+  return (type.includes('traspaso') || (type.includes('preparacion') && type.includes('kit'))) && !type.includes('entrada');
 };
 
 export const isInventoryTransferInType = (typeRaw: unknown) => {

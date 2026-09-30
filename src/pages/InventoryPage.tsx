@@ -30,7 +30,7 @@ import {
   upsertInventoryMonthlyCloseSnapshot,
   type InventoryMonthlyCloseSnapshot,
 } from '../utils/inventoryMonthlyClose';
-import { formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, normalizeKitUnit, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
+import { DEFAULT_KIT_PRODUCTS, formatKitComponents, formatKitComponentsInline, isRetiredProductCode, normalizeKitComponents, normalizeKitUnit, parseKitComponentsText, upsertProductCatalogRow } from '../utils/productCatalog';
 import { openTableXlsx } from '../utils/tableExport';
 import { describeConnectionError } from '../utils/connectionErrors';
 import { emitSuccessFeedback } from '../utils/uiFeedback';
@@ -429,6 +429,7 @@ const INT32_MAX = 2147483647;
 const TRANSFER_NODE_OPTIONS = Array.from(new Set([...CANET_STOCK_WAREHOUSES, ...HUARTE_STOCK_WAREHOUSES]));
 const NON_TRANSFER_WAREHOUSE_OPTIONS = new Set(['ENSAMBLAJE ESPAÑA', 'MI MEDICO']);
 const TRANSFER_PAIR_PREFIX = 'TRANSFER_PAIR:';
+const TESTING_KITS_WAREHOUSE = 'TESTING KITS';
 const SELLABLE_STOCK_WAREHOUSES = ['CANET', 'HUARTE', 'MAS BORRAS'];
 const SELLABLE_STOCK_WAREHOUSE_SET = new Set(SELLABLE_STOCK_WAREHOUSES);
 const CANET_OWN_WAREHOUSE_ORDER = CANET_STOCK_WAREHOUSES;
@@ -1036,10 +1037,17 @@ const getPotentialSemaforo = (potencial: number, stockOptimo: number) => {
   }
   return 'OPTIMO';
 };
+const normalizedMovementTypeToken = (typeRaw: unknown) => normalizeSearch(typeRaw).replace(/[_-]+/g, ' ');
+const isKitPreparationType = (typeRaw: unknown) => {
+  const type = normalizedMovementTypeToken(typeRaw);
+  return type.includes('preparacion') && type.includes('kit');
+};
+const isTransferLikeMovementType = (typeRaw: unknown) =>
+  normalizeSearch(typeRaw).includes('traspaso') || isKitPreparationType(typeRaw);
 const inferMovementSignByType = (typeRaw: string, qtyRaw: number) => {
   const t = normalizeSearch(typeRaw);
   if (t.includes('nota credito') || t.includes('nota_credito')) return 1;
-  if (t.includes('venta') || t.includes('envio') || t.includes('traspaso')) return -1;
+  if (t.includes('venta') || t.includes('envio') || isTransferLikeMovementType(t)) return -1;
   if (/ajuste[\s_-]*negativ/.test(t) || /ajuste\s*-/.test(t) || t.includes('ajuste-')) return -1;
   if (/ajuste[\s_-]*positiv/.test(t) || t.includes('ajuste+')) return 1;
   return qtyRaw < 0 ? -1 : 1;
@@ -1132,6 +1140,20 @@ function InventoryPage() {
     seed.productos as GenericRow[],
     { userId: actorId, mergeStrategy: mergeProductsPayload },
   );
+  useEffect(() => {
+    const testingKitDefault = DEFAULT_KIT_PRODUCTS.find((row) => clean(row.producto).toUpperCase() === 'TESTING KIT');
+    if (!testingKitDefault) return;
+    const exists = productos.some((row) => clean(row.producto).toUpperCase() === 'TESTING KIT');
+    if (exists) return;
+    const now = new Date().toISOString();
+    setProductos((prev) =>
+      upsertProductCatalogRow(prev, {
+        ...testingKitDefault,
+        updated_at: now,
+        updated_by: actorName,
+      } as any),
+    );
+  }, [actorName, productos, setProductos]);
   const [, setHuarteProductosCatalog] = useSharedJsonState<GenericRow[]>(
     'inventory_huarte_productos_v1',
     huarteSeed.productos as GenericRow[],
@@ -2053,6 +2075,78 @@ function InventoryPage() {
       .sort((a, b) => a.producto.localeCompare(b.producto) || a.lote.localeCompare(b.lote));
   }, [stockByPLB, cartonajeProducts]);
 
+  const preparedKitStockRows = useMemo(() => {
+    const metaByProduct = new Map<string, { vialesPorCaja: number }>();
+    for (const product of productos) {
+      const code = clean(product.producto).toUpperCase();
+      if (!code) continue;
+      metaByProduct.set(code, { vialesPorCaja: Math.max(0, toNum(product.viales_por_caja)) });
+    }
+
+    const stockByProduct = new Map<string, number>();
+    for (const row of stockByPLB) {
+      if (normalizeWarehouseAlias(row.bodega) !== TESTING_KITS_WAREHOUSE) continue;
+      const product = clean(row.producto).toUpperCase();
+      if (!product) continue;
+      stockByProduct.set(product, (stockByProduct.get(product) || 0) + Math.max(0, toNum(row.stock)));
+    }
+
+    return productos
+      .map((product) => {
+        const kitCode = clean(product.producto).toUpperCase();
+        const kitName = clean(product.nombre) || kitCode;
+        const mode = clean(product.modo_stock || product.tipo_producto).toUpperCase();
+        const components = normalizeKitComponents((product as any).kit_componentes || (product as any).componentes_kit);
+        if (!kitCode || isRetiredProductCode(kitCode) || (mode !== 'KIT' && components.length === 0)) return null;
+        if (components.length === 0) return null;
+
+        const componentRows = components.map((component) => {
+          const componentProduct = clean(component.producto).toUpperCase();
+          const required = Math.max(0, toNum(component.cantidad));
+          const unit = normalizeKitUnit(component.unidad);
+          const stockInBase = stockByProduct.get(componentProduct) || 0;
+          const vialesPorCaja = Math.max(0, metaByProduct.get(componentProduct)?.vialesPorCaja || 0);
+          const stockForRecipeUnit = unit === 'vial' && vialesPorCaja > 0 ? stockInBase * vialesPorCaja : stockInBase;
+          const kitsFromComponent = required > 0 ? stockForRecipeUnit / required : 0;
+          return {
+            product: componentProduct,
+            required,
+            unit,
+            stockForRecipeUnit,
+            kitsFromComponent,
+          };
+        });
+        const availableRaw = componentRows.length > 0
+          ? Math.min(...componentRows.map((component) => component.kitsFromComponent))
+          : 0;
+        const limiting = componentRows
+          .slice()
+          .sort((a, b) => a.kitsFromComponent - b.kitsFromComponent || a.product.localeCompare(b.product))[0];
+
+        return {
+          kitCode,
+          kitName,
+          warehouse: TESTING_KITS_WAREHOUSE,
+          availableKits: Math.max(0, Math.floor(availableRaw + 1e-9)),
+          limitingComponent: limiting
+            ? `${limiting.product} (${Math.floor(limiting.kitsFromComponent + 1e-9).toLocaleString('es-ES')} kits)`
+            : '-',
+          reserve: componentRows
+            .map((component) => `${component.product}: ${component.stockForRecipeUnit.toLocaleString('es-ES', { maximumFractionDigits: 2 })} ${component.unit === 'vial' ? 'viales' : 'cajas'}`)
+            .join(' · '),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (b!.availableKits - a!.availableKits) || a!.kitCode.localeCompare(b!.kitCode)) as Array<{
+        kitCode: string;
+        kitName: string;
+        warehouse: string;
+        availableKits: number;
+        limitingComponent: string;
+        reserve: string;
+      }>;
+  }, [productos, stockByPLB]);
+
 
 
   const stockVisualByProduct = useMemo(() => {
@@ -2106,7 +2200,7 @@ function InventoryPage() {
 
   const outputControl = useMemo(() => {
     return monthMovements
-      .filter((m) => ['traspaso', 'venta', 'envio'].some((t) => contains(m.tipo_movimiento, t)))
+      .filter((m) => ['traspaso', 'venta', 'envio'].some((t) => contains(m.tipo_movimiento, t)) || isKitPreparationType(m.tipo_movimiento))
       .filter((m) => (dashOutProduct ? clean(m.producto).toUpperCase() === clean(dashOutProduct).toUpperCase() : true))
       .filter((m) => (dashOutLot ? normalizeLotCompareToken(clean(m.lote)) === normalizeLotCompareToken(dashOutLot) : true))
       .map((m) => ({ producto: clean(m.producto), lote: clean(m.lote), bodega: clean(m.bodega), tipo: clean(m.tipo_movimiento), cantidad: toNum(m.cantidad_signed) }));
@@ -2196,7 +2290,7 @@ function InventoryPage() {
     const rawQty = toNum(movementForm.cantidad);
     const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
-    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const isStockOutput = sign < 0 || isTransferLikeMovementType(movementForm.tipo_movimiento);
     const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
     const componentProducts = Array.from(new Set(movementKitComponents.map((component) => clean(component.producto)).filter(Boolean)));
     const map = new Map<string, string[]>();
@@ -2302,6 +2396,7 @@ function InventoryPage() {
         new Set([
           'venta',
           'traspaso',
+          'preparacion_kit',
           ...tipos.map((t) => clean(t.tipo_movimiento)).filter(Boolean),
         ]),
       ).sort(),
@@ -2576,7 +2671,7 @@ function InventoryPage() {
     const baseQuantity = componentQuantity * kitQuantity;
     if (normalizeKitUnit(componentUnitRaw) !== 'vial') return baseQuantity;
     const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
-    return vialesPorCaja > 0 ? baseQuantity / vialesPorCaja : 0;
+    return vialesPorCaja > 0 ? baseQuantity / vialesPorCaja : baseQuantity;
   }, [inventoryProductMetaByCode]);
 
   const formatKitComponentQuantityHelp = useCallback((componentProductRaw: unknown, componentQuantityRaw: unknown, componentUnitRaw: unknown, kitQuantityRaw: unknown) => {
@@ -2587,7 +2682,11 @@ function InventoryPage() {
     const unit = normalizeKitUnit(componentUnitRaw);
     if (unit === 'vial') {
       const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
-      if (vialesPorCaja <= 0) return `${componentQuantity.toLocaleString('es-ES')} vial(es) por kit · falta viales/caja en ${componentProduct}`;
+      if (vialesPorCaja <= 0) {
+        return totalUnits > 0
+          ? `Descontará ${totalUnits.toLocaleString('es-ES')} vial(es) = ${totalUnits.toLocaleString('es-ES')} unidad(es)`
+          : `${componentQuantity.toLocaleString('es-ES')} vial(es) por kit`;
+      }
       const boxes = totalUnits / vialesPorCaja;
       return totalUnits > 0
         ? `Descontará ${totalUnits.toLocaleString('es-ES')} vial(es) = ${boxes.toLocaleString('es-ES', { maximumFractionDigits: 4 })} caja(s)`
@@ -4270,7 +4369,7 @@ function InventoryPage() {
     const rawQty = toNum(movementForm.cantidad);
     const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
-    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const isStockOutput = sign < 0 || isTransferLikeMovementType(movementForm.tipo_movimiento);
     const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
     const activeMasterRows = canetKnownActiveLotRows
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
@@ -4352,7 +4451,7 @@ function InventoryPage() {
     const rawQty = toNum(line.cantidad);
     const configuredSign = toNum(signByType.get(movementForm.tipo_movimiento));
     const sign = configuredSign !== 0 ? configuredSign : inferMovementSignByType(movementForm.tipo_movimiento, rawQty);
-    const isStockOutput = sign < 0 || normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const isStockOutput = sign < 0 || isTransferLikeMovementType(movementForm.tipo_movimiento);
     const sourceIsHuarte = HUARTE_OWN_WAREHOUSES.has(selectedWarehouse);
     const activeMasterRows = canetKnownActiveLotRows
       .map((l) => ({ producto: clean(l.producto), lote: clean(l.lote), bodega: normalizeWarehouseAlias((l as any).bodega) }))
@@ -4593,7 +4692,7 @@ function InventoryPage() {
       id: 'single',
     };
     const qty = Math.abs(toNum(!editingId ? primaryDraftLine.cantidad : movementForm.cantidad));
-    const isTransfer = normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+    const isTransfer = isTransferLikeMovementType(movementForm.tipo_movimiento);
     const isKitMovement = !editingId && movementIsKit;
     const isMultiLineCreate = !editingId && !isKitMovement;
     const transferDestination = clean(movementForm.destino || movementForm.cliente);
@@ -4794,7 +4893,6 @@ function InventoryPage() {
           const componentUnit = normalizeKitUnit(component.unidad);
           const componentRawQty = Math.max(0, toNum(component.cantidad)) * qty;
           const componentQty = convertKitComponentQuantity(componentProduct, component.cantidad, componentUnit, qty);
-          const vialesPorCaja = Math.max(0, toNum(inventoryProductMetaByCode.get(componentProduct)?.vialesPorCaja));
           return {
             componentProduct,
             componentLot,
@@ -4802,9 +4900,7 @@ function InventoryPage() {
             componentRawQty,
             componentQty,
             componentSignedQty: componentQty * sign,
-            conversionError: componentUnit === 'vial' && vialesPorCaja <= 0
-              ? `El componente ${componentProduct} está en viales, pero no tiene viales/caja configurado en Maestros.`
-              : '',
+            conversionError: '',
           };
         })
       : [];
@@ -6458,6 +6554,41 @@ function InventoryPage() {
           )}
 
           {(!isCompact || compactInventoryPanel === 'stock') && (
+            <DataSection title="Stock preparado de kits" subtitle="Calculado desde la bodega TESTING KITS y la receta de cada kit." tone="emerald" onDownload={async () => {
+              openTablePdf(
+                'Inventario - Stock preparado de kits',
+                `dashboard-stock-kits-${periodFileKey}.pdf`,
+                ['Kit', 'Bodega', 'Kits disponibles', 'Componente limitante', 'Reserva componentes'],
+                preparedKitStockRows.map((r) => [r.kitCode, r.warehouse, r.availableKits, r.limitingComponent, r.reserve]),
+              );
+              await notifyAnabela(`${actorName} descargó tablero: Stock preparado de kits (${periodFileKey}).`);
+              appendAudit('Descarga PDF', `Dashboard stock preparado kits (${periodFileKey})`);
+            }} onDownloadExcel={async () => {
+              openTableExcel(
+                'Inventario - Stock preparado de kits',
+                `dashboard-stock-kits-${periodFileKey}.xlsx`,
+                ['Kit', 'Bodega', 'Kits disponibles', 'Componente limitante', 'Reserva componentes'],
+                preparedKitStockRows.map((r) => [r.kitCode, r.warehouse, r.availableKits, r.limitingComponent, r.reserve]),
+              );
+              await notifyAnabela(`${actorName} descargó Excel tablero: Stock preparado de kits (${periodFileKey}).`);
+              appendAudit('Descarga Excel', `Dashboard stock preparado kits (${periodFileKey})`);
+            }}>
+              <SimpleDataTable
+                headers={['Kit', 'Bodega', 'Kits disponibles', 'Componente limitante', 'Reserva componentes']}
+                rows={preparedKitStockRows.length > 0
+                  ? preparedKitStockRows.map((r) => [
+                    <ProductPill key={`${r.kitCode}-kit-stock`} code={r.kitCode} colorMap={productColorMap} />,
+                    r.warehouse,
+                    <span key={`${r.kitCode}-available`} className="font-mono text-sm font-black text-teal-700">{r.availableKits.toLocaleString('es-ES')}</span>,
+                    r.limitingComponent,
+                    r.reserve || '-',
+                  ])
+                  : [['-', TESTING_KITS_WAREHOUSE, 0, '-', 'Sin kits configurados']]}
+              />
+            </DataSection>
+          )}
+
+          {(!isCompact || compactInventoryPanel === 'stock') && (
             <DataSection title="Stock por producto por lote y bodega" subtitle="Acumulado hasta el mes seleccionado." tone="violet" onDownload={async () => {
               openTablePdf(
                 'Inventario - Stock por producto/lote/bodega',
@@ -7470,13 +7601,19 @@ function InventoryPage() {
                 label="Tipo"
                 value={movementForm.tipo_movimiento}
                 onChange={(v) => {
-                  setMovementForm({ ...movementForm, tipo_movimiento: v });
+                  setMovementForm({
+                    ...movementForm,
+                    tipo_movimiento: v,
+                    bodega: isKitPreparationType(v) && !clean(movementForm.bodega) ? 'CANET' : movementForm.bodega,
+                    destino: isKitPreparationType(v) && !clean(movementForm.destino) ? TESTING_KITS_WAREHOUSE : movementForm.destino,
+                    cliente: isKitPreparationType(v) && !clean(movementForm.cliente) ? TESTING_KITS_WAREHOUSE : movementForm.cliente,
+                  });
                   setMovementKitLots({});
                 }}
                 options={typeOptions}
                 placeholder="Selecciona tipo"
               />
-              {(editingId || movementIsKit) && (normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+              {(editingId || movementIsKit) && (isTransferLikeMovementType(movementForm.tipo_movimiento) ? (
                 <SelectInput
                   label="Origen"
                   value={movementForm.bodega}
@@ -7541,7 +7678,7 @@ function InventoryPage() {
                   <div className="grid gap-1.5">
                     {movementLines.map((line, index) => {
                       const isFirstKitLine = movementIsKit && index === 0;
-                      const lineIsTransfer = normalizeSearch(movementForm.tipo_movimiento).includes('traspaso');
+                      const lineIsTransfer = isTransferLikeMovementType(movementForm.tipo_movimiento);
                       return (
                         <div
                           key={line.id}
@@ -7635,7 +7772,7 @@ function InventoryPage() {
                   )}
                 </div>
               )}
-              {(editingId || movementIsKit) && normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+              {(editingId || movementIsKit) && isTransferLikeMovementType(movementForm.tipo_movimiento) ? (
                 <SelectInput
                   label="Destino"
                   value={movementForm.destino || movementForm.cliente}
@@ -7643,7 +7780,7 @@ function InventoryPage() {
                   options={transferNodeOptions}
                   placeholder="Selecciona destino"
                 />
-              ) : !normalizeSearch(movementForm.tipo_movimiento).includes('traspaso') ? (
+              ) : !isTransferLikeMovementType(movementForm.tipo_movimiento) ? (
                 <>
                   <InputDatalist label="Cliente" value={movementForm.cliente} onChange={(v) => setMovementForm({ ...movementForm, cliente: v })} listId="inventory-clientes" options={clientOptions} placeholder="Opcional" />
                   <Input label="Destino" value={movementForm.destino} onChange={(v) => setMovementForm({ ...movementForm, destino: v })} />
