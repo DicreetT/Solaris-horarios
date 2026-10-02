@@ -448,60 +448,72 @@ const textLinesToManualRows = <T extends { id: string }>(
     .filter(Boolean)
     .map(factory);
 
+const shouldKeepManualDraftRow = (row: any) => clean(row?.id).startsWith('manual_');
+
 const normalizeManualMovementRows = (value: unknown, section: string): DailyManualMovementRow[] => (
     Array.isArray(value) ? value : []
-).map((row: any) => ({
-    id: clean(row?.id) || newManualRowId(section),
-    tipo: clean(row?.tipo),
-    producto: clean(row?.producto),
-    lote: clean(row?.lote),
-    cantidad: clean(row?.cantidad),
-    cliente: clean(row?.cliente),
-    origen: clean(row?.origen),
-    destino: clean(row?.destino),
-    bodega: clean(row?.bodega),
-    observacion: clean(row?.observacion),
-})).filter((row) => (
-    clean(row.producto) || clean(row.lote) || clean(row.cantidad) ||
-    clean(row.cliente) || clean(row.origen) || clean(row.destino) ||
-    clean(row.bodega) || clean(row.observacion)
-));
+).flatMap((raw: any) => {
+    const row = {
+        id: clean(raw?.id) || newManualRowId(section),
+        tipo: clean(raw?.tipo),
+        producto: clean(raw?.producto),
+        lote: clean(raw?.lote),
+        cantidad: clean(raw?.cantidad),
+        cliente: clean(raw?.cliente),
+        origen: clean(raw?.origen),
+        destino: clean(raw?.destino),
+        bodega: clean(raw?.bodega),
+        observacion: clean(raw?.observacion),
+    };
+    const hasContent = clean(row.producto) || clean(row.lote) || clean(row.cantidad) ||
+        clean(row.cliente) || clean(row.origen) || clean(row.destino) ||
+        clean(row.bodega) || clean(row.observacion);
+    return hasContent || shouldKeepManualDraftRow(raw) ? [row] : [];
+});
 
 const normalizeManualClientRows = (value: unknown): DailyManualClientRow[] => (
     Array.isArray(value) ? value : []
-).map((row: any) => ({
-    id: clean(row?.id) || newManualRowId('client'),
-    cliente: clean(row?.cliente || row?.name),
-    observacion: clean(row?.observacion || row?.note),
-})).filter((row) => clean(row.cliente) || clean(row.observacion));
+).flatMap((raw: any) => {
+    const row = {
+        id: clean(raw?.id) || newManualRowId('client'),
+        cliente: clean(raw?.cliente || raw?.name),
+        observacion: clean(raw?.observacion || raw?.note),
+    };
+    return clean(row.cliente) || clean(row.observacion) || shouldKeepManualDraftRow(raw) ? [row] : [];
+});
 
 const normalizeManualSupportRows = (value: unknown): DailyManualSupportRow[] => (
     Array.isArray(value) ? value : []
-).map((row: any) => ({
-    id: clean(row?.id) || newManualRowId('support'),
-    concepto: clean(row?.concepto),
-    detalle: clean(row?.detalle),
-    responsable: clean(row?.responsable),
-})).filter((row) => clean(row.concepto) || clean(row.detalle) || clean(row.responsable));
+).flatMap((raw: any) => {
+    const row = {
+        id: clean(raw?.id) || newManualRowId('support'),
+        concepto: clean(raw?.concepto),
+        detalle: clean(raw?.detalle),
+        responsable: clean(raw?.responsable),
+    };
+    return clean(row.concepto) || clean(row.detalle) || clean(row.responsable) || shouldKeepManualDraftRow(raw) ? [row] : [];
+});
 
 const normalizeManualStockRows = (value: unknown): DailyManualStockRow[] => (
     Array.isArray(value) ? value : []
-).map((row: any) => ({
-    id: clean(row?.id) || newManualRowId('stock'),
-    producto: clean(row?.producto),
-    lote: clean(row?.lote),
-    bodega: clean(row?.bodega),
-    lunaris: clean(row?.lunaris),
-    physical: clean(row?.physical),
-    physicalOk: !!row?.physicalOk,
-    zoho: clean(row?.zoho),
-    zohoOk: !!row?.zohoOk,
-    observation: clean(row?.observation || row?.observacion),
-})).filter((row) => (
-    clean(row.producto) || clean(row.lote) || clean(row.bodega) ||
-    clean(row.lunaris) || clean(row.physical) || clean(row.zoho) ||
-    clean(row.observation)
-));
+).flatMap((raw: any) => {
+    const row = {
+        id: clean(raw?.id) || newManualRowId('stock'),
+        producto: clean(raw?.producto),
+        lote: clean(raw?.lote),
+        bodega: clean(raw?.bodega),
+        lunaris: clean(raw?.lunaris),
+        physical: clean(raw?.physical),
+        physicalOk: !!raw?.physicalOk,
+        zoho: clean(raw?.zoho),
+        zohoOk: !!raw?.zohoOk,
+        observation: clean(raw?.observation || raw?.observacion),
+    };
+    const hasContent = clean(row.producto) || clean(row.lote) || clean(row.bodega) ||
+        clean(row.lunaris) || clean(row.physical) || clean(row.zoho) ||
+        clean(row.observation);
+    return hasContent || shouldKeepManualDraftRow(raw) ? [row] : [];
+});
 
 const buildManualTablesFromSections = (sections?: DailyInventoryControlReport['manualSections']): DailyManualTables => ({
     shipments: textLinesToManualRows(sections?.shipments, (line, index) => ({
