@@ -111,9 +111,10 @@ export function useNotifications(currentUser: User | null) {
         isLoading,
         error,
         addNotification: addNotificationMutation.mutateAsync,
-        sendNudge: async (todoTitle: string, userIds: string[]) => {
+        sendNudge: async (todoTitle: string, userIds: string[], todoId?: number) => {
             if (!currentUser) return;
-            const message = `Accion requerida: tarea pendiente "${todoTitle}".`;
+            const taskRef = todoId ? ` [#${todoId}]` : '';
+            const message = `Acción requerida: tarea pendiente${taskRef}: "${todoTitle}".`;
 
             // Send to each user who hasn't finished
             const promises = userIds.map(uid =>

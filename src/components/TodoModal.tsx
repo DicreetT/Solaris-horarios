@@ -21,6 +21,9 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState("");
     const [isPriority, setIsPriority] = useState(false);
+    const selectedAssigneeNames = USERS
+        .filter((u) => assignedIds.includes(u.id))
+        .map((u) => u.name);
 
     const handleToggleAssignee = (id: string) => {
         setAssignedIds((prev) =>
@@ -49,6 +52,10 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
 
         if (!title.trim()) {
             alert('Por favor, escribe un título para la tarea.');
+            return;
+        }
+        if (assignedIds.length === 0) {
+            alert('Selecciona al menos una persona para recibir la tarea.');
             return;
         }
 
@@ -197,6 +204,9 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                             <label className="block text-sm font-bold text-gray-900 mb-2">
                                 Asignar a
                             </label>
+                            <p className="mb-2 text-xs font-semibold text-gray-500">
+                                La tarea aparecerá en el panel de las personas seleccionadas y les llegará una notificación.
+                            </p>
                             <div className="flex flex-wrap gap-2">
                                 {USERS.map((u) => (
                                     <label
@@ -221,6 +231,14 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                                         {u.name}
                                     </label>
                                 ))}
+                            </div>
+                            <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-bold ${assignedIds.length > 0
+                                ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                                : 'border-rose-100 bg-rose-50 text-rose-700'
+                                }`}>
+                                {assignedIds.length > 0
+                                    ? `Se notificará a: ${selectedAssigneeNames.join(', ')}`
+                                    : 'Selecciona al menos una persona.'}
                             </div>
                         </div>
 
@@ -253,7 +271,7 @@ export default function TodoModal({ onClose }: { onClose: () => void }) {
                             ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary-dark hover:scale-105 active:scale-95'}
                         `}
                         >
-                            {isSubmitting ? 'Creando...' : '✨ Crear tarea'}
+                            {isSubmitting ? 'Creando...' : 'Crear tarea'}
                         </button>
                     </div>
                 </form>

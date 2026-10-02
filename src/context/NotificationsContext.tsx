@@ -18,7 +18,7 @@ interface NotificationsContextType {
     isLoading: boolean;
     error: any;
     addNotification: (params: { message: string; userId?: string; type?: string }) => Promise<void>;
-    sendNudge: (todoTitle: string, userIds: string[]) => Promise<void>;
+    sendNudge: (todoTitle: string, userIds: string[], todoId?: number) => Promise<void>;
     sendCaffeineBoost: (userName: string, userIds: string[]) => Promise<void>;
     markAllAsRead: () => Promise<void>;
     markAsRead: (notificationId: number) => Promise<void>;

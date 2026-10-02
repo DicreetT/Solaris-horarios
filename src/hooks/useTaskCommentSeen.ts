@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { User } from '../types';
 import { useSharedJsonState } from './useSharedJsonState';
 
@@ -15,18 +15,18 @@ export function useTaskCommentSeen(currentUser: User | null) {
         initializeIfMissing: !!currentUser?.id,
     });
 
-    const getSeenAt = (taskId: number) => seenMap[String(taskId)] || '';
+    const getSeenAt = useCallback((taskId: number) => seenMap[String(taskId)] || '', [seenMap]);
 
-    const markSeenAt = (taskId: number, timestamp: string) => {
+    const markSeenAt = useCallback((taskId: number, timestamp: string) => {
         if (!timestamp) return;
         setSeenMap((prev) => {
             const current = prev[String(taskId)] || '';
             if (current === timestamp) return prev;
             return { ...prev, [String(taskId)]: timestamp };
         });
-    };
+    }, [setSeenMap]);
 
-    const markManySeenAt = (updates: SeenMap) => {
+    const markManySeenAt = useCallback((updates: SeenMap) => {
         const keys = Object.keys(updates || {});
         if (keys.length === 0) return;
         setSeenMap((prev) => {
@@ -42,7 +42,7 @@ export function useTaskCommentSeen(currentUser: User | null) {
             });
             return changed ? next : prev;
         });
-    };
+    }, [setSeenMap]);
 
     return {
         seenMap,
@@ -51,4 +51,3 @@ export function useTaskCommentSeen(currentUser: User | null) {
         markManySeenAt,
     };
 }
-

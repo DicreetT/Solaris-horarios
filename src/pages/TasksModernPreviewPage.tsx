@@ -27,6 +27,7 @@ import LinkifiedText from '../components/LinkifiedText';
 import { UserAvatar } from '../components/UserAvatar';
 import { Todo, type Attachment, type Comment } from '../types';
 import TodoModal from '../components/TodoModal';
+import { useNotificationsContext } from '../context/NotificationsContext';
 
 const PRIORITY_TAG = '__priority__';
 
@@ -67,8 +68,10 @@ function isUrgentForUser(task: Todo, currentUserId: string) {
 
   const isPriority = (task.tags || []).includes(PRIORITY_TAG);
   const isShocked = !!task.shocked_users?.includes(currentUserId);
+  const todayKey = new Date().toISOString().split('T')[0];
+  const isDueNow = !!task.due_date_key && task.due_date_key <= todayKey;
 
-  return isShocked || isPriority;
+  return isShocked || isPriority || isDueNow;
 }
 
 function getTaskPriority(task: Todo, currentUserId: string) {
@@ -418,6 +421,7 @@ function TaskPreviewDetailModal({
 }) {
   const { currentUser } = useAuth();
   const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
+  const { sendNudge } = useNotificationsContext();
   const { getSeenAt, markSeenAt } = useTaskCommentSeen(currentUser);
   const [newComment, setNewComment] = useState('');
   const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
@@ -483,6 +487,7 @@ function TaskPreviewDetailModal({
         shocked_users: Array.from(new Set(nextRecipients)),
       },
     });
+    await sendNudge(task.title, nextRecipients, task.id);
     onRelampagoVisualChange(true);
   };
 
@@ -867,19 +872,43 @@ export default function TasksModernPreviewPage() {
   const [openSections, setOpenSections] = useState({
     assigned: true,
     urgent: true,
-    created: false,
+    created: true,
     completed: false,
     team: false,
   });
+  const { getSeenAt, markManySeenAt } = useTaskCommentSeen(currentUser);
+
+  const getLatestForeignCommentAt = (task: Todo): string | null => {
+    const foreignComments = (task.comments || [])
+      .filter((comment) => comment.user_id !== currentUser.id)
+      .filter((comment) => !!comment.created_at);
+    if (foreignComments.length === 0) return null;
+    return foreignComments.reduce((latest: string, comment) => (
+      toMillis(comment.created_at) > toMillis(latest) ? comment.created_at : latest
+    ), foreignComments[0].created_at);
+  };
+
+  useEffect(() => {
+    const seed: Record<string, string> = {};
+    todos.forEach((task) => {
+      if (getSeenAt(task.id)) return;
+      const latest = getLatestForeignCommentAt(task);
+      if (latest) seed[String(task.id)] = latest;
+    });
+    markManySeenAt(seed);
+  }, [todos, getSeenAt, markManySeenAt]);
 
   const unreadCommentsByTask = useMemo(() => {
     const map = new Map<number, number>();
     todos.forEach((task) => {
-      const unread = (task.comments || []).filter((c: any) => c.user_id !== currentUser.id).length;
+      const seenAtMs = toMillis(getSeenAt(task.id) || '');
+      const unread = (task.comments || []).filter(
+        (comment: any) => comment.user_id !== currentUser.id && toMillis(comment.created_at) > seenAtMs,
+      ).length;
       map.set(task.id, unread);
     });
     return map;
-  }, [todos, currentUser.id]);
+  }, [todos, currentUser.id, getSeenAt]);
 
   const isAdmin = !!currentUser?.isAdmin;
   const assignedToMe = useMemo(
@@ -1003,15 +1032,14 @@ export default function TasksModernPreviewPage() {
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-violet-700">
               <Sparkles size={13} />
-              Propuesta moderna
+              Panel de tareas
             </div>
             <div>
               <h1 className="text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
-                Tareas como carrusel
+                Tareas del equipo
               </h1>
               <p className="mt-3 max-w-2xl text-base font-medium leading-7 text-slate-600">
-                La idea es separar mejor lo que te toca a ti, lo que has creado y lo que necesita más urgencia, con tarjetas
-                horizontales, nombres visibles y una alerta relámpago que se nota sin convertir todo en un muro infinito.
+                Revisa lo que te toca, lo que has creado y lo urgente con nombres visibles, progreso por persona y avisos claros.
               </p>
             </div>
 
@@ -1055,16 +1083,16 @@ export default function TasksModernPreviewPage() {
               </div>
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">Lo urgente</p>
-                <h2 className="text-2xl font-black">Relámpago visible</h2>
+                <h2 className="text-2xl font-black">Avisos claros</h2>
               </div>
             </div>
             <div className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-4">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-bold text-slate-300">Quiere decir: léeme ya</span>
+                <span className="text-sm font-bold text-slate-300">Quiere decir: revisar pronto</span>
                 <ArrowRight size={16} className="text-amber-300" />
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-300">
-                Sin secuestrar toda la app. La tarea se queda arriba, visible, y solo se limpia cuando se reconoce o se resuelve.
+                Las tareas urgentes quedan arriba y también envían notificación cuando activas un relámpago.
               </p>
               <button
                 type="button"
@@ -1096,7 +1124,7 @@ export default function TasksModernPreviewPage() {
 
         <TaskRail
         title="Urgentes / relámpago"
-        subtitle="Una fila que agrupa las tareas que ya están señaladas o vencidas."
+        subtitle="Una fila que agrupa tareas señaladas, prioritarias o vencidas."
         tasks={urgent}
         currentUserId={currentUser.id}
         unreadCommentsByTask={unreadCommentsByTask}
@@ -1153,8 +1181,7 @@ export default function TasksModernPreviewPage() {
       />
 
       <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-white/80 p-4 text-sm font-semibold text-slate-600">
-        Sugerencia visual: esta versión está pensada para que puedas pasar tareas hacia los lados, ver nombres completos,
-        y reservar la alerta relámpago para lo realmente urgente.
+        Las tareas se pueden revisar hacia los lados. Los nombres, fechas, comentarios nuevos y avisos urgentes quedan visibles en cada tarjeta.
       </div>
 
       {showCreateModal && <TodoModal onClose={() => setShowCreateModal(false)} />}

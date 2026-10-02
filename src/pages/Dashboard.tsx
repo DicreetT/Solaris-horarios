@@ -235,6 +235,54 @@ type DailyControlStockSnapshot = {
     observation: string;
 };
 
+type DailyManualMovementRow = {
+    id: string;
+    tipo?: string;
+    producto?: string;
+    lote?: string;
+    cantidad?: string;
+    cliente?: string;
+    origen?: string;
+    destino?: string;
+    bodega?: string;
+    observacion?: string;
+};
+
+type DailyManualClientRow = {
+    id: string;
+    cliente: string;
+    observacion?: string;
+};
+
+type DailyManualSupportRow = {
+    id: string;
+    concepto?: string;
+    detalle?: string;
+    responsable?: string;
+};
+
+type DailyManualStockRow = {
+    id: string;
+    producto?: string;
+    lote?: string;
+    bodega?: string;
+    lunaris?: string;
+    physical?: string;
+    physicalOk?: boolean;
+    zoho?: string;
+    zohoOk?: boolean;
+    observation?: string;
+};
+
+type DailyManualTables = {
+    shipments: DailyManualMovementRow[];
+    clients: DailyManualClientRow[];
+    transfers: DailyManualMovementRow[];
+    assemblies: DailyManualMovementRow[];
+    support: DailyManualSupportRow[];
+    stock: DailyManualStockRow[];
+};
+
 type DailyInventoryControlReport = {
     id: string;
     dateKey: string;
@@ -255,6 +303,7 @@ type DailyInventoryControlReport = {
         assemblies?: string;
         stock?: string;
     };
+    manualTables?: DailyManualTables;
     snapshot?: {
         shipments: DailyControlMovementSnapshot[];
         transfers: DailyControlMovementSnapshot[];
@@ -388,6 +437,115 @@ const normalizeAttachmentsList = (value: unknown): Attachment[] => {
         .filter((file) => file.name && file.url);
 };
 
+const newManualRowId = (prefix: string) => uid(`manual_${prefix}`);
+
+const textLinesToManualRows = <T extends { id: string }>(
+    value: unknown,
+    factory: (line: string, index: number) => T,
+) => clean(value)
+    .split(/\r?\n/)
+    .map((line) => clean(line))
+    .filter(Boolean)
+    .map(factory);
+
+const normalizeManualMovementRows = (value: unknown, section: string): DailyManualMovementRow[] => (
+    Array.isArray(value) ? value : []
+).map((row: any) => ({
+    id: clean(row?.id) || newManualRowId(section),
+    tipo: clean(row?.tipo),
+    producto: clean(row?.producto),
+    lote: clean(row?.lote),
+    cantidad: clean(row?.cantidad),
+    cliente: clean(row?.cliente),
+    origen: clean(row?.origen),
+    destino: clean(row?.destino),
+    bodega: clean(row?.bodega),
+    observacion: clean(row?.observacion),
+})).filter((row) => (
+    clean(row.producto) || clean(row.lote) || clean(row.cantidad) ||
+    clean(row.cliente) || clean(row.origen) || clean(row.destino) ||
+    clean(row.bodega) || clean(row.observacion)
+));
+
+const normalizeManualClientRows = (value: unknown): DailyManualClientRow[] => (
+    Array.isArray(value) ? value : []
+).map((row: any) => ({
+    id: clean(row?.id) || newManualRowId('client'),
+    cliente: clean(row?.cliente || row?.name),
+    observacion: clean(row?.observacion || row?.note),
+})).filter((row) => clean(row.cliente) || clean(row.observacion));
+
+const normalizeManualSupportRows = (value: unknown): DailyManualSupportRow[] => (
+    Array.isArray(value) ? value : []
+).map((row: any) => ({
+    id: clean(row?.id) || newManualRowId('support'),
+    concepto: clean(row?.concepto),
+    detalle: clean(row?.detalle),
+    responsable: clean(row?.responsable),
+})).filter((row) => clean(row.concepto) || clean(row.detalle) || clean(row.responsable));
+
+const normalizeManualStockRows = (value: unknown): DailyManualStockRow[] => (
+    Array.isArray(value) ? value : []
+).map((row: any) => ({
+    id: clean(row?.id) || newManualRowId('stock'),
+    producto: clean(row?.producto),
+    lote: clean(row?.lote),
+    bodega: clean(row?.bodega),
+    lunaris: clean(row?.lunaris),
+    physical: clean(row?.physical),
+    physicalOk: !!row?.physicalOk,
+    zoho: clean(row?.zoho),
+    zohoOk: !!row?.zohoOk,
+    observation: clean(row?.observation || row?.observacion),
+})).filter((row) => (
+    clean(row.producto) || clean(row.lote) || clean(row.bodega) ||
+    clean(row.lunaris) || clean(row.physical) || clean(row.zoho) ||
+    clean(row.observation)
+));
+
+const buildManualTablesFromSections = (sections?: DailyInventoryControlReport['manualSections']): DailyManualTables => ({
+    shipments: textLinesToManualRows(sections?.shipments, (line, index) => ({
+        id: `manual_ship_legacy_${index}_${line.slice(0, 8)}`,
+        producto: line,
+    })),
+    clients: textLinesToManualRows(sections?.clients, (line, index) => ({
+        id: `manual_client_legacy_${index}_${line.slice(0, 8)}`,
+        cliente: line.replace(/^[-•]\s*/, ''),
+    })),
+    transfers: textLinesToManualRows(sections?.transfers, (line, index) => ({
+        id: `manual_transfer_legacy_${index}_${line.slice(0, 8)}`,
+        producto: line,
+    })),
+    assemblies: textLinesToManualRows(sections?.assemblies, (line, index) => ({
+        id: `manual_asm_legacy_${index}_${line.slice(0, 8)}`,
+        producto: line,
+    })),
+    support: [],
+    stock: textLinesToManualRows(sections?.stock, (line, index) => ({
+        id: `manual_stock_legacy_${index}_${line.slice(0, 8)}`,
+        producto: line,
+    })),
+});
+
+const normalizeManualTables = (value: unknown, sections?: DailyInventoryControlReport['manualSections']): DailyManualTables => {
+    const fallback = buildManualTablesFromSections(sections);
+    const raw = value && typeof value === 'object' ? value as any : {};
+    const shipments = normalizeManualMovementRows(raw.shipments, 'shipment');
+    const clients = normalizeManualClientRows(raw.clients);
+    const transfers = normalizeManualMovementRows(raw.transfers, 'transfer');
+    const assemblies = normalizeManualMovementRows(raw.assemblies, 'assembly');
+    const support = normalizeManualSupportRows(raw.support);
+    const stock = normalizeManualStockRows(raw.stock);
+    return {
+        shipments: shipments.length > 0 ? shipments : fallback.shipments,
+        clients: clients.length > 0 ? clients : fallback.clients,
+        transfers: transfers.length > 0 ? transfers : fallback.transfers,
+        assemblies: assemblies.length > 0 ? assemblies : fallback.assemblies,
+        support: support.length > 0 ? support : fallback.support,
+        stock: stock.length > 0 ? stock : fallback.stock,
+    };
+};
+
 const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryControlState => {
     const reportsRaw = Array.isArray((value as any)?.reports) ? (value as any).reports : [];
     const deletedReportIds: string[] = Array.isArray((value as any)?.deletedReportIds)
@@ -398,7 +556,17 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
         : [];
     return {
         reports: reportsRaw
-            .map((report: any) => ({
+            .map((report: any) => {
+                const manualSections = report?.manualSections && typeof report.manualSections === 'object'
+                    ? {
+                        shipments: clean(report.manualSections.shipments),
+                        clients: clean(report.manualSections.clients),
+                        transfers: clean(report.manualSections.transfers),
+                        assemblies: clean(report.manualSections.assemblies),
+                        stock: clean(report.manualSections.stock),
+                    }
+                    : undefined;
+                return {
                 id: clean(report?.id) || uid('ctrl'),
                 dateKey: clean(report?.dateKey),
                 eventId: Number.isFinite(Number(report?.eventId)) ? Number(report.eventId) : undefined,
@@ -411,15 +579,8 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                 rows: report?.rows && typeof report.rows === 'object' ? report.rows : {},
                 attachments: normalizeAttachmentsList(report?.attachments),
                 notes: clean(report?.notes),
-                manualSections: report?.manualSections && typeof report.manualSections === 'object'
-                    ? {
-                        shipments: clean(report.manualSections.shipments),
-                        clients: clean(report.manualSections.clients),
-                        transfers: clean(report.manualSections.transfers),
-                        assemblies: clean(report.manualSections.assemblies),
-                        stock: clean(report.manualSections.stock),
-                    }
-                    : undefined,
+                manualSections,
+                manualTables: normalizeManualTables(report?.manualTables, manualSections),
                 snapshot: report?.snapshot && typeof report.snapshot === 'object'
                     ? {
                         shipments: Array.isArray(report.snapshot.shipments) ? report.snapshot.shipments : [],
@@ -433,7 +594,8 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                 createdAt: clean(report?.createdAt) || new Date().toISOString(),
                 updatedAt: clean(report?.updatedAt) || clean(report?.createdAt) || new Date().toISOString(),
                 updatedBy: clean(report?.updatedBy),
-            }))
+            };
+            })
             .filter((report: DailyInventoryControlReport) => (
                 report.dateKey &&
                 !deletedReportIds.includes(report.id) &&
@@ -1508,6 +1670,77 @@ function Dashboard() {
         }
     };
 
+    const getCanetMovementsForControlDate = (dateKey: string) => (
+        canetMovementsEffectiveSource.filter((movement: any) => {
+            const movementDate = dateFromAny(clean(movement?.fecha));
+            return movementDate ? toDateKey(movementDate) === dateKey : clean(movement?.fecha) === dateKey;
+        })
+    );
+
+    const buildManualTablesDraft = (dateKey: string): DailyManualTables => {
+        const dayMovements = getCanetMovementsForControlDate(dateKey);
+        const shipments = dayMovements
+            .filter((movement: any) => {
+                const type = normalizeInventorySearch(movement?.tipo_movimiento);
+                return !type.includes('traspaso') && (type.includes('envio') || type.includes('venta') || type.includes('salida'));
+            })
+            .map((movement: any) => ({
+                id: clean(movement?.id) || newManualRowId('shipment'),
+                tipo: clean(movement?.tipo_movimiento) || 'Venta/envío',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                cantidad: formatQty(Math.abs(getInventorySignedQuantity(movement))),
+                cliente: clean(movement?.cliente || movement?.destino),
+            }))
+            .filter((row) => row.producto || row.lote || row.cantidad || row.cliente);
+        const transfers = dayMovements
+            .filter((movement: any) => normalizeInventorySearch(movement?.tipo_movimiento).includes('traspaso'))
+            .map((movement: any) => ({
+                id: clean(movement?.id) || newManualRowId('transfer'),
+                tipo: clean(movement?.tipo_movimiento) || 'Traspaso',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                cantidad: formatQty(Math.abs(getInventorySignedQuantity(movement))),
+                origen: clean(movement?.bodega),
+                destino: clean(movement?.destino || movement?.cliente),
+            }))
+            .filter((row) => row.producto || row.lote || row.cantidad || row.origen || row.destino);
+        const assemblies = dayMovements
+            .filter((movement: any) => normalizeInventorySearch(movement?.tipo_movimiento).includes('ensam'))
+            .map((movement: any) => ({
+                id: clean(movement?.id) || newManualRowId('assembly'),
+                tipo: clean(movement?.tipo_movimiento) || 'Ensamblaje',
+                producto: productKey(movement?.producto),
+                lote: clean(movement?.lote),
+                cantidad: formatQty(Math.abs(getInventorySignedQuantity(movement))),
+                bodega: clean(movement?.bodega),
+            }))
+            .filter((row) => row.producto || row.lote || row.cantidad || row.bodega);
+        const clients = Array.from(new Set(shipments.map((row) => clean(row.cliente)).filter(Boolean)))
+            .sort((a, b) => a.localeCompare(b))
+            .map((cliente) => ({ id: newManualRowId('client'), cliente }));
+        const stock = canetStockRowsWithBodega.map((row) => ({
+            id: `${row.producto}|${row.lote}|${row.bodega}`,
+            producto: row.producto,
+            lote: row.lote,
+            bodega: row.bodega,
+            lunaris: formatQty(row.stockTotal),
+            physical: '',
+            physicalOk: false,
+            zoho: '',
+            zohoOk: false,
+            observation: '',
+        }));
+        return {
+            shipments,
+            clients,
+            transfers,
+            assemblies,
+            support: [],
+            stock,
+        };
+    };
+
     const buildEmptyDailyControlReport = (dateKey: string, eventId?: number): DailyInventoryControlReport => {
         const now = new Date().toISOString();
         return {
@@ -1526,6 +1759,7 @@ function Dashboard() {
                 assemblies: '',
                 stock: '',
             },
+            manualTables: buildManualTablesDraft(dateKey),
             createdAt: now,
             updatedAt: now,
             updatedBy: currentUser?.id || '',
@@ -1578,6 +1812,7 @@ function Dashboard() {
                     assemblies: '',
                     stock: '',
                 },
+                manualTables: existing?.manualTables || buildManualTablesDraft(dateKey),
                 updatedAt: new Date().toISOString(),
                 updatedBy: currentUser?.id || '',
             }));
@@ -1662,6 +1897,97 @@ function Dashboard() {
         });
     };
 
+    const updateDailyManualTable = (updater: (tables: DailyManualTables) => DailyManualTables) => {
+        const dateKey = inventoryControlDateKey;
+        upsertDailyInventoryControl(dateKey, (existing) => {
+            const base = existing || buildEmptyDailyControlReport(dateKey);
+            const currentTables = normalizeManualTables(base.manualTables, base.manualSections);
+            return {
+                ...base,
+                manualTables: updater(currentTables),
+                updatedAt: new Date().toISOString(),
+                updatedBy: currentUser?.id || '',
+            };
+        });
+    };
+
+    const updateManualMovementCell = (
+        section: 'shipments' | 'transfers' | 'assemblies',
+        rowId: string,
+        field: keyof DailyManualMovementRow,
+        value: string,
+    ) => updateDailyManualTable((tables) => ({
+        ...tables,
+        [section]: tables[section].map((row) => (
+            row.id === rowId ? { ...row, [field]: value } : row
+        )),
+    }));
+
+    const addManualMovementRow = (section: 'shipments' | 'transfers' | 'assemblies') => updateDailyManualTable((tables) => ({
+        ...tables,
+        [section]: [
+            ...tables[section],
+            {
+                id: newManualRowId(section),
+                tipo: section === 'shipments' ? 'Venta/envío' : section === 'transfers' ? 'Traspaso' : 'Ensamblaje',
+            },
+        ],
+    }));
+
+    const removeManualMovementRow = (section: 'shipments' | 'transfers' | 'assemblies', rowId: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        [section]: tables[section].filter((row) => row.id !== rowId),
+    }));
+
+    const updateManualClientCell = (rowId: string, field: keyof DailyManualClientRow, value: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        clients: tables.clients.map((row) => row.id === rowId ? { ...row, [field]: value } : row),
+    }));
+
+    const addManualClientRow = () => updateDailyManualTable((tables) => ({
+        ...tables,
+        clients: [...tables.clients, { id: newManualRowId('client'), cliente: '' }],
+    }));
+
+    const removeManualClientRow = (rowId: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        clients: tables.clients.filter((row) => row.id !== rowId),
+    }));
+
+    const updateManualSupportCell = (rowId: string, field: keyof DailyManualSupportRow, value: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        support: tables.support.map((row) => row.id === rowId ? { ...row, [field]: value } : row),
+    }));
+
+    const addManualSupportRow = () => updateDailyManualTable((tables) => ({
+        ...tables,
+        support: [...tables.support, { id: newManualRowId('support'), concepto: '', detalle: '', responsable: '' }],
+    }));
+
+    const removeManualSupportRow = (rowId: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        support: tables.support.filter((row) => row.id !== rowId),
+    }));
+
+    const updateManualStockCell = (
+        rowId: string,
+        field: keyof DailyManualStockRow,
+        value: string | boolean,
+    ) => updateDailyManualTable((tables) => ({
+        ...tables,
+        stock: tables.stock.map((row) => row.id === rowId ? { ...row, [field]: value } : row),
+    }));
+
+    const addManualStockRow = () => updateDailyManualTable((tables) => ({
+        ...tables,
+        stock: [...tables.stock, { id: newManualRowId('stock'), producto: '', lote: '', bodega: '', lunaris: '', physical: '', zoho: '', observation: '' }],
+    }));
+
+    const removeManualStockRow = (rowId: string) => updateDailyManualTable((tables) => ({
+        ...tables,
+        stock: tables.stock.filter((row) => row.id !== rowId),
+    }));
+
     const loadLatestCanetMovementsForDailyControl = async () => {
         const { data, error } = await supabase
             .from('inventory_movements')
@@ -1696,26 +2022,69 @@ function Dashboard() {
     const handleSaveDailyInventoryControl = () => {
         if (!activeDailyInventoryControl) return;
         const savedAt = new Date().toISOString();
-        const stockSnapshot = dailyStockControlRows.map((row) => ({
-            key: row.key,
-            producto: row.producto,
-            lote: row.lote,
-            bodega: row.bodega,
-            lunaris: toNum(row.lunaris),
-            physical: clean(row.physical),
-            physicalOk: !!row.physicalOk,
-            zoho: clean(row.soho),
-            zohoOk: !!row.sohoOk,
-            difference: clean(row.physical) === '' ? null : toNum(row.physical) - toNum(row.lunaris),
-            observation: clean(row.observation),
-        }));
+        const manualTables = normalizeManualTables(activeDailyInventoryControl.manualTables, activeDailyInventoryControl.manualSections);
+        const stockSnapshot = activeDailyControlIsManual
+            ? manualTables.stock.map((row) => ({
+                key: clean(row.id) || `${row.producto}|${row.lote}|${row.bodega}`,
+                producto: clean(row.producto),
+                lote: clean(row.lote),
+                bodega: clean(row.bodega),
+                lunaris: toNum(row.lunaris),
+                physical: clean(row.physical),
+                physicalOk: !!row.physicalOk,
+                zoho: clean(row.zoho),
+                zohoOk: !!row.zohoOk,
+                difference: clean(row.physical) === '' ? null : toNum(row.physical) - toNum(row.lunaris),
+                observation: clean(row.observation),
+            }))
+            : dailyStockControlRows.map((row) => ({
+                key: row.key,
+                producto: row.producto,
+                lote: row.lote,
+                bodega: row.bodega,
+                lunaris: toNum(row.lunaris),
+                physical: clean(row.physical),
+                physicalOk: !!row.physicalOk,
+                zoho: clean(row.soho),
+                zohoOk: !!row.sohoOk,
+                difference: clean(row.physical) === '' ? null : toNum(row.physical) - toNum(row.lunaris),
+                observation: clean(row.observation),
+            }));
 
         upsertDailyInventoryControl(inventoryControlDateKey, (existing) => ({
             ...(existing || buildEmptyDailyControlReport(inventoryControlDateKey)),
             snapshot: {
-                shipments: dailyShipmentRows.map((row) => ({ ...row })),
-                transfers: dailyTransferRows.map((row) => ({ ...row })),
-                assemblies: dailyAssemblyRows.map((row) => ({ ...row })),
+                shipments: activeDailyControlIsManual
+                    ? manualTables.shipments.map((row) => ({
+                        id: row.id,
+                        tipo: clean(row.tipo) || 'Venta/envío',
+                        producto: clean(row.producto),
+                        lote: clean(row.lote),
+                        cliente: clean(row.cliente),
+                        cantidad: toNum(row.cantidad),
+                    }))
+                    : dailyShipmentRows.map((row) => ({ ...row })),
+                transfers: activeDailyControlIsManual
+                    ? manualTables.transfers.map((row) => ({
+                        id: row.id,
+                        tipo: clean(row.tipo) || 'Traspaso',
+                        producto: clean(row.producto),
+                        lote: clean(row.lote),
+                        bodega: clean(row.origen || row.bodega),
+                        destino: clean(row.destino),
+                        cantidad: toNum(row.cantidad),
+                    }))
+                    : dailyTransferRows.map((row) => ({ ...row })),
+                assemblies: activeDailyControlIsManual
+                    ? manualTables.assemblies.map((row) => ({
+                        id: row.id,
+                        tipo: clean(row.tipo) || 'Ensamblaje',
+                        producto: clean(row.producto),
+                        lote: clean(row.lote),
+                        bodega: clean(row.bodega),
+                        cantidad: toNum(row.cantidad),
+                    }))
+                    : dailyAssemblyRows.map((row) => ({ ...row })),
                 stock: stockSnapshot,
             },
             savedAt,
@@ -2807,6 +3176,10 @@ function Dashboard() {
         [dailyInventoryControls, inventoryControlDateKey],
     );
     const activeDailyControlIsManual = !!activeDailyInventoryControl?.manualMode;
+    const activeDailyManualTables = useMemo(
+        () => normalizeManualTables(activeDailyInventoryControl?.manualTables, activeDailyInventoryControl?.manualSections),
+        [activeDailyInventoryControl],
+    );
     const selectedCalendarDailyControl = useMemo(
         () => dailyInventoryControls.reports.find((report) => report.dateKey === selectedCalendarDateKey) || null,
         [dailyInventoryControls, selectedCalendarDateKey],
@@ -2885,11 +3258,272 @@ function Dashboard() {
         Array.from(new Set(dailyShipmentRows.map((row) => clean(row.cliente)).filter(Boolean))).sort((a, b) => a.localeCompare(b))
     ), [dailyShipmentRows]);
     const dailyStockDiffCount = useMemo(() => (
-        dailyStockControlRows.filter((row) => {
+        activeDailyControlIsManual
+            ? activeDailyManualTables.stock.filter((row) => {
+                if (clean(row.physical) === '') return false;
+                return Math.abs(toNum(row.physical) - toNum(row.lunaris)) > 0.000001;
+            }).length
+            : dailyStockControlRows.filter((row) => {
             if (clean(row.physical) === '') return false;
             return Math.abs(toNum(row.physical) - toNum(row.lunaris)) > 0.000001;
         }).length
-    ), [dailyStockControlRows]);
+    ), [activeDailyControlIsManual, activeDailyManualTables, dailyStockControlRows]);
+
+    const renderManualMovementTable = (
+        title: string,
+        section: 'shipments' | 'transfers' | 'assemblies',
+        rows: DailyManualMovementRow[],
+        fields: Array<{ key: keyof DailyManualMovementRow; label: string; placeholder?: string }>,
+    ) => (
+        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{title}</p>
+                <button
+                    type="button"
+                    onClick={() => addManualMovementRow(section)}
+                    className="rounded-full border border-teal-200 bg-white px-2.5 py-1 text-[11px] font-black text-teal-700 hover:bg-teal-50"
+                >
+                    + Fila
+                </button>
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                    <thead className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+                        <tr>
+                            {fields.map((field) => (
+                                <th key={`${section}-${String(field.key)}`} className="px-1.5 py-1">{field.label}</th>
+                            ))}
+                            <th className="px-1.5 py-1">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row) => (
+                            <tr key={row.id} className="border-t border-slate-100">
+                                {fields.map((field) => (
+                                    <td key={`${row.id}-${String(field.key)}`} className="px-1 py-1">
+                                        <input
+                                            value={clean(row[field.key])}
+                                            onChange={(e) => updateManualMovementCell(section, row.id, field.key, e.target.value)}
+                                            placeholder={field.placeholder || field.label}
+                                            className="h-8 min-w-[94px] rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                                        />
+                                    </td>
+                                ))}
+                                <td className="px-1 py-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => removeManualMovementRow(section, row.id)}
+                                        className="rounded-lg border border-rose-100 bg-white p-1.5 text-rose-600 hover:bg-rose-50"
+                                        title="Eliminar fila"
+                                    >
+                                        <Trash2 size={13} />
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                        {rows.length === 0 && (
+                            <tr>
+                                <td colSpan={fields.length + 1} className="px-2 py-3 text-center font-semibold text-slate-400">
+                                    Sin filas. Puedes añadir una manualmente.
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+
+    const renderManualClientsTable = () => (
+        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Clientes del día</p>
+                <button
+                    type="button"
+                    onClick={addManualClientRow}
+                    className="rounded-full border border-teal-200 bg-white px-2.5 py-1 text-[11px] font-black text-teal-700 hover:bg-teal-50"
+                >
+                    + Cliente
+                </button>
+            </div>
+            <div className="space-y-1.5">
+                {activeDailyManualTables.clients.map((row) => (
+                    <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] gap-1.5">
+                        <input
+                            value={row.cliente}
+                            onChange={(e) => updateManualClientCell(row.id, 'cliente', e.target.value)}
+                            placeholder="Cliente"
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                        />
+                        <input
+                            value={row.observacion || ''}
+                            onChange={(e) => updateManualClientCell(row.id, 'observacion', e.target.value)}
+                            placeholder="Observación"
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => removeManualClientRow(row.id)}
+                            className="rounded-lg border border-rose-100 bg-white p-1.5 text-rose-600 hover:bg-rose-50"
+                            title="Eliminar cliente"
+                        >
+                            <Trash2 size={13} />
+                        </button>
+                    </div>
+                ))}
+                {activeDailyManualTables.clients.length === 0 && (
+                    <p className="py-2 text-center text-xs font-semibold text-slate-400">Sin clientes todavía.</p>
+                )}
+            </div>
+        </div>
+    );
+
+    const renderManualSupportTable = () => (
+        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Soporte del día</p>
+                <button
+                    type="button"
+                    onClick={addManualSupportRow}
+                    className="rounded-full border border-teal-200 bg-white px-2.5 py-1 text-[11px] font-black text-teal-700 hover:bg-teal-50"
+                >
+                    + Soporte
+                </button>
+            </div>
+            <div className="space-y-1.5">
+                {activeDailyManualTables.support.map((row) => (
+                    <div key={row.id} className="grid grid-cols-[0.8fr_1.2fr_0.8fr_auto] gap-1.5">
+                        <input
+                            value={row.concepto || ''}
+                            onChange={(e) => updateManualSupportCell(row.id, 'concepto', e.target.value)}
+                            placeholder="Concepto"
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                        />
+                        <input
+                            value={row.detalle || ''}
+                            onChange={(e) => updateManualSupportCell(row.id, 'detalle', e.target.value)}
+                            placeholder="Detalle"
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                        />
+                        <input
+                            value={row.responsable || ''}
+                            onChange={(e) => updateManualSupportCell(row.id, 'responsable', e.target.value)}
+                            placeholder="Responsable"
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => removeManualSupportRow(row.id)}
+                            className="rounded-lg border border-rose-100 bg-white p-1.5 text-rose-600 hover:bg-rose-50"
+                            title="Eliminar soporte"
+                        >
+                            <Trash2 size={13} />
+                        </button>
+                    </div>
+                ))}
+                {activeDailyManualTables.support.length === 0 && (
+                    <p className="py-2 text-center text-xs font-semibold text-slate-400">Sin soporte registrado.</p>
+                )}
+            </div>
+        </div>
+    );
+
+    const renderManualStockTable = () => (
+        <div className="overflow-x-auto rounded-xl border border-white bg-white">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
+                <p className="text-[11px] font-black uppercase tracking-widest text-slate-500">Stock del día</p>
+                <button
+                    type="button"
+                    onClick={addManualStockRow}
+                    className="rounded-full border border-teal-200 bg-white px-2.5 py-1 text-[11px] font-black text-teal-700 hover:bg-teal-50"
+                >
+                    + Fila stock
+                </button>
+            </div>
+            <table className="min-w-full text-left text-xs">
+                <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
+                    <tr>
+                        <th className="px-3 py-2">Producto</th>
+                        <th className="px-3 py-2">Lote</th>
+                        <th className="px-3 py-2">Bodega</th>
+                        <th className="px-3 py-2">Lunaris</th>
+                        <th className="px-3 py-2">Físico</th>
+                        <th className="px-3 py-2">OK físico</th>
+                        <th className="px-3 py-2">Zoho</th>
+                        <th className="px-3 py-2">OK Zoho</th>
+                        <th className="px-3 py-2">Dif.</th>
+                        <th className="px-3 py-2">Observación</th>
+                        <th className="px-3 py-2">Acción</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {activeDailyManualTables.stock.map((row) => {
+                        const diff = clean(row.physical) === '' ? 0 : toNum(row.physical) - toNum(row.lunaris);
+                        return (
+                            <tr key={row.id} className="border-t border-slate-100">
+                                {(['producto', 'lote', 'bodega', 'lunaris', 'physical'] as Array<keyof DailyManualStockRow>).map((field) => (
+                                    <td key={`${row.id}-${String(field)}`} className="px-2 py-2">
+                                        <input
+                                            value={clean(row[field])}
+                                            onChange={(e) => updateManualStockCell(row.id, field, e.target.value)}
+                                            className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs font-bold outline-none focus:border-teal-400"
+                                        />
+                                    </td>
+                                ))}
+                                <td className="px-3 py-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!row.physicalOk}
+                                        onChange={(e) => updateManualStockCell(row.id, 'physicalOk', e.target.checked)}
+                                    />
+                                </td>
+                                <td className="px-2 py-2">
+                                    <input
+                                        value={row.zoho || ''}
+                                        onChange={(e) => updateManualStockCell(row.id, 'zoho', e.target.value)}
+                                        className="h-8 w-24 rounded-lg border border-slate-200 px-2 text-xs font-bold outline-none focus:border-teal-400"
+                                    />
+                                </td>
+                                <td className="px-3 py-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!row.zohoOk}
+                                        onChange={(e) => updateManualStockCell(row.id, 'zohoOk', e.target.checked)}
+                                    />
+                                </td>
+                                <td className={`px-3 py-2 font-black ${Math.abs(diff) > 0.000001 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                    {clean(row.physical) === '' ? '-' : formatQty(diff)}
+                                </td>
+                                <td className="px-2 py-2">
+                                    <input
+                                        value={row.observation || ''}
+                                        onChange={(e) => updateManualStockCell(row.id, 'observation', e.target.value)}
+                                        className="h-8 w-40 rounded-lg border border-slate-200 px-2 text-xs font-semibold outline-none focus:border-teal-400"
+                                        placeholder="Observación"
+                                    />
+                                </td>
+                                <td className="px-2 py-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => removeManualStockRow(row.id)}
+                                        className="rounded-lg border border-rose-100 bg-white p-1.5 text-rose-600 hover:bg-rose-50"
+                                        title="Eliminar fila"
+                                    >
+                                        <Trash2 size={13} />
+                                    </button>
+                                </td>
+                            </tr>
+                        );
+                    })}
+                    {activeDailyManualTables.stock.length === 0 && (
+                        <tr>
+                            <td colSpan={11} className="px-3 py-4 text-center font-semibold text-slate-400">Sin filas de stock. Puedes añadir una manualmente.</td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+    );
     const fallbackCanetCritical = useMemo(() => {
         const consumoByProduct = new Map<string, number>();
         ((canetSeed.productos as any[]) || []).forEach((p: any) => {
@@ -5786,33 +6420,22 @@ function Dashboard() {
                                             </div>
                                             {activeDailyControlIsManual ? (
                                                 <div className="space-y-3">
-                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
-                                                        Ventas / envíos
-                                                        <textarea
-                                                            value={activeDailyInventoryControl.manualSections?.shipments || ''}
-                                                            onChange={(e) => updateDailyManualSection('shipments', e.target.value)}
-                                                            placeholder="Producto · lote · cantidad · cliente"
-                                                            className="mt-1 min-h-[88px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
-                                                        />
-                                                    </label>
-                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
-                                                        Clientes del día
-                                                        <textarea
-                                                            value={activeDailyInventoryControl.manualSections?.clients || ''}
-                                                            onChange={(e) => updateDailyManualSection('clients', e.target.value)}
-                                                            placeholder="Cliente 1, cliente 2..."
-                                                            className="mt-1 min-h-[64px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
-                                                        />
-                                                    </label>
-                                                    <label className="block text-[11px] font-black uppercase tracking-wide text-slate-500">
-                                                        Traspasos
-                                                        <textarea
-                                                            value={activeDailyInventoryControl.manualSections?.transfers || ''}
-                                                            onChange={(e) => updateDailyManualSection('transfers', e.target.value)}
-                                                            placeholder="Producto · lote · cantidad · origen → destino"
-                                                            className="mt-1 min-h-[88px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
-                                                        />
-                                                    </label>
+                                                    {renderManualMovementTable('Ventas / envíos', 'shipments', activeDailyManualTables.shipments, [
+                                                        { key: 'producto', label: 'Producto' },
+                                                        { key: 'lote', label: 'Lote' },
+                                                        { key: 'cantidad', label: 'Cantidad' },
+                                                        { key: 'cliente', label: 'Cliente' },
+                                                        { key: 'observacion', label: 'Obs.' },
+                                                    ])}
+                                                    {renderManualClientsTable()}
+                                                    {renderManualMovementTable('Traspasos', 'transfers', activeDailyManualTables.transfers, [
+                                                        { key: 'producto', label: 'Producto' },
+                                                        { key: 'lote', label: 'Lote' },
+                                                        { key: 'cantidad', label: 'Cantidad' },
+                                                        { key: 'origen', label: 'Origen' },
+                                                        { key: 'destino', label: 'Destino' },
+                                                        { key: 'observacion', label: 'Obs.' },
+                                                    ])}
                                                 </div>
                                             ) : (
                                                 <>
@@ -5860,12 +6483,13 @@ function Dashboard() {
                                                 </label>
                                             </div>
                                             {activeDailyControlIsManual ? (
-                                                <textarea
-                                                    value={activeDailyInventoryControl.manualSections?.assemblies || ''}
-                                                    onChange={(e) => updateDailyManualSection('assemblies', e.target.value)}
-                                                    placeholder="Producto · lote · cantidad · bodega"
-                                                    className="min-h-[180px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
-                                                />
+                                                renderManualMovementTable('Ensamblajes', 'assemblies', activeDailyManualTables.assemblies, [
+                                                    { key: 'producto', label: 'Producto' },
+                                                    { key: 'lote', label: 'Lote' },
+                                                    { key: 'cantidad', label: 'Cantidad' },
+                                                    { key: 'bodega', label: 'Bodega' },
+                                                    { key: 'observacion', label: 'Obs.' },
+                                                ])
                                             ) : (
                                                 <div className="space-y-1">
                                                     {dailyAssemblyRows.slice(0, 10).map((row) => (
@@ -5891,15 +6515,9 @@ function Dashboard() {
                                                 </label>
                                             </div>
                                             {activeDailyControlIsManual && (
-                                                <label className="mb-3 block text-[11px] font-black uppercase tracking-wide text-slate-500">
-                                                    Stock del día
-                                                    <textarea
-                                                        value={activeDailyInventoryControl.manualSections?.stock || ''}
-                                                        onChange={(e) => updateDailyManualSection('stock', e.target.value)}
-                                                        placeholder="Producto · lote · bodega · Lunaris · físico · Zoho · diferencia/observación"
-                                                        className="mt-1 min-h-[118px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-teal-400"
-                                                    />
-                                                </label>
+                                                <div className="mb-3 space-y-3">
+                                                    {renderManualSupportTable()}
+                                                </div>
                                             )}
                                             <FileUploader
                                                 folderPath={`daily-inventory-control/${inventoryControlDateKey}`}
@@ -5911,7 +6529,11 @@ function Dashboard() {
                                         </div>
                                     </div>
 
-                                    {!activeDailyControlIsManual && (
+                                    {activeDailyControlIsManual ? (
+                                        <div className="mt-3">
+                                            {renderManualStockTable()}
+                                        </div>
+                                    ) : (
                                     <div className="mt-3 overflow-x-auto rounded-xl border border-white bg-white">
                                         <table className="min-w-full text-left text-xs">
                                             <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
