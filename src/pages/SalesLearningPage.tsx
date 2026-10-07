@@ -322,10 +322,10 @@ export default function SalesLearningPage() {
         <MetricCard icon={Tags} label="FAQs pendientes" value={String(pendingFaqs.length)} />
       </section>}
 
-      <section className="grid gap-6 xl:grid-cols-2">
+      <section className={canManageFormations || isCommercialNotebookView || isActiveInfoView ? 'grid gap-6' : 'grid gap-6 xl:grid-cols-2'}>
         <Panel title="Formación y aprendizaje" icon={BookOpen}>
           {canManageFormations ? (
-            <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="grid gap-4">
               <form onSubmit={handleCreateFormation} className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                 <input value={formationDraft.name} onChange={(e) => setFormationDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Título de la formación" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
                 <textarea value={formationDraft.objective} onChange={(e) => setFormationDraft((p) => ({ ...p, objective: e.target.value }))} placeholder="De qué trata la formación" rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
