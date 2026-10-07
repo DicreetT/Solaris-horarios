@@ -20,6 +20,8 @@ export type FormationRecord = {
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
+  deletedBy?: string;
 };
 
 export type StudentSupportRecord = {
@@ -96,7 +98,11 @@ function timestampMs(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function mergeRecordsById<T extends { id: string; updatedAt?: string; createdAt?: string }>(remote: unknown, local: unknown): T[] {
+function recordVersion(item?: { updatedAt?: string; createdAt?: string; deletedAt?: string }) {
+  return item?.deletedAt || item?.updatedAt || item?.createdAt;
+}
+
+function mergeRecordsById<T extends { id: string; updatedAt?: string; createdAt?: string; deletedAt?: string }>(remote: unknown, local: unknown): T[] {
   const remoteList = Array.isArray(remote) ? remote as T[] : [];
   const localList = Array.isArray(local) ? local as T[] : [];
   const byId = new Map<string, T>();
@@ -105,13 +111,13 @@ function mergeRecordsById<T extends { id: string; updatedAt?: string; createdAt?
     const id = String(item?.id || '').trim();
     if (!id) return;
     const previous = byId.get(id);
-    const itemTime = timestampMs(item.updatedAt || item.createdAt);
-    const previousTime = timestampMs(previous?.updatedAt || previous?.createdAt);
+    const itemTime = timestampMs(recordVersion(item));
+    const previousTime = timestampMs(recordVersion(previous));
     byId.set(id, !previous || itemTime >= previousTime ? { ...previous, ...item } : { ...item, ...previous });
   });
 
   return Array.from(byId.values()).sort((a, b) => (
-    timestampMs(b.updatedAt || b.createdAt) - timestampMs(a.updatedAt || a.createdAt)
+    timestampMs(recordVersion(b)) - timestampMs(recordVersion(a))
   ));
 }
 
@@ -141,7 +147,7 @@ export function useSalesLearning(currentUser?: User | null) {
   );
 
   const safeState = useMemo<SalesLearningState>(() => ({
-    formations: Array.isArray(state?.formations) ? state.formations : [],
+    formations: (Array.isArray(state?.formations) ? state.formations : []).filter((formation) => !formation.deletedAt),
     support: Array.isArray(state?.support) ? state.support : [],
     needs: Array.isArray(state?.needs) ? state.needs : [],
     faqs: Array.isArray(state?.faqs) ? state.faqs : [],
@@ -188,6 +194,25 @@ export function useSalesLearning(currentUser?: User | null) {
       ...(prev || EMPTY_STATE),
       formations: ((prev || EMPTY_STATE).formations || []).map((item) => (
         item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item
+      )),
+    }));
+  };
+
+  const updateFormation = (id: string, patch: Partial<Omit<FormationRecord, 'id' | 'createdAt'>>) => {
+    setState((prev) => ({
+      ...(prev || EMPTY_STATE),
+      formations: ((prev || EMPTY_STATE).formations || []).map((item) => (
+        item.id === id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item
+      )),
+    }));
+  };
+
+  const deleteFormation = (id: string) => {
+    const now = new Date().toISOString();
+    setState((prev) => ({
+      ...(prev || EMPTY_STATE),
+      formations: ((prev || EMPTY_STATE).formations || []).map((item) => (
+        item.id === id ? { ...item, deletedAt: now, deletedBy: currentUser?.id, updatedAt: now } : item
       )),
     }));
   };
@@ -244,7 +269,9 @@ export function useSalesLearning(currentUser?: User | null) {
     activeFormations: safeState.formations.filter((formation) => formation.status === 'active'),
     pendingSupport: safeState.support.filter((item) => item.status === 'pending'),
     createFormation,
+    updateFormation,
     updateFormationStatus,
+    deleteFormation,
     createSupport,
     updateSupportStatus,
     createNeed,

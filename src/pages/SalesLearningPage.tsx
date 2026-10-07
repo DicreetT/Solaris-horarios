@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, Lightbulb, Plus, Radar, RotateCcw, Tags } from 'lucide-react';
+import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, Lightbulb, Plus, Radar, RotateCcw, Tags, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { CommercialNeedRecord, FaqRecord, StudentSupportRecord, useSalesLearning } from '../hooks/useSalesLearning';
 import { useProjects } from '../hooks/useProjects';
@@ -91,7 +91,9 @@ export default function SalesLearningPage() {
     needs,
     faqs,
     createFormation,
+    updateFormation,
     updateFormationStatus,
+    deleteFormation,
     createSupport,
     updateSupportStatus,
     createNeed,
@@ -353,10 +355,6 @@ export default function SalesLearningPage() {
                 {selectedFormation ? (
                   <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-black text-slate-950">{selectedFormation.name}</p>
-                        <p className="mt-1 text-sm font-semibold leading-5 text-slate-600">{selectedFormation.objective || selectedFormation.purpose || 'Sin objetivo todavía.'}</p>
-                      </div>
                       <select
                         value={selectedFormation.status}
                         onChange={(event) => updateFormationStatus(selectedFormation.id, event.target.value as any)}
@@ -367,13 +365,30 @@ export default function SalesLearningPage() {
                         <option value="paused">Pausada</option>
                         <option value="closed">Cerrada</option>
                       </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deleteFormation(selectedFormation.id);
+                          setSelectedFormationId('');
+                        }}
+                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-2 py-1 text-xs font-black text-rose-600 hover:bg-rose-50"
+                      >
+                        <Trash2 size={13} />
+                        Eliminar
+                      </button>
                     </div>
-                    {(selectedFormation.duration || selectedFormation.teacher || selectedFormation.audienceSize || selectedFormation.tools) && (
-                      <p className="mt-3 text-xs font-bold text-slate-500">
-                        {[selectedFormation.duration, selectedFormation.teacher, selectedFormation.audienceSize, selectedFormation.tools].filter(Boolean).join(' · ')}
-                      </p>
-                    )}
-                    {selectedFormation.structure && <p className="mt-3 max-h-36 overflow-auto rounded-xl bg-white p-3 text-xs font-semibold leading-5 text-slate-600">{selectedFormation.structure}</p>}
+                    <div className="mt-3 grid gap-2">
+                      <input value={selectedFormation.name} onChange={(event) => updateFormation(selectedFormation.id, { name: event.target.value })} placeholder="Título" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-900" />
+                      <textarea value={selectedFormation.objective} onChange={(event) => updateFormation(selectedFormation.id, { objective: event.target.value })} placeholder="De qué trata" rows={2} className="resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" />
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <input value={selectedFormation.duration || ''} onChange={(event) => updateFormation(selectedFormation.id, { duration: event.target.value })} placeholder="Duración" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700" />
+                        <input value={selectedFormation.teacher || ''} onChange={(event) => updateFormation(selectedFormation.id, { teacher: event.target.value })} placeholder="Docente" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700" />
+                        <input value={selectedFormation.audienceSize || ''} onChange={(event) => updateFormation(selectedFormation.id, { audienceSize: event.target.value })} placeholder="Personas estimadas" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700" />
+                        <input value={selectedFormation.tools || ''} onChange={(event) => updateFormation(selectedFormation.id, { tools: event.target.value })} placeholder="Herramientas" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700" />
+                      </div>
+                      <textarea value={selectedFormation.purpose} onChange={(event) => updateFormation(selectedFormation.id, { purpose: event.target.value })} placeholder="Para qué sirve" rows={2} className="resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" />
+                      <textarea value={selectedFormation.structure} onChange={(event) => updateFormation(selectedFormation.id, { structure: event.target.value })} placeholder="Estructura / pasos" rows={4} className="resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700" />
+                    </div>
                   </div>
                 ) : (
                   <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-500">No hay formaciones todavía.</p>

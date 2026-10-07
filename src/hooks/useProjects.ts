@@ -286,9 +286,14 @@ export function calculateProjectProgress(project: LunarisProject) {
   };
 }
 
+function isOperationalPromotionProject(project: LunarisProject) {
+  return project.type === 'cupon_promocion' && (!!project.promotionKind || !!project.promotionStatus);
+}
+
 export function canUserSeeProject(project: LunarisProject, user?: User | null) {
   if (!user) return false;
   if (project.deletedAt) return false;
+  if (isOperationalPromotionProject(project)) return false;
   return (
     project.ownerId === user.id
     || project.responsibleId === user.id
@@ -316,6 +321,7 @@ export function useProjects(currentUser?: User | null) {
     const list = Array.isArray(projectsState) ? projectsState : [];
     return [...list]
       .filter((project) => !project.deletedAt)
+      .filter((project) => !isOperationalPromotionProject(project))
       .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }, [projectsState]);
 

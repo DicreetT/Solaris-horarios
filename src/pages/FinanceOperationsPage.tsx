@@ -20,7 +20,7 @@ import { ESTEBAN_ID, USERS } from '../constants';
 import { FileUploader } from '../components/FileUploader';
 import { useAuth } from '../context/AuthContext';
 import type { Attachment } from '../types';
-import { useFinanceOperations, PromotionOperationalStatus } from '../hooks/useFinanceOperations';
+import { PromotionOperationalStatus, useFinanceOperations } from '../hooks/useFinanceOperations';
 import { MentionType, mentionTypeLabel, useMentions } from '../hooks/useMentions';
 import { calculateProjectProgress, projectStatusLabel, projectTypeLabel, useProjects } from '../hooks/useProjects';
 import { useShoppingList } from '../hooks/useShoppingList';
@@ -107,22 +107,9 @@ function promoStatusClass(status: PromotionOperationalStatus) {
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
-function derivedPromotionStatus(projectStatus: string): PromotionOperationalStatus {
-  if (projectStatus === 'done') return 'active';
-  if (projectStatus === 'validation') return 'scheduled';
-  if (projectStatus === 'paused') return 'finished';
-  return 'in_review';
-}
-
 function normalizePromotionStatus(value: unknown): PromotionOperationalStatus | null {
   if (value === 'active' || value === 'scheduled' || value === 'finished' || value === 'in_review') return value;
   return null;
-}
-
-function projectPromotionStatus(project: { status?: string; promotionStatus?: unknown }, meta?: { status?: unknown }) {
-  return normalizePromotionStatus(meta?.status)
-    || normalizePromotionStatus(project.promotionStatus)
-    || derivedPromotionStatus(project.status || 'pending');
 }
 
 function purchaseStatus(item: { is_purchased: boolean; delivery_date?: string }) {
@@ -178,10 +165,10 @@ export default function FinanceOperationsPage() {
       : ALL_FINANCE_VIEWS;
   const requestedView = normalizeView(searchParams.get('view'));
   const activeView = allowedViews.includes(requestedView) ? requestedView : allowedViews[0];
-  const { projects, visibleProjects, createProject, updateProject } = useProjects(currentUser);
+  const { projects, visibleProjects } = useProjects(currentUser);
   const { createMention } = useMentions(currentUser);
   const { shoppingItems } = useShoppingList(currentUser);
-  const { promotionMetaByProjectId, monthlyReports, updatePromotionMeta, upsertMonthlyReport, deleteMonthlyReport } = useFinanceOperations(currentUser);
+  const { promotions, monthlyReports, createPromotion, updatePromotion, deletePromotion, upsertMonthlyReport, deleteMonthlyReport } = useFinanceOperations(currentUser);
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [reportDraft, setReportDraft] = useState({
     title: '',
@@ -219,24 +206,18 @@ export default function FinanceOperationsPage() {
     };
   }, []);
 
-  const visibleProjectIds = useMemo(() => new Set(visibleProjects.map((project) => project.id)), [visibleProjects]);
-  const canSeeOperationalPromotion = (project: { id: string; ownerId?: string; responsibleId?: string; participants?: string[]; status?: string }) => {
-    if (!isOperationsContext && !isPromotionOnlyContext) {
-      return !!currentUser?.isAdmin || visibleProjectIds.has(project.id) || ['Thalia', 'Itzi', 'Heidy', 'Esteban'].includes(currentUser?.name || '');
-    }
-    const meta = promotionMetaByProjectId[project.id];
-    const status = projectPromotionStatus(project, meta);
+  const canSeeOperationalPromotion = (promotion: { createdBy?: string; status?: string }) => {
+    const status = normalizePromotionStatus(promotion.status) || 'in_review';
     return (
-      project.ownerId === effectiveUserId
-      || project.responsibleId === effectiveUserId
-      || (project.participants || []).includes(effectiveUserId)
+      promotion.createdBy === effectiveUserId
+      || currentUser?.isAdmin
+      || ['Thalia', 'Heidy'].includes(currentUser?.name || '')
       || status === 'active'
       || status === 'scheduled'
     );
   };
 
-  const promotionProjects = projects
-    .filter((project) => project.type === 'cupon_promocion')
+  const visiblePromotions = promotions
     .filter(canSeeOperationalPromotion);
 
   const currentMonthReports = monthlyReports.filter((report) => report.monthKey === monthKey);
@@ -264,13 +245,12 @@ export default function FinanceOperationsPage() {
   ));
 
   const promotionCounts = useMemo(() => {
-    return promotionProjects.reduce((acc, project) => {
-      const meta = promotionMetaByProjectId[project.id];
-      const status = projectPromotionStatus(project, meta);
+    return visiblePromotions.reduce((acc, promotion) => {
+      const status = normalizePromotionStatus(promotion.status) || 'in_review';
       acc[status] = (acc[status] || 0) + 1;
       return acc;
     }, {} as Record<PromotionOperationalStatus, number>);
-  }, [promotionMetaByProjectId, promotionProjects]);
+  }, [visiblePromotions]);
 
   const handleSaveReport = (event: React.FormEvent) => {
     event.preventDefault();
@@ -425,27 +405,10 @@ export default function FinanceOperationsPage() {
     const kindLabel = promoDraft.kind === 'coupon' ? 'Cupón' : 'Promoción';
     const heidyUser = USERS.find((user) => ['heidy', 'heidi'].includes(user.name.toLowerCase()));
     const initialPromotionStatus = effectiveUserName === 'Heidy' ? promoDraft.status : 'in_review';
-    const created = createProject({
+    const created = createPromotion({
+      kind: promoDraft.kind,
       name: promoDraft.name.trim(),
-      type: 'cupon_promocion',
-      responsibleId: effectiveUserId,
-      objective: promoDraft.reason.trim() || `${kindLabel} propuesto por ${effectiveUserName}`,
-      description: [
-        `${kindLabel} creado desde Promociones.`,
-        promoDraft.reason ? `Motivo: ${promoDraft.reason}` : '',
-        promoDraft.audience ? `Aplicable para: ${promoDraft.audience}` : '',
-        promoDraft.maxPeople ? `Válido para: ${promoDraft.maxPeople}` : '',
-        promoDraft.discount ? `Descuento/condición: ${promoDraft.discount}` : '',
-        promoDraft.howItWorks ? `Funcionamiento: ${promoDraft.howItWorks}` : '',
-      ].filter(Boolean).join('\n'),
-      priority: 'medium',
-      targetDate: promoDraft.endDate,
-      expectedResult: `${kindLabel} documentado, validado y listo para comunicar si corresponde.`,
-      completionDefinition: 'Condiciones, vigencia, público, productos, viabilidad y aprobación quedan definidos.',
-      tags: [promoDraft.kind === 'coupon' ? 'cupon' : 'promocion', ...(promoDraft.products ? promoDraft.products.split(',').map((tag) => tag.trim()).filter(Boolean) : [])],
-    }, { ownerId: effectiveUserId, actorId: currentUser.id });
-
-    updatePromotionMeta(created.id, {
+      reason: promoDraft.reason,
       status: initialPromotionStatus,
       startDate: promoDraft.startDate,
       endDate: promoDraft.endDate,
@@ -454,26 +417,16 @@ export default function FinanceOperationsPage() {
       maxPeople: promoDraft.maxPeople,
       products: promoDraft.products,
       howItWorks: promoDraft.howItWorks,
-      economicNote: promoDraft.discount,
+      discount: promoDraft.discount,
     });
-    updateProject(
-      created.id,
-      { promotionKind: promoDraft.kind, promotionStatus: initialPromotionStatus },
-      `Promoción registrada como ${promoStatusLabel(initialPromotionStatus).toLowerCase()}`,
-    );
 
     if (heidyUser?.id && heidyUser.id !== effectiveUserId) {
-      updateProject(
-        created.id,
-        { participants: [heidyUser.id] },
-        'Validación financiera solicitada automáticamente a Heidy',
-      );
       await createMention({
         title: `Validar viabilidad · ${created.name}`,
-        originType: 'project',
+        originType: 'other',
         originId: created.id,
         originLabel: created.name,
-        objectPath: `/projects?project=${created.id}`,
+        objectPath: '/finanzas-operativas?view=promociones',
         targetUserId: heidyUser.id,
         mentionType: 'validar',
         context: [
@@ -487,17 +440,12 @@ export default function FinanceOperationsPage() {
     }
 
     if (promoDraft.mentionTargetUserId) {
-      updateProject(
-        created.id,
-        { participants: [promoDraft.mentionTargetUserId] },
-        `Mención ${mentionTypeLabel(promoDraft.mentionType).toLowerCase()} creada desde promociones`,
-      );
       await createMention({
         title: `${mentionTypeLabel(promoDraft.mentionType)} · ${created.name}`,
-        originType: 'project',
+        originType: 'other',
         originId: created.id,
         originLabel: created.name,
-        objectPath: `/projects?project=${created.id}`,
+        objectPath: '/finanzas-operativas?view=promociones',
         targetUserId: promoDraft.mentionTargetUserId,
         mentionType: promoDraft.mentionType,
         context: promoDraft.mentionContext.trim() || `Revisar ${kindLabel.toLowerCase()}: ${created.name}`,
@@ -524,12 +472,7 @@ export default function FinanceOperationsPage() {
   };
 
   const handleUpdatePromotionStatus = (project: { id: string }, status: PromotionOperationalStatus) => {
-    updatePromotionMeta(project.id, { status });
-    updateProject(
-      project.id,
-      { promotionStatus: status },
-      `Estado operativo de cupón/promoción: ${promoStatusLabel(status)}`,
-    );
+    updatePromotion(project.id, { status });
   };
 
   const switchView = (view: FinanceView) => {
@@ -594,9 +537,9 @@ export default function FinanceOperationsPage() {
         <PromotionsView
           promoDraft={promoDraft}
           setPromoDraft={setPromoDraft}
-          promotionProjects={promotionProjects}
-          promotionMetaByProjectId={promotionMetaByProjectId}
-          updatePromotionMeta={updatePromotionMeta}
+          promotions={visiblePromotions}
+          updatePromotion={updatePromotion}
+          deletePromotion={deletePromotion}
           updatePromotionStatus={handleUpdatePromotionStatus}
           handleCreatePromotion={handleCreatePromotion}
           navigate={navigate}
@@ -663,18 +606,18 @@ export default function FinanceOperationsPage() {
 function PromotionsView({
   promoDraft,
   setPromoDraft,
-  promotionProjects,
-  promotionMetaByProjectId,
-  updatePromotionMeta,
+  promotions,
+  updatePromotion,
+  deletePromotion,
   updatePromotionStatus,
   handleCreatePromotion,
   navigate,
 }: {
   promoDraft: any;
   setPromoDraft: React.Dispatch<React.SetStateAction<any>>;
-  promotionProjects: any[];
-  promotionMetaByProjectId: Record<string, any>;
-  updatePromotionMeta: (projectId: string, patch: any) => void;
+  promotions: any[];
+  updatePromotion: (promotionId: string, patch: any) => void;
+  deletePromotion: (promotionId: string) => void;
   updatePromotionStatus: (project: { id: string }, status: PromotionOperationalStatus) => void;
   handleCreatePromotion: (event: React.FormEvent) => void;
   navigate: (path: string) => void;
@@ -753,51 +696,55 @@ function PromotionsView({
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-black text-slate-950">Cupones y promociones</h2>
-            <p className="text-sm font-semibold text-slate-500">Registro operativo derivado de proyectos.</p>
+            <p className="text-sm font-semibold text-slate-500">Registro operativo propio. No crea proyectos ni aparece en Mis proyectos.</p>
           </div>
-          <button type="button" onClick={() => navigate('/projects')} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
-            Ir a proyectos
+          <button type="button" onClick={() => navigate('/inicio-roles')} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+            Ver Mi espacio
           </button>
         </div>
         <div className="space-y-3">
-          {promotionProjects.length === 0 && (
+          {promotions.length === 0 && (
             <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-500">
-              Todavía no hay proyectos tipo Cupón / Promoción visibles.
+              Todavía no hay cupones o promociones registrados.
             </p>
           )}
-          {promotionProjects.map((project) => {
-            const progress = calculateProjectProgress(project);
-            const meta = promotionMetaByProjectId[project.id];
-            const status = projectPromotionStatus(project, meta);
+          {promotions.map((promotion) => {
+            const status = normalizePromotionStatus(promotion.status) || 'in_review';
             return (
-              <article key={project.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <article key={promotion.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div className="flex flex-wrap gap-2">
                       <span className={classNames('rounded-full border px-3 py-1 text-xs font-black', promoStatusClass(status))}>{promoStatusLabel(status)}</span>
-                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-600">{projectStatusLabel(project.status)}</span>
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-600">{promotion.kind === 'coupon' ? 'Cupón' : 'Promoción'}</span>
                     </div>
-                    <h3 className="mt-2 text-lg font-black text-slate-950">{project.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-slate-600">{project.objective || project.description || 'Sin descripción'}</p>
-                    <p className="mt-2 text-xs font-bold text-slate-500">{progress.completed}% completado · responsable {userName(project.responsibleId)}</p>
+                    <input value={promotion.name || ''} onChange={(event) => updatePromotion(promotion.id, { name: event.target.value })} placeholder="Nombre" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-black text-slate-950" />
+                    <textarea value={promotion.reason || ''} onChange={(event) => updatePromotion(promotion.id, { reason: event.target.value })} placeholder="Motivo / idea de fondo" rows={2} className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600" />
+                    <p className="mt-2 text-xs font-bold text-slate-500">Creado por {userName(promotion.createdBy)} · {promotion.updatedAt?.slice(0, 10) || 'sin fecha'}</p>
                   </div>
-                  <select value={status} onChange={(event) => updatePromotionStatus(project, event.target.value as PromotionOperationalStatus)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">
-                    <option value="in_review">En revisión</option>
-                    <option value="scheduled">Programado</option>
-                    <option value="active">Activo</option>
-                    <option value="finished">Finalizado</option>
-                  </select>
+                  <div className="flex flex-wrap gap-2">
+                    <select value={status} onChange={(event) => updatePromotionStatus(promotion, event.target.value as PromotionOperationalStatus)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">
+                      <option value="in_review">En revisión</option>
+                      <option value="scheduled">Programado</option>
+                      <option value="active">Activo</option>
+                      <option value="finished">Finalizado</option>
+                    </select>
+                    <button type="button" onClick={() => deletePromotion(promotion.id)} className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                      <Trash2 size={14} />
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-4 grid gap-2 md:grid-cols-3">
-                  <input value={meta?.couponCode || ''} onChange={(event) => updatePromotionMeta(project.id, { couponCode: event.target.value })} placeholder="Código/cupón" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input type="date" value={meta?.startDate || ''} onChange={(event) => updatePromotionMeta(project.id, { startDate: event.target.value })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input type="date" value={meta?.endDate || ''} onChange={(event) => updatePromotionMeta(project.id, { endDate: event.target.value })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input value={meta?.audience || ''} onChange={(event) => updatePromotionMeta(project.id, { audience: event.target.value })} placeholder="A quién aplica" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input value={meta?.maxPeople || ''} onChange={(event) => updatePromotionMeta(project.id, { maxPeople: event.target.value })} placeholder="Límite de uso / personas" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input value={meta?.products || ''} onChange={(event) => updatePromotionMeta(project.id, { products: event.target.value })} placeholder="Productos" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
-                  <input value={meta?.economicNote || ''} onChange={(event) => updatePromotionMeta(project.id, { economicNote: event.target.value })} placeholder="Nota económica" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input value={promotion.couponCode || ''} onChange={(event) => updatePromotion(promotion.id, { couponCode: event.target.value })} placeholder="Código/cupón" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input type="date" value={promotion.startDate || ''} onChange={(event) => updatePromotion(promotion.id, { startDate: event.target.value })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input type="date" value={promotion.endDate || ''} onChange={(event) => updatePromotion(promotion.id, { endDate: event.target.value })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input value={promotion.audience || ''} onChange={(event) => updatePromotion(promotion.id, { audience: event.target.value })} placeholder="A quién aplica" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input value={promotion.maxPeople || ''} onChange={(event) => updatePromotion(promotion.id, { maxPeople: event.target.value })} placeholder="Límite de uso / personas" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input value={promotion.products || ''} onChange={(event) => updatePromotion(promotion.id, { products: event.target.value })} placeholder="Productos" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                  <input value={promotion.discount || ''} onChange={(event) => updatePromotion(promotion.id, { discount: event.target.value })} placeholder="Nota económica" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
                 </div>
-                <textarea value={meta?.howItWorks || ''} onChange={(event) => updatePromotionMeta(project.id, { howItWorks: event.target.value })} placeholder="Cómo funciona" className="mt-2 min-h-[72px] w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
+                <textarea value={promotion.howItWorks || ''} onChange={(event) => updatePromotion(promotion.id, { howItWorks: event.target.value })} placeholder="Cómo funciona" className="mt-2 min-h-[72px] w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" />
               </article>
             );
           })}

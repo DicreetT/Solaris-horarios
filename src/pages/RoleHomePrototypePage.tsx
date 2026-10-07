@@ -661,10 +661,6 @@ function classNames(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-function isActivePromotionProject(project: { status?: string; promotionStatus?: unknown }, meta?: { status?: unknown }) {
-  return meta?.status === 'active' || project.promotionStatus === 'active' || (project.status === 'done' && !meta?.status);
-}
-
 function formatVisibleTags(tags: unknown, limit = 2) {
   const visible = (Array.isArray(tags) ? tags : [])
     .map((tag) => String(tag || '').trim())
@@ -748,7 +744,7 @@ function RoleHomePrototypePage() {
   const { todos } = useTodos(currentUser);
   const { projects, ensureEstebanInitialPortfolio, updateProject } = useProjects(currentUser);
   const { activeFormations, needs, faqs, support } = useSalesLearning(currentUser);
-  const { promotionMetaByProjectId, monthlyReports } = useFinanceOperations(currentUser);
+  const { promotions, monthlyReports } = useFinanceOperations(currentUser);
   const { reports: inventoryDailyReports } = useInventoryDailyEvents(currentUser?.id);
   const { shoppingItems } = useShoppingList(currentUser);
   const { blocks, addBlock } = useWeeklyWorkPlans(currentUser);
@@ -887,11 +883,10 @@ function RoleHomePrototypePage() {
     selectedUserAllProjects.slice(0, 3)
   ), [selectedUserAllProjects]);
   const activeCoupons = useMemo(() => (
-    projects
-      .filter((project) => project.type === 'cupon_promocion')
-      .filter((project) => isActivePromotionProject(project, promotionMetaByProjectId[project.id]))
+    promotions
+      .filter((promotion) => promotion.status === 'active')
       .slice(0, 3)
-  ), [projects, promotionMetaByProjectId]);
+  ), [promotions]);
 
   const todayArchive = useMemo(() => (
     (Array.isArray(facturacionArchive) ? facturacionArchive : []).find((entry) => entry.dateKey === todayKey)
@@ -1009,9 +1004,9 @@ function RoleHomePrototypePage() {
   }, [currentMonthKeyForReports, monthlyReports]);
   const activeCouponRows = useMemo(() => (
     activeCoupons.length > 0
-      ? activeCoupons.map((project) => ({
-        label: project.name,
-        detail: project.objective || 'Cupón/promoción activa',
+      ? activeCoupons.map((promotion) => ({
+        label: promotion.name,
+        detail: promotion.audience || promotion.reason || 'Cupón/promoción activa',
         status: 'Activo',
         tone: 'green' as const,
       }))
@@ -1664,7 +1659,6 @@ function RoleHomePrototypePage() {
               checklistItems={homeChecklistItems.filter((item) => !item.completed).slice(0, 3)}
               projects={selectedUserProjects}
               coupons={activeCoupons}
-              promotionMetaByProjectId={promotionMetaByProjectId}
               checklistLoading={checklistLoading}
               onCompleteTask={completeTaskFromHome}
               onToggleChecklist={toggleChecklistFromHome}
@@ -2078,7 +2072,6 @@ function QuickOverviewGrid({
   checklistItems,
   projects,
   coupons,
-  promotionMetaByProjectId,
   checklistLoading,
   onCompleteTask,
   onToggleChecklist,
@@ -2089,7 +2082,6 @@ function QuickOverviewGrid({
   checklistItems: HomeChecklistItem[];
   projects: any[];
   coupons: any[];
-  promotionMetaByProjectId: Record<string, any>;
   checklistLoading: boolean;
   onCompleteTask: (todo: any) => void;
   onToggleChecklist: (itemId: string) => void;
@@ -2206,18 +2198,17 @@ function QuickOverviewGrid({
         </div>
         <div className="space-y-2">
           {coupons.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-500">No hay cupones activos.</p>}
-          {coupons.map((project) => {
-            const meta = promotionMetaByProjectId[project.id] || {};
+          {coupons.map((promotion) => {
             return (
               <button
-                key={project.id}
+                key={promotion.id}
                 type="button"
                 onClick={() => onNavigate('/finanzas-operativas?view=promociones')}
                 className="w-full rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white"
               >
-                <p className="truncate text-sm font-black text-slate-900">{project.name}</p>
+                <p className="truncate text-sm font-black text-slate-900">{promotion.name}</p>
                 <p className="mt-0.5 text-xs font-bold text-slate-500">
-                  {meta.audience || 'Sin público'} · {meta.endDate || 'sin fin'}
+                  {promotion.audience || 'Sin público'} · {promotion.endDate || 'sin fin'}
                 </p>
               </button>
             );

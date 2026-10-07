@@ -21,6 +21,28 @@ export type PromotionMeta = {
   updatedBy?: string;
 };
 
+export type PromotionRecord = {
+  id: string;
+  kind: 'coupon' | 'promotion';
+  name: string;
+  reason?: string;
+  audience?: string;
+  maxPeople?: string;
+  products?: string;
+  couponCode?: string;
+  discount?: string;
+  startDate?: string;
+  endDate?: string;
+  howItWorks?: string;
+  status: PromotionOperationalStatus;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+};
+
 export type MonthlyFinanceReport = {
   id: string;
   monthKey: string;
@@ -37,11 +59,13 @@ export type MonthlyFinanceReport = {
 
 export type FinanceOperationsState = {
   promotionMetaByProjectId: Record<string, PromotionMeta>;
+  promotions: PromotionRecord[];
   monthlyReports: MonthlyFinanceReport[];
 };
 
 const EMPTY_STATE: FinanceOperationsState = {
   promotionMetaByProjectId: {},
+  promotions: [],
   monthlyReports: [],
 };
 
@@ -68,6 +92,34 @@ function normalizeReport(raw: any): MonthlyFinanceReport {
     reportType: type,
     notes: clean(raw?.notes),
     attachments: Array.isArray(raw?.attachments) ? raw.attachments : [],
+    createdAt: clean(raw?.createdAt) || now,
+    updatedAt: clean(raw?.updatedAt) || clean(raw?.createdAt) || now,
+    updatedBy: clean(raw?.updatedBy),
+    deletedAt: clean(raw?.deletedAt),
+    deletedBy: clean(raw?.deletedBy),
+  };
+}
+
+function normalizePromotion(raw: any): PromotionRecord {
+  const now = nowIso();
+  const status = ['in_review', 'scheduled', 'active', 'finished'].includes(raw?.status)
+    ? raw.status
+    : 'in_review';
+  return {
+    id: clean(raw?.id) || uniqueId('promotion'),
+    kind: raw?.kind === 'promotion' ? 'promotion' : 'coupon',
+    name: clean(raw?.name) || 'Cupón / promoción',
+    reason: clean(raw?.reason),
+    audience: clean(raw?.audience),
+    maxPeople: clean(raw?.maxPeople),
+    products: clean(raw?.products),
+    couponCode: clean(raw?.couponCode),
+    discount: clean(raw?.discount),
+    startDate: clean(raw?.startDate),
+    endDate: clean(raw?.endDate),
+    howItWorks: clean(raw?.howItWorks),
+    status,
+    createdBy: clean(raw?.createdBy),
     createdAt: clean(raw?.createdAt) || now,
     updatedAt: clean(raw?.updatedAt) || clean(raw?.createdAt) || now,
     updatedBy: clean(raw?.updatedBy),
@@ -103,6 +155,9 @@ export function normalizeFinanceOperationsState(value: unknown): FinanceOperatio
 
   return {
     promotionMetaByProjectId,
+    promotions: (Array.isArray(raw.promotions) ? raw.promotions : [])
+      .map(normalizePromotion)
+      .sort((a: PromotionRecord, b: PromotionRecord) => b.updatedAt.localeCompare(a.updatedAt)),
     monthlyReports: (Array.isArray(raw.monthlyReports) ? raw.monthlyReports : [])
       .map(normalizeReport)
       .filter((report: MonthlyFinanceReport) => report.monthKey)
@@ -120,6 +175,10 @@ function reportVersion(report?: MonthlyFinanceReport) {
   return report?.deletedAt || report?.updatedAt || report?.createdAt;
 }
 
+function promotionVersion(promotion?: PromotionRecord) {
+  return promotion?.deletedAt || promotion?.updatedAt || promotion?.createdAt;
+}
+
 function mergeFinanceOperationsState(remote: unknown, local: unknown): FinanceOperationsState {
   const remoteState = normalizeFinanceOperationsState(remote);
   const localState = normalizeFinanceOperationsState(local);
@@ -132,6 +191,12 @@ function mergeFinanceOperationsState(remote: unknown, local: unknown): FinanceOp
       : { ...meta, ...previous };
   });
 
+  const promotionsById = new Map<string, PromotionRecord>();
+  [...remoteState.promotions, ...localState.promotions].forEach((promotion) => {
+    const previous = promotionsById.get(promotion.id);
+    promotionsById.set(promotion.id, !previous || newerTimestamp(promotionVersion(promotion), promotionVersion(previous)) ? promotion : previous);
+  });
+
   const reportsById = new Map<string, MonthlyFinanceReport>();
   [...remoteState.monthlyReports, ...localState.monthlyReports].forEach((report) => {
     const previous = reportsById.get(report.id);
@@ -140,6 +205,7 @@ function mergeFinanceOperationsState(remote: unknown, local: unknown): FinanceOp
 
   return normalizeFinanceOperationsState({
     promotionMetaByProjectId,
+    promotions: Array.from(promotionsById.values()),
     monthlyReports: Array.from(reportsById.values()),
   });
 }
@@ -159,6 +225,56 @@ export function useFinanceOperations(currentUser?: User | null) {
   );
 
   const normalized = useMemo(() => normalizeFinanceOperationsState(state), [state]);
+
+  const createPromotion = (draft: Omit<PromotionRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => {
+    const now = nowIso();
+    const promotion: PromotionRecord = {
+      ...draft,
+      id: uniqueId('promotion'),
+      createdBy: currentUser?.id,
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: currentUser?.id,
+    };
+    setState((prev) => {
+      const base = normalizeFinanceOperationsState(prev);
+      return {
+        ...base,
+        promotions: [promotion, ...base.promotions],
+      };
+    });
+    return promotion;
+  };
+
+  const updatePromotion = (promotionId: string, patch: Partial<Omit<PromotionRecord, 'id' | 'createdAt'>>) => {
+    const now = nowIso();
+    setState((prev) => {
+      const base = normalizeFinanceOperationsState(prev);
+      return {
+        ...base,
+        promotions: base.promotions.map((promotion) => (
+          promotion.id === promotionId
+            ? { ...promotion, ...patch, updatedAt: now, updatedBy: currentUser?.id }
+            : promotion
+        )),
+      };
+    });
+  };
+
+  const deletePromotion = (promotionId: string) => {
+    const now = nowIso();
+    setState((prev) => {
+      const base = normalizeFinanceOperationsState(prev);
+      return {
+        ...base,
+        promotions: base.promotions.map((promotion) => (
+          promotion.id === promotionId
+            ? { ...promotion, deletedAt: now, deletedBy: currentUser?.id, updatedAt: now, updatedBy: currentUser?.id }
+            : promotion
+        )),
+      };
+    });
+  };
 
   const updatePromotionMeta = (projectId: string, patch: Partial<Omit<PromotionMeta, 'projectId' | 'updatedAt'>>) => {
     const now = nowIso();
@@ -229,7 +345,11 @@ export function useFinanceOperations(currentUser?: User | null) {
   return {
     isLoading,
     promotionMetaByProjectId: normalized.promotionMetaByProjectId,
+    promotions: normalized.promotions.filter((promotion) => !promotion.deletedAt),
     monthlyReports: normalized.monthlyReports.filter((report) => !report.deletedAt),
+    createPromotion,
+    updatePromotion,
+    deletePromotion,
     updatePromotionMeta,
     upsertMonthlyReport,
     deleteMonthlyReport,
