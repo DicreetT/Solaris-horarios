@@ -146,17 +146,22 @@ export function useSalesLearning(currentUser?: User | null) {
     },
   );
 
-  const safeState = useMemo<SalesLearningState>(() => ({
-    formations: (Array.isArray(state?.formations) ? state.formations : []).filter((formation) => !formation.deletedAt),
+  const persistedState = useMemo<SalesLearningState>(() => ({
+    formations: Array.isArray(state?.formations) ? state.formations : [],
     support: Array.isArray(state?.support) ? state.support : [],
     needs: Array.isArray(state?.needs) ? state.needs : [],
     faqs: Array.isArray(state?.faqs) ? state.faqs : [],
   }), [state]);
 
+  const safeState = useMemo<SalesLearningState>(() => ({
+    ...persistedState,
+    formations: persistedState.formations.filter((formation) => !formation.deletedAt),
+  }), [persistedState]);
+
   const syncSalesLearningNow = async () => {
     const synced = await saveSharedJsonStateNow(
       SALES_LEARNING_KEY,
-      safeState,
+      persistedState,
       {
         userId: currentUser?.id,
         mergeBeforePersist: true,
