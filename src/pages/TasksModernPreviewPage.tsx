@@ -412,6 +412,7 @@ function TaskRail({
 
 function TaskPreviewDetailModal({
   task,
+  actingUserId,
   onClose,
   highlightRelampago,
   relampagoRecipients,
@@ -420,6 +421,7 @@ function TaskPreviewDetailModal({
   onRelampagoVisualChange,
 }: {
   task: Todo;
+  actingUserId: string;
   onClose: () => void;
   highlightRelampago?: boolean;
   relampagoRecipients: string[];
@@ -428,7 +430,7 @@ function TaskPreviewDetailModal({
   onRelampagoVisualChange: (active: boolean) => void;
 }) {
   const { currentUser } = useAuth();
-  const { addComment, updateTodo, toggleTodo } = useTodos(currentUser);
+  const { addComment, updateTodo } = useTodos(currentUser);
   const { sendNudge } = useNotificationsContext();
   const { getSeenAt, markSeenAt } = useTaskCommentSeen(currentUser);
   const [newComment, setNewComment] = useState('');
@@ -438,7 +440,7 @@ function TaskPreviewDetailModal({
   const selectedRelampagoName = personName(selectedRelampagoUserId);
   const creator = personName(task.created_by);
   const isGloballyComplete = isGloballyDone(task);
-  const isDoneForMe = task.completed_by.includes(currentUser.id);
+  const isDoneForMe = task.completed_by.includes(actingUserId);
 
   const toMillis = (value?: string | null) => {
     if (!value) return 0;
@@ -447,21 +449,21 @@ function TaskPreviewDetailModal({
   };
 
   const latestForeignComment = (task.comments || [])
-    .filter((comment) => comment.user_id !== currentUser.id)
+    .filter((comment) => comment.user_id !== actingUserId)
     .filter((comment) => !!comment.created_at)
     .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))[0];
   const seenAt = getSeenAt(task.id) || '';
   const seenAtMs = toMillis(seenAt);
   const unreadForeignComments = (task.comments || []).filter(
-    (comment) => comment.user_id !== currentUser.id && toMillis(comment.created_at) > seenAtMs,
+    (comment) => comment.user_id !== actingUserId && toMillis(comment.created_at) > seenAtMs,
   ).length;
 
   const markCommentsRead = async () => {
     if (latestForeignComment?.created_at) {
       markSeenAt(task.id, latestForeignComment.created_at);
     }
-    if (task.shocked_users?.includes(currentUser.id)) {
-      const nextShocked = (task.shocked_users || []).filter((uid) => uid !== currentUser.id);
+    if (task.shocked_users?.includes(actingUserId)) {
+      const nextShocked = (task.shocked_users || []).filter((uid) => uid !== actingUserId);
       await updateTodo({
         id: task.id,
         updates: {
@@ -472,14 +474,32 @@ function TaskPreviewDetailModal({
   };
 
   const handleToggleStatus = async () => {
-    if (!task.assigned_to.includes(currentUser.id)) return;
-    await toggleTodo(task);
+    if (!task.assigned_to.includes(actingUserId)) return;
+    const nextCompleted = isDoneForMe
+      ? task.completed_by.filter((id) => id !== actingUserId)
+      : Array.from(new Set([...task.completed_by, actingUserId]));
+    const nextShocked = isDoneForMe
+      ? (task.shocked_users || [])
+      : (task.shocked_users || []).filter((uid) => uid !== actingUserId);
+    await updateTodo({
+      id: task.id,
+      updates: {
+        completed_by: nextCompleted,
+        shocked_users: nextShocked,
+      },
+    });
   };
 
   const handleResolveByCompleting = async () => {
-    if (!task.assigned_to.includes(currentUser.id)) return;
+    if (!task.assigned_to.includes(actingUserId)) return;
     if (!isDoneForMe) {
-      await toggleTodo(task);
+      await updateTodo({
+        id: task.id,
+        updates: {
+          completed_by: Array.from(new Set([...task.completed_by, actingUserId])),
+          shocked_users: (task.shocked_users || []).filter((uid) => uid !== actingUserId),
+        },
+      });
     }
   };
 
@@ -618,7 +638,7 @@ function TaskPreviewDetailModal({
                     Responde aquí, añade adjuntos o continúa la conversación.
                   </p>
                 </div>
-                {(unreadForeignComments > 0 || task.shocked_users?.includes(currentUser.id)) && (
+                {(unreadForeignComments > 0 || task.shocked_users?.includes(actingUserId)) && (
                   <button
                     type="button"
                     onClick={markCommentsRead}
@@ -838,9 +858,9 @@ function TaskPreviewDetailModal({
                 <button
                   type="button"
                   onClick={handleResolveByCompleting}
-                  disabled={!task.assigned_to.includes(currentUser.id)}
+                  disabled={!task.assigned_to.includes(actingUserId)}
                   className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition ${
-                    task.assigned_to.includes(currentUser.id)
+                    task.assigned_to.includes(actingUserId)
                       ? 'border border-emerald-200 bg-emerald-500 text-white hover:bg-emerald-400'
                       : 'border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}
@@ -850,7 +870,7 @@ function TaskPreviewDetailModal({
                 <button
                   type="button"
                   onClick={handleToggleStatus}
-                  disabled={!task.assigned_to.includes(currentUser.id)}
+                  disabled={!task.assigned_to.includes(actingUserId)}
                   className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition ${
                     isDoneForMe
                       ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
@@ -1232,6 +1252,7 @@ export default function TasksModernPreviewPage() {
       {selectedTask && (
         <TaskPreviewDetailModal
           task={selectedTask}
+          actingUserId={effectiveTaskUserId}
           highlightRelampago={highlightRelampago}
           relampagoRecipients={relampagoRecipients}
           onRelampagoRecipientsChange={setRelampagoRecipients}

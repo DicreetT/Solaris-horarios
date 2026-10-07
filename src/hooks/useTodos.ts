@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useNotifications } from './useNotifications';
 import { supabase } from '../lib/supabase';
 import { User, Todo } from '../types';
@@ -8,6 +8,23 @@ import { USERS } from '../constants';
 
 const EMPTY_ARRAY: Todo[] = [];
 const EMPTY_GRACE_MS = 120000;
+
+function normalizeTodo(row: any): Todo {
+    return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        created_by: row.created_by,
+        assigned_to: row.assigned_to || [],
+        due_date_key: row.due_date_key,
+        completed_by: row.completed_by || [],
+        attachments: row.attachments || [],
+        comments: row.comments || [],
+        tags: row.tags || [],
+        shocked_users: row.shocked_users || [],
+        created_at: row.created_at,
+    };
+}
 
 function readTodosCache(userId?: string) {
     if (!userId || typeof window === 'undefined') return EMPTY_ARRAY;
@@ -28,6 +45,39 @@ function writeTodosCache(userId: string, todos: Todo[]) {
     } catch {
         // noop
     }
+}
+
+function userCanSeeTodo(userId: string | undefined, todo: Todo) {
+    if (!userId) return false;
+    const user = USERS.find((item) => item.id === userId);
+    if (user?.isAdmin) return true;
+    return todo.created_by === userId || (todo.assigned_to || []).includes(userId);
+}
+
+function replaceOrInsertTodo(list: Todo[], todo: Todo, userId?: string) {
+    const nextWithoutTodo = list.filter((item) => item.id !== todo.id);
+    if (!userCanSeeTodo(userId, todo)) return nextWithoutTodo;
+    return [todo, ...nextWithoutTodo].sort((a, b) => {
+        if (a.due_date_key && b.due_date_key && a.due_date_key !== b.due_date_key) {
+            return a.due_date_key.localeCompare(b.due_date_key);
+        }
+        if (a.due_date_key && !b.due_date_key) return -1;
+        if (!a.due_date_key && b.due_date_key) return 1;
+        return Date.parse(b.created_at || '') - Date.parse(a.created_at || '');
+    });
+}
+
+function updateTodoCaches(
+    queryClient: QueryClient,
+    updater: (todos: Todo[], userId?: string) => Todo[],
+) {
+    queryClient.getQueriesData<Todo[]>({ queryKey: ['todos'] }).forEach(([queryKey, current]) => {
+        if (!Array.isArray(current)) return;
+        const userId = Array.isArray(queryKey) ? String(queryKey[1] || '') : '';
+        const next = updater(current, userId);
+        queryClient.setQueryData(queryKey as QueryKey, next);
+        if (userId) writeTodosCache(userId, next);
+    });
 }
 
 const MANUAL_MENTION_ALIASES: Record<string, string[]> = {
@@ -90,20 +140,7 @@ export function useTodos(currentUser: User | null) {
 
             if (error) throw error;
 
-            const mapped = (data || []).map((row: any) => ({
-                id: row.id,
-                title: row.title,
-                description: row.description,
-                created_by: row.created_by,
-                assigned_to: row.assigned_to || [],
-                due_date_key: row.due_date_key,
-                completed_by: row.completed_by || [],
-                attachments: row.attachments || [],
-                comments: row.comments || [],
-                tags: row.tags || [],
-                shocked_users: row.shocked_users || [],
-                created_at: row.created_at,
-            }));
+            const mapped = (data || []).map(normalizeTodo);
 
             const visible = currentUser.isAdmin
                 ? mapped
@@ -187,6 +224,8 @@ export function useTodos(currentUser: User | null) {
             return data;
         },
         onSuccess: async (createdTodo, variables) => {
+            const normalized = normalizeTodo(createdTodo);
+            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, normalized, userId));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea creada con éxito.');
 
@@ -236,18 +275,47 @@ export function useTodos(currentUser: User | null) {
                 ? (todo.shocked_users || []).filter(uid => uid !== currentUser.id)
                 : (todo.shocked_users || []);
 
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('todos')
                 .update({
                     completed_by: nextCompleted,
                     shocked_users: nextShocked
                 })
-                .eq('id', todo.id);
+                .eq('id', todo.id)
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
+                .single();
 
             if (error) throw error;
-            return { nextCompleted, nextShocked, isNowCompleted: !isDone };
+            return { todo: normalizeTodo(data), isNowCompleted: !isDone };
+        },
+        onMutate: async (todo) => {
+            await queryClient.cancelQueries({ queryKey: ['todos'] });
+            const snapshots = queryClient.getQueriesData<Todo[]>({ queryKey: ['todos'] });
+            const isDone = todo.completed_by.includes(currentUser.id);
+            const nextCompleted = isDone
+                ? todo.completed_by.filter((id: string) => id !== currentUser.id)
+                : Array.from(new Set([...todo.completed_by, currentUser.id]));
+            const nextShocked = isDone
+                ? (todo.shocked_users || [])
+                : (todo.shocked_users || []).filter((uid) => uid !== currentUser.id);
+
+            updateTodoCaches(queryClient, (current, userId) => current.map((item) => (
+                item.id === todo.id
+                    ? { ...item, completed_by: nextCompleted, shocked_users: nextShocked }
+                    : item
+            )).filter((item) => userCanSeeTodo(userId, item)));
+
+            return { snapshots };
+        },
+        onError: (_error, _variables, context) => {
+            context?.snapshots?.forEach(([queryKey, data]) => {
+                queryClient.setQueryData(queryKey, data);
+                const userId = Array.isArray(queryKey) ? String(queryKey[1] || '') : '';
+                if (userId && Array.isArray(data)) writeTodosCache(userId, data);
+            });
         },
         onSuccess: (result) => {
+            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, result.todo, userId));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback(result?.isNowCompleted ? 'Tarea finalizada con éxito.' : 'Tarea reabierta con éxito.');
         },
@@ -310,9 +378,12 @@ export function useTodos(currentUser: User | null) {
                 console.warn(`No se pudieron crear ${failed.length} notificaciones de comentario.`, failed);
             }
 
-            return nextComments;
+            return { todoId, nextComments };
         },
-        onSuccess: () => {
+        onSuccess: (result) => {
+            updateTodoCaches(queryClient, (current) => current.map((todo) => (
+                todo.id === result.todoId ? { ...todo, comments: result.nextComments } : todo
+            )));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Comentario guardado con éxito.');
         },
@@ -332,14 +403,35 @@ export function useTodos(currentUser: User | null) {
 
             // Only issue: `assignedTo` vs `assigned_to` in Create logic.
             // The updates object passed here should use interface keys (which are snake_case).
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('todos')
                 .update(updates)
-                .eq('id', id);
+                .eq('id', id)
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
+                .single();
 
             if (error) throw error;
+            return normalizeTodo(data);
         },
-        onSuccess: () => {
+        onMutate: async ({ id, updates }) => {
+            await queryClient.cancelQueries({ queryKey: ['todos'] });
+            const snapshots = queryClient.getQueriesData<Todo[]>({ queryKey: ['todos'] });
+
+            updateTodoCaches(queryClient, (current, userId) => current
+                .map((todo) => (todo.id === id ? { ...todo, ...updates } as Todo : todo))
+                .filter((todo) => userCanSeeTodo(userId, todo)));
+
+            return { snapshots };
+        },
+        onError: (_error, _variables, context) => {
+            context?.snapshots?.forEach(([queryKey, data]) => {
+                queryClient.setQueryData(queryKey, data);
+                const userId = Array.isArray(queryKey) ? String(queryKey[1] || '') : '';
+                if (userId && Array.isArray(data)) writeTodosCache(userId, data);
+            });
+        },
+        onSuccess: (updatedTodo) => {
+            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, updatedTodo, userId));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea actualizada con éxito.');
         },
