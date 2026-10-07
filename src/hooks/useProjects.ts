@@ -73,6 +73,8 @@ export type LunarisProject = {
   expectedResult: string;
   completionDefinition: string;
   status: ProjectStatus;
+  promotionKind?: 'coupon' | 'promotion';
+  promotionStatus?: 'in_review' | 'scheduled' | 'active' | 'finished';
   weeklyPriorityRank?: number;
   waitingFor?: string;
   waitingSince?: string;
@@ -93,6 +95,8 @@ export type LunarisProject = {
   };
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
+  deletedBy?: string;
 };
 
 export type ProjectDraft = Pick<
@@ -216,6 +220,30 @@ function historyEntry(userId: string, type: ProjectHistoryEntry['type'], text: s
   };
 }
 
+function timestampMs(value?: string) {
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeProjectLists(remote: unknown, local: unknown): LunarisProject[] {
+  const remoteList = Array.isArray(remote) ? remote as LunarisProject[] : [];
+  const localList = Array.isArray(local) ? local as LunarisProject[] : [];
+  const byId = new Map<string, LunarisProject>();
+
+  [...remoteList, ...localList].forEach((project) => {
+    const id = String(project?.id || '').trim();
+    if (!id) return;
+    const previous = byId.get(id);
+    const projectTime = timestampMs(project.deletedAt || project.updatedAt || project.createdAt);
+    const previousTime = timestampMs(previous?.deletedAt || previous?.updatedAt || previous?.createdAt);
+    byId.set(id, !previous || projectTime >= previousTime ? { ...previous, ...project } : { ...project, ...previous });
+  });
+
+  return Array.from(byId.values()).sort((a, b) => (
+    timestampMs(b.updatedAt || b.createdAt) - timestampMs(a.updatedAt || a.createdAt)
+  ));
+}
+
 export function projectStatusLabel(status: ProjectStatus) {
   if (status === 'pending') return 'Pendiente';
   if (status === 'in_progress') return 'En curso';
@@ -260,6 +288,7 @@ export function calculateProjectProgress(project: LunarisProject) {
 
 export function canUserSeeProject(project: LunarisProject, user?: User | null) {
   if (!user) return false;
+  if (project.deletedAt) return false;
   return (
     project.ownerId === user.id
     || project.responsibleId === user.id
@@ -278,14 +307,16 @@ export function useProjects(currentUser?: User | null) {
       initializeIfMissing: true,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeStrategy: (_remote, next) => Array.isArray(next) ? next : [],
+      mergeStrategy: mergeProjectLists,
       isUsefulPayload: (payload) => Array.isArray(payload),
     },
   );
 
   const projects = useMemo(() => {
     const list = Array.isArray(projectsState) ? projectsState : [];
-    return [...list].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    return [...list]
+      .filter((project) => !project.deletedAt)
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }, [projectsState]);
 
   const visibleProjects = useMemo(() => (
@@ -334,8 +365,19 @@ export function useProjects(currentUser?: User | null) {
 
   const deleteProject = (projectId: string) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
+    const now = new Date().toISOString();
     setProjects((prev) => (
-      (Array.isArray(prev) ? prev : []).filter((project) => project.id !== projectId)
+      (Array.isArray(prev) ? prev : []).map((project) => (
+        project.id === projectId
+          ? {
+            ...project,
+            deletedAt: now,
+            deletedBy: currentUser.id,
+            history: [...(project.history || []), historyEntry(currentUser.id, 'updated', 'Proyecto eliminado')],
+            updatedAt: now,
+          }
+          : project
+      ))
     ));
   };
 

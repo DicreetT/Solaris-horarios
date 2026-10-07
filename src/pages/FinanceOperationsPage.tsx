@@ -114,6 +114,17 @@ function derivedPromotionStatus(projectStatus: string): PromotionOperationalStat
   return 'in_review';
 }
 
+function normalizePromotionStatus(value: unknown): PromotionOperationalStatus | null {
+  if (value === 'active' || value === 'scheduled' || value === 'finished' || value === 'in_review') return value;
+  return null;
+}
+
+function projectPromotionStatus(project: { status?: string; promotionStatus?: unknown }, meta?: { status?: unknown }) {
+  return normalizePromotionStatus(meta?.status)
+    || normalizePromotionStatus(project.promotionStatus)
+    || derivedPromotionStatus(project.status || 'pending');
+}
+
 function purchaseStatus(item: { is_purchased: boolean; delivery_date?: string }) {
   if (!item.is_purchased) return { label: 'Pendiente', className: 'border-amber-200 bg-amber-50 text-amber-700' };
   if (item.delivery_date) return { label: 'En entrega', className: 'border-sky-200 bg-sky-50 text-sky-700' };
@@ -214,7 +225,7 @@ export default function FinanceOperationsPage() {
       return !!currentUser?.isAdmin || visibleProjectIds.has(project.id) || ['Thalia', 'Itzi', 'Heidy', 'Esteban'].includes(currentUser?.name || '');
     }
     const meta = promotionMetaByProjectId[project.id];
-    const status = meta?.status || derivedPromotionStatus(project.status || 'pending');
+    const status = projectPromotionStatus(project, meta);
     return (
       project.ownerId === effectiveUserId
       || project.responsibleId === effectiveUserId
@@ -255,7 +266,7 @@ export default function FinanceOperationsPage() {
   const promotionCounts = useMemo(() => {
     return promotionProjects.reduce((acc, project) => {
       const meta = promotionMetaByProjectId[project.id];
-      const status = meta?.status || derivedPromotionStatus(project.status);
+      const status = projectPromotionStatus(project, meta);
       acc[status] = (acc[status] || 0) + 1;
       return acc;
     }, {} as Record<PromotionOperationalStatus, number>);
@@ -413,6 +424,7 @@ export default function FinanceOperationsPage() {
     if (!currentUser?.id || !effectiveUserId || !promoDraft.name.trim()) return;
     const kindLabel = promoDraft.kind === 'coupon' ? 'Cupón' : 'Promoción';
     const heidyUser = USERS.find((user) => ['heidy', 'heidi'].includes(user.name.toLowerCase()));
+    const initialPromotionStatus = effectiveUserName === 'Heidy' ? promoDraft.status : 'in_review';
     const created = createProject({
       name: promoDraft.name.trim(),
       type: 'cupon_promocion',
@@ -434,7 +446,7 @@ export default function FinanceOperationsPage() {
     }, { ownerId: effectiveUserId, actorId: currentUser.id });
 
     updatePromotionMeta(created.id, {
-      status: effectiveUserName === 'Heidy' ? promoDraft.status : 'in_review',
+      status: initialPromotionStatus,
       startDate: promoDraft.startDate,
       endDate: promoDraft.endDate,
       couponCode: promoDraft.kind === 'coupon' ? promoDraft.couponCode : '',
@@ -444,6 +456,11 @@ export default function FinanceOperationsPage() {
       howItWorks: promoDraft.howItWorks,
       economicNote: promoDraft.discount,
     });
+    updateProject(
+      created.id,
+      { promotionKind: promoDraft.kind, promotionStatus: initialPromotionStatus },
+      `Promoción registrada como ${promoStatusLabel(initialPromotionStatus).toLowerCase()}`,
+    );
 
     if (heidyUser?.id && heidyUser.id !== effectiveUserId) {
       updateProject(
@@ -504,6 +521,15 @@ export default function FinanceOperationsPage() {
       mentionType: 'consultar',
       mentionContext: '',
     });
+  };
+
+  const handleUpdatePromotionStatus = (project: { id: string }, status: PromotionOperationalStatus) => {
+    updatePromotionMeta(project.id, { status });
+    updateProject(
+      project.id,
+      { promotionStatus: status },
+      `Estado operativo de cupón/promoción: ${promoStatusLabel(status)}`,
+    );
   };
 
   const switchView = (view: FinanceView) => {
@@ -571,6 +597,7 @@ export default function FinanceOperationsPage() {
           promotionProjects={promotionProjects}
           promotionMetaByProjectId={promotionMetaByProjectId}
           updatePromotionMeta={updatePromotionMeta}
+          updatePromotionStatus={handleUpdatePromotionStatus}
           handleCreatePromotion={handleCreatePromotion}
           navigate={navigate}
         />
@@ -639,6 +666,7 @@ function PromotionsView({
   promotionProjects,
   promotionMetaByProjectId,
   updatePromotionMeta,
+  updatePromotionStatus,
   handleCreatePromotion,
   navigate,
 }: {
@@ -647,6 +675,7 @@ function PromotionsView({
   promotionProjects: any[];
   promotionMetaByProjectId: Record<string, any>;
   updatePromotionMeta: (projectId: string, patch: any) => void;
+  updatePromotionStatus: (project: { id: string }, status: PromotionOperationalStatus) => void;
   handleCreatePromotion: (event: React.FormEvent) => void;
   navigate: (path: string) => void;
 }) {
@@ -739,7 +768,7 @@ function PromotionsView({
           {promotionProjects.map((project) => {
             const progress = calculateProjectProgress(project);
             const meta = promotionMetaByProjectId[project.id];
-            const status = meta?.status || derivedPromotionStatus(project.status);
+            const status = projectPromotionStatus(project, meta);
             return (
               <article key={project.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -752,7 +781,7 @@ function PromotionsView({
                     <p className="mt-1 text-sm font-semibold text-slate-600">{project.objective || project.description || 'Sin descripción'}</p>
                     <p className="mt-2 text-xs font-bold text-slate-500">{progress.completed}% completado · responsable {userName(project.responsibleId)}</p>
                   </div>
-                  <select value={status} onChange={(event) => updatePromotionMeta(project.id, { status: event.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">
+                  <select value={status} onChange={(event) => updatePromotionStatus(project, event.target.value as PromotionOperationalStatus)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700">
                     <option value="in_review">En revisión</option>
                     <option value="scheduled">Programado</option>
                     <option value="active">Activo</option>

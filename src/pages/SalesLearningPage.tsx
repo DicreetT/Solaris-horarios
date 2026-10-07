@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, Lightbulb, Plus, Radar, RotateCcw, Tags } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -138,6 +138,7 @@ export default function SalesLearningPage() {
     answer: '',
     tags: '',
   });
+  const [selectedFormationId, setSelectedFormationId] = useState('');
 
   const supportTags = useMemo(() => tagSummary(support), [support]);
   const activeCommercialSignals = useMemo(() => (
@@ -196,11 +197,29 @@ export default function SalesLearningPage() {
       .sort((a, b) => b.items.length - a.items.length)
       .slice(0, 6);
   }, [activeCommercialSignals]);
+  const selectedFormation = useMemo(() => (
+    formations.find((formation) => formation.id === selectedFormationId)
+    || activeFormations[0]
+    || formations[0]
+    || null
+  ), [activeFormations, formations, selectedFormationId]);
+
+  useEffect(() => {
+    if (!canManageFormations) return;
+    if (!selectedFormationId && selectedFormation?.id) {
+      setSelectedFormationId(selectedFormation.id);
+      return;
+    }
+    if (selectedFormationId && !formations.some((formation) => formation.id === selectedFormationId)) {
+      setSelectedFormationId(activeFormations[0]?.id || formations[0]?.id || '');
+    }
+  }, [activeFormations, canManageFormations, formations, selectedFormation?.id, selectedFormationId]);
 
   const handleCreateFormation = (event: React.FormEvent) => {
     event.preventDefault();
     if (!formationDraft.name.trim()) return;
-    createFormation(formationDraft);
+    const created = createFormation(formationDraft);
+    setSelectedFormationId(created.id);
     setFormationDraft({ name: '', objective: '', purpose: '', duration: '', teacher: '', audienceSize: '', tools: '', resources: '', ideas: '', structure: '', status: 'draft' });
   };
 
@@ -290,26 +309,81 @@ export default function SalesLearningPage() {
 
       <section className="grid gap-6 xl:grid-cols-2">
         <Panel title="Formación y aprendizaje" icon={BookOpen}>
-          {canManageFormations && (
-            <form onSubmit={handleCreateFormation} className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <input value={formationDraft.name} onChange={(e) => setFormationDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Título de la formación" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
-              <textarea value={formationDraft.objective} onChange={(e) => setFormationDraft((p) => ({ ...p, objective: e.target.value }))} placeholder="De qué trata la formación" rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
-              <div className="grid gap-2 md:grid-cols-2">
-                <input value={formationDraft.duration} onChange={(e) => setFormationDraft((p) => ({ ...p, duration: e.target.value }))} placeholder="Duración" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
-                <input value={formationDraft.teacher} onChange={(e) => setFormationDraft((p) => ({ ...p, teacher: e.target.value }))} placeholder="Docente" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
-                <input value={formationDraft.audienceSize} onChange={(e) => setFormationDraft((p) => ({ ...p, audienceSize: e.target.value }))} placeholder="Personas estimadas" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
-                <input value={formationDraft.tools} onChange={(e) => setFormationDraft((p) => ({ ...p, tools: e.target.value }))} placeholder="Herramientas previstas" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+          {canManageFormations ? (
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+              <form onSubmit={handleCreateFormation} className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <input value={formationDraft.name} onChange={(e) => setFormationDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Título de la formación" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                <textarea value={formationDraft.objective} onChange={(e) => setFormationDraft((p) => ({ ...p, objective: e.target.value }))} placeholder="De qué trata la formación" rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
+                <div className="grid gap-2 md:grid-cols-2">
+                  <input value={formationDraft.duration} onChange={(e) => setFormationDraft((p) => ({ ...p, duration: e.target.value }))} placeholder="Duración" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                  <input value={formationDraft.teacher} onChange={(e) => setFormationDraft((p) => ({ ...p, teacher: e.target.value }))} placeholder="Docente" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                  <input value={formationDraft.audienceSize} onChange={(e) => setFormationDraft((p) => ({ ...p, audienceSize: e.target.value }))} placeholder="Personas estimadas" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                  <input value={formationDraft.tools} onChange={(e) => setFormationDraft((p) => ({ ...p, tools: e.target.value }))} placeholder="Herramientas previstas" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                </div>
+                <textarea value={formationDraft.purpose} onChange={(e) => setFormationDraft((p) => ({ ...p, purpose: e.target.value }))} placeholder="Para qué sirve" rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
+                <textarea value={formationDraft.structure} onChange={(e) => setFormationDraft((p) => ({ ...p, structure: e.target.value }))} placeholder="Estructura / pasos" rows={3} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
+                <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-pink-600 px-3 py-2 text-xs font-black text-white">
+                  <Plus size={14} />
+                  Crear formación en borrador
+                </button>
+              </form>
+
+              <div className="space-y-3 rounded-2xl border border-pink-100 bg-white p-4">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-pink-700">Formaciones activas</p>
+                  <select
+                    value={selectedFormation?.id || ''}
+                    onChange={(event) => setSelectedFormationId(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-black text-slate-800 outline-none"
+                  >
+                    {formations.length === 0 && <option value="">No hay formaciones todavía</option>}
+                    {activeFormations.length > 0 && (
+                      <optgroup label="Activas">
+                        {activeFormations.map((formation) => <option key={formation.id} value={formation.id}>{formation.name}</option>)}
+                      </optgroup>
+                    )}
+                    {formations.filter((formation) => formation.status !== 'active').length > 0 && (
+                      <optgroup label="Borradores / pausadas / cerradas">
+                        {formations.filter((formation) => formation.status !== 'active').map((formation) => <option key={formation.id} value={formation.id}>{formation.name}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                {selectedFormation ? (
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-black text-slate-950">{selectedFormation.name}</p>
+                        <p className="mt-1 text-sm font-semibold leading-5 text-slate-600">{selectedFormation.objective || selectedFormation.purpose || 'Sin objetivo todavía.'}</p>
+                      </div>
+                      <select
+                        value={selectedFormation.status}
+                        onChange={(event) => updateFormationStatus(selectedFormation.id, event.target.value as any)}
+                        className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600"
+                      >
+                        <option value="draft">Borrador</option>
+                        <option value="active">Activa</option>
+                        <option value="paused">Pausada</option>
+                        <option value="closed">Cerrada</option>
+                      </select>
+                    </div>
+                    {(selectedFormation.duration || selectedFormation.teacher || selectedFormation.audienceSize || selectedFormation.tools) && (
+                      <p className="mt-3 text-xs font-bold text-slate-500">
+                        {[selectedFormation.duration, selectedFormation.teacher, selectedFormation.audienceSize, selectedFormation.tools].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                    {selectedFormation.structure && <p className="mt-3 max-h-36 overflow-auto rounded-xl bg-white p-3 text-xs font-semibold leading-5 text-slate-600">{selectedFormation.structure}</p>}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-500">No hay formaciones todavía.</p>
+                )}
               </div>
-              <textarea value={formationDraft.purpose} onChange={(e) => setFormationDraft((p) => ({ ...p, purpose: e.target.value }))} placeholder="Para qué sirve" rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
-              <textarea value={formationDraft.structure} onChange={(e) => setFormationDraft((p) => ({ ...p, structure: e.target.value }))} placeholder="Estructura / pasos" rows={3} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none" />
-              <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-pink-600 px-3 py-2 text-xs font-black text-white">
-                <Plus size={14} />
-                Crear formación en borrador
-              </button>
-            </form>
-          )}
-          <ListEmpty show={formations.length === 0} text="No hay formaciones todavía." />
-          {(canManageFormations ? formations : activeFormations).slice(0, 6).map((formation) => (
+            </div>
+          ) : (
+            <>
+              <ListEmpty show={activeFormations.length === 0} text="No hay formaciones activas todavía." />
+              {activeFormations.slice(0, 6).map((formation) => (
             <div key={formation.id} className="rounded-2xl border border-slate-100 bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -338,7 +412,9 @@ export default function SalesLearningPage() {
               </div>
               {formation.structure && <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-600">{formation.structure}</p>}
             </div>
-          ))}
+              ))}
+            </>
+          )}
         </Panel>
 
         {(isSalesSupportView || isFaqNotebookView) && <Panel title="Soporte de alumnos" icon={HelpCircle}>

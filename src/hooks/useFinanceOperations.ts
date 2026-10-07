@@ -31,6 +31,8 @@ export type MonthlyFinanceReport = {
   createdAt: string;
   updatedAt: string;
   updatedBy?: string;
+  deletedAt?: string;
+  deletedBy?: string;
 };
 
 export type FinanceOperationsState = {
@@ -69,6 +71,8 @@ function normalizeReport(raw: any): MonthlyFinanceReport {
     createdAt: clean(raw?.createdAt) || now,
     updatedAt: clean(raw?.updatedAt) || clean(raw?.createdAt) || now,
     updatedBy: clean(raw?.updatedBy),
+    deletedAt: clean(raw?.deletedAt),
+    deletedBy: clean(raw?.deletedBy),
   };
 }
 
@@ -106,6 +110,40 @@ export function normalizeFinanceOperationsState(value: unknown): FinanceOperatio
   };
 }
 
+function newerTimestamp(a?: string, b?: string) {
+  const aTime = a ? new Date(a).getTime() : 0;
+  const bTime = b ? new Date(b).getTime() : 0;
+  return (Number.isFinite(aTime) ? aTime : 0) >= (Number.isFinite(bTime) ? bTime : 0);
+}
+
+function reportVersion(report?: MonthlyFinanceReport) {
+  return report?.deletedAt || report?.updatedAt || report?.createdAt;
+}
+
+function mergeFinanceOperationsState(remote: unknown, local: unknown): FinanceOperationsState {
+  const remoteState = normalizeFinanceOperationsState(remote);
+  const localState = normalizeFinanceOperationsState(local);
+  const promotionMetaByProjectId = { ...remoteState.promotionMetaByProjectId };
+
+  Object.entries(localState.promotionMetaByProjectId).forEach(([projectId, meta]) => {
+    const previous = promotionMetaByProjectId[projectId];
+    promotionMetaByProjectId[projectId] = !previous || newerTimestamp(meta.updatedAt, previous.updatedAt)
+      ? { ...previous, ...meta }
+      : { ...meta, ...previous };
+  });
+
+  const reportsById = new Map<string, MonthlyFinanceReport>();
+  [...remoteState.monthlyReports, ...localState.monthlyReports].forEach((report) => {
+    const previous = reportsById.get(report.id);
+    reportsById.set(report.id, !previous || newerTimestamp(reportVersion(report), reportVersion(previous)) ? report : previous);
+  });
+
+  return normalizeFinanceOperationsState({
+    promotionMetaByProjectId,
+    monthlyReports: Array.from(reportsById.values()),
+  });
+}
+
 export function useFinanceOperations(currentUser?: User | null) {
   const [state, setState, isLoading] = useSharedJsonState<FinanceOperationsState>(
     FINANCE_OPERATIONS_KEY,
@@ -115,6 +153,7 @@ export function useFinanceOperations(currentUser?: User | null) {
       initializeIfMissing: true,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeStrategy: mergeFinanceOperationsState,
       isUsefulPayload: (payload) => !!payload && typeof payload === 'object',
     },
   );
@@ -173,11 +212,16 @@ export function useFinanceOperations(currentUser?: User | null) {
   };
 
   const deleteMonthlyReport = (reportId: string) => {
+    const now = nowIso();
     setState((prev) => {
       const base = normalizeFinanceOperationsState(prev);
       return {
         ...base,
-        monthlyReports: base.monthlyReports.filter((item) => item.id !== reportId),
+        monthlyReports: base.monthlyReports.map((item) => (
+          item.id === reportId
+            ? { ...item, deletedAt: now, deletedBy: currentUser?.id, updatedAt: now, updatedBy: currentUser?.id }
+            : item
+        )),
       };
     });
   };
@@ -185,7 +229,7 @@ export function useFinanceOperations(currentUser?: User | null) {
   return {
     isLoading,
     promotionMetaByProjectId: normalized.promotionMetaByProjectId,
-    monthlyReports: normalized.monthlyReports,
+    monthlyReports: normalized.monthlyReports.filter((report) => !report.deletedAt),
     updatePromotionMeta,
     upsertMonthlyReport,
     deleteMonthlyReport,

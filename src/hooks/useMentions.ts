@@ -61,6 +61,30 @@ function statusFromResponse(kind: MentionResponseKind): MentionStatus {
   return 'informed';
 }
 
+function timestampMs(value?: string) {
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeMentionLists(remote: unknown, local: unknown): Mention[] {
+  const remoteList = Array.isArray(remote) ? remote as Mention[] : [];
+  const localList = Array.isArray(local) ? local as Mention[] : [];
+  const byId = new Map<string, Mention>();
+
+  [...remoteList, ...localList].forEach((mention) => {
+    const id = String(mention?.id || '').trim();
+    if (!id) return;
+    const previous = byId.get(id);
+    const mentionTime = timestampMs(mention.updatedAt || mention.createdAt);
+    const previousTime = timestampMs(previous?.updatedAt || previous?.createdAt);
+    byId.set(id, !previous || mentionTime >= previousTime ? { ...previous, ...mention } : { ...mention, ...previous });
+  });
+
+  return Array.from(byId.values()).sort((a, b) => (
+    timestampMs(b.createdAt || b.updatedAt) - timestampMs(a.createdAt || a.updatedAt)
+  ));
+}
+
 export function mentionTypeLabel(type: MentionType) {
   if (type === 'informar') return 'Informar';
   if (type === 'consultar') return 'Consultar';
@@ -92,7 +116,7 @@ export function useMentions(currentUser?: User | null) {
       initializeIfMissing: true,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeStrategy: (_remote, next) => Array.isArray(next) ? next : [],
+      mergeStrategy: mergeMentionLists,
       isUsefulPayload: (payload) => Array.isArray(payload),
     },
   );

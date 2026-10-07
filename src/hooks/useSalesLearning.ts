@@ -91,6 +91,41 @@ function normalizeTags(value: string | string[] | undefined) {
   return `${value || ''}`.split(',').map((tag) => tag.trim()).filter(Boolean);
 }
 
+function timestampMs(value?: string) {
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeRecordsById<T extends { id: string; updatedAt?: string; createdAt?: string }>(remote: unknown, local: unknown): T[] {
+  const remoteList = Array.isArray(remote) ? remote as T[] : [];
+  const localList = Array.isArray(local) ? local as T[] : [];
+  const byId = new Map<string, T>();
+
+  [...remoteList, ...localList].forEach((item) => {
+    const id = String(item?.id || '').trim();
+    if (!id) return;
+    const previous = byId.get(id);
+    const itemTime = timestampMs(item.updatedAt || item.createdAt);
+    const previousTime = timestampMs(previous?.updatedAt || previous?.createdAt);
+    byId.set(id, !previous || itemTime >= previousTime ? { ...previous, ...item } : { ...item, ...previous });
+  });
+
+  return Array.from(byId.values()).sort((a, b) => (
+    timestampMs(b.updatedAt || b.createdAt) - timestampMs(a.updatedAt || a.createdAt)
+  ));
+}
+
+function mergeSalesLearningState(remote: unknown, local: unknown): SalesLearningState {
+  const remoteState = remote && typeof remote === 'object' ? remote as Partial<SalesLearningState> : {};
+  const localState = local && typeof local === 'object' ? local as Partial<SalesLearningState> : {};
+  return {
+    formations: mergeRecordsById<FormationRecord>(remoteState.formations, localState.formations),
+    support: mergeRecordsById<StudentSupportRecord>(remoteState.support, localState.support),
+    needs: mergeRecordsById<CommercialNeedRecord>(remoteState.needs, localState.needs),
+    faqs: mergeRecordsById<FaqRecord>(remoteState.faqs, localState.faqs),
+  };
+}
+
 export function useSalesLearning(currentUser?: User | null) {
   const [state, setState, isLoading] = useSharedJsonState<SalesLearningState>(
     SALES_LEARNING_KEY,
@@ -100,12 +135,7 @@ export function useSalesLearning(currentUser?: User | null) {
       initializeIfMissing: true,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
-      mergeStrategy: (_remote, next) => ({
-        formations: Array.isArray(next?.formations) ? next.formations : [],
-        support: Array.isArray(next?.support) ? next.support : [],
-        needs: Array.isArray(next?.needs) ? next.needs : [],
-        faqs: Array.isArray(next?.faqs) ? next.faqs : [],
-      }),
+      mergeStrategy: mergeSalesLearningState,
       isUsefulPayload: (payload) => !!payload && typeof payload === 'object',
     },
   );

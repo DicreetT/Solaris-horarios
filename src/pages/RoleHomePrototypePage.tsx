@@ -661,6 +661,10 @@ function classNames(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
+function isActivePromotionProject(project: { status?: string; promotionStatus?: unknown }, meta?: { status?: unknown }) {
+  return meta?.status === 'active' || project.promotionStatus === 'active' || (project.status === 'done' && !meta?.status);
+}
+
 function formatVisibleTags(tags: unknown, limit = 2) {
   const visible = (Array.isArray(tags) ? tags : [])
     .map((tag) => String(tag || '').trim())
@@ -885,7 +889,7 @@ function RoleHomePrototypePage() {
   const activeCoupons = useMemo(() => (
     projects
       .filter((project) => project.type === 'cupon_promocion')
-      .filter((project) => promotionMetaByProjectId[project.id]?.status === 'active')
+      .filter((project) => isActivePromotionProject(project, promotionMetaByProjectId[project.id]))
       .slice(0, 3)
   ), [projects, promotionMetaByProjectId]);
 
