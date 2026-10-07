@@ -44,6 +44,7 @@ import { useFinanceOperations } from '../hooks/useFinanceOperations';
 import { getInventoryDailyStatus, useInventoryDailyEvents } from '../hooks/useInventoryDailyEvents';
 import { Mention, mentionStatusLabel, mentionTypeLabel, useMentions } from '../hooks/useMentions';
 import { calculateProjectProgress, canUserSeeProject, projectStatusLabel, projectTypeLabel, useProjects } from '../hooks/useProjects';
+import type { LunarisProject } from '../hooks/useProjects';
 import { useSalesLearning } from '../hooks/useSalesLearning';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
 import { useShoppingList } from '../hooks/useShoppingList';
@@ -669,6 +670,41 @@ function formatVisibleTags(tags: unknown, limit = 2) {
   return visible.length > 0 ? visible.join(', ') : 'sin tags';
 }
 
+function normalizeSearchText(value: unknown) {
+  return `${value || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function isCouponLikeProject(project: LunarisProject) {
+  const searchable = normalizeSearchText([
+    project.name,
+    project.objective,
+    project.description,
+    project.expectedResult,
+    project.tags?.join(' '),
+  ].filter(Boolean).join(' '));
+  return (
+    project.type === 'cupon_promocion'
+    || !!project.promotionKind
+    || !!project.promotionStatus
+    || searchable.includes('cupon')
+    || searchable.includes('promocion')
+    || searchable.includes('descuento')
+  );
+}
+
+function isLegacyCouponProjectActive(project: LunarisProject) {
+  if (project.promotionStatus) return project.promotionStatus === 'active';
+  return !['done', 'paused'].includes(project.status);
+}
+
+function isActivePromotionRecord(promotion: any) {
+  const status = normalizeSearchText(promotion?.status);
+  return status === 'active' || status === 'activo' || status === 'activa';
+}
+
 function normalizeMentionText(value: unknown) {
   return `${value || ''}`
     .normalize('NFD')
@@ -879,14 +915,35 @@ function RoleHomePrototypePage() {
   const selectedUserAllProjects = useMemo(() => (
     projects.filter((project) => canUserSeeProject(project, selectedUser))
   ), [projects, selectedUser]);
+  const selectedUserCouponProjects = useMemo(() => (
+    selectedUserAllProjects.filter(isCouponLikeProject)
+  ), [selectedUserAllProjects]);
   const selectedUserProjects = useMemo(() => (
-    selectedUserAllProjects.slice(0, 3)
+    selectedUserAllProjects.filter((project) => !isCouponLikeProject(project)).slice(0, 3)
   ), [selectedUserAllProjects]);
   const activeCoupons = useMemo(() => (
-    promotions
-      .filter((promotion) => promotion.status === 'active')
-      .slice(0, 3)
-  ), [promotions]);
+    [
+      ...promotions
+        .filter(isActivePromotionRecord)
+        .map((promotion) => ({
+          ...promotion,
+          source: 'promotion' as const,
+        })),
+      ...selectedUserCouponProjects
+        .filter(isLegacyCouponProjectActive)
+        .map((project) => ({
+          id: `legacy-project-${project.id}`,
+          name: project.name,
+          audience: project.objective || project.description || 'Cupón/promoción',
+          endDate: project.targetDate || '',
+          howItWorks: project.expectedResult,
+          source: 'legacy-project' as const,
+          sourceProjectId: project.id,
+        })),
+    ].filter((coupon, index, list) => (
+      list.findIndex((item) => normalizeSearchText(item.name) === normalizeSearchText(coupon.name)) === index
+    ))
+  ), [promotions, selectedUserCouponProjects]);
 
   const todayArchive = useMemo(() => (
     (Array.isArray(facturacionArchive) ? facturacionArchive : []).find((entry) => entry.dateKey === todayKey)
@@ -1006,7 +1063,7 @@ function RoleHomePrototypePage() {
     activeCoupons.length > 0
       ? activeCoupons.map((promotion) => ({
         label: promotion.name,
-        detail: promotion.audience || promotion.reason || 'Cupón/promoción activa',
+        detail: promotion.audience || ('reason' in promotion ? promotion.reason : '') || promotion.howItWorks || 'Cupón/promoción activa',
         status: 'Activo',
         tone: 'green' as const,
       }))
@@ -2198,21 +2255,34 @@ function QuickOverviewGrid({
         </div>
         <div className="space-y-2">
           {coupons.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-500">No hay cupones activos.</p>}
-          {coupons.map((promotion) => {
-            return (
-              <button
-                key={promotion.id}
-                type="button"
-                onClick={() => onNavigate('/finanzas-operativas?view=promociones')}
-                className="w-full rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white"
-              >
-                <p className="truncate text-sm font-black text-slate-900">{promotion.name}</p>
-                <p className="mt-0.5 text-xs font-bold text-slate-500">
-                  {promotion.audience || 'Sin público'} · {promotion.endDate || 'sin fin'}
-                </p>
-              </button>
-            );
-          })}
+          {coupons.length > 0 && (
+            <details className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+              <summary className="cursor-pointer list-none">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-slate-900">{coupons.length} cupón/promoción activa(s)</p>
+                    <p className="mt-0.5 text-xs font-bold text-slate-500">Abrir lista sin ocupar toda la pantalla</p>
+                  </div>
+                  <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-slate-500">Ver</span>
+                </div>
+              </summary>
+              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                {coupons.map((promotion) => (
+                  <button
+                    key={promotion.id}
+                    type="button"
+                    onClick={() => onNavigate('/finanzas-operativas?view=promociones')}
+                    className="w-full rounded-xl border border-white bg-white px-3 py-2 text-left hover:border-slate-200"
+                  >
+                    <p className="truncate text-sm font-black text-slate-900">{promotion.name}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs font-bold text-slate-500">
+                      {promotion.audience || promotion.howItWorks || 'Sin público'} · {promotion.endDate || 'sin fin'}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       </article>
     </section>
