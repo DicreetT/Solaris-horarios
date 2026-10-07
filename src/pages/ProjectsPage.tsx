@@ -18,7 +18,7 @@ import {
 import { useTodos } from '../hooks/useTodos';
 import type { Attachment } from '../types';
 
-const PROJECT_TYPES: ProjectType[] = ['general', 'contenido', 'cupon_promocion', 'sistema_tecnologia', 'formacion', 'inventario_logistica', 'finanzas', 'expansion'];
+const PROJECT_TYPES: ProjectType[] = ['general', 'contenido', 'sistema_tecnologia', 'formacion', 'inventario_logistica', 'finanzas', 'expansion'];
 const STEP_STATUSES: ProjectStepStatus[] = ['pending', 'in_progress', 'waiting', 'blocked', 'validation', 'completed'];
 const PREVIEW_ROLE_TO_USER_NAME: Record<string, string> = {
   direction: 'Thalia',
@@ -42,6 +42,34 @@ function projectPriorityLabel(priority?: ProjectPriority) {
 
 function nextStepFor(project: LunarisProject) {
   return (project.steps || []).find((step) => step.status !== 'completed') || (project.steps || [])[0];
+}
+
+function normalizeSearchText(value: unknown) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function isCouponLikeProject(project: LunarisProject) {
+  const searchableText = normalizeSearchText([
+    project.name,
+    project.type,
+    project.promotionKind,
+    project.promotionStatus,
+    project.objective,
+    project.description,
+    project.tags?.join(' '),
+  ].filter(Boolean).join(' '));
+
+  return (
+    project.type === 'cupon_promocion'
+    || !!project.promotionKind
+    || !!project.promotionStatus
+    || searchableText.includes('cupon')
+    || searchableText.includes('promocion')
+    || searchableText.includes('descuento')
+  );
 }
 
 function progressTone(status: LunarisProject['status']) {
@@ -104,16 +132,18 @@ export default function ProjectsPage() {
   const effectiveProjectUserId = effectiveProjectUser?.id || currentUser?.id || '';
   const isPreviewingOtherUser = !!currentUser?.isAdmin && !!previewRoleKey && !!effectiveProjectUserId;
   const isEstebanPreview = effectiveProjectUserId === ESTEBAN_ID && !!currentUser?.isAdmin;
-  const displayedProjects = useMemo(() => (
-    isPreviewingOtherUser
+  const displayedProjects = useMemo(() => {
+    const scopedProjects = isPreviewingOtherUser
       ? projects.filter((project) => (
         project.ownerId === effectiveProjectUserId
         || project.responsibleId === effectiveProjectUserId
         || project.participants.includes(effectiveProjectUserId)
         || project.steps.some((step) => step.responsibleId === effectiveProjectUserId)
       ))
-      : visibleProjects
-  ), [effectiveProjectUserId, isPreviewingOtherUser, projects, visibleProjects]);
+      : visibleProjects;
+
+    return scopedProjects.filter((project) => !isCouponLikeProject(project));
+  }, [effectiveProjectUserId, isPreviewingOtherUser, projects, visibleProjects]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const selectedProject = selectedProjectId ? displayedProjects.find((project) => project.id === selectedProjectId) || null : null;
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -168,6 +198,7 @@ export default function ProjectsPage() {
   const [taskDraftByStep, setTaskDraftByStep] = useState<Record<string, { title: string; assignedTo: string; dueDate: string }>>({});
   const [activeProjectAction, setActiveProjectAction] = useState<'step' | 'decision' | null>(null);
   const suppressedProjectParamRef = useRef<string | null>(null);
+  const pendingEditProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -227,7 +258,8 @@ export default function ProjectsPage() {
       completionDefinition: selectedProject.completionDefinition || '',
       tags: (selectedProject.tags || []).join(', '),
     });
-    setEditProjectOpen(false);
+    setEditProjectOpen(pendingEditProjectIdRef.current === selectedProject.id);
+    pendingEditProjectIdRef.current = null;
   }, [selectedProject?.id]);
 
   const selectedProgress = useMemo(() => (
@@ -274,18 +306,35 @@ export default function ProjectsPage() {
     setEditProjectOpen(false);
   };
 
+  const handleDeleteProjectById = (projectToDelete: LunarisProject) => {
+    if (!window.confirm(`¿Eliminar el proyecto "${projectToDelete.name}"?`)) return;
+    const currentIndex = displayedProjects.findIndex((project) => project.id === projectToDelete.id);
+    const nextProject = displayedProjects[currentIndex + 1] || displayedProjects[currentIndex - 1] || null;
+    deleteProject(projectToDelete.id);
+    if (selectedProjectId !== projectToDelete.id) return;
+    if (nextProject) {
+      setSelectedProjectId(nextProject.id);
+    } else {
+      closeSelectedProject();
+    }
+  };
+
   const handleDeleteProject = () => {
     if (!selectedProject) return;
-    if (!window.confirm(`¿Eliminar el proyecto "${selectedProject.name}"?`)) return;
-    const currentIndex = displayedProjects.findIndex((project) => project.id === selectedProject.id);
-    deleteProject(selectedProject.id);
-    const nextProject = displayedProjects[currentIndex + 1] || displayedProjects[currentIndex - 1] || null;
-    setSelectedProjectId(nextProject?.id || '');
+    handleDeleteProjectById(selectedProject);
   };
 
   const selectProject = (projectId: string) => {
     suppressedProjectParamRef.current = null;
+    pendingEditProjectIdRef.current = null;
     setSelectedProjectId(projectId);
+  };
+
+  const openProjectEditor = (projectId: string) => {
+    suppressedProjectParamRef.current = null;
+    pendingEditProjectIdRef.current = projectId;
+    setSelectedProjectId(projectId);
+    if (selectedProjectId === projectId) setEditProjectOpen(true);
   };
 
   const closeSelectedProject = () => {
@@ -469,6 +518,22 @@ export default function ProjectsPage() {
                           className="rounded-xl bg-teal-700 px-3 py-2 text-xs font-black text-white hover:bg-teal-800"
                         >
                           Abrir
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openProjectEditor(project.id)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
+                        >
+                          <Pencil size={13} />
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteProjectById(project)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 hover:bg-rose-100"
+                        >
+                          <Trash2 size={13} />
+                          Eliminar
                         </button>
                       </div>
                     </div>
