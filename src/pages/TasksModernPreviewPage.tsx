@@ -961,12 +961,17 @@ export default function TasksModernPreviewPage() {
   }, [todos, effectiveTaskUserId, getSeenAt]);
 
   const isAdmin = !!currentUser?.isAdmin;
+  const isPriorityForMe = (task: Todo) => (
+    (task.tags || []).includes(PRIORITY_TAG)
+    || (task.shocked_users || []).includes(effectiveTaskUserId)
+  );
   const assignedToMe = useMemo(
     () => sortTasks(
       todos.filter((task) => (
         task.assigned_to.includes(effectiveTaskUserId)
         && !task.completed_by.includes(effectiveTaskUserId)
         && !isGloballyDone(task)
+        && !isPriorityForMe(task)
       )),
       effectiveTaskUserId,
     ),
@@ -983,8 +988,9 @@ export default function TasksModernPreviewPage() {
     () => sortTasks(
       todos.filter((task) => (
         !isGloballyDone(task)
-        && (task.assigned_to.includes(effectiveTaskUserId) || task.created_by === effectiveTaskUserId)
-        && ((task.tags || []).includes(PRIORITY_TAG) || (task.shocked_users || []).includes(effectiveTaskUserId))
+        && task.assigned_to.includes(effectiveTaskUserId)
+        && !task.completed_by.includes(effectiveTaskUserId)
+        && isPriorityForMe(task)
       )),
       effectiveTaskUserId,
     ),
@@ -1011,7 +1017,12 @@ export default function TasksModernPreviewPage() {
   );
   const relampagoTasks = useMemo(
     () => sortTasks(
-      todos.filter((task) => (task.shocked_users || []).includes(effectiveTaskUserId) && !isGloballyDone(task)),
+      todos.filter((task) => (
+        task.assigned_to.includes(effectiveTaskUserId)
+        && !task.completed_by.includes(effectiveTaskUserId)
+        && (task.shocked_users || []).includes(effectiveTaskUserId)
+        && !isGloballyDone(task)
+      )),
       effectiveTaskUserId,
     ),
     [todos, effectiveTaskUserId],
@@ -1160,7 +1171,7 @@ export default function TasksModernPreviewPage() {
 
       <TaskRail
         title="Prioritarias"
-        subtitle="Marcadas como prioritarias o relámpago. Van arriba para que no se pierdan."
+        subtitle="Solo prioridades asignadas a ti y todavía pendientes de tu parte."
         tasks={priorityTasks}
         currentUserId={effectiveTaskUserId}
         unreadCommentsByTask={unreadCommentsByTask}
@@ -1174,7 +1185,7 @@ export default function TasksModernPreviewPage() {
 
       <TaskRail
         title="Asignadas a mí"
-        subtitle="Solo pendientes tuyas. Si marcas tu parte como hecha, salen de esta fila."
+        subtitle="Pendientes tuyas que no están en la fila de prioridad."
         tasks={assignedToMe}
         currentUserId={effectiveTaskUserId}
         unreadCommentsByTask={unreadCommentsByTask}
