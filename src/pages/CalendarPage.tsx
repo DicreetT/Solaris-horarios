@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import DayDetailsModal from '../components/DayDetailsModal';
 import TaskDetailModal from '../components/TaskDetailModal';
+import CalendarGrid from '../components/CalendarGrid';
 import { useTimeData } from '../hooks/useTimeData';
 import { useTraining } from '../hooks/useTraining';
 import { useAbsences } from '../hooks/useAbsences';
@@ -41,6 +42,7 @@ function CalendarPage() {
     };
 
     const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
+    const [monthDate, setMonthDate] = useState(() => new Date());
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [showDayDetails, setShowDayDetails] = useState(false);
     const [expandedTasksByDay, setExpandedTasksByDay] = useState<Record<string, boolean>>({});
@@ -66,6 +68,8 @@ function CalendarPage() {
     } | null>(null);
     const [selectedEventItem, setSelectedEventItem] = useState<any | null>(null);
     const weekEnd = addDays(weekStart, 6);
+    const monthStart = useMemo(() => new Date(monthDate.getFullYear(), monthDate.getMonth(), 1), [monthDate]);
+    const monthEnd = useMemo(() => new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0), [monthDate]);
     const weekDays = useMemo(
         () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
         [weekStart],
@@ -75,8 +79,8 @@ function CalendarPage() {
     const todayKey = toDateKey(new Date());
 
     const { timeData } = useTimeData({
-        from: weekStart,
-        to: weekEnd,
+        from: monthStart,
+        to: monthEnd,
     });
     const { trainingRequests, createTrainingRequest } = useTraining(currentUser);
     const { absenceRequests, createAbsence } = useAbsences(currentUser);
@@ -264,357 +268,92 @@ function CalendarPage() {
     };
 
     return (
-        <div className="calendar-page max-w-7xl mx-auto h-[calc(100vh-5rem)] flex flex-col">
-            <div className="mb-6 flex items-center gap-4">
-                <div className="calendar-surface p-3 bg-white border border-gray-200 rounded-2xl shadow-sm text-primary">
-                    <CalendarIcon size={32} />
+        <div className="calendar-page mx-auto flex h-[calc(100vh-5rem)] max-w-7xl flex-col">
+            <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-700 shadow-sm">
+                        <CalendarIcon size={30} />
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-black tracking-normal text-slate-950">Calendario mensual</h1>
+                        <p className="mt-1 text-sm font-bold text-slate-500">
+                            {getGreeting()}, {currentUser?.name}. Vista limpia del mes para ausencias, avisos, tareas y reuniones.
+                        </p>
+                    </div>
                 </div>
-                <div>
-                    <h1 className="calendar-hero-title text-4xl font-black text-gray-900 tracking-tight">
-                        Calendario Semanal
-                    </h1>
-                    <p className="calendar-hero-subtitle text-gray-500 font-medium">
-                        {getGreeting()}, {currentUser?.name}. Centro diario de trabajo con enfoque operativo.
-                    </p>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => navigate('/dashboard?section=time#time-summary')}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50"
+                    >
+                        <Clock size={16} />
+                        Jornada
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => openRequestModal('absence', selectedDate || new Date())}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50"
+                    >
+                        <UserX size={16} />
+                        Ausencia
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => openRequestModal('vacation', selectedDate || new Date())}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50"
+                    >
+                        <Palmtree size={16} />
+                        Vacaciones
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => openRequestModal('meeting', selectedDate || new Date())}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-700 shadow-sm hover:bg-slate-50"
+                    >
+                        <Users size={16} />
+                        Reunión
+                    </button>
                 </div>
             </div>
 
-            <div className="calendar-surface mb-4 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 to-indigo-50 p-4 shadow-sm">
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                    <span className="inline-flex items-center gap-2 font-bold text-sky-900">
-                        <Sun size={16} />
-                        Estado de hoy
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center gap-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        <Sun size={14} />
+                        Hoy: {todayTeam.absencesCount === 0 ? 'equipo completo' : `${todayTeam.absencesCount} ausencia(s)`}
                     </span>
-                    {todayTeam.absencesCount === 0 ? (
-                        <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold">
-                            Equipo completo
-                        </span>
-                    ) : (
-                        <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-700 font-bold">
-                            {todayTeam.absencesCount} ausencia(s) hoy
-                        </span>
-                    )}
-                    <span className="px-3 py-1 rounded-full bg-white/80 border border-sky-200 text-sky-800 font-semibold">
-                        {todayTeam.activeNowCount} activos ahora
+                    <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                        <Clock size={14} />
+                        {todayTeam.activeNowCount} activo(s) ahora
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+                        <span className="h-2 w-2 rounded-full bg-rose-400" />
+                        Avisos
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+                        <span className="h-2 w-2 rounded-full bg-violet-400" />
+                        Ausencias
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+                        <span className="h-2 w-2 rounded-full bg-amber-400" />
+                        Tareas
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1">
+                        <span className="h-2 w-2 rounded-full bg-blue-400" />
+                        Reuniones/formación
                     </span>
                 </div>
             </div>
 
-            <div className="calendar-surface mb-4 bg-white border border-gray-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-                <button
-                    onClick={() => setWeekStart(prev => addDays(prev, -7))}
-                    className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-                >
-                    <ChevronLeft size={18} />
-                </button>
-                <p className="font-bold text-gray-800 text-sm md:text-base">
-                    {weekStart.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })} - {weekEnd.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}
-                </p>
-                <button
-                    onClick={() => setWeekStart(prev => addDays(prev, 7))}
-                    className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-                >
-                    <ChevronRight size={18} />
-                </button>
-            </div>
-
-            <div className="flex-1 min-h-0 overflow-y-auto pb-4">
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-4">
-                    {workDays.map((day, index) => {
-                        const dayKey = toDateKey(day);
-                        const events = getDayEvents(day);
-                        const team = getTeamStatus(day);
-                        const override = overrides.find((o) => o.date_key === dayKey);
-                        const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-                        const isNonWorking = override ? override.is_non_working : isWeekend;
-                        const isToday = dayKey === todayKey;
-                        const isPast = dayKey < todayKey;
-                        const isFuture = dayKey > todayKey;
-                        const basePendingTasks = todos.filter(
-                            (t) =>
-                                t.assigned_to.includes(currentUser?.id || '') &&
-                                !t.completed_by.includes(currentUser?.id || ''),
-                        );
-                        const dayTaskList = basePendingTasks
-                            .filter((task) => {
-                                if (!task.due_date_key) return isToday;
-                                return task.due_date_key <= dayKey;
-                            })
-                            .sort((a, b) => `${a.due_date_key || ''}`.localeCompare(`${b.due_date_key || ''}`));
-                        const dayTaskCount = dayTaskList.length;
-                        const dayTaskTotal = (events?.allTasks.length || 0);
-                        const meetingsCount = events?.meetings.length || 0;
-                        const trainingsCount = events?.trainings.length || 0;
-                        const vacationsCount = (events?.absences || []).filter((a) => a.type === 'vacation').length;
-                        const absencesCount = (events?.absences || []).filter((a) => a.type !== 'vacation').length;
-                        const dayCalendarEvents = calendarEvents.filter((event) => event.date_key === dayKey);
-                        const toneClass = workdayToneClasses[Math.min(index, workdayToneClasses.length - 1)];
-                        return (
-                            <div
-                                key={dayKey}
-                                className={`
-                                    calendar-soft-surface rounded-3xl border p-4 shadow-sm flex flex-col gap-4 min-h-[340px] transition-all
-                                    ${isToday ? 'border-primary/60 ring-2 ring-primary/25 bg-white' : toneClass}
-                                    ${isPast ? 'opacity-70 saturate-75' : ''}
-                                    ${isFuture ? 'opacity-90' : ''}
-                                `}
-                            >
-                                <button
-                                    onClick={() => handleDateClick(day)}
-                                    className="text-left"
-                                >
-                                    <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">
-                                        {day.toLocaleDateString('es-ES', { weekday: 'short' })}
-                                    </p>
-                                    <p className={`text-3xl font-black ${isToday ? 'text-primary' : 'text-gray-900'}`}>
-                                        {day.toLocaleDateString('es-ES', { day: '2-digit' })}
-                                    </p>
-                                    {isToday && (
-                                        <p className="text-xs font-bold text-primary uppercase tracking-widest mt-1">Hoy</p>
-                                    )}
-                                </button>
-
-                                {currentUser?.isAdmin && (
-                                    <div className="self-start flex items-center gap-1.5">
-                                        <button
-                                            disabled={!!togglingDays[dayKey]}
-                                            onClick={async () => {
-                                                setTogglingDays((prev) => ({ ...prev, [dayKey]: true }));
-                                                try {
-                                                    await toggleDayStatus(day, false);
-                                                } finally {
-                                                    setTogglingDays((prev) => ({ ...prev, [dayKey]: false }));
-                                                }
-                                            }}
-                                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                                                !isNonWorking
-                                                    ? 'bg-amber-100 border-amber-300 text-amber-800'
-                                                    : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'
-                                            }`}
-                                        >
-                                            Laborable
-                                        </button>
-                                        <button
-                                            disabled={!!togglingDays[dayKey]}
-                                            onClick={async () => {
-                                                setTogglingDays((prev) => ({ ...prev, [dayKey]: true }));
-                                                try {
-                                                    await toggleDayStatus(day, true);
-                                                } finally {
-                                                    setTogglingDays((prev) => ({ ...prev, [dayKey]: false }));
-                                                }
-                                            }}
-                                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                                                isNonWorking
-                                                    ? 'bg-red-100 border-red-200 text-red-700'
-                                                    : 'bg-white border-red-200 text-red-700 hover:bg-red-50'
-                                            }`}
-                                        >
-                                            No laborable
-                                        </button>
-                                    </div>
-                                )}
-
-                                <div className="grid grid-cols-1 gap-2 text-xs">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            if (dayTaskCount === 0) return;
-                                            setExpandedTasksByDay((prev) => ({ ...prev, [dayKey]: !prev[dayKey] }));
-                                        }}
-                                        className={`rounded-xl border p-2 text-left transition-all ${
-                                            dayTaskCount > 0
-                                                ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
-                                                : dayTaskTotal === 0
-                                                    ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                                                    : (isPast || isToday)
-                                                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
-                                                        : 'bg-amber-50/70 border-amber-200 text-amber-700 hover:bg-amber-100'
-                                        }`}
-                                    >
-                                        <p className="font-bold inline-flex items-center gap-1">
-                                            <CheckSquare size={12} />
-                                            Tareas
-                                        </p>
-                                        <p className="mt-1 font-semibold">
-                                            {dayTaskCount > 0
-                                                ? `${dayTaskCount} pendiente(s)`
-                                                : dayTaskTotal === 0
-                                                    ? 'No hay tareas'
-                                                    : (isPast || isToday)
-                                                        ? 'Todo al día'
-                                                        : 'Tareas programadas'}
-                                        </p>
-                                        {dayTaskCount > 0 && (
-                                            <p className="mt-1 text-[11px] font-bold underline">
-                                                {expandedTasksByDay[dayKey] ? 'Ocultar detalle' : 'Ver tareas pendientes'}
-                                            </p>
-                                        )}
-                                    </button>
-                                    {dayTaskCount > 0 && expandedTasksByDay[dayKey] && (
-                                        <div className="rounded-xl border border-amber-200 bg-white p-2">
-                                            <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                                                {dayTaskList.map((task) => {
-                                                    const due = task.due_date_key || '';
-                                                    const label = due === dayKey ? 'Vence hoy' : (due && due < dayKey ? 'Atrasada' : 'Pendiente');
-                                                    const chipClass =
-                                                        label === 'Vence hoy'
-                                                            ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                                            : label === 'Atrasada'
-                                                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                                                : 'bg-amber-50 text-amber-700 border-amber-200';
-                                                    return (
-                                                        <button
-                                                            key={task.id}
-                                                            onClick={() => setSelectedTask(task)}
-                                                            className="w-full flex items-start justify-between gap-2 rounded-lg border border-gray-100 p-2 text-left hover:border-amber-200 hover:bg-amber-50/40"
-                                                        >
-                                                            <span className="text-[11px] font-semibold text-amber-900 line-clamp-2">{task.title}</span>
-                                                            <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${chipClass}`}>
-                                                                {label}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                            <button
-                                                onClick={() => navigate('/tasks')}
-                                                className="mt-2 text-[11px] font-bold text-amber-800 underline"
-                                            >
-                                                Ver panel de tareas
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                    {dayCalendarEvents.length > 0 && (
-                                        <button
-                                            onClick={() => handleDateClick(day)}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 transition-colors"
-                                        >
-                                            <AlertCircle size={12} />
-                                            Eventos {dayCalendarEvents.length}
-                                        </button>
-                                    )}
-                                    {meetingsCount > 0 && (
-                                        <button
-                                            onClick={() => openEventListModal('meetings', day, events?.meetings || [])}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
-                                        >
-                                            <Users size={12} />
-                                            Reunion {meetingsCount}
-                                        </button>
-                                    )}
-                                    {trainingsCount > 0 && (
-                                        <button
-                                            onClick={() => openEventListModal('trainings', day, events?.trainings || [])}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors"
-                                        >
-                                            <GraduationCap size={12} />
-                                            Formacion {trainingsCount}
-                                        </button>
-                                    )}
-                                    {vacationsCount > 0 && (
-                                        <button
-                                            onClick={() => openEventListModal('absences', day, events?.absences || [])}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                        >
-                                            <Palmtree size={12} />
-                                            Vacaciones {vacationsCount}
-                                        </button>
-                                    )}
-                                    {absencesCount > 0 && (
-                                        <button
-                                            onClick={() => openEventListModal('absences', day, events?.absences || [])}
-                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
-                                        >
-                                            <AlertCircle size={12} />
-                                            Ausencias {absencesCount}
-                                        </button>
-                                    )}
-                                </div>
-
-                                <div className="text-xs">
-                                    {team.absencesCount === 0 ? (
-                                        <p className="inline-flex px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">Equipo completo</p>
-                                    ) : (
-                                        <p className="inline-flex px-2 py-1 rounded-lg bg-amber-50 text-amber-700 font-bold">
-                                            {team.absencesCount} ausencia(s)
-                                        </p>
-                                    )}
-                                </div>
-
-                                <div className="mt-auto space-y-2">
-                                    <button
-                                        onClick={() => navigate('/dashboard?section=time#time-summary')}
-                                        className="w-full inline-flex items-center justify-center gap-2 px-3 py-3 rounded-2xl text-sm font-black bg-indigo-100 text-indigo-800 hover:bg-indigo-200 border border-indigo-200 hover:-translate-y-0.5 active:translate-y-0 transition-all"
-                                    >
-                                        <Clock size={16} />
-                                        Fichar Jornada
-                                    </button>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            onClick={() => openRequestModal('absence', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-700 hover:bg-red-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
-                                        >
-                                            <UserX size={12} />
-                                            Solicitar Ausencia
-                                        </button>
-                                        <button
-                                            onClick={() => openRequestModal('vacation', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
-                                        >
-                                            <Palmtree size={12} />
-                                            Solicitar Vacaciones
-                                        </button>
-                                        <button
-                                            onClick={() => openRequestModal('meeting', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
-                                        >
-                                            <Users size={12} />
-                                            Solicitar Reunion
-                                        </button>
-                                        <button
-                                            onClick={() => openRequestModal('training', day)}
-                                            className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-xl text-xs font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 hover:-translate-y-0.5 active:translate-y-0 transition-all"
-                                        >
-                                            <GraduationCap size={12} />
-                                            Solicitar Formacion
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {nonWorkDays.map((day) => {
-                        const dayKey = toDateKey(day);
-                        const isToday = dayKey === todayKey;
-                        return (
-                            <div
-                                key={dayKey}
-                                className={`rounded-xl border bg-gray-50 p-2.5 flex items-center justify-between ${isToday ? 'border-primary/40' : 'border-gray-200'} opacity-80`}
-                            >
-                                <div>
-                                    <p className="text-xs uppercase tracking-wider font-bold text-gray-500">
-                                        {day.toLocaleDateString('es-ES', { weekday: 'long' })}
-                                    </p>
-                                    <p className="text-base font-black text-gray-700">
-                                        {day.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
-                                    </p>
-                                    <p className="text-xs text-gray-500 font-medium">Dia no laboral</p>
-                                </div>
-                                <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-200 text-gray-600 text-xs font-bold">
-                                    <Lock size={12} />
-                                    Bloqueado
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
+            <div className="min-h-0 flex-1 pb-4">
+                <CalendarGrid
+                    monthDate={monthDate}
+                    selectedDate={selectedDate || new Date()}
+                    onChangeMonth={setMonthDate}
+                    onSelectDate={handleDateClick}
+                    overrides={overrides}
+                />
             </div>
 
             {showDayDetails && (

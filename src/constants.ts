@@ -6,6 +6,7 @@ import type { User, DriveFolder } from './types';
  */
 // UUID real de Esteban en Supabase
 export const ESTEBAN_ID = "07d58adc-8c82-458d-ba48-f733ec706c7c";
+export const HEIDY_ID = "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6";
 export const CARLOS_EMAIL = "carlos@solaris.global";
 
 export const USERS: User[] = [
@@ -17,7 +18,7 @@ export const USERS: User[] = [
         isAdmin: true,
     },
     {
-        id: "b7c2ff86-bf39-4a1f-8e35-73ca8c9bbcc6", // contable
+        id: HEIDY_ID, // contable
         name: "Heidy",
         email: "heidy.m.solaris@gmail.com",
         isTrainingManager: false,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Command, MapPin, CheckSquare, Users, FileText, Boxes, Folder, LayoutDashboard } from 'lucide-react';
+import { Search, Command, MapPin, CheckSquare, Users, FileText, Boxes, Folder, LayoutDashboard, CalendarClock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
@@ -49,7 +49,10 @@ const SearchPalette: React.FC = () => {
         { label: 'Inventario Huarte', path: '/inventory-facturacion', icon: Boxes },
         { label: 'Exportaciones', path: '/exports', icon: FileText },
         { label: 'Carpetas', path: '/folders', icon: Folder },
-        { label: 'Albaranes', path: '/albaranes', icon: FileText },
+        { label: 'Incidencias producto/lote', path: '/albaranes', icon: FileText },
+        { label: 'Eventos diarios de inventario', path: '/eventos-inventario', icon: CalendarClock },
+        { label: 'Finanzas y promociones', path: '/finanzas-operativas', icon: FileText },
+        { label: 'Operaciones y Fer', path: '/operaciones-fer', icon: Users },
     ].filter((link) => {
         if (!isRestrictedUser) return true;
         return ['/dashboard', '/tasks', '/inventory', '/inventory-facturacion', '/folders'].includes(link.path);

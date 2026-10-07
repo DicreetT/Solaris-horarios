@@ -3,7 +3,7 @@ import { X, Save, Trash2, ShoppingCart, CheckCircle2, Calendar, MessageSquare } 
 import { ShoppingItem, Attachment } from '../../types';
 import { FileUploader } from '../FileUploader';
 import { useAuth } from '../../context/AuthContext';
-import { ESTEBAN_ID } from '../../constants';
+import { HEIDY_ID } from '../../constants';
 
 interface ShoppingItemModalProps {
     isOpen: boolean;
@@ -25,11 +25,10 @@ export default function ShoppingItemModal({
     isSubmitting = false
 }: ShoppingItemModalProps) {
     const { currentUser } = useAuth();
-    const isEsteban = currentUser?.id === ESTEBAN_ID;
+    const canManagePurchases = currentUser?.id === HEIDY_ID || !!currentUser?.isAdmin;
     const isCreator = currentUser?.id === initialData?.created_by;
-    const canEditPurchase = isEsteban;
-    // Show if Esteban OR (Creator and editing existing item)
-    const showPurchaseSection = isEsteban || (isCreator && !!initialData);
+    const canEditPurchase = canManagePurchases;
+    const showPurchaseSection = canManagePurchases || (isCreator && !!initialData);
 
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
@@ -71,7 +70,7 @@ export default function ShoppingItemModal({
             attachments
         };
 
-        if (isEsteban) {
+        if (canManagePurchases) {
             submitData.is_purchased = isPurchased;
             if (isPurchased) {
                 // If purchased, include details
@@ -146,7 +145,7 @@ export default function ShoppingItemModal({
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Añade detalles (marca, cantidad, etc)..."
+                            placeholder="Cantidad, motivo, link de compra sugerido, marca o cualquier detalle útil..."
                             className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl !text-black dark:text-black dark:bg-gray-50 dark:border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all min-h-[100px] resize-none"
                             style={{ color: '#000000' }}
                         />
@@ -164,7 +163,7 @@ export default function ShoppingItemModal({
                         />
                     </div>
 
-                    {/* Purchase Controls (Visible to Admin and Creator) */}
+                    {/* Purchase Controls (Visible to Finanzas/Dirección and creator in read-only mode) */}
                     {showPurchaseSection && (
                         <div className="pt-4 border-t border-gray-100 space-y-4">
                             <h3 className="font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-2 uppercase text-xs tracking-wider flex justify-between items-center">

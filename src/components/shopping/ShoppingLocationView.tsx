@@ -6,7 +6,7 @@ import { UserAvatar } from '../UserAvatar';
 import ShoppingItemModal from './ShoppingItemModal';
 import PurchaseModal from './PurchaseModal';
 import { formatDatePretty } from '../../utils/dateUtils';
-import { ESTEBAN_ID } from '../../constants';
+import { HEIDY_ID } from '../../constants';
 
 interface ShoppingLocationViewProps {
     location: 'canet' | 'huarte';
@@ -86,14 +86,14 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
     };
 
     const canEdit = (item: ShoppingItem) => {
-        return currentUser?.id === item.created_by || currentUser?.id === ESTEBAN_ID;
+        return currentUser?.id === item.created_by || currentUser?.id === HEIDY_ID || !!currentUser?.isAdmin;
     };
 
     const canDelete = (item: ShoppingItem) => {
         return currentUser?.id === item.created_by;
     };
 
-    const canToggle = currentUser?.id === ESTEBAN_ID;
+    const canToggle = currentUser?.id === HEIDY_ID || !!currentUser?.isAdmin;
 
     return (
         <div className="max-w-5xl mx-auto pb-20">
@@ -195,7 +195,7 @@ export default function ShoppingLocationView({ location, currentUser, onBack }: 
                                             ? 'text-gray-300 hover:text-indigo-500'
                                             : 'text-gray-200 cursor-not-allowed'
                                         }`}
-                                    title={!canToggle ? "Solo Esteban puede marcar como comprado" : "Marcar como comprado"}
+                                    title={!canToggle ? "Solo Heidi o Dirección pueden marcar como comprado" : "Marcar como comprado"}
                                 >
                                     {item.is_purchased ? (
                                         <CheckCircle2 size={24} fill="currentColor" className="text-green-100" />

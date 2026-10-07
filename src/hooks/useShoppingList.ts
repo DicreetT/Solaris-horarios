@@ -6,7 +6,7 @@ import { emitSuccessFeedback } from '../utils/uiFeedback';
 
 const EMPTY_ARRAY: ShoppingItem[] = [];
 
-import { ESTEBAN_ID } from '../constants';
+import { HEIDY_ID } from '../constants';
 
 export function useShoppingList(currentUser: User | null) {
     const queryClient = useQueryClient();
@@ -105,9 +105,9 @@ export function useShoppingList(currentUser: User | null) {
         mutationFn: async ({ id, isPurchased, deliveryDate, responseMessage }: { id: number; isPurchased: boolean; deliveryDate?: string; responseMessage?: string }) => {
             if (!currentUser) throw new Error('No user logged in');
 
-            // Only Esteban can mark as purchased
-            if (currentUser.id !== ESTEBAN_ID) {
-                throw new Error('Solo Esteban puede marcar ítems como comprados');
+            // Finanzas gestiona el estado de compra; Dirección conserva acceso administrativo.
+            if (currentUser.id !== HEIDY_ID && !currentUser.isAdmin) {
+                throw new Error('Solo Heidi o Dirección pueden marcar ítems como comprados');
             }
 
             const updates: any = {
@@ -140,7 +140,6 @@ export function useShoppingList(currentUser: User | null) {
 
             // Notify creator if purchased
             if (variables.isPurchased && data) {
-                // If creator is not Esteban (avoid notifying self unnecessarily, though Esteban is manager)
                 if (data.created_by !== currentUser?.id) {
                     let msg = `Tu ítem "${data.name}" ha sido comprado.`;
                     if (variables.deliveryDate) {

@@ -135,12 +135,16 @@ export function useAbsences(currentUser: User | null) {
                 updatePayload.resolution_type = payload.resolution_type;
             }
 
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('absence_requests')
                 .update(updatePayload)
-                .eq('id', payload.id);
+                .eq('id', payload.id)
+                .select('id');
 
             if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('No se pudo actualizar la solicitud (sin permisos o ya no existe).');
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['absences'] });

@@ -2,8 +2,11 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-    LayoutDashboard,
+    AlertCircle,
+    AtSign,
     CheckSquare,
+    BookOpen,
+    BriefcaseBusiness,
     FileText,
     LogOut,
     Lock,
@@ -14,10 +17,19 @@ import {
     ChevronLeft,
     ChevronRight,
     Clock,
+    ClipboardCheck,
+    FolderKanban,
+    Inbox,
+    MessageSquareText,
+    PanelsTopLeft,
+    ReceiptText,
     Search,
     Boxes,
-    Wrench,
-    ClipboardCheck,
+    ShieldCheck,
+    ShoppingCart,
+    Tags,
+    Truck,
+    Users,
     X
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
@@ -31,9 +43,10 @@ import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useTodos } from '../hooks/useTodos';
 import { useTimeData } from '../hooks/useTimeData';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
-import { CARLOS_EMAIL } from '../constants';
+import { USERS } from '../constants';
 import { toDateKey } from '../utils/dateUtils';
 import { calculateHours, formatHours } from '../utils/timeUtils';
+import { downloadUserManualPdf } from '../utils/userManualPdf';
 
 type UserLaborDocumentProfile = {
     contract: Attachment[];
@@ -50,6 +63,106 @@ const EMPTY_LABOR_DOCUMENT_PROFILE: UserLaborDocumentProfile = {
     contract: [],
     medical: [],
     payroll: [],
+};
+
+type RoleSidebarItem = {
+    label: string;
+    icon: any;
+    path?: string;
+    isActive?: (pathname: string, search: string) => boolean;
+};
+
+const commonRoleItems: RoleSidebarItem[] = [
+    { path: '/inicio-roles', label: 'Mi espacio', icon: PanelsTopLeft },
+    { path: '/checklist', label: 'Checklist diario', icon: ClipboardCheck },
+    { path: '/tasks', label: 'Tareas', icon: CheckSquare },
+    { path: '/mentions', label: 'Menciones para mí', icon: AtSign },
+    { path: '/projects', label: 'Proyectos', icon: FolderKanban },
+    { path: '/avisos', label: 'Avisos', icon: Bell },
+    { path: '/calendar', label: 'Calendario', icon: CalendarClock },
+    { path: '/time-tracking', label: 'Mi jornada', icon: Clock },
+    { path: '/absences', label: 'Solicitudes', icon: Inbox },
+    {
+        path: '/inventory?view=canet&tab=control_stock',
+        label: 'Control de stock',
+        icon: Boxes,
+        isActive: (pathname, search) => pathname === '/inventory' && new URLSearchParams(search).get('tab') === 'control_stock',
+    },
+    { path: '/operaciones-fer?view=solicitud-apoyo', label: 'Solicitud de apoyo', icon: Users },
+    { path: '/folders', label: 'Documentos y recursos', icon: FileText },
+];
+
+const fallbackRoleItems: RoleSidebarItem[] = commonRoleItems;
+
+const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
+    thalia: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/formacion-ventas?view=direction', label: 'Formación', icon: BookOpen },
+        { path: '/dossier-trazabilidad', label: 'Trazabilidad', icon: ShieldCheck },
+        { path: '/facturacion', label: 'Facturación a pagar', icon: ReceiptText },
+    ],
+    itzi: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        { path: '/despachos', label: 'Despachos', icon: Truck },
+        { path: '/control-operativo', label: 'Control operativo', icon: ClipboardCheck },
+        { path: '/eventos-inventario', label: 'Evento inventario', icon: CalendarClock },
+        { path: '/formacion-ventas?view=commercial', label: 'Cuaderno comercial', icon: MessageSquareText },
+        { path: '/formacion-ventas?view=faqs', label: 'Preguntas frecuentes', icon: BookOpen },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/projects', label: 'Crear proyecto', icon: FolderKanban },
+    ],
+    anabella: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        {
+            path: '/inventory?view=canet',
+            label: 'Stock',
+            icon: Boxes,
+            isActive: (pathname, search) => {
+                const params = new URLSearchParams(search);
+                return pathname === '/inventory' && params.get('view') === 'canet' && !params.get('tab');
+            },
+        },
+        { path: '/control-operativo', label: 'Control operativo', icon: ClipboardCheck },
+        { path: '/albaranes', label: 'Incidencias producto/lote', icon: AlertCircle },
+        { path: '/despachos', label: 'Despachos', icon: Truck },
+        { path: '/eventos-inventario', label: 'Evento diario inventario', icon: CalendarClock },
+        { path: '/shopping', label: 'Compras', icon: ShoppingCart },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+    ],
+    heidy: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        { path: '/control-operativo', label: 'Control operativo', icon: ClipboardCheck },
+        { path: '/eventos-inventario', label: 'Evento inventario', icon: CalendarClock },
+        { path: '/facturacion', label: 'Facturación', icon: ReceiptText },
+        { path: '/shopping', label: 'Compras', icon: ShoppingCart },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/finanzas-operativas?view=costes', label: 'Proyectos costes', icon: BriefcaseBusiness },
+    ],
+    esteban: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        { path: '/projects', label: 'Proyectos', icon: FolderKanban },
+        { path: '/operaciones-fer', label: 'Operaciones', icon: BriefcaseBusiness },
+        { path: '/operaciones-fer?view=solicitud-apoyo', label: 'Solicitud de apoyo', icon: Users },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/facturacion', label: 'Facturación', icon: ReceiptText },
+        { path: '/formacion-ventas?view=active', label: 'Formaciones activas', icon: BookOpen },
+    ],
+    fer: [
+        { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
+        { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/operaciones-fer?view=entregables', label: 'Entregables', icon: ClipboardCheck },
+        { path: '/operaciones-fer?view=jornada', label: 'Jornada semanal', icon: CalendarClock },
+    ],
+};
+
+const previewRoleToUserKey: Record<string, string> = {
+    direction: 'thalia',
+    sales: 'itzi',
+    warehouse: 'anabella',
+    finance: 'heidy',
+    operations: 'esteban',
+    support: 'fer',
 };
 
 /**
@@ -84,6 +197,10 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showLaborCard, setShowLaborCard] = useState(false);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
+    const [previewRoleKey, setPreviewRoleKey] = useState<string | null>(() => {
+        if (typeof window === 'undefined') return null;
+        return window.localStorage.getItem('lunaris_role_preview');
+    });
     const userMenuRef = useRef(null);
     const currentMonthStart = useMemo(() => {
         const now = new Date();
@@ -99,7 +216,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         { profiles: {} },
     );
 
-    const isRestrictedUser = !!currentUser?.isRestricted || (currentUser?.email || '').toLowerCase() === CARLOS_EMAIL;
     const unreadCount = notifications.filter((n) => !n.read).length;
     const currentLaborProfile = currentUser
         ? laborDocuments.profiles[currentUser.id] || EMPTY_LABOR_DOCUMENT_PROFILE
@@ -114,13 +230,28 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         }, 0);
     }, [currentMonthStart, currentUser, timeData]);
 
-    // --- BADGE CALCULATIONS ---
-
-    // 1. Tasks: Assigned to me AND incomplete
+    const currentUserKey = (currentUser?.name || '').trim().toLowerCase();
+    const effectiveUserKey = currentUser?.isAdmin && previewRoleKey
+        ? previewRoleToUserKey[previewRoleKey] || currentUserKey
+        : currentUserKey;
+    const effectiveSidebarUser = USERS.find((user) => user.name.trim().toLowerCase() === effectiveUserKey);
+    const effectiveSidebarUserId = effectiveSidebarUser?.id || currentUser?.id || '';
     const pendingTasksCount = todos.filter(t =>
-        t.assigned_to?.includes(currentUser?.id || '') &&
-        !t.completed_by?.includes(currentUser?.id || '')
+        t.assigned_to?.includes(effectiveSidebarUserId) &&
+        !t.completed_by?.includes(effectiveSidebarUserId)
     ).length;
+    const areaNavigationItems = roleSpecificSidebarItemsByUser[effectiveUserKey] || [];
+    const roleNavigationItems = (roleSpecificSidebarItemsByUser[effectiveUserKey] ? commonRoleItems : fallbackRoleItems)
+        .filter((item) => (
+            effectiveUserKey !== 'esteban'
+            || !['Proyectos', 'Solicitud de apoyo'].includes(item.label)
+        ))
+        .map((item) => {
+            if (item.label === 'Mi jornada' && effectiveUserKey) {
+                return { ...item, path: `/time-tracking?user=${effectiveUserKey}` };
+            }
+            return item;
+        });
 
     // Close user menu when clicking outside
     useEffect(() => {
@@ -131,6 +262,18 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         }
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    useEffect(() => {
+        const handlePreviewRoleChange = () => {
+            setPreviewRoleKey(window.localStorage.getItem('lunaris_role_preview'));
+        };
+        window.addEventListener('storage', handlePreviewRoleChange);
+        window.addEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+        return () => {
+            window.removeEventListener('storage', handlePreviewRoleChange);
+            window.removeEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+        };
     }, []);
 
     interface NavigationItem {
@@ -153,50 +296,9 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             onClick: () => window.dispatchEvent(new CustomEvent('toggle-search')),
             shortcut: '⌘K'
         },
-        {
-            path: '/dashboard',
-            label: 'Dashboard',
-            icon: LayoutDashboard,
-            show: true
-        },
-        {
-            path: '/tasks',
-            label: 'Tareas',
-            icon: CheckSquare,
-            show: true,
-            badge: pendingTasksCount
-        },
-        {
-            path: '/inventory',
-            label: 'Inventario',
-            icon: Boxes,
-            show: true,
-            isActive: (pathname, search) => pathname === '/inventory' && !new URLSearchParams(search).get('tab'),
-        },
-        {
-            path: '/inventory?view=canet&tab=control_stock',
-            label: 'Control stock',
-            icon: Wrench,
-            show: true,
-            isActive: (pathname, search) => pathname === '/inventory' && new URLSearchParams(search).get('tab') === 'control_stock',
-        },
-        {
-            path: '/control-operativo',
-            label: 'Control operativo',
-            icon: ClipboardCheck,
-            show: true,
-        },
-        {
-            path: '/despachos',
-            label: 'Despachos',
-            icon: FileText,
-            show: !isRestrictedUser,
-        },
     ];
 
-    const handleNavigation = (path: string) => {
-        navigate(path);
-        // Close sidebar on mobile after navigation
+    const closeSidebarOnMobile = () => {
         if (window.innerWidth < 768) {
             onClose();
         }
@@ -233,12 +335,23 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         });
     };
 
+    const handleDownloadUserManual = () => {
+        const manualUserName = effectiveSidebarUser?.name || currentUser?.name || 'Usuario';
+        const uniqueAreaItems = Array.from(new Set(areaNavigationItems.map((item) => item.label)));
+        downloadUserManualPdf({
+            userKey: effectiveUserKey,
+            userName: manualUserName,
+            areaItems: uniqueAreaItems,
+        });
+        setShowUserMenu(false);
+    };
+
     return (
         <>
             {/* Mobile backdrop */}
             {isOpen && (
                 <div
-                    className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm"
+                    className="fixed inset-0 bg-black/50 z-[890] md:hidden backdrop-blur-sm"
                     onClick={onClose}
                 />
             )}
@@ -246,7 +359,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             {/* Sidebar */}
             <aside
                 className={`
-          fixed top-0 left-0 h-screen bg-white shadow-2xl md:shadow-none z-[260] overflow-hidden
+          fixed top-0 left-0 h-screen bg-white shadow-2xl md:shadow-none z-[900] overflow-hidden
           transition-all duration-300 ease-in-out flex flex-col
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
           ${isCollapsed ? 'md:w-20' : 'md:w-64'}
@@ -315,12 +428,15 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                 : false;
                                         return (
                                             <button
+                                                type="button"
                                                 key={item.label}
-                                                onClick={() => {
+                                                onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
                                                     if (item.onClick) item.onClick();
                                                     if (item.path) {
                                                         navigate(item.path);
-                                                        if (window.innerWidth < 768) onClose();
+                                                        closeSidebarOnMobile();
                                                     }
                                                 }}
                                                 className={`
@@ -355,6 +471,103 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                     </div>
                                                 )}
                                             </button>
+                                        );
+                                    })}
+
+                                    {!isCollapsed && (
+                                        <div className="px-3 py-2">
+                                            <div className="h-px bg-slate-200/80 dark:bg-slate-700/70" />
+                                        </div>
+                                    )}
+
+                                    {roleNavigationItems.map((item) => {
+                                        const itemUrl = item.path ? new URL(item.path, window.location.origin) : null;
+                                        const isActive = item.isActive
+                                            ? item.isActive(location.pathname, location.search)
+                                            : itemUrl
+                                                ? location.pathname === itemUrl.pathname
+                                                    && (itemUrl.search ? location.search === itemUrl.search : !location.search)
+                                                : false;
+                                        const roleBadge = item.label === 'Tareas' ? pendingTasksCount : undefined;
+                                        return (
+                                            <a
+                                                key={`role-${item.label}`}
+                                                href={item.path || '#'}
+                                                onClick={closeSidebarOnMobile}
+                                                className={`
+                                                    w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
+                                                    ${isActive
+                                                        ? 'bg-gradient-to-r from-teal-700 via-teal-700 to-slate-700 text-white shadow-md'
+                                                        : `${textColor} ${hoverBg} hover:shadow-sm`
+                                                    }
+                                                `}
+                                            >
+                                                <item.icon
+                                                    size={20}
+                                                    className={`
+                                                        transition-transform duration-300 group-hover:scale-110 relative z-10
+                                                        ${isActive ? 'text-white' : (isMoodActive ? 'text-gray-800' : 'text-gray-400 dark:text-gray-500') + ' group-hover:text-primary'}
+                                                    `}
+                                                />
+
+                                                {!isCollapsed && (
+                                                    <div className="flex-1 flex items-center justify-between text-sm font-bold relative z-10">
+                                                        <span className="truncate">{item.label}</span>
+                                                        {roleBadge !== undefined && roleBadge > 0 && (
+                                                            <span className="flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 bg-red-500 text-white text-[10px] font-black rounded-full shadow-sm animate-pulse">
+                                                                {roleBadge > 99 ? '99+' : roleBadge}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </a>
+                                        );
+                                    })}
+
+                                    {areaNavigationItems.length > 0 && !isCollapsed && (
+                                        <div className="mt-3 px-3 py-4">
+                                            <div className="h-px bg-slate-200/80 dark:bg-slate-700/70" />
+                                            <p className="mt-4 text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">
+                                                Mi área
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {areaNavigationItems.map((item) => {
+                                        const itemUrl = item.path ? new URL(item.path, window.location.origin) : null;
+                                        const isActive = item.isActive
+                                            ? item.isActive(location.pathname, location.search)
+                                            : itemUrl
+                                                ? location.pathname === itemUrl.pathname
+                                                    && (itemUrl.search ? location.search === itemUrl.search : !location.search)
+                                                : false;
+                                        return (
+                                            <a
+                                                key={`area-${item.label}`}
+                                                href={item.path || '#'}
+                                                onClick={closeSidebarOnMobile}
+                                                className={`
+                                                    w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
+                                                    ${isActive
+                                                        ? 'bg-gradient-to-r from-teal-700 via-teal-700 to-slate-700 text-white shadow-md'
+                                                        : `${textColor} ${hoverBg} hover:shadow-sm`
+                                                    }
+                                                `}
+                                            >
+                                                <item.icon
+                                                    size={20}
+                                                    className={`
+                                                        transition-transform duration-300 group-hover:scale-110 relative z-10
+                                                        ${isActive ? 'text-white' : (isMoodActive ? 'text-gray-800' : 'text-gray-400 dark:text-gray-500') + ' group-hover:text-primary'}
+                                                    `}
+                                                />
+
+                                                {!isCollapsed && (
+                                                    <div className="flex-1 flex items-center justify-between text-sm font-bold relative z-10">
+                                                        <span className="truncate">{item.label}</span>
+                                                    </div>
+                                                )}
+                                            </a>
                                         );
                                     })}
                                 </nav>
@@ -433,6 +646,13 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                             <Lock size={16} />
                                                             Cambiar contraseña
                                                         </button>
+                                                        <button
+                                                            onClick={handleDownloadUserManual}
+                                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl transition-colors"
+                                                        >
+                                                            <FileText size={16} />
+                                                            Descargar manual
+                                                        </button>
                                                         <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                                                         <div className="px-3 py-2 flex items-center justify-between">
                                                             <span className="text-xs font-bold text-gray-400 uppercase">Tema</span>
@@ -472,7 +692,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                 {/* Desktop collapse toggle */}
                 <button
                     onClick={onToggleCollapse}
-                    className="hidden md:flex absolute -right-3 top-24 w-6 h-6 bg-white border border-violet-200 rounded-full items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-all duration-200 shadow-sm z-[261]"
+                    className="hidden md:flex absolute -right-3 top-24 w-6 h-6 bg-white border border-violet-200 rounded-full items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-all duration-200 shadow-sm z-[901]"
                 >
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </button>

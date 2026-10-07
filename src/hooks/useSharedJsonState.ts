@@ -500,6 +500,8 @@ export function useSharedJsonState<T>(
   const [loading, setLoading] = useState(true);
   const valueRef = useRef<T>(fallbackValue);
   const fallbackRef = useRef<T>(fallbackValue);
+  const mergeStrategyRef = useRef<typeof mergeStrategy>(mergeStrategy);
+  const isUsefulPayloadRef = useRef<typeof isUsefulPayload>(isUsefulPayload);
   const keyRef = useRef(key);
   const localCacheKeyRef = useRef(`shared_json_state_cache:${key}`);
   const backupKeyRef = useRef(`shared_json_state_backup_non_empty:${key}`);
@@ -519,6 +521,14 @@ export function useSharedJsonState<T>(
     fallbackRef.current = fallbackValue;
   }, [fallbackValue]);
 
+  useEffect(() => {
+    mergeStrategyRef.current = mergeStrategy;
+  }, [mergeStrategy]);
+
+  useEffect(() => {
+    isUsefulPayloadRef.current = isUsefulPayload;
+  }, [isUsefulPayload]);
+
   const persist = useCallback(
     async (next: T): Promise<T> => {
       let payloadToStore = next;
@@ -537,8 +547,9 @@ export function useSharedJsonState<T>(
           if (!error && data && Object.prototype.hasOwnProperty.call(data, 'payload')) {
             const remotePayload = data.payload as T;
             previousRemotePayload = remotePayload;
-            payloadToStore = (mergeStrategy
-              ? mergeStrategy(remotePayload, next)
+            const customMerge = mergeStrategyRef.current;
+            payloadToStore = (customMerge
+              ? customMerge(remotePayload, next)
               : defaultMergeRemoteLocal(remotePayload, next)) as T;
           }
         } catch {
@@ -549,7 +560,8 @@ export function useSharedJsonState<T>(
 
       const persistHistory = async (payload: T | undefined, source: SharedJsonHistorySnapshot['source']) => {
         if (!enableHistory || payload === undefined || isEffectivelyEmpty(payload)) return;
-        if (isUsefulPayload && !isUsefulPayload(payload)) return;
+        const isUseful = isUsefulPayloadRef.current;
+        if (isUseful && !isUseful(payload)) return;
         const historyKey = sharedJsonHistoryKeyFor(key);
         try {
           const { data } = await withTimeout<{ data: any; error: any }>(
@@ -631,7 +643,7 @@ export function useSharedJsonState<T>(
         protectFromEmptyOverwrite &&
         !preferRemoteSnapshot &&
         !isEffectivelyEmpty(payloadToStore) &&
-        (!isUsefulPayload || isUsefulPayload(payloadToStore))
+        (!isUsefulPayloadRef.current || isUsefulPayloadRef.current(payloadToStore))
       ) {
         const backupKey = backupKeyRef.current;
         const { error: backupError } = await withTimeout<{ error: any }>(
@@ -661,10 +673,8 @@ export function useSharedJsonState<T>(
       key,
       maxHistoryEntries,
       mergeBeforePersist,
-      mergeStrategy,
       preferRemoteSnapshot,
       protectFromEmptyOverwrite,
-      isUsefulPayload,
       userId,
     ],
   );
@@ -766,8 +776,8 @@ export function useSharedJsonState<T>(
         const hasPendingLocalWrites = writeVersionRef.current > lastPersistedVersionRef.current;
         const shouldMergeIncoming = mergeIncomingWithLocal || hasPendingLocalWrites;
         const incoming = shouldMergeIncoming
-          ? ((mergeStrategy
-              ? mergeStrategy(incomingRaw, valueRef.current)
+          ? ((mergeStrategyRef.current
+              ? mergeStrategyRef.current(incomingRaw, valueRef.current)
               : defaultMergeRemoteLocal(incomingRaw, valueRef.current)) as T)
           : incomingRaw;
 
@@ -866,8 +876,8 @@ export function useSharedJsonState<T>(
           const hasPendingLocalWrites = writeVersionRef.current > lastPersistedVersionRef.current;
           const shouldMergeIncoming = mergeIncomingWithLocal || hasPendingLocalWrites;
           const next = shouldMergeIncoming
-            ? ((mergeStrategy
-                ? mergeStrategy(nextRaw, valueRef.current)
+            ? ((mergeStrategyRef.current
+                ? mergeStrategyRef.current(nextRaw, valueRef.current)
                 : defaultMergeRemoteLocal(nextRaw, valueRef.current)) as T)
             : (nextRaw as T);
           setValue(next as T);
@@ -890,7 +900,7 @@ export function useSharedJsonState<T>(
       }
       void supabase.removeChannel(channel);
     };
-  }, [key, initializeIfMissing, mergeIncomingWithLocal, mergeStrategy, persist, pollIntervalMs, protectFromEmptyOverwrite]);
+  }, [key, initializeIfMissing, mergeIncomingWithLocal, persist, pollIntervalMs, protectFromEmptyOverwrite]);
 
   const setSharedValue = useCallback<React.Dispatch<React.SetStateAction<T>>>(
     (updater) => {

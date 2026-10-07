@@ -30,6 +30,14 @@ import TodoModal from '../components/TodoModal';
 import { useNotificationsContext } from '../context/NotificationsContext';
 
 const PRIORITY_TAG = '__priority__';
+const PREVIEW_ROLE_TO_USER_NAME: Record<string, string> = {
+  direction: 'Thalia',
+  sales: 'Itzi',
+  warehouse: 'Anabella',
+  finance: 'Heidy',
+  operations: 'Esteban',
+  support: 'Fer',
+};
 
 function personName(id: string) {
   return USERS.find((u) => u.id === id)?.name || id;
@@ -863,24 +871,46 @@ function TaskPreviewDetailModal({
 
 export default function TasksModernPreviewPage() {
   const { currentUser } = useAuth();
-  const { todos, toggleTodo, deleteTodo } = useTodos(currentUser);
+  const { todos, updateTodo, deleteTodo } = useTodos(currentUser);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [previewRoleKey, setPreviewRoleKey] = useState<string | null>(() => (
+    typeof window === 'undefined' ? null : window.localStorage.getItem('lunaris_role_preview')
+  ));
+  const effectiveTaskUser = useMemo(() => {
+    if (!currentUser?.isAdmin || !previewRoleKey) return currentUser;
+    const previewName = PREVIEW_ROLE_TO_USER_NAME[previewRoleKey];
+    return USERS.find((user) => user.name === previewName) || currentUser;
+  }, [currentUser, previewRoleKey]);
+  const effectiveTaskUserId = effectiveTaskUser?.id || currentUser.id;
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
   const [highlightRelampago, setHighlightRelampago] = useState(false);
   const [relampagoRecipients, setRelampagoRecipients] = useState<string[]>([]);
   const [openSections, setOpenSections] = useState({
+    priority: true,
     assigned: true,
-    urgent: true,
     created: true,
-    completed: false,
+    completedByMe: false,
+    fullyCompleted: false,
     team: false,
   });
   const { getSeenAt, markManySeenAt } = useTaskCommentSeen(currentUser);
 
+  useEffect(() => {
+    const handlePreviewRoleChange = () => {
+      setPreviewRoleKey(window.localStorage.getItem('lunaris_role_preview'));
+    };
+    window.addEventListener('storage', handlePreviewRoleChange);
+    window.addEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+    return () => {
+      window.removeEventListener('storage', handlePreviewRoleChange);
+      window.removeEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+    };
+  }, []);
+
   const getLatestForeignCommentAt = (task: Todo): string | null => {
     const foreignComments = (task.comments || [])
-      .filter((comment) => comment.user_id !== currentUser.id)
+      .filter((comment) => comment.user_id !== effectiveTaskUserId)
       .filter((comment) => !!comment.created_at);
     if (foreignComments.length === 0) return null;
     return foreignComments.reduce((latest: string, comment) => (
@@ -903,56 +933,74 @@ export default function TasksModernPreviewPage() {
     todos.forEach((task) => {
       const seenAtMs = toMillis(getSeenAt(task.id) || '');
       const unread = (task.comments || []).filter(
-        (comment: any) => comment.user_id !== currentUser.id && toMillis(comment.created_at) > seenAtMs,
+        (comment: any) => comment.user_id !== effectiveTaskUserId && toMillis(comment.created_at) > seenAtMs,
       ).length;
       map.set(task.id, unread);
     });
     return map;
-  }, [todos, currentUser.id, getSeenAt]);
+  }, [todos, effectiveTaskUserId, getSeenAt]);
 
   const isAdmin = !!currentUser?.isAdmin;
   const assignedToMe = useMemo(
     () => sortTasks(
-      todos.filter((task) => task.assigned_to.includes(currentUser.id) && !isGloballyDone(task)),
-      currentUser.id,
+      todos.filter((task) => (
+        task.assigned_to.includes(effectiveTaskUserId)
+        && !task.completed_by.includes(effectiveTaskUserId)
+        && !isGloballyDone(task)
+      )),
+      effectiveTaskUserId,
     ),
-    [todos, currentUser.id],
+    [todos, effectiveTaskUserId],
   );
   const createdByMe = useMemo(
     () => sortTasks(
-      todos.filter((task) => task.created_by === currentUser.id && !isGloballyDone(task)),
-      currentUser.id,
+      todos.filter((task) => task.created_by === effectiveTaskUserId && !isGloballyDone(task)),
+      effectiveTaskUserId,
     ),
-    [todos, currentUser.id],
+    [todos, effectiveTaskUserId],
   );
-  const urgent = useMemo(
+  const priorityTasks = useMemo(
     () => sortTasks(
-      todos.filter((task) => isUrgent(task, currentUser.id) && !isGloballyDone(task)),
-      currentUser.id,
+      todos.filter((task) => (
+        !isGloballyDone(task)
+        && (task.assigned_to.includes(effectiveTaskUserId) || task.created_by === effectiveTaskUserId)
+        && ((task.tags || []).includes(PRIORITY_TAG) || (task.shocked_users || []).includes(effectiveTaskUserId))
+      )),
+      effectiveTaskUserId,
     ),
-    [todos, currentUser.id],
+    [todos, effectiveTaskUserId],
   );
-  const completed = useMemo(
-    () => sortTasks(todos.filter(isGloballyDone), currentUser.id),
-    [todos, currentUser.id],
+  const completedByMePendingOthers = useMemo(
+    () => sortTasks(
+      todos.filter((task) => (
+        task.assigned_to.includes(effectiveTaskUserId)
+        && task.completed_by.includes(effectiveTaskUserId)
+        && !isGloballyDone(task)
+      )),
+      effectiveTaskUserId,
+    ),
+    [todos, effectiveTaskUserId],
+  );
+  const fullyCompleted = useMemo(
+    () => sortTasks(todos.filter((task) => task.assigned_to.includes(effectiveTaskUserId) && isGloballyDone(task)), effectiveTaskUserId),
+    [todos, effectiveTaskUserId],
   );
   const allTeam = useMemo(
-    () => sortTasks(todos.filter((task) => !isGloballyDone(task)), currentUser.id),
-    [todos, currentUser.id],
+    () => sortTasks(todos.filter((task) => !isGloballyDone(task)), effectiveTaskUserId),
+    [todos, effectiveTaskUserId],
   );
   const relampagoTasks = useMemo(
     () => sortTasks(
-      todos.filter((task) => (task.shocked_users || []).includes(currentUser.id) && !isGloballyDone(task)),
-      currentUser.id,
+      todos.filter((task) => (task.shocked_users || []).includes(effectiveTaskUserId) && !isGloballyDone(task)),
+      effectiveTaskUserId,
     ),
-    [todos, currentUser.id],
+    [todos, effectiveTaskUserId],
   );
 
-  const urgentCount = urgent.length;
-  const assignedOpenCount = assignedToMe.filter((task) => !task.completed_by.includes(currentUser.id)).length;
+  const priorityCount = priorityTasks.length;
+  const assignedOpenCount = assignedToMe.filter((task) => !task.completed_by.includes(effectiveTaskUserId)).length;
   const createdCount = createdByMe.length;
   const relampagoSpotlightTask = relampagoTasks[0] || null;
-  const spotlightTask = urgent[0] || assignedToMe[0] || createdByMe[0] || allTeam[0] || completed[0] || null;
 
   useEffect(() => {
     if (!selectedTask) return;
@@ -968,11 +1016,11 @@ export default function TasksModernPreviewPage() {
     const task = todos.find((item) => String(item.id) === taskParam);
     if (!task) return;
     setSelectedTask(task);
-    setHighlightRelampago(!!task.shocked_users?.includes(currentUser.id));
+    setHighlightRelampago(!!task.shocked_users?.includes(effectiveTaskUserId));
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('task');
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams, todos, currentUser.id]);
+  }, [searchParams, setSearchParams, todos, effectiveTaskUserId]);
 
   const openRelampago = (task: Todo) => {
     setHighlightRelampago(true);
@@ -997,9 +1045,21 @@ export default function TasksModernPreviewPage() {
 
   const toggleMyPart = async (task: Todo) => {
     try {
-      if (task.assigned_to.includes(currentUser.id)) {
-        await toggleTodo(task);
-      }
+      if (!task.assigned_to.includes(effectiveTaskUserId)) return;
+      const isDone = task.completed_by.includes(effectiveTaskUserId);
+      const nextCompleted = isDone
+        ? task.completed_by.filter((id) => id !== effectiveTaskUserId)
+        : Array.from(new Set([...task.completed_by, effectiveTaskUserId]));
+      const nextShocked = isDone
+        ? (task.shocked_users || [])
+        : (task.shocked_users || []).filter((uid) => uid !== effectiveTaskUserId);
+      await updateTodo({
+        id: task.id,
+        updates: {
+          completed_by: nextCompleted,
+          shocked_users: nextShocked,
+        },
+      });
     } catch (error) {
       console.error('Error toggling task in preview page:', error);
     }
@@ -1028,7 +1088,7 @@ export default function TasksModernPreviewPage() {
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-10">
       <section className="overflow-hidden rounded-[2rem] border border-violet-200 bg-white shadow-sm">
-        <div className="grid gap-6 bg-[radial-gradient(circle_at_top_right,rgba(168,85,247,0.12),transparent_30%),linear-gradient(180deg,#ffffff_0%,#faf5ff_100%)] p-6 lg:grid-cols-[1.3fr_0.7fr] lg:p-8">
+        <div className="bg-[radial-gradient(circle_at_top_right,rgba(168,85,247,0.12),transparent_30%),linear-gradient(180deg,#ffffff_0%,#faf5ff_100%)] p-6 lg:p-8">
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-black uppercase tracking-[0.3em] text-violet-700">
               <Sparkles size={13} />
@@ -1039,7 +1099,7 @@ export default function TasksModernPreviewPage() {
                 Tareas del equipo
               </h1>
               <p className="mt-3 max-w-2xl text-base font-medium leading-7 text-slate-600">
-                Revisa lo que te toca, lo que has creado y lo urgente con nombres visibles, progreso por persona y avisos claros.
+                Revisa primero lo prioritario, luego lo asignado a ti y al final lo completado por partes o por todo el equipo.
               </p>
             </div>
 
@@ -1048,7 +1108,7 @@ export default function TasksModernPreviewPage() {
                 {assignedOpenCount} asignadas abiertas
               </span>
               <span className="rounded-full bg-amber-500 px-3 py-1.5 text-xs font-black text-white shadow-sm">
-                {urgentCount} urgentes
+                {priorityCount} prioritarias
               </span>
               <span className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-black text-white shadow-sm">
                 {createdCount} creadas por ti
@@ -1075,44 +1135,28 @@ export default function TasksModernPreviewPage() {
               </button>
             </div>
           </div>
-
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-950 p-5 text-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.7)]">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-amber-500/15 p-3 text-amber-300">
-                <BellRing size={24} />
-              </div>
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">Lo urgente</p>
-                <h2 className="text-2xl font-black">Avisos claros</h2>
-              </div>
-            </div>
-            <div className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-bold text-slate-300">Quiere decir: revisar pronto</span>
-                <ArrowRight size={16} className="text-amber-300" />
-              </div>
-              <p className="mt-3 text-sm leading-6 text-slate-300">
-                Las tareas urgentes quedan arriba y también envían notificación cuando activas un relámpago.
-              </p>
-              <button
-                type="button"
-                onClick={() => spotlightTask && openRelampago(spotlightTask)}
-                disabled={!spotlightTask}
-                className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-black text-slate-950 hover:bg-amber-400"
-              >
-                Ver tarea destacada
-                <ArrowRight size={15} />
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 
-        <TaskRail
+      <TaskRail
+        title="Prioritarias"
+        subtitle="Marcadas como prioritarias o relámpago. Van arriba para que no se pierdan."
+        tasks={priorityTasks}
+        currentUserId={effectiveTaskUserId}
+        unreadCommentsByTask={unreadCommentsByTask}
+        onOpenTask={setSelectedTask}
+        onToggleMine={toggleMyPart}
+        onDeleteTask={deleteTask}
+        tone="amber"
+        isOpen={openSections.priority}
+        onToggleOpen={() => toggleSection('priority')}
+      />
+
+      <TaskRail
         title="Asignadas a mí"
-        subtitle="Más claras, con nombres visibles, fecha de creación y prioridad por lo más reciente."
+        subtitle="Solo pendientes tuyas. Si marcas tu parte como hecha, salen de esta fila."
         tasks={assignedToMe}
-        currentUserId={currentUser.id}
+        currentUserId={effectiveTaskUserId}
         unreadCommentsByTask={unreadCommentsByTask}
         onOpenTask={setSelectedTask}
         onToggleMine={toggleMyPart}
@@ -1122,25 +1166,11 @@ export default function TasksModernPreviewPage() {
         onToggleOpen={() => toggleSection('assigned')}
       />
 
-        <TaskRail
-        title="Urgentes / relámpago"
-        subtitle="Una fila que agrupa tareas señaladas, prioritarias o vencidas."
-        tasks={urgent}
-        currentUserId={currentUser.id}
-        unreadCommentsByTask={unreadCommentsByTask}
-        onOpenTask={setSelectedTask}
-        onToggleMine={toggleMyPart}
-        onDeleteTask={deleteTask}
-        tone="amber"
-        isOpen={openSections.urgent}
-        onToggleOpen={() => toggleSection('urgent')}
-      />
-
-        <TaskRail
+      <TaskRail
         title="Creadas por mí"
         subtitle="Lo que tú generaste, ordenado por fecha de creación y con la urgencia visible."
         tasks={createdByMe}
-        currentUserId={currentUser.id}
+        currentUserId={effectiveTaskUserId}
         unreadCommentsByTask={unreadCommentsByTask}
         onOpenTask={setSelectedTask}
         onToggleMine={toggleMyPart}
@@ -1150,12 +1180,12 @@ export default function TasksModernPreviewPage() {
         onToggleOpen={() => toggleSection('created')}
       />
 
-      {isAdmin && (
+      {isAdmin && !previewRoleKey && (
         <TaskRail
           title="Todo el equipo"
           subtitle="Vista administrativa, pero todavía en formato carrusel para no hacerse eterna."
           tasks={allTeam}
-          currentUserId={currentUser.id}
+          currentUserId={effectiveTaskUserId}
           unreadCommentsByTask={unreadCommentsByTask}
           onOpenTask={setSelectedTask}
           onToggleMine={toggleMyPart}
@@ -1166,22 +1196,36 @@ export default function TasksModernPreviewPage() {
         />
       )}
 
-        <TaskRail
-        title="Completas"
-        subtitle="Todo lo que ya está terminado por todo el equipo, al final y plegado."
-        tasks={completed}
-        currentUserId={currentUser.id}
+      <TaskRail
+        title="Completas por mí / pendientes por otros"
+        subtitle="Tu parte ya está hecha, pero aún falta alguien más."
+        tasks={completedByMePendingOthers}
+        currentUserId={effectiveTaskUserId}
         unreadCommentsByTask={unreadCommentsByTask}
         onOpenTask={setSelectedTask}
         onToggleMine={toggleMyPart}
         onDeleteTask={deleteTask}
         tone="emerald"
-        isOpen={openSections.completed}
-        onToggleOpen={() => toggleSection('completed')}
+        isOpen={openSections.completedByMe}
+        onToggleOpen={() => toggleSection('completedByMe')}
+      />
+
+      <TaskRail
+        title="Completas full"
+        subtitle="Terminadas por todas las personas asignadas."
+        tasks={fullyCompleted}
+        currentUserId={effectiveTaskUserId}
+        unreadCommentsByTask={unreadCommentsByTask}
+        onOpenTask={setSelectedTask}
+        onToggleMine={toggleMyPart}
+        onDeleteTask={deleteTask}
+        tone="emerald"
+        isOpen={openSections.fullyCompleted}
+        onToggleOpen={() => toggleSection('fullyCompleted')}
       />
 
       <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-white/80 p-4 text-sm font-semibold text-slate-600">
-        Las tareas se pueden revisar hacia los lados. Los nombres, fechas, comentarios nuevos y avisos urgentes quedan visibles en cada tarjeta.
+        Las tareas se pueden revisar hacia los lados. Las prioritarias quedan arriba; las completadas por ti y las completadas por todo el equipo quedan plegadas al final.
       </div>
 
       {showCreateModal && <TodoModal onClose={() => setShowCreateModal(false)} />}

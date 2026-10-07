@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { USERS } from '../constants';
@@ -14,8 +14,26 @@ type ChecklistTask = {
     created_at?: string;
 };
 
+const PREVIEW_ROLE_TO_USER_NAME: Record<string, string> = {
+    direction: 'Thalia',
+    sales: 'Itzi',
+    warehouse: 'Anabella',
+    finance: 'Heidy',
+    operations: 'Esteban',
+    support: 'Fer',
+};
+
 export default function DailyChecklistPage() {
     const { currentUser } = useAuth();
+    const [previewRoleKey, setPreviewRoleKey] = useState<string | null>(() => (
+        typeof window === 'undefined' ? null : window.localStorage.getItem('lunaris_role_preview')
+    ));
+    const effectiveChecklistUser = useMemo(() => {
+        if (!currentUser?.isAdmin || !previewRoleKey) return currentUser;
+        const previewName = PREVIEW_ROLE_TO_USER_NAME[previewRoleKey];
+        return USERS.find((user) => user.name === previewName) || currentUser;
+    }, [currentUser, previewRoleKey]);
+    const effectiveChecklistUserId = effectiveChecklistUser?.id || currentUser?.id || '';
     const [viewMode, setViewMode] = useState<'daily' | 'templates' | 'history'>('daily');
     const [selectedUserForTemplate, setSelectedUserForTemplate] = useState(USERS[0]?.id || '');
     const [templateTasks, setTemplateTasks] = useState<{ id: string; text: string }[]>([]);
@@ -29,19 +47,31 @@ export default function DailyChecklistPage() {
     const [historyFilterDate, setHistoryFilterDate] = useState(toDateKey(new Date()));
     const [historyFilterUser, setHistoryFilterUser] = useState('all');
 
-    const isAdmin = currentUser?.isAdmin;
+    const isAdmin = currentUser?.isAdmin && !previewRoleKey;
     const todayKey = toDateKey(new Date());
 
     useEffect(() => {
+        const handlePreviewRoleChange = () => {
+            setPreviewRoleKey(window.localStorage.getItem('lunaris_role_preview'));
+        };
+        window.addEventListener('storage', handlePreviewRoleChange);
+        window.addEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+        return () => {
+            window.removeEventListener('storage', handlePreviewRoleChange);
+            window.removeEventListener('lunaris-role-preview-change', handlePreviewRoleChange);
+        };
+    }, []);
+
+    useEffect(() => {
         if (viewMode === 'templates') {
-            const targetUser = isAdmin ? selectedUserForTemplate : currentUser?.id;
+            const targetUser = isAdmin ? selectedUserForTemplate : effectiveChecklistUserId;
             if (targetUser) fetchTemplate(targetUser);
         } else if (viewMode === 'daily') {
             fetchDailyChecklist();
         } else if (viewMode === 'history') {
             fetchHistory();
         }
-    }, [viewMode, selectedUserForTemplate, historyFilterDate, historyFilterUser, currentUser]);
+    }, [viewMode, selectedUserForTemplate, historyFilterDate, historyFilterUser, currentUser, effectiveChecklistUserId]);
 
     // --- Template Management ---
     async function fetchTemplate(userId: string) {
@@ -64,7 +94,7 @@ export default function DailyChecklistPage() {
         if (!currentUser) return;
         setSaving(true);
 
-        const targetUserId = isAdmin ? selectedUserForTemplate : currentUser.id;
+        const targetUserId = isAdmin ? selectedUserForTemplate : effectiveChecklistUserId || currentUser.id;
 
         const { error } = await supabase
             .from('checklist_templates')
@@ -100,7 +130,7 @@ export default function DailyChecklistPage() {
 
     // --- Daily Checklist (User) ---
     async function fetchDailyChecklist() {
-        if (!currentUser) return;
+        if (!currentUser || !effectiveChecklistUserId) return;
         setLoading(true);
 
         // 1. Fetch BOTH template and daily data needed for merging
@@ -108,13 +138,13 @@ export default function DailyChecklistPage() {
             supabase
                 .from('daily_checklists')
                 .select('*')
-                .eq('user_id', currentUser.id)
+                .eq('user_id', effectiveChecklistUserId)
                 .eq('date_key', todayKey)
                 .single(),
             supabase
                 .from('checklist_templates')
                 .select('tasks')
-                .eq('user_id', currentUser.id)
+                .eq('user_id', effectiveChecklistUserId)
                 .single()
         ]);
 
@@ -153,13 +183,13 @@ export default function DailyChecklistPage() {
     }
 
     async function saveDailyProgress() {
-        if (!currentUser) return;
+        if (!currentUser || !effectiveChecklistUserId) return;
         setSaving(true);
 
         const { error } = await supabase
             .from('daily_checklists')
             .upsert({
-                user_id: currentUser.id,
+                user_id: effectiveChecklistUserId,
                 date_key: todayKey,
                 history: dailyTasks,
                 updated_at: new Date().toISOString()
@@ -211,7 +241,7 @@ export default function DailyChecklistPage() {
             .order('date_key', { ascending: false });
 
         if (!isAdmin) {
-            query = query.eq('user_id', currentUser.id);
+            query = query.eq('user_id', effectiveChecklistUserId || currentUser.id);
         } else {
             if (historyFilterUser !== 'all') {
                 query = query.eq('user_id', historyFilterUser);

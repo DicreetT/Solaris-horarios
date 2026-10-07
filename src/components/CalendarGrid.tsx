@@ -9,10 +9,11 @@ import { useAbsences } from '../hooks/useAbsences';
 import { useTodos } from '../hooks/useTodos';
 import { useMeetings } from '../hooks/useMeetings';
 import { useDailyStatus } from '../hooks/useDailyStatus';
-import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, CheckSquare, Users, XCircle, MessageSquare } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, BookOpen, AlertCircle, CheckSquare, Users, XCircle, MessageSquare, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CalendarOverride } from '../hooks/useCalendarOverrides';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
+import { isAnnouncementActiveOn, isAnnouncementVisibleForUser, useAnnouncements } from '../hooks/useAnnouncements';
 
 /**
  * Calendario mensual rediseñado
@@ -49,6 +50,7 @@ export default function CalendarGrid({
     const { meetingRequests } = useMeetings(currentUser);
     const { dailyStatuses } = useDailyStatus(currentUser);
     const { calendarEvents } = useCalendarEvents();
+    const { announcements } = useAnnouncements(currentUser);
     const navigate = useNavigate();
 
     const year = monthDate.getFullYear();
@@ -77,7 +79,7 @@ export default function CalendarGrid({
     }
 
     return (
-        <div className="bg-white rounded-3xl border border-gray-200 shadow-xl h-full flex flex-col overflow-hidden ring-1 ring-gray-100">
+        <div className="bg-white rounded-3xl border border-gray-200 shadow-xl h-full min-h-[860px] flex flex-col overflow-hidden ring-1 ring-gray-100">
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50/50 shrink-0">
                 <div className="flex items-center gap-4">
@@ -120,10 +122,10 @@ export default function CalendarGrid({
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: -20 }}
                         transition={{ duration: 0.3, ease: "easeOut" }}
-                        className="grid grid-cols-7 auto-rows-fr h-full bg-gray-200/50 gap-px overflow-y-auto no-scrollbar"
+                        className="grid grid-cols-7 auto-rows-[minmax(128px,1fr)] h-full min-h-[768px] bg-gray-200/50 gap-px overflow-y-auto no-scrollbar"
                     >
                         {daysArray.map((d, idx) => {
-                            if (!d) return <div key={idx} className="bg-gray-50/30 aspect-square" />;
+                            if (!d) return <div key={idx} className="min-h-[128px] bg-gray-50/30" />;
 
                             const dKey = toDateKey(d);
                             const isSelected = selectedDate && toDateKey(selectedDate) === dKey;
@@ -135,6 +137,10 @@ export default function CalendarGrid({
                             const isClickable = isAdminView || !isNonWorking;
 
                             const dayEvents = calendarEvents.filter(e => e.date_key === dKey);
+                            const dayAnnouncements = announcements.filter(announcement => (
+                                isAnnouncementActiveOn(announcement, dKey)
+                                && isAnnouncementVisibleForUser(announcement, currentUser)
+                            ));
                             const dayData = timeData[dKey] || {};
                             let workEntries: { userId: string; record: any }[] = [];
 
@@ -192,6 +198,20 @@ export default function CalendarGrid({
                                     color: 'bg-rose-50 text-rose-800 border-rose-200',
                                     icon: <AlertCircle size={10} />,
                                     detail: event.description || event.title || 'Evento del día'
+                                });
+                            });
+
+                            dayAnnouncements.forEach(announcement => {
+                                badges.push({
+                                    type: 'announcement',
+                                    label: announcement.title || 'Aviso',
+                                    color: announcement.priority === 'urgent'
+                                        ? 'bg-red-50 text-red-700 border-red-200'
+                                        : announcement.priority === 'important'
+                                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                            : 'bg-slate-50 text-slate-700 border-slate-200',
+                                    icon: <Bell size={10} />,
+                                    detail: announcement.description || announcement.title || 'Aviso'
                                 });
                             });
 
@@ -271,7 +291,7 @@ export default function CalendarGrid({
                                     whileHover={{ y: isNonWorking ? 0 : -2 }}
                                     onClick={() => isClickable && onSelectDate(d)}
                                     className={`
-                                        group relative flex flex-col p-3 transition-all min-h-[120px] outline-none
+                                        group relative flex flex-col p-3 transition-all min-h-[128px] outline-none
                                         ${isSelected
                                             ? "bg-primary/[0.08] ring-2 ring-primary ring-inset z-20 shadow-lg shadow-primary/10"
                                             : isNonWorking

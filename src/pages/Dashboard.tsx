@@ -310,6 +310,7 @@ type DailyInventoryControlReport = {
         assemblies: DailyControlMovementSnapshot[];
         stock: DailyControlStockSnapshot[];
     };
+    reviews?: Record<string, unknown>;
     savedAt?: string;
     savedBy?: string;
     createdAt: string;
@@ -601,6 +602,7 @@ const normalizeDailyInventoryControlState = (value: unknown): DailyInventoryCont
                         stock: Array.isArray(report.snapshot.stock) ? report.snapshot.stock : [],
                     }
                     : undefined,
+                reviews: report?.reviews && typeof report.reviews === 'object' ? report.reviews : undefined,
                 savedAt: clean(report?.savedAt),
                 savedBy: clean(report?.savedBy),
                 createdAt: clean(report?.createdAt) || new Date().toISOString(),

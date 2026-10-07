@@ -4,12 +4,13 @@ import { useAuth } from '../context/AuthContext';
 import { useTimeData } from '../hooks/useTimeData';
 import { useAbsences } from '../hooks/useAbsences';
 import { useWorkProfile } from '../hooks/useWorkProfile';
-import { USERS } from '../constants';
+import { ESTEBAN_ID, USERS } from '../constants';
 import { formatDatePretty, toDateKey } from '../utils/dateUtils';
 import { calculateTotalHours, calculateHours } from '../utils/timeUtils';
 import TimeTrackerWidget from '../components/TimeTrackerWidget';
-import { Clock, History, Calendar, CheckSquare, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle, Coffee } from 'lucide-react';
+import { Clock, History, Calendar, Edit2, Save, Trash2, Shield, User as UserIcon, Briefcase, AlertTriangle, Coffee, FileText } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
+import { useFinanceOperations } from '../hooks/useFinanceOperations';
 
 import { useCalendarOverrides } from '../hooks/useCalendarOverrides';
 
@@ -21,6 +22,7 @@ export default function TimeTrackingPage() {
     const { absenceRequests, createAbsence, deleteAbsenceByDate } = useAbsences(currentUser);
     const { userProfiles, updateProfile } = useWorkProfile();
     const { overrides: calendarOverrides } = useCalendarOverrides();
+    const { upsertMonthlyReport } = useFinanceOperations(currentUser);
 
     // UI States
     const [adminViewMode, setAdminViewMode] = useState<'table' | 'details'>('table');
@@ -35,6 +37,10 @@ export default function TimeTrackingPage() {
         from: monthStart,
         to: monthEnd,
     });
+    const userParam = searchParams.get('user');
+    const forcedUserId = userParam === 'esteban'
+        ? ESTEBAN_ID
+        : USERS.find((user) => user.id === userParam || user.name.toLowerCase() === String(userParam || '').toLowerCase())?.id;
 
     // Navigation Handlers
     const handlePrevMonth = () => {
@@ -91,11 +97,13 @@ export default function TimeTrackingPage() {
     // --- Helpers ---
 
     const getProfile = (userId: string) => {
-        return userProfiles.find(p => p.user_id === userId) || {
-            weekly_hours: 0,
-            vacation_days_total: 22,
-            hours_adjustment: 0,
-            vacation_adjustment: 0
+        const profile = userProfiles.find(p => p.user_id === userId);
+        return {
+            user_id: userId,
+            weekly_hours: Number(profile?.weekly_hours ?? 0),
+            vacation_days_total: Number(profile?.vacation_days_total ?? 22),
+            hours_adjustment: Number(profile?.hours_adjustment ?? 0),
+            vacation_adjustment: Number(profile?.vacation_adjustment ?? 0),
         };
     };
 
@@ -223,6 +231,56 @@ export default function TimeTrackingPage() {
                 const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
                 return acc + diffDays;
             }, 0);
+    };
+
+    const requestOverlapsSelectedMonth = (request: any) => {
+        if (!request?.date_key) return false;
+        const start = new Date(`${request.date_key}T00:00:00`);
+        const end = request.end_date ? new Date(`${request.end_date}T00:00:00`) : start;
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+        return start <= monthEnd && end >= monthStart;
+    };
+
+    const handleGenerateMonthlyTimeReport = (userId: string) => {
+        const user = USERS.find((item) => item.id === userId);
+        if (!user) return;
+        const profile = getProfile(userId);
+        const monthKey = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
+        const monthLabel = selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
+        const monthlyTarget = calculateMonthlyExpectedHours(userId, selectedDate);
+        const workedHoursCalculated = calculateMonthlyWorkedHours(userId, selectedDate);
+        const workedHoursTotal = workedHoursCalculated + (profile.hours_adjustment || 0);
+        const pendingHours = Math.max(0, monthlyTarget - workedHoursTotal);
+        const userRequests = absenceRequests.filter((request: any) => request.created_by === userId && requestOverlapsSelectedMonth(request));
+        const vacations = userRequests.filter((request: any) => request.type === 'vacation');
+        const absences = userRequests.filter((request: any) => request.type === 'absence');
+        const permits = userRequests.filter((request: any) => request.type === 'special_permit');
+        const requestLines = userRequests.length
+            ? userRequests.map((request: any) => `- ${request.type} · ${request.date_key}${request.end_date ? ` → ${request.end_date}` : ''} · estado: ${request.status}${request.reason ? ` · ${request.reason}` : ''}`).join('\n')
+            : '- Sin solicitudes registradas en el mes.';
+
+        upsertMonthlyReport({
+            monthKey,
+            title: `Informe horario · ${user.name} · ${monthLabel}`,
+            reportType: 'otros',
+            notes: [
+                `Área: Jornada / Registro horario`,
+                `Usuario: ${user.name}`,
+                `Mes: ${monthLabel}`,
+                `Objetivo mensual: ${monthlyTarget}h`,
+                `Horas trabajadas: ${workedHoursTotal.toFixed(1)}h`,
+                `Horas pendientes: ${pendingHours.toFixed(1)}h`,
+                `Vacaciones solicitadas/tomadas: ${vacations.length}`,
+                `Ausencias: ${absences.length}`,
+                `Permisos: ${permits.length}`,
+                '',
+                'Solicitudes del mes:',
+                requestLines,
+            ].join('\n'),
+            attachments: [],
+            updatedBy: userId,
+        });
+        alert(`Informe horario de ${user.name} generado para ${monthLabel}.`);
     };
 
     // --- Sub-Components ---
@@ -478,9 +536,19 @@ export default function TimeTrackingPage() {
                     {/* Hours Card */}
                     <div className="bg-white rounded-3xl p-6 shadow-lg border border-indigo-50 relative overflow-hidden">
                         <div className="relative z-10">
-                            <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2 mb-4">
-                                <Clock className="text-indigo-500" /> Control Horario ({selectedDate.toLocaleString('es-ES', { month: 'long' })})
-                            </h3>
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                <h3 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+                                    <Clock className="text-indigo-500" /> Control Horario ({selectedDate.toLocaleString('es-ES', { month: 'long' })})
+                                </h3>
+                                <button
+                                    type="button"
+                                    onClick={() => handleGenerateMonthlyTimeReport(userId)}
+                                    className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-700 hover:bg-indigo-100"
+                                >
+                                    <FileText size={14} />
+                                    Generar informe del mes
+                                </button>
+                            </div>
                             <div className="grid grid-cols-3 gap-4 text-center divide-x divide-gray-100">
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Objetivo</p>
@@ -791,13 +859,12 @@ export default function TimeTrackingPage() {
                 </div>
             </div>
 
-            {canManageVacationBalances ? (
+            {isAdmin && !forcedUserId ? (
                 <div className="space-y-8">
-                    {!isAdmin && renderUserDashboard(currentUser.id)}
                     {renderAdminTable()}
                 </div>
             ) : (
-                renderUserDashboard(currentUser.id)
+                renderUserDashboard(forcedUserId || currentUser.id)
             )}
         </div>
     );

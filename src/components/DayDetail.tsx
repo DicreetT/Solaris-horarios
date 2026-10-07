@@ -23,7 +23,7 @@ export default function DayDetail({
 }: DayDetailProps) {
     const { currentUser: user } = useAuth();
     const { timeData, updateTimeEntry } = useTimeData();
-    const { updateAbsenceStatus } = useAbsences(user);
+    const { absenceRequests, updateAbsenceStatus } = useAbsences(user);
     const { addNotification } = useNotificationsContext();
 
     const [messageDrafts, setMessageDrafts] = useState({});
@@ -77,12 +77,37 @@ export default function DayDetail({
     }
 
     const handleApproveVacation = async (userId: string) => {
-        // We need to find the absence request for this user and date.
-        // This is complex because we don't have the absence ID here directly from timeData.
-        // timeData stores 'vacation-request' status but maybe not the absence ID.
-        // For now, I will just define the function to satisfy the usage, 
-        // but log an error or TODO.
-        console.error("handleApproveVacation not fully implemented - missing absence ID");
+        const request = absenceRequests.find((item: any) => {
+            const start = item.date_key;
+            const end = item.end_date || item.date_key;
+            return (
+                item.created_by === userId &&
+                item.status === 'pending' &&
+                (item.type === 'vacation' || `${item.reason || ''}`.toLowerCase().includes('vacaciones')) &&
+                start <= key &&
+                end >= key
+            );
+        });
+
+        if (!request) {
+            alert('No encontré una solicitud de vacaciones pendiente para esa persona en este día.');
+            return;
+        }
+
+        try {
+            await updateAbsenceStatus({
+                id: request.id,
+                status: 'approved',
+                response_message: 'Vacaciones aprobadas desde el calendario.',
+            });
+            updateRecord(userId, (r) => ({ ...r, status: 'vacation' }));
+            await addNotification({
+                message: 'Vacaciones aprobadas correctamente.',
+            });
+        } catch (error) {
+            console.error('Error approving vacation request', error);
+            alert('No se pudo aprobar la solicitud. Revisa permisos o inténtalo desde Solicitudes.');
+        }
     };
 
     function handleUpdateNote(note: string) {
