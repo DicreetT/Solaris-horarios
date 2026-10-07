@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { User } from '../types';
-import { useSharedJsonState } from './useSharedJsonState';
+import { saveSharedJsonStateNow, useSharedJsonState } from './useSharedJsonState';
 
 export const SALES_LEARNING_KEY = 'sales_learning_workspace_v1';
 
@@ -153,6 +153,21 @@ export function useSalesLearning(currentUser?: User | null) {
     faqs: Array.isArray(state?.faqs) ? state.faqs : [],
   }), [state]);
 
+  const syncSalesLearningNow = async () => {
+    const synced = await saveSharedJsonStateNow(
+      SALES_LEARNING_KEY,
+      safeState,
+      {
+        userId: currentUser?.id,
+        mergeBeforePersist: true,
+        mergeStrategy: mergeSalesLearningState,
+        protectFromEmptyOverwrite: true,
+      },
+    );
+    setState(synced);
+    return synced;
+  };
+
   const createFormation = (draft: Omit<FormationRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => {
     const now = new Date().toISOString();
     const formation: FormationRecord = {
@@ -278,5 +293,6 @@ export function useSalesLearning(currentUser?: User | null) {
     updateNeed,
     createFaq,
     updateFaqStatus,
+    syncSalesLearningNow,
   };
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, Lightbulb, Plus, Radar, RotateCcw, Tags, Trash2 } from 'lucide-react';
+import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, Lightbulb, Plus, Radar, RotateCcw, Save, Tags, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { CommercialNeedRecord, FaqRecord, StudentSupportRecord, useSalesLearning } from '../hooks/useSalesLearning';
 import { useProjects } from '../hooks/useProjects';
@@ -100,6 +100,7 @@ export default function SalesLearningPage() {
     updateNeed,
     createFaq,
     updateFaqStatus,
+    syncSalesLearningNow,
   } = useSalesLearning(currentUser);
   const { createProject } = useProjects(currentUser);
 
@@ -141,6 +142,7 @@ export default function SalesLearningPage() {
     tags: '',
   });
   const [selectedFormationId, setSelectedFormationId] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
 
   const supportTags = useMemo(() => tagSummary(support), [support]);
   const activeCommercialSignals = useMemo(() => (
@@ -223,6 +225,17 @@ export default function SalesLearningPage() {
     const created = createFormation(formationDraft);
     setSelectedFormationId(created.id);
     setFormationDraft({ name: '', objective: '', purpose: '', duration: '', teacher: '', audienceSize: '', tools: '', resources: '', ideas: '', structure: '', status: 'draft' });
+  };
+
+  const handleSyncFormations = async () => {
+    setSyncMessage('Sincronizando...');
+    try {
+      const synced = await syncSalesLearningNow();
+      const activeCount = synced.formations.filter((formation) => !formation.deletedAt && formation.status === 'active').length;
+      setSyncMessage(`${activeCount} formación(es) activas sincronizadas.`);
+    } catch {
+      setSyncMessage('No se pudo sincronizar. Revisa conexión y vuelve a intentar.');
+    }
   };
 
   const handleCreateSupport = (event: React.FormEvent) => {
@@ -333,6 +346,17 @@ export default function SalesLearningPage() {
               <div className="space-y-3 rounded-2xl border border-pink-100 bg-white p-4">
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-pink-700">Formaciones activas</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSyncFormations}
+                      className="inline-flex items-center gap-2 rounded-xl border border-pink-200 bg-pink-50 px-3 py-2 text-xs font-black text-pink-700 hover:bg-pink-100"
+                    >
+                      <Save size={14} />
+                      Sincronizar formaciones
+                    </button>
+                    {syncMessage && <span className="text-xs font-bold text-slate-500">{syncMessage}</span>}
+                  </div>
                   <select
                     value={selectedFormation?.id || ''}
                     onChange={(event) => setSelectedFormationId(event.target.value)}
