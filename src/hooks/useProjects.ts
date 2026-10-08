@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { ESTEBAN_ID } from '../constants';
 import type { Attachment, User } from '../types';
 import { findMentionedUsersInText } from '../utils/mentionsAndTags';
@@ -361,6 +361,30 @@ export function useProjects(currentUser?: User | null) {
       }).catch((): void => undefined);
     });
   };
+
+  useEffect(() => {
+    if (!currentUser?.id || projects.length === 0) return;
+
+    projects.forEach((project) => {
+      createAutomaticProjectMentions(
+        project,
+        'project',
+        project.id,
+        `Proyecto: ${project.name}`,
+        [project.objective, project.description, project.expectedResult, project.completionDefinition].join('\n\n'),
+      );
+
+      (project.steps || []).forEach((step) => {
+        createAutomaticProjectMentions(
+          project,
+          'project_step',
+          `${project.id}:${step.id}`,
+          `Paso de proyecto: ${step.name}`,
+          [step.name, step.description, step.deliverable].join('\n\n'),
+        );
+      });
+    });
+  }, [currentUser?.id, mentions, projects]);
 
   const createProject = (draft: ProjectDraft, options?: { ownerId?: string; actorId?: string }) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
