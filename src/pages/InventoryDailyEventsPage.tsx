@@ -202,6 +202,81 @@ function buildLunarisStockLookup(snapshot: InventoryStockControlSnapshot | null 
   return lookup;
 }
 
+function countStockDifferences(stockRows: ReturnType<typeof getStockRows>) {
+  return stockRows.filter((row) => (
+    (row.diffPhysical !== null && Math.abs(Number(row.diffPhysical)) > 0.000001)
+    || (row.diffZoho !== null && Math.abs(Number(row.diffZoho)) > 0.000001)
+    || (row.diffPhysicalZoho !== null && Math.abs(Number(row.diffPhysicalZoho)) > 0.000001)
+  )).length;
+}
+
+function InventoryWorkflowPanel({
+  report,
+  stockRows,
+}: {
+  report: InventoryDailyReport;
+  stockRows: ReturnType<typeof getStockRows>;
+}) {
+  const reviews = report.reviews || ({} as NonNullable<InventoryDailyReport['reviews']>);
+  const missingPhysical = stockRows.filter((row) => row.physical === '').length;
+  const missingZoho = stockRows.filter((row) => row.zoho === '').length;
+  const differences = countStockDifferences(stockRows);
+  const physicalDone = stockRows.length > 0 && missingPhysical === 0 && reviews.anabella?.status === 'conforme';
+  const zohoDone = physicalDone && missingZoho === 0 && reviews.itzi?.status === 'conforme';
+  const reconciliationDone = zohoDone && reviews.heidy?.status === 'conforme';
+  const steps = [
+    {
+      title: 'Control creado',
+      detail: `${stockRows.length} fila(s) CANET cargadas desde Control de Stock.`,
+      done: true,
+      tone: 'emerald',
+    },
+    {
+      title: 'Físico Anabela / Fer',
+      detail: missingPhysical > 0 ? `Faltan ${missingPhysical} físico(s).` : 'Físico completo; falta guardar conforme si no aparece cerrado.',
+      done: physicalDone,
+      tone: physicalDone ? 'emerald' : 'sky',
+    },
+    {
+      title: 'Zoho / movimientos Itzi',
+      detail: !physicalDone ? 'Se puede ir revisando, pero físico aún no está cerrado.' : (missingZoho > 0 ? `Faltan ${missingZoho} valor(es) Zoho.` : 'Zoho completo; falta guardar conforme si no aparece cerrado.'),
+      done: zohoDone,
+      tone: zohoDone ? 'emerald' : 'sky',
+    },
+    {
+      title: 'Conciliación Heidi',
+      detail: !zohoDone ? 'Queda esperando físico y Zoho completos.' : (differences > 0 ? `${differences} diferencia(s) para revisar.` : 'Sin diferencias pendientes.'),
+      done: reconciliationDone,
+      tone: reconciliationDone ? 'emerald' : differences > 0 ? 'amber' : 'sky',
+    },
+  ];
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center gap-2">
+        <ClipboardCheck size={18} className="text-teal-700" />
+        <h2 className="text-lg font-black text-slate-950">Orden del control</h2>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-4">
+        {steps.map((step, index) => (
+          <div key={step.title} className={classNames('rounded-xl border p-3', step.done ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50')}>
+            <div className="flex items-start justify-between gap-2">
+              <span className={classNames('inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-black', step.done ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500')}>
+                {index + 1}
+              </span>
+              <span className={classNames('rounded-full border px-2 py-0.5 text-[10px] font-black', statusClass(step.tone))}>
+                {step.done ? 'Listo' : 'Pendiente'}
+              </span>
+            </div>
+            <h3 className="mt-3 text-sm font-black text-slate-950">{step.title}</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-600">{step.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ReviewCard({
   report,
   reviewerKey,
@@ -535,11 +610,27 @@ function DifferencesSummary({
   stockRows: ReturnType<typeof getStockRows>;
   currentStatus: ReturnType<typeof getInventoryDailyStatus>;
 }) {
+  const missingPhysical = stockRows.filter((row) => row.physical === '').length;
+  const missingZoho = stockRows.filter((row) => row.zoho === '').length;
+  const differences = countStockDifferences(stockRows);
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex items-center gap-2">
-        <ClipboardCheck size={18} className="text-teal-700" />
-        <h2 className="text-lg font-black text-slate-950">Resumen de diferencias del control</h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ClipboardCheck size={18} className="text-teal-700" />
+          <h2 className="text-lg font-black text-slate-950">Resumen de diferencias del control</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', missingPhysical > 0 ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
+            Físico: {missingPhysical > 0 ? `${missingPhysical} pendiente(s)` : 'completo'}
+          </span>
+          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', missingZoho > 0 ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
+            Zoho: {missingZoho > 0 ? `${missingZoho} pendiente(s)` : 'completo'}
+          </span>
+          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', differences > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
+            Diferencias: {differences}
+          </span>
+        </div>
       </div>
       <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
         <table className="min-w-full text-left text-xs">
@@ -585,7 +676,13 @@ function DifferencesSummary({
       {currentStatus.complete && (
         <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
           <CheckCircle2 size={17} />
-          Inventario diario conciliado y visible para Dirección como resumen.
+          {differences > 0 ? 'Inventario diario conciliado con diferencias registradas.' : 'Inventario diario conciliado y visible para Dirección como resumen.'}
+        </div>
+      )}
+      {!currentStatus.complete && stockRows.length > 0 && (
+        <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-black text-sky-700">
+          <AlertTriangle size={17} />
+          El resumen se mantiene visible mientras faltan columnas o revisiones.
         </div>
       )}
     </section>
@@ -622,11 +719,7 @@ export default function InventoryDailyEventsPage() {
   const currentStatus = getInventoryDailyStatus(currentReport);
   const currentUserName = currentUser?.name || '';
   const stockRows = getStockRows(currentReport);
-  const stockDiffs = stockRows.filter((row) => (
-    (row.diffPhysical !== null && Math.abs(Number(row.diffPhysical)) > 0.000001)
-    || (row.diffZoho !== null && Math.abs(Number(row.diffZoho)) > 0.000001)
-    || (row.diffPhysicalZoho !== null && Math.abs(Number(row.diffPhysicalZoho)) > 0.000001)
-  ));
+  const stockDiffs = countStockDifferences(stockRows);
   const [notesDraft, setNotesDraft] = useState(currentReport?.notes || '');
 
   React.useEffect(() => {
@@ -743,13 +836,15 @@ export default function InventoryDailyEventsPage() {
                 <p className="text-xs font-black uppercase tracking-wide text-slate-500">Filas de stock</p>
               </div>
               <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                <AlertTriangle className={stockDiffs.length > 0 ? 'text-amber-600' : 'text-emerald-600'} size={20} />
-                <p className="mt-3 text-2xl font-black text-slate-950">{stockDiffs.length}</p>
+                <AlertTriangle className={stockDiffs > 0 ? 'text-amber-600' : 'text-emerald-600'} size={20} />
+                <p className="mt-3 text-2xl font-black text-slate-950">{stockDiffs}</p>
                 <p className="text-xs font-black uppercase tracking-wide text-slate-500">Diferencias</p>
               </div>
             </div>
 
             <DispatchDayFolder day={selectedArchiveDay} loading={archiveLoading} selectedDateKey={selectedDateKey} />
+
+            <InventoryWorkflowPanel report={currentReport} stockRows={stockRows} />
 
             <div className="grid gap-3 xl:grid-cols-2">
               <SimpleTable

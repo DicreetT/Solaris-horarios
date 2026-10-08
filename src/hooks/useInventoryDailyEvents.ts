@@ -514,16 +514,40 @@ const buildReport = (
 export const getInventoryDailyStatus = (report?: InventoryDailyReport | null) => {
   if (!report) return { label: 'Sin evento', tone: 'slate', complete: false };
   const reviews = Object.values(report.reviews || normalizeReviews(undefined));
-  if (reviews.every((review) => review.status === 'conforme')) {
-    return { label: 'Inventario diario conciliado', tone: 'emerald', complete: true };
-  }
+  const reviewsByKey = normalizeReviews(report.reviews);
+  const stockRows = normalizeStockRows(report.manualTables?.stock);
+  const missingPhysical = stockRows.filter((row) => clean(row.physical) === '').length;
+  const missingZoho = stockRows.filter((row) => clean(row.zoho) === '').length;
+  const differences = stockRows.filter((row) => {
+    const lunaris = toNum(row.lunaris);
+    const physical = clean(row.physical);
+    const zoho = clean(row.zoho);
+    const physicalDiff = physical === '' ? 0 : toNum(physical) - lunaris;
+    const zohoDiff = zoho === '' ? 0 : toNum(zoho) - lunaris;
+    const physicalZohoDiff = physical === '' || zoho === '' ? 0 : toNum(physical) - toNum(zoho);
+    return Math.abs(physicalDiff) > 0.000001 || Math.abs(zohoDiff) > 0.000001 || Math.abs(physicalZohoDiff) > 0.000001;
+  }).length;
+
+  if (stockRows.length === 0) return { label: 'Control creado sin stock', tone: 'sky', complete: false };
   if (reviews.some((review) => review.status === 'issue')) {
     return { label: 'Con incidencia', tone: 'rose', complete: false };
   }
   if (reviews.some((review) => review.status === 'waiting')) {
     return { label: 'En espera', tone: 'amber', complete: false };
   }
-  return { label: 'Pendiente de revisión', tone: 'sky', complete: false };
+  if (reviewsByKey.anabella.status !== 'conforme' || missingPhysical > 0) {
+    return { label: 'Pendiente físico', tone: 'sky', complete: false };
+  }
+  if (reviewsByKey.itzi.status !== 'conforme' || missingZoho > 0) {
+    return { label: 'Pendiente Zoho', tone: 'sky', complete: false };
+  }
+  if (reviewsByKey.heidy.status !== 'conforme') {
+    return { label: 'Pendiente conciliación', tone: 'amber', complete: false };
+  }
+  if (differences > 0) {
+    return { label: 'Conciliado con diferencias', tone: 'amber', complete: true };
+  }
+  return { label: 'Sin diferencias', tone: 'emerald', complete: true };
 };
 
 export function useInventoryDailyEvents(currentUserId?: string) {
