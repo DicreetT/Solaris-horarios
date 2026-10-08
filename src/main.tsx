@@ -75,29 +75,68 @@ const renderFatal = (title: string, detail?: string) => {
     )
 }
 
-window.addEventListener('error', (event) => {
-    renderFatal('Lunaris encontró un error al iniciar', `${event.message || 'Error desconocido'}`)
-})
+const renderCleanup = () => {
+    root.render(
+        <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-6 text-center">
+            <div className="max-w-xl">
+                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-4" />
+                <h1 className="text-xl font-black mb-2">Limpiando Lunaris en este navegador</h1>
+                <p className="text-sm opacity-80">
+                    Estamos borrando una copia local antigua. En unos segundos volverás a iniciar sesión.
+                </p>
+            </div>
+        </div>,
+    )
+}
 
-window.addEventListener('unhandledrejection', (event) => {
-    const reason = (event.reason && (event.reason.message || String(event.reason))) || 'Error desconocido'
-    const normalized = String(reason).toLowerCase()
-    const isTransientNetwork =
-        normalized.includes('failed to fetch') ||
-        normalized.includes('networkerror') ||
-        normalized.includes('network error') ||
-        normalized.includes('load failed') ||
-        normalized.includes('timeout') ||
-        normalized.includes('tiempo de espera')
-
-    if (isTransientNetwork) {
-        console.warn('Transient unhandled rejection ignored:', reason)
-        event.preventDefault()
-        return
+async function clearLocalBrowserState() {
+    if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(registrations.map((registration) => registration.unregister()))
     }
 
-    renderFatal('Lunaris encontró un error al iniciar', reason)
-})
+    if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map((key) => caches.delete(key)))
+    }
+
+    if ('indexedDB' in window && typeof indexedDB.databases === 'function') {
+        const databases = await indexedDB.databases()
+        await Promise.all(
+            databases
+                .map((database) => database.name)
+                .filter((name): name is string => !!name)
+                .map((name) => new Promise<void>((resolve) => {
+                    const request = indexedDB.deleteDatabase(name)
+                    request.onsuccess = () => resolve()
+                    request.onerror = () => resolve()
+                    request.onblocked = () => resolve()
+                })),
+        )
+    }
+
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+}
+
+function isCleanupRequested() {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('limpieza') === '1' || params.get('reset-lunaris') === '1'
+}
+
+async function runCleanupAndRestart() {
+    renderCleanup()
+    try {
+        await clearLocalBrowserState()
+    } catch (error) {
+        console.warn('No se pudo limpiar todo el estado local de Lunaris.', error)
+    } finally {
+        const nextUrl = new URL('/login', window.location.origin)
+        nextUrl.searchParams.set('limpieza', 'hecha')
+        nextUrl.searchParams.set('t', String(Date.now()))
+        window.location.replace(nextUrl.toString())
+    }
+}
 
 async function bootstrap() {
     try {
@@ -123,4 +162,32 @@ async function bootstrap() {
     }
 }
 
-bootstrap()
+if (isCleanupRequested()) {
+    void runCleanupAndRestart()
+} else {
+    window.addEventListener('error', (event) => {
+        renderFatal('Lunaris encontró un error al iniciar', `${event.message || 'Error desconocido'}`)
+    })
+
+    window.addEventListener('unhandledrejection', (event) => {
+        const reason = (event.reason && (event.reason.message || String(event.reason))) || 'Error desconocido'
+        const normalized = String(reason).toLowerCase()
+        const isTransientNetwork =
+            normalized.includes('failed to fetch') ||
+            normalized.includes('networkerror') ||
+            normalized.includes('network error') ||
+            normalized.includes('load failed') ||
+            normalized.includes('timeout') ||
+            normalized.includes('tiempo de espera')
+
+        if (isTransientNetwork) {
+            console.warn('Transient unhandled rejection ignored:', reason)
+            event.preventDefault()
+            return
+        }
+
+        renderFatal('Lunaris encontró un error al iniciar', reason)
+    })
+
+    bootstrap()
+}
