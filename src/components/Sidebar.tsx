@@ -304,6 +304,12 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         }
     };
 
+    const navigateSidebarItem = (path?: string) => {
+        if (!path) return;
+        navigate(path);
+        closeSidebarOnMobile();
+    };
+
     const handleLogout = async () => {
         if (isLoggingOut) return;
         setIsLoggingOut(true);
@@ -490,10 +496,14 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                 : false;
                                         const roleBadge = item.label === 'Tareas' ? pendingTasksCount : undefined;
                                         return (
-                                            <a
+                                            <button
+                                                type="button"
                                                 key={`role-${item.label}`}
-                                                href={item.path || '#'}
-                                                onClick={closeSidebarOnMobile}
+                                                onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    navigateSidebarItem(item.path);
+                                                }}
                                                 className={`
                                                     w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
                                                     ${isActive
@@ -520,7 +530,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                         )}
                                                     </div>
                                                 )}
-                                            </a>
+                                            </button>
                                         );
                                     })}
 
@@ -542,10 +552,14 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                     && (itemUrl.search ? location.search === itemUrl.search : !location.search)
                                                 : false;
                                         return (
-                                            <a
+                                            <button
+                                                type="button"
                                                 key={`area-${item.label}`}
-                                                href={item.path || '#'}
-                                                onClick={closeSidebarOnMobile}
+                                                onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    navigateSidebarItem(item.path);
+                                                }}
                                                 className={`
                                                     w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative overflow-hidden
                                                     ${isActive
@@ -567,7 +581,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                         <span className="truncate">{item.label}</span>
                                                     </div>
                                                 )}
-                                            </a>
+                                            </button>
                                         );
                                     })}
                                 </nav>

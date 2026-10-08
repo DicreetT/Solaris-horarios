@@ -52,6 +52,80 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 import { User } from './types';
 
+type RouteErrorBoundaryState = {
+  error: Error | null;
+};
+
+async function clearStaleBrowserState() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn('No se pudo limpiar la cache de Lunaris.', error);
+  }
+}
+
+function isStaleChunkError(error: unknown) {
+  const text = String((error as any)?.message || error || '').toLowerCase();
+  return (
+    text.includes('failed to fetch dynamically imported module') ||
+    text.includes('importing a module script failed') ||
+    text.includes('mime type') ||
+    text.includes('expected a javascript module') ||
+    text.includes('loading chunk') ||
+    text.includes('dynamically imported module')
+  );
+}
+
+class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, RouteErrorBoundaryState> {
+  state: RouteErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    if (!isStaleChunkError(error)) return;
+    const recoveryKey = 'lunaris-stale-chunk-recovery';
+    const alreadyTried = window.sessionStorage.getItem(recoveryKey);
+    if (alreadyTried) return;
+    window.sessionStorage.setItem(recoveryKey, '1');
+    void clearStaleBrowserState().finally(() => {
+      window.location.replace(`${window.location.pathname}${window.location.search || ''}`);
+    });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="min-h-[40vh] flex items-center justify-center px-4">
+        <div className="max-w-md rounded-3xl border border-amber-200 bg-white p-6 text-center shadow-sm">
+          <h2 className="text-xl font-black text-slate-950">Lunaris necesita recargar este módulo</h2>
+          <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+            Parece una versión anterior guardada en el navegador. No se han borrado datos; solo hay que limpiar la caché visual y recargar.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              void clearStaleBrowserState().finally(() => window.location.reload());
+            }}
+            className="mt-5 rounded-2xl bg-teal-700 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-teal-800"
+          >
+            Recargar Lunaris
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 function RouteLoadingFallback() {
   return (
     <div className="min-h-[40vh] flex items-center justify-center px-4">
@@ -63,7 +137,11 @@ function RouteLoadingFallback() {
 }
 
 function withLazyPage(page: React.ReactElement) {
-  return <Suspense fallback={<RouteLoadingFallback />}>{page}</Suspense>;
+  return (
+    <RouteErrorBoundary>
+      <Suspense fallback={<RouteLoadingFallback />}>{page}</Suspense>
+    </RouteErrorBoundary>
+  );
 }
 
 /**

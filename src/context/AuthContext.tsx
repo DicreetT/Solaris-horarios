@@ -25,8 +25,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const mapAuthUser = (authUser: SupabaseUser): User | null => {
         const email = authUser.email?.toLowerCase();
-        const localUser = USERS.find((u) => u.email.toLowerCase() === email);
-        if (!localUser) return null;
+        const localUser = USERS.find((u) => {
+            const configuredEmail = u.email.toLowerCase();
+            if (configuredEmail === email) return true;
+            if (u.name.toLowerCase() === 'anabella') {
+                return [
+                    'anabela.solaris@gmail.com',
+                    'anabelas.solaris@gmail.com',
+                    'anabella.solaris@gmail.com',
+                    'anabellas.solaris@gmail.com',
+                ].includes(email || '');
+            }
+            return false;
+        });
+        if (!localUser) {
+            return {
+                id: authUser.id,
+                name: authUser.email?.split('@')[0] || 'Usuario',
+                email: authUser.email || '',
+                isTrainingManager: false,
+            };
+        }
         return {
             ...localUser,
             id: authUser.id,

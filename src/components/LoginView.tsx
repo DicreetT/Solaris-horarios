@@ -155,7 +155,18 @@ export default function LoginView({ onLogin }: { onLogin: (user: User) => void }
 
         // Buscamos la config de rol en nuestro array USERS
         const configuredUser =
-            USERS.find((u) => u.email.toLowerCase() === loggedEmail) || null;
+            USERS.find((u) => {
+                if (u.email.toLowerCase() === loggedEmail) return true;
+                if (u.name.toLowerCase() === 'anabella') {
+                    return [
+                        'anabela.solaris@gmail.com',
+                        'anabelas.solaris@gmail.com',
+                        'anabella.solaris@gmail.com',
+                        'anabellas.solaris@gmail.com',
+                    ].includes(loggedEmail);
+                }
+                return false;
+            }) || null;
 
         const finalUser =
             (configuredUser
