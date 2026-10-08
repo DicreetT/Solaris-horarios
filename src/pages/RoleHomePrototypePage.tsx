@@ -854,6 +854,7 @@ function RoleHomePrototypePage() {
 
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>(initialRole);
   const [activePanelTitle, setActivePanelTitle] = useState<string | null>(null);
+  const [selectedMentionContext, setSelectedMentionContext] = useState<Mention | null>(null);
   const [homeChecklistItems, setHomeChecklistItems] = useState<HomeChecklistItem[]>([]);
   const [checklistLoading, setChecklistLoading] = useState(false);
   const hasEnsuredEstebanPortfolioRef = useRef(false);
@@ -921,6 +922,19 @@ function RoleHomePrototypePage() {
   const selectedUserProjects = useMemo(() => (
     selectedUserAllProjects.filter((project) => !isCouponLikeProject(project)).slice(0, 3)
   ), [selectedUserAllProjects]);
+  const selectedMentionProjectContext = useMemo(() => {
+    if (!selectedMentionContext) return null;
+    const projectId = selectedMentionContext.originType === 'project_step'
+      ? selectedMentionContext.originId.split(':')[0]
+      : selectedMentionContext.originId;
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return null;
+    const stepId = selectedMentionContext.originType === 'project_step'
+      ? selectedMentionContext.originId.split(':')[1]
+      : '';
+    const step = stepId ? (project.steps || []).find((item) => item.id === stepId) || null : null;
+    return { mention: selectedMentionContext, project, step };
+  }, [projects, selectedMentionContext]);
   const activeCoupons = useMemo(() => (
     [
       ...promotions
@@ -1402,6 +1416,14 @@ function RoleHomePrototypePage() {
   ), [pendingMentionsForSelectedUser]);
   const selectedAgenda = dailyAgenda?.[selectedAgendaDate]?.[selectedRole.userId] || {};
 
+  const openMentionContext = (mention: Mention) => {
+    if (mention.originType === 'project' || mention.originType === 'project_step') {
+      setSelectedMentionContext(mention);
+      return;
+    }
+    navigate(mention.objectPath || '/mentions');
+  };
+
   const updateAgendaItem = (dateKey: string, hour: string, value: string) => {
     if (!selectedRole.userId) return;
     setDailyAgenda((prev) => ({
@@ -1685,7 +1707,7 @@ function RoleHomePrototypePage() {
                 rows={decisionMentionsForSelectedUser}
                 empty="No hay decisiones ni validaciones pendientes."
                 onOpenAll={() => navigate('/mentions')}
-                onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
+                onOpenMention={openMentionContext}
               />
               <MentionSummaryCard
                 role={selectedRole}
@@ -1694,7 +1716,7 @@ function RoleHomePrototypePage() {
                 rows={generalMentionsForSelectedUser}
                 empty="No hay menciones informativas o de consulta pendientes."
                 onOpenAll={() => navigate('/mentions')}
-                onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
+                onOpenMention={openMentionContext}
               />
             </div>
 
@@ -1704,7 +1726,7 @@ function RoleHomePrototypePage() {
               sentMentions={mentionsBySelectedUser}
               repliedMentions={mentionResponsesForSelectedUser}
               onOpenAll={() => navigate('/mentions')}
-              onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
+              onOpenMention={openMentionContext}
             />
 
             <HomeSectionHeader
@@ -1800,6 +1822,16 @@ function RoleHomePrototypePage() {
                   onAddBlock={addPersonalWeekBlock}
                 />
               </section>
+            )}
+
+            {selectedMentionProjectContext && (
+              <MentionProjectContextModal
+                role={selectedRole}
+                mention={selectedMentionProjectContext.mention}
+                project={selectedMentionProjectContext.project}
+                step={selectedMentionProjectContext.step}
+                onClose={() => setSelectedMentionContext(null)}
+              />
             )}
           </main>
         </div>
@@ -2493,6 +2525,93 @@ function MentionActivityDrawer({
         </div>
       )}
     </section>
+  );
+}
+
+function MentionProjectContextModal({
+  role,
+  mention,
+  project,
+  step,
+  onClose,
+}: {
+  role: RoleHome;
+  mention: Mention;
+  project: LunarisProject;
+  step: LunarisProject['steps'][number] | null;
+  onClose: () => void;
+}) {
+  const progress = calculateProjectProgress(project);
+  const source = USERS.find((user) => user.id === mention.sourceUserId);
+  const target = USERS.find((user) => user.id === mention.targetUserId);
+  const tags = Array.from(new Set((project.tags || []).map((tag) => String(tag || '').replace(/^#/, '').trim()).filter(Boolean)));
+
+  return (
+    <div className="fixed inset-0 z-[260] flex items-start justify-center overflow-y-auto bg-slate-950/45 px-3 py-8 backdrop-blur-sm">
+      <section className="w-full max-w-3xl rounded-[2rem] border border-white/80 bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className={classNames('text-xs font-black uppercase tracking-[0.22em]', role.accentText)}>Contexto de mención</p>
+            <h2 className="mt-1 text-2xl font-black text-slate-950">{project.name}</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+              {source?.name || 'Equipo'} mencionó a {target?.name || 'este usuario'} en este proyecto.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-500 hover:bg-slate-100"
+            aria-label="Cerrar contexto de mención"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <ContextMetric label="Tipo" value={projectTypeLabel(project.type)} />
+          <ContextMetric label="Estado" value={projectStatusLabel(project.status)} />
+          <ContextMetric label="Progreso" value={`${progress.completed}%`} />
+        </div>
+
+        {tags.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {tags.slice(0, 8).map((tag) => (
+              <span key={tag} className="rounded-full border border-teal-100 bg-teal-50 px-3 py-1 text-xs font-black text-teal-700">#{tag}</span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">Mención</p>
+          <h3 className="mt-1 text-lg font-black text-slate-950">{mention.title}</h3>
+          <p className="mt-3 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-700">{mention.context}</p>
+          <p className="mt-3 text-[11px] font-black uppercase tracking-wide text-slate-400">
+            {mentionTypeLabel(mention.mentionType)} · {mentionStatusLabel(mention.status)} · {formatMentionActivityDate(mention.createdAt)}
+          </p>
+        </div>
+
+        {step && (
+          <div className="mt-4 rounded-2xl border border-slate-100 bg-white p-4">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500">Paso donde te mencionaron</p>
+            <h3 className="mt-1 text-base font-black text-slate-950">{step.name}</h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">{step.description || step.deliverable || 'Sin descripción.'}</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-black text-slate-500">
+              <span className="rounded-full bg-slate-100 px-3 py-1">{step.weight || 0}% del proyecto</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">{step.targetDate || 'sin fecha'}</span>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ContextMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+      <p className="truncate text-sm font-black text-slate-950">{value}</p>
+      <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+    </div>
   );
 }
 
