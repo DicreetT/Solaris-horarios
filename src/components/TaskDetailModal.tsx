@@ -63,23 +63,9 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
     )).length;
 
     const handleMarkCommentsRead = async () => {
-        const wasShocked = !!task.shocked_users?.includes(currentUser.id);
         if (latestForeignComment?.created_at) {
             markSeenAt(task.id, latestForeignComment.created_at);
             onMarkCommentsRead?.(task);
-        }
-        if (task.shocked_users?.includes(currentUser.id)) {
-            const nextShocked = (task.shocked_users || []).filter((uid) => uid !== currentUser.id);
-            await updateTodo({
-                id: task.id,
-                updates: {
-                    shocked_users: nextShocked,
-                },
-            });
-        }
-        if (wasShocked) {
-            setShowCelebration(true);
-            window.setTimeout(() => onClose(), 350);
         }
     };
 
@@ -312,10 +298,10 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                 </div>
 
                 <div className="space-y-8">
-                    {(task.shocked_users?.includes(currentUser.id) || unreadForeignComments > 0) && (
+                    {unreadForeignComments > 0 && (
                         <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm">
                             <p className="text-sm font-black text-amber-900">
-                                Modo tormenta activo: completa una acción para volver al sol.
+                                Hay comentarios nuevos en esta tarea.
                             </p>
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 <button
@@ -483,7 +469,7 @@ export default function TaskDetailModal({ task, onClose, onMarkCommentsRead }: T
                                 <MessageSquare size={16} />
                                 Comentarios ({task.comments?.length || 0})
                             </h3>
-                            {(unreadForeignComments > 0 || task.shocked_users?.includes(currentUser.id)) && (
+                            {unreadForeignComments > 0 && (
                                 <button
                                     type="button"
                                     onClick={handleMarkCommentsRead}

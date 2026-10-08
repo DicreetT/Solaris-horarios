@@ -2142,7 +2142,7 @@ function Dashboard() {
     const categorizeNotification = (n: any): NotificationFilter => {
         const text = `${n.message || ''}`.toLowerCase();
         if (text.includes('stock') || text.includes('inventario') || text.includes('caduc')) return 'stock';
-        if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea')) return 'tasks';
+        if (n.type === 'action_required' || text.includes('tarea')) return 'tasks';
         if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
         if (text.includes('reun')) return 'meetings';
         if (text.includes('ausenc') || text.includes('vacaci') || text.includes('permiso')) return 'absences';

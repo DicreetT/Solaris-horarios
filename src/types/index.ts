@@ -104,7 +104,6 @@ export interface Todo {
     attachments?: Attachment[]; // jsonb
     comments?: Comment[]; // jsonb
     tags?: string[]; // array of strings
-    shocked_users?: string[]; // array of UUIDs
     created_at: string;
 }
 
@@ -112,7 +111,7 @@ export interface Notification {
     id: number;
     user_id: string;
     message: string;
-    type?: 'info' | 'success' | 'error' | 'action_required' | 'reminder' | 'recognition' | 'shock';
+    type?: 'info' | 'success' | 'error' | 'action_required' | 'reminder' | 'recognition';
     read: boolean;
     created_at: string;
 }

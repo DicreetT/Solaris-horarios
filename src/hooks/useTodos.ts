@@ -21,7 +21,6 @@ function normalizeTodo(row: any): Todo {
         attachments: row.attachments || [],
         comments: row.comments || [],
         tags: row.tags || [],
-        shocked_users: row.shocked_users || [],
         created_at: row.created_at,
     };
 }
@@ -134,7 +133,7 @@ export function useTodos(currentUser: User | null) {
             if (!currentUser) return [];
             const { data, error } = await supabase
                 .from('todos')
-                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, created_at')
                 .order('due_date_key', { ascending: true, nullsFirst: false })
                 .order('created_at', { ascending: false });
 
@@ -264,25 +263,19 @@ export function useTodos(currentUser: User | null) {
     });
 
     const toggleTodoMutation = useMutation({
-        mutationFn: async (todo: { id: number; completed_by: string[]; shocked_users?: string[] }) => {
+        mutationFn: async (todo: { id: number; completed_by: string[] }) => {
             const isDone = todo.completed_by.includes(currentUser.id);
             const nextCompleted = isDone
                 ? todo.completed_by.filter((id: string) => id !== currentUser.id)
                 : [...todo.completed_by, currentUser.id];
 
-            // If marking as done, also remove from shocked_users
-            const nextShocked = !isDone
-                ? (todo.shocked_users || []).filter(uid => uid !== currentUser.id)
-                : (todo.shocked_users || []);
-
             const { data, error } = await supabase
                 .from('todos')
                 .update({
                     completed_by: nextCompleted,
-                    shocked_users: nextShocked
                 })
                 .eq('id', todo.id)
-                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, created_at')
                 .single();
 
             if (error) throw error;
@@ -295,13 +288,10 @@ export function useTodos(currentUser: User | null) {
             const nextCompleted = isDone
                 ? todo.completed_by.filter((id: string) => id !== currentUser.id)
                 : Array.from(new Set([...todo.completed_by, currentUser.id]));
-            const nextShocked = isDone
-                ? (todo.shocked_users || [])
-                : (todo.shocked_users || []).filter((uid) => uid !== currentUser.id);
 
             updateTodoCaches(queryClient, (current, userId) => current.map((item) => (
                 item.id === todo.id
-                    ? { ...item, completed_by: nextCompleted, shocked_users: nextShocked }
+                    ? { ...item, completed_by: nextCompleted }
                     : item
             )).filter((item) => userCanSeeTodo(userId, item)));
 
@@ -407,7 +397,7 @@ export function useTodos(currentUser: User | null) {
                 .from('todos')
                 .update(updates)
                 .eq('id', id)
-                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, shocked_users, created_at')
+                .select('id, title, description, created_by, assigned_to, due_date_key, completed_by, attachments, comments, tags, created_at')
                 .single();
 
             if (error) throw error;

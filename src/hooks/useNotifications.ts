@@ -6,7 +6,7 @@ import { User, Notification } from '../types';
 type NotificationType = NonNullable<Notification['type']>;
 
 const normalizeType = (type?: string): NotificationType => {
-    const supported: NotificationType[] = ['info', 'success', 'error', 'action_required', 'reminder', 'recognition', 'shock'];
+    const supported: NotificationType[] = ['info', 'success', 'error', 'action_required', 'reminder', 'recognition'];
     if (type && supported.includes(type as NotificationType)) {
         return type as NotificationType;
     }
@@ -111,21 +111,6 @@ export function useNotifications(currentUser: User | null) {
         isLoading,
         error,
         addNotification: addNotificationMutation.mutateAsync,
-        sendNudge: async (todoTitle: string, userIds: string[], todoId?: number) => {
-            if (!currentUser) return;
-            const taskRef = todoId ? ` [#${todoId}]` : '';
-            const message = `Acción requerida: tarea pendiente${taskRef}: "${todoTitle}".`;
-
-            // Send to each user who hasn't finished
-            const promises = userIds.map(uid =>
-                addNotificationMutation.mutateAsync({
-                    message,
-                    userId: uid,
-                    type: 'action_required'
-                })
-            );
-            await Promise.all(promises);
-        },
         sendCaffeineBoost: async (userName: string, userIds: string[]) => {
             if (!currentUser) return;
             const message = `${userName} reconoce tu esfuerzo en esta tarea.`;

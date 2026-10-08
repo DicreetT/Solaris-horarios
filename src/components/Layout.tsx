@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -9,9 +9,7 @@ import { CaffeineOverlay } from './CaffeineOverlay';
 
 import { useAuth } from '../context/AuthContext';
 import { useRealtime } from '../hooks/useRealtime';
-import { useTodos } from '../hooks/useTodos';
 import { useTimeData } from '../hooks/useTimeData';
-import { StormOverlay } from './StormOverlay';
 import { TeamHeartbeat } from './TeamHeartbeat';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { toDateKey } from '../utils/dateUtils';
@@ -29,11 +27,9 @@ function Layout() {
     useRealtime(currentUser);
     useDailyTeamGreeting(currentUser);
     useInventoryCriticalAlerts(currentUser);
-    const { todos } = useTodos(currentUser);
     const { timeData } = useTimeData();
     const { dailyStatuses } = useDailyStatus(currentUser);
     const { notifications } = useNotificationsContext();
-    const navigate = useNavigate();
     const location = useLocation();
     const isChatRoute = location.pathname === '/chat';
 
@@ -121,27 +117,6 @@ function Layout() {
         setPendingCaffeine(rest);
     }, [pendingCaffeine, activeCaffeine]);
 
-    // Calculate if storm mode should be active and which tasks trigger it
-    const { isStormActive, shockedTasks } = React.useMemo(() => {
-        if (!currentUser || !todos) return { isStormActive: false, shockedTasks: [] };
-
-        // Storm is active if I have a task assigned to me that I haven't completed AND I've been 'shocked' for it
-        const tasks = todos.filter(t => {
-            const isAssigned = (t.assigned_to || []).includes(currentUser.id);
-            const isCompleted = (t.completed_by || []).includes(currentUser.id);
-            const isShocked = (t.shocked_users || []).includes(currentUser.id);
-            return isAssigned && !isCompleted && isShocked;
-        });
-
-        const active = tasks.length > 0;
-
-        if (active) {
-            console.log('⚡ STORM MODE ACTIVATED for user:', currentUser.id);
-        }
-
-        return { isStormActive: active, shockedTasks: tasks };
-    }, [currentUser, todos]);
-
     const activeUsers = React.useMemo(() => {
         const todayKey = toDateKey(new Date());
         const todayData = timeData[todayKey] || {};
@@ -163,16 +138,8 @@ function Layout() {
         setSidebarCollapsed(!sidebarCollapsed);
     };
 
-    const handleTaskClick = (taskId: number) => {
-        navigate(`/tasks?task=${taskId}`);
-    };
-
     return (
-        <StormOverlay
-            isActive={isStormActive}
-            shockedTasks={shockedTasks}
-            onTaskClick={handleTaskClick}
-        >
+        <>
             <div className="lunaris-elegant h-screen flex relative overflow-hidden bg-bg dark:text-gray-100 transition-colors duration-500">
                 {/* Sidebar */}
                 <Sidebar
@@ -231,7 +198,7 @@ function Layout() {
 
                 <GlobalSuccessToast />
             </div>
-        </StormOverlay>
+        </>
     );
 }
 

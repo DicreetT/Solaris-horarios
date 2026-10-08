@@ -2,13 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
-  BellRing,
   Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Flame,
   MessageCircle,
   Plus,
   Paperclip,
@@ -27,7 +25,6 @@ import LinkifiedText from '../components/LinkifiedText';
 import { UserAvatar } from '../components/UserAvatar';
 import { Todo, type Attachment, type Comment } from '../types';
 import TodoModal from '../components/TodoModal';
-import { useNotificationsContext } from '../context/NotificationsContext';
 
 const PRIORITY_TAG = '__priority__';
 const PREVIEW_ROLE_TO_USER_NAME: Record<string, string> = {
@@ -75,11 +72,10 @@ function isUrgentForUser(task: Todo, currentUserId: string) {
   if (isDoneForMe) return false;
 
   const isPriority = (task.tags || []).includes(PRIORITY_TAG);
-  const isShocked = !!task.shocked_users?.includes(currentUserId);
   const todayKey = new Date().toISOString().split('T')[0];
   const isDueNow = !!task.due_date_key && task.due_date_key <= todayKey;
 
-  return isShocked || isPriority || isDueNow;
+  return isPriority || isDueNow;
 }
 
 function getTaskPriority(task: Todo, currentUserId: string) {
@@ -140,7 +136,6 @@ function TaskPoster({
   const isDoneForMe = task.completed_by.includes(currentUserId);
   const isMine = task.assigned_to.includes(currentUserId);
   const isPriority = (task.tags || []).includes(PRIORITY_TAG);
-  const isShocked = !!task.shocked_users?.includes(currentUserId) && !isDoneForMe;
   const creator = personName(task.created_by);
   const assignees = task.assigned_to.map((uid) => ({
     id: uid,
@@ -155,9 +150,7 @@ function TaskPoster({
   return (
     <article
       className={`snap-start w-[330px] shrink-0 rounded-[2rem] border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-xl ${
-        isShocked && !isFullyDone
-          ? 'border-red-300 bg-gradient-to-br from-white via-red-50 to-rose-100 shadow-[0_0_0_1px_rgba(239,68,68,0.18),0_20px_40px_-20px_rgba(239,68,68,0.45)]'
-          : isDoneForMe
+        isDoneForMe
             ? 'border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-50'
             : isPriority
               ? 'border-red-300 bg-white shadow-[0_0_0_1px_rgba(239,68,68,0.10)]'
@@ -172,33 +165,19 @@ function TaskPoster({
         </div>
         <div
           className={`rounded-2xl p-2 ${
-            isShocked && !isFullyDone
-              ? 'bg-red-500/15 text-red-600'
-              : isPriority
+            isPriority
                 ? 'bg-red-50 text-red-500'
                 : 'bg-violet-100 text-violet-700'
           }`}
         >
-          {isShocked && !isFullyDone ? (
-            <BellRing size={18} className="animate-pulse" />
-          ) : isPriority ? (
-            <BellRing size={18} />
-          ) : (
-            <Sparkles size={18} />
-          )}
+          <Sparkles size={18} />
         </div>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {isShocked && !isFullyDone && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-black text-white">
-            <Flame size={11} />
-            Relámpago
-          </span>
-        )}
-        {!isShocked && isPriority && (
+        {isPriority && (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-700">
-            <BellRing size={11} />
+            <Sparkles size={11} />
             Prioritaria
           </span>
         )}
@@ -223,7 +202,7 @@ function TaskPoster({
         </div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
           <div
-            className={`h-full rounded-full ${isShocked ? 'bg-red-500' : isDoneForMe ? 'bg-emerald-500' : 'bg-violet-500'}`}
+            className={`h-full rounded-full ${isDoneForMe ? 'bg-emerald-500' : 'bg-violet-500'}`}
             style={{ width: `${totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0}%` }}
           />
         </div>
@@ -414,30 +393,17 @@ function TaskPreviewDetailModal({
   task,
   actingUserId,
   onClose,
-  highlightRelampago,
-  relampagoRecipients,
-  onRelampagoRecipientsChange,
-  onToggleRelampagoRecipient,
-  onRelampagoVisualChange,
 }: {
   task: Todo;
   actingUserId: string;
   onClose: () => void;
-  highlightRelampago?: boolean;
-  relampagoRecipients: string[];
-  onRelampagoRecipientsChange: (ids: string[]) => void;
-  onToggleRelampagoRecipient: (uid: string) => void;
-  onRelampagoVisualChange: (active: boolean) => void;
 }) {
   const { currentUser } = useAuth();
   const { addComment, updateTodo } = useTodos(currentUser);
-  const { sendNudge } = useNotificationsContext();
   const { getSeenAt, markSeenAt } = useTaskCommentSeen(currentUser);
   const [newComment, setNewComment] = useState('');
   const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const selectedRelampagoUserId = relampagoRecipients[0] || task.assigned_to.find((uid) => !task.completed_by.includes(uid)) || task.assigned_to[0] || '';
-  const selectedRelampagoName = personName(selectedRelampagoUserId);
   const creator = personName(task.created_by);
   const isGloballyComplete = isGloballyDone(task);
   const isDoneForMe = task.completed_by.includes(actingUserId);
@@ -462,15 +428,6 @@ function TaskPreviewDetailModal({
     if (latestForeignComment?.created_at) {
       markSeenAt(task.id, latestForeignComment.created_at);
     }
-    if (task.shocked_users?.includes(actingUserId)) {
-      const nextShocked = (task.shocked_users || []).filter((uid) => uid !== actingUserId);
-      await updateTodo({
-        id: task.id,
-        updates: {
-          shocked_users: nextShocked,
-        },
-      });
-    }
   };
 
   const handleToggleStatus = async () => {
@@ -478,14 +435,10 @@ function TaskPreviewDetailModal({
     const nextCompleted = isDoneForMe
       ? task.completed_by.filter((id) => id !== actingUserId)
       : Array.from(new Set([...task.completed_by, actingUserId]));
-    const nextShocked = isDoneForMe
-      ? (task.shocked_users || [])
-      : (task.shocked_users || []).filter((uid) => uid !== actingUserId);
     await updateTodo({
       id: task.id,
       updates: {
         completed_by: nextCompleted,
-        shocked_users: nextShocked,
       },
     });
   };
@@ -497,37 +450,9 @@ function TaskPreviewDetailModal({
         id: task.id,
         updates: {
           completed_by: Array.from(new Set([...task.completed_by, actingUserId])),
-          shocked_users: (task.shocked_users || []).filter((uid) => uid !== actingUserId),
         },
       });
     }
-  };
-
-  const handleSendRelampago = async () => {
-    const nextRecipients = relampagoRecipients.filter((uid) => task.assigned_to.includes(uid));
-    if (nextRecipients.length === 0) {
-      alert('Selecciona al menos una persona para enviar el relámpago.');
-      return;
-    }
-    await updateTodo({
-      id: task.id,
-      updates: {
-        shocked_users: Array.from(new Set(nextRecipients)),
-      },
-    });
-    await sendNudge(task.title, nextRecipients, task.id);
-    onRelampagoVisualChange(true);
-  };
-
-  const handleClearRelampago = async () => {
-    await updateTodo({
-      id: task.id,
-      updates: {
-        shocked_users: [],
-      },
-    });
-    onRelampagoRecipientsChange([]);
-    onRelampagoVisualChange(false);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -638,7 +563,7 @@ function TaskPreviewDetailModal({
                     Responde aquí, añade adjuntos o continúa la conversación.
                   </p>
                 </div>
-                {(unreadForeignComments > 0 || task.shocked_users?.includes(actingUserId)) && (
+                {unreadForeignComments > 0 && (
                   <button
                     type="button"
                     onClick={markCommentsRead}
@@ -750,52 +675,6 @@ function TaskPreviewDetailModal({
           </div>
 
           <div className="space-y-4">
-            <div className={`rounded-[1.75rem] border p-4 ${
-              highlightRelampago ? 'border-red-300 bg-red-50 shadow-[0_0_0_4px_rgba(239,68,68,0.09)]' : 'border-violet-200 bg-violet-50'
-            }`}>
-              <p className="text-xs font-black uppercase tracking-[0.28em] text-violet-600">Relámpago para</p>
-              <p className="mt-1 text-sm font-semibold text-slate-600">
-                Puedes señalar una o varias personas. El aviso rojo se le quita solo a quien lo resuelva.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {task.assigned_to.map((uid) => {
-                  const done = isDoneForUser(task, uid);
-                  const selected = relampagoRecipients.includes(uid);
-                  return (
-                    <button
-                      key={uid}
-                      type="button"
-                      onClick={() => onToggleRelampagoRecipient(uid)}
-                      className={`rounded-full border px-3 py-2 text-sm font-bold transition ${
-                        selected
-                          ? 'border-red-300 bg-red-500 text-white shadow-[0_0_0_4px_rgba(239,68,68,0.12)]'
-                          : done
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                            : 'border-slate-200 bg-slate-50 text-slate-700'
-                      }`}
-                    >
-                      {personName(uid)}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className={`mt-4 rounded-2xl border p-4 ${
-                highlightRelampago ? 'border-red-200 bg-red-100/70' : 'border-rose-200 bg-rose-50'
-              }`}>
-                <div className="flex items-center gap-2 text-rose-700">
-                  <BellRing size={16} />
-                  <p className="text-sm font-black">
-                    {relampagoRecipients.length > 1
-                      ? `Esta alerta iría a ${relampagoRecipients.map((uid) => personName(uid)).join(', ')}`
-                      : `Esta alerta iría solo a ${selectedRelampagoName}`}
-                  </p>
-                </div>
-                <p className="mt-2 text-sm font-medium text-rose-900/80">
-                  En la maqueta, eliges una o varias personas aunque la tarea tenga varios asignados.
-                </p>
-              </div>
-            </div>
-
             <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4">
               <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-400">Progreso</p>
               <div className="mt-2 flex items-center justify-between gap-3 text-sm font-semibold text-slate-600">
@@ -833,21 +712,6 @@ function TaskPreviewDetailModal({
             <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4">
               <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-400">Acciones</p>
               <div className="mt-3 grid gap-2">
-                <button
-                  type="button"
-                  onClick={handleSendRelampago}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-500 px-4 py-3 text-sm font-black text-white hover:bg-red-400"
-                >
-                  <BellRing size={16} />
-                  Enviar relámpago
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearRelampago}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700 hover:bg-rose-100"
-                >
-                  Quitar relámpago
-                </button>
                 <button
                   type="button"
                   onClick={markCommentsRead}
@@ -904,8 +768,6 @@ export default function TasksModernPreviewPage() {
   const effectiveTaskUserId = effectiveTaskUser?.id || currentUser.id;
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Todo | null>(null);
-  const [highlightRelampago, setHighlightRelampago] = useState(false);
-  const [relampagoRecipients, setRelampagoRecipients] = useState<string[]>([]);
   const [openSections, setOpenSections] = useState({
     priority: true,
     assigned: true,
@@ -963,7 +825,6 @@ export default function TasksModernPreviewPage() {
   const isAdmin = !!currentUser?.isAdmin;
   const isPriorityForMe = (task: Todo) => (
     (task.tags || []).includes(PRIORITY_TAG)
-    || (task.shocked_users || []).includes(effectiveTaskUserId)
   );
   const assignedToMe = useMemo(
     () => sortTasks(
@@ -1015,23 +876,9 @@ export default function TasksModernPreviewPage() {
     () => sortTasks(todos.filter((task) => !isGloballyDone(task)), effectiveTaskUserId),
     [todos, effectiveTaskUserId],
   );
-  const relampagoTasks = useMemo(
-    () => sortTasks(
-      todos.filter((task) => (
-        task.assigned_to.includes(effectiveTaskUserId)
-        && !task.completed_by.includes(effectiveTaskUserId)
-        && (task.shocked_users || []).includes(effectiveTaskUserId)
-        && !isGloballyDone(task)
-      )),
-      effectiveTaskUserId,
-    ),
-    [todos, effectiveTaskUserId],
-  );
-
   const priorityCount = priorityTasks.length;
   const assignedOpenCount = assignedToMe.filter((task) => !task.completed_by.includes(effectiveTaskUserId)).length;
   const createdCount = createdByMe.length;
-  const relampagoSpotlightTask = relampagoTasks[0] || null;
 
   useEffect(() => {
     if (!selectedTask) return;
@@ -1047,32 +894,10 @@ export default function TasksModernPreviewPage() {
     const task = todos.find((item) => String(item.id) === taskParam);
     if (!task) return;
     setSelectedTask(task);
-    setHighlightRelampago(!!task.shocked_users?.includes(effectiveTaskUserId));
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('task');
     setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams, todos, effectiveTaskUserId]);
-
-  const openRelampago = (task: Todo) => {
-    setHighlightRelampago(true);
-    setSelectedTask(task);
-  };
-
-  useEffect(() => {
-    if (!selectedTask) {
-      setRelampagoRecipients([]);
-      return;
-    }
-
-    const currentRelampago = (selectedTask.shocked_users || []).filter((uid) => selectedTask.assigned_to.includes(uid));
-    if (currentRelampago.length > 0) {
-      setRelampagoRecipients(currentRelampago);
-      return;
-    }
-
-    const initialRecipient = selectedTask.assigned_to.find((uid) => !selectedTask.completed_by.includes(uid)) || selectedTask.assigned_to[0] || '';
-    setRelampagoRecipients(initialRecipient ? [initialRecipient] : []);
-  }, [selectedTask]);
 
   const toggleMyPart = async (task: Todo) => {
     try {
@@ -1081,14 +906,10 @@ export default function TasksModernPreviewPage() {
       const nextCompleted = isDone
         ? task.completed_by.filter((id) => id !== effectiveTaskUserId)
         : Array.from(new Set([...task.completed_by, effectiveTaskUserId]));
-      const nextShocked = isDone
-        ? (task.shocked_users || [])
-        : (task.shocked_users || []).filter((uid) => uid !== effectiveTaskUserId);
       await updateTodo({
         id: task.id,
         updates: {
           completed_by: nextCompleted,
-          shocked_users: nextShocked,
         },
       });
     } catch (error) {
@@ -1102,18 +923,10 @@ export default function TasksModernPreviewPage() {
     if (!ok) return;
     await deleteTodo(task.id);
     setSelectedTask((current) => (current?.id === task.id ? null : current));
-    setHighlightRelampago(false);
-    setRelampagoRecipients([]);
   };
 
   const toggleSection = (key: keyof typeof openSections) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const toggleRelampagoRecipient = (uid: string) => {
-    setRelampagoRecipients((prev) =>
-      prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid],
-    );
   };
 
   return (
@@ -1154,15 +967,6 @@ export default function TasksModernPreviewPage() {
               >
                 <Plus size={15} />
                 Nueva tarea
-              </button>
-              <button
-                type="button"
-                onClick={() => relampagoSpotlightTask && openRelampago(relampagoSpotlightTask)}
-                disabled={!relampagoSpotlightTask}
-                className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800 hover:bg-amber-100"
-              >
-                <BellRing size={15} />
-                Ver relámpago mío
               </button>
             </div>
           </div>
@@ -1264,15 +1068,8 @@ export default function TasksModernPreviewPage() {
         <TaskPreviewDetailModal
           task={selectedTask}
           actingUserId={effectiveTaskUserId}
-          highlightRelampago={highlightRelampago}
-          relampagoRecipients={relampagoRecipients}
-          onRelampagoRecipientsChange={setRelampagoRecipients}
-          onToggleRelampagoRecipient={toggleRelampagoRecipient}
-          onRelampagoVisualChange={setHighlightRelampago}
           onClose={() => {
             setSelectedTask(null);
-            setHighlightRelampago(false);
-            setRelampagoRecipients([]);
           }}
         />
       )}

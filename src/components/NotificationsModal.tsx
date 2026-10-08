@@ -28,7 +28,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
         if (n.type === 'recognition') return 'recognition';
         const text = `${n.message || ''}`.toLowerCase();
         if (text.includes('[invhf_ensam]')) return 'other';
-        if (n.type === 'action_required' || n.type === 'shock' || text.includes('tarea') || text.includes('comentario')) return 'tasks';
+        if (n.type === 'action_required' || text.includes('tarea') || text.includes('comentario')) return 'tasks';
         if (text.includes('fich') || text.includes('jornada') || text.includes('pausa') || text.includes('horario')) return 'schedule';
         if (text.includes('reunión') || text.includes('reunion')) return 'meetings';
         if (text.includes('ausencia') || text.includes('vacacion') || text.includes('vacación')) return 'absences';
@@ -126,7 +126,7 @@ export default function NotificationsModal({ isOpen, onClose }: NotificationsMod
 
         const type = n.type || 'info';
         const typeMeta = (() => {
-            if (type === 'action_required' || type === 'shock') {
+            if (type === 'action_required') {
                 return {
                     icon: <AlertTriangle size={20} />,
                     iconClass: isUnread ? 'bg-amber-100 text-amber-700' : 'bg-amber-50 text-amber-500',

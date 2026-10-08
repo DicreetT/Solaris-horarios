@@ -1307,7 +1307,6 @@ function RoleHomePrototypePage() {
       .from('todos')
       .update({
         completed_by: nextCompleted,
-        shocked_users: (todo.shocked_users || []).filter((userId: string) => userId !== selectedRole.userId),
       })
       .eq('id', todo.id);
     if (!error) {
