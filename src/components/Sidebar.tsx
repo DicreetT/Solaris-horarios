@@ -151,6 +151,7 @@ const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
     fer: [
         { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
         { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
+        { path: '/eventos-inventario', label: 'Evento diario inventario', icon: CalendarClock },
         { path: '/operaciones-fer?view=entregables', label: 'Entregables', icon: ClipboardCheck },
         { path: '/operaciones-fer?view=jornada', label: 'Jornada semanal', icon: CalendarClock },
     ],
