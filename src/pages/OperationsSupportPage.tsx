@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { CalendarDays, CheckSquare, Clock, FolderKanban, Plus, Send, Trash2, UserCheck } from 'lucide-react';
+import { CalendarDays, CheckSquare, Clock, FolderKanban, MessageSquareText, Plus, Send, Trash2, UserCheck } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { ESTEBAN_ID, USERS } from '../constants';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../hooks/useNotifications';
 import { calculateProjectProgress, projectStatusLabel, useProjects } from '../hooks/useProjects';
 import { useTodos } from '../hooks/useTodos';
 import { getWeekDateKeys, getWeekStartKey, WeeklyWorkBlockKind, useWeeklyWorkPlans } from '../hooks/useWeeklyWorkPlans';
+import type { WeeklyWorkBlock } from '../hooks/useWeeklyWorkPlans';
 
 const FER_ID = '4ca49a9d-7ee5-4b54-8e93-bc4833de549a';
 
@@ -61,6 +63,7 @@ export default function OperationsSupportPage() {
   }, [currentUser, previewRoleKey]);
   const { projects, visibleProjects, addStep } = useProjects(currentUser);
   const { todos } = useTodos(currentUser);
+  const { addNotification } = useNotifications(currentUser || null);
   const { blocks, addBlock, updateBlock, deleteBlock } = useWeeklyWorkPlans(currentUser);
   const [weekStart, setWeekStart] = useState(getWeekStartKey());
   const weekDays = useMemo(() => getWeekDateKeys(weekStart), [weekStart]);
@@ -92,6 +95,7 @@ export default function OperationsSupportPage() {
     endTime: '13:00',
     notes: '',
   });
+  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
   const [stepDraft, setStepDraft] = useState({
     projectId: '',
     name: '',
@@ -236,7 +240,7 @@ export default function OperationsSupportPage() {
     event.preventDefault();
     if (!taskDraft.title.trim()) return;
     const project = visibleOperationProjects.find((item) => item.id === taskDraft.projectId);
-    addBlock({
+    const request = addBlock({
       userId: FER_ID,
       weekStart: getWeekStartKey(new Date(`${taskDraft.dueDate || weekStart}T00:00:00`)),
       dateKey: taskDraft.dueDate || weekDays[0] || weekStart,
@@ -250,6 +254,7 @@ export default function OperationsSupportPage() {
       notes: project ? `Asignado por Esteban · Proyecto: ${project.name}` : 'Asignado por Esteban',
       updatedBy: currentUser?.id,
     });
+    notifySupportPeople([FER_ID, ESTEBAN_ID], `Nueva solicitud de apoyo a Fer: ${request.title}`);
     setTaskDraft((prev) => ({ ...prev, title: '' }));
   };
 
@@ -264,6 +269,35 @@ export default function OperationsSupportPage() {
     const target = allSupportRequests[nextIndex];
     updateBlock(current.id, { priorityRank: nextIndex + 1 });
     updateBlock(target.id, { priorityRank: currentIndex + 1 });
+  };
+
+  const notifySupportPeople = (userIds: Array<string | undefined>, message: string) => {
+    Array.from(new Set(userIds.filter(Boolean))).forEach((userId) => {
+      if (!userId || userId === currentUser?.id) return;
+      void addNotification({ userId, type: 'action_required', message }).catch((): void => undefined);
+    });
+  };
+
+  const handleAddSupportComment = (requestId: string) => {
+    const text = (supportReplyDrafts[requestId] || '').trim();
+    if (!text || !currentUser?.id) return;
+    const request = allSupportRequests.find((item) => item.id === requestId) || mySupportRequests.find((item) => item.id === requestId);
+    if (!request) return;
+    const authorId = effectiveUser?.id || currentUser.id;
+    const comment = {
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `support-comment-${Date.now()}`,
+      userId: authorId,
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    updateBlock(request.id, { comments: [...(request.comments || []), comment] });
+    setSupportReplyDrafts((prev) => ({ ...prev, [requestId]: '' }));
+
+    const requesterIsAuthor = request.requesterId === authorId;
+    notifySupportPeople(
+      requesterIsAuthor ? [FER_ID, ESTEBAN_ID] : [request.requesterId, authorId === FER_ID ? ESTEBAN_ID : FER_ID],
+      `Nueva respuesta en solicitud de apoyo: ${request.title}`,
+    );
   };
 
   const handleAddFerStep = (event: React.FormEvent) => {
@@ -307,15 +341,47 @@ export default function OperationsSupportPage() {
       <div className="mt-5 space-y-2">
         <h3 className="text-sm font-black text-slate-900">Mis solicitudes enviadas</h3>
         {mySupportRequests.slice(0, 6).map((request) => (
-          <div key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-sm font-black text-slate-950">{request.title}</p>
-            <p className="mt-1 text-xs font-bold text-slate-500">{request.dateKey} · {request.startTime}-{request.endTime}</p>
-          </div>
+          <SupportRequestCard
+            key={request.id}
+            request={request}
+            replyValue={supportReplyDrafts[request.id] || ''}
+            onReplyChange={(value) => setSupportReplyDrafts((prev) => ({ ...prev, [request.id]: value }))}
+            onAddReply={() => handleAddSupportComment(request.id)}
+          />
         ))}
         {mySupportRequests.length === 0 && <p className="text-sm font-semibold text-slate-500">Aún no has enviado solicitudes de apoyo.</p>}
       </div>
     </section>
   );
+
+  if (isSupportRequestOnly && effectiveUser?.id === FER_ID) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 lg:px-8">
+        <header className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Mis solicitudes</p>
+          <h1 className="mt-2 text-3xl font-black text-slate-950">Solicitudes de apoyo a Fer</h1>
+          <p className="mt-2 text-sm font-semibold text-slate-600">
+            Aquí ves quién pidió apoyo, cuándo lo necesita y puedes responder para coordinar.
+          </p>
+        </header>
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="space-y-3">
+            {allSupportRequests.map((request, index) => (
+              <SupportRequestCard
+                key={request.id}
+                request={request}
+                isActive={index < 3}
+                replyValue={supportReplyDrafts[request.id] || ''}
+                onReplyChange={(value) => setSupportReplyDrafts((prev) => ({ ...prev, [request.id]: value }))}
+                onAddReply={() => handleAddSupportComment(request.id)}
+              />
+            ))}
+            {allSupportRequests.length === 0 && <p className="text-sm font-semibold text-slate-500">Aún no hay solicitudes de apoyo para ti.</p>}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   if (isSupportRequestOnly) {
     return (
@@ -335,7 +401,7 @@ export default function OperationsSupportPage() {
   function handleCreateSupportRequest(event: React.FormEvent) {
     event.preventDefault();
     if (!supportRequestDraft.title.trim()) return;
-    addBlock({
+    const request = addBlock({
       userId: FER_ID,
       weekStart: getWeekStartKey(new Date(`${supportRequestDraft.dateKey}T00:00:00`)),
       dateKey: supportRequestDraft.dateKey,
@@ -348,6 +414,7 @@ export default function OperationsSupportPage() {
       notes: supportRequestDraft.notes,
       updatedBy: currentUser?.id,
     });
+    notifySupportPeople([FER_ID, ESTEBAN_ID], `Nueva solicitud de apoyo a Fer: ${request.title}`);
     setSupportRequestDraft((prev) => ({ ...prev, title: '', notes: '' }));
   }
 
@@ -505,13 +572,15 @@ export default function OperationsSupportPage() {
                 {allSupportRequests.map((request, index) => (
                   <div key={request.id} className={classNames('rounded-xl border p-3', index < 3 ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50')}>
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-black text-slate-950">{request.title}</p>
-                        <p className="mt-1 text-xs font-bold text-slate-500">
-                          Pidió {userName(request.requesterId)} · {request.dateKey} · {request.startTime}-{request.endTime}
-                        </p>
-                        {request.notes && <p className="mt-2 text-sm font-semibold text-slate-600">{request.notes}</p>}
-                        {index < 3 && <p className="mt-2 text-xs font-black uppercase tracking-wide text-emerald-700">Activa para Fer</p>}
+                      <div className="min-w-0 flex-1">
+                        <SupportRequestCard
+                          request={request}
+                          isActive={index < 3}
+                          replyValue={supportReplyDrafts[request.id] || ''}
+                          onReplyChange={(value) => setSupportReplyDrafts((prev) => ({ ...prev, [request.id]: value }))}
+                          onAddReply={() => handleAddSupportComment(request.id)}
+                          bare
+                        />
                       </div>
                       <div className="flex shrink-0 flex-col gap-1">
                         <button type="button" onClick={() => moveSupportRequest(request.id, -1)} disabled={index === 0} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-700 disabled:opacity-40">
@@ -618,13 +687,14 @@ export default function OperationsSupportPage() {
             <p className="mt-1 text-sm font-semibold text-slate-500">Las tres primeras son las activas para Fer esta semana.</p>
             <div className="mt-4 space-y-2">
               {allSupportRequests.slice(0, 8).map((request, index) => (
-                <div key={request.id} className={classNames('rounded-xl border p-3', index < 3 ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50')}>
-                  <p className="text-sm font-black text-slate-950">{request.title}</p>
-                  <p className="mt-1 text-xs font-bold text-slate-500">
-                    {request.dateKey} · {request.startTime}-{request.endTime} · pidió {userName(request.requesterId)}
-                  </p>
-                  {index < 3 && <p className="mt-2 text-xs font-black uppercase tracking-wide text-emerald-700">Activa</p>}
-                </div>
+                <SupportRequestCard
+                  key={request.id}
+                  request={request}
+                  isActive={index < 3}
+                  replyValue={supportReplyDrafts[request.id] || ''}
+                  onReplyChange={(value) => setSupportReplyDrafts((prev) => ({ ...prev, [request.id]: value }))}
+                  onAddReply={() => handleAddSupportComment(request.id)}
+                />
               ))}
               {allSupportRequests.length === 0 && <p className="text-sm font-semibold text-slate-500">No hay solicitudes de apoyo registradas.</p>}
             </div>
@@ -641,6 +711,75 @@ function MetricCard({ icon: Icon, label, value }: { icon: any; label: string; va
       <Icon size={20} />
       <p className="mt-3 text-2xl font-black">{value}</p>
       <p className="text-xs font-black uppercase tracking-wide">{label}</p>
+    </div>
+  );
+}
+
+function SupportRequestCard({
+  request,
+  isActive = false,
+  replyValue,
+  onReplyChange,
+  onAddReply,
+  bare = false,
+}: {
+  request: WeeklyWorkBlock;
+  isActive?: boolean;
+  replyValue: string;
+  onReplyChange: (value: string) => void;
+  onAddReply: () => void;
+  bare?: boolean;
+}) {
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-slate-950">{request.title}</p>
+          <p className="mt-1 text-xs font-bold text-slate-500">
+            {request.dateKey} · {request.startTime}-{request.endTime} · pidió {userName(request.requesterId)}
+          </p>
+        </div>
+        {isActive && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-black uppercase tracking-wide text-emerald-700">Activa</span>}
+      </div>
+
+      {request.notes && <p className="mt-2 text-sm font-semibold leading-5 text-slate-600">{request.notes}</p>}
+
+      {(request.comments || []).length > 0 && (
+        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+          {(request.comments || []).slice(-4).map((comment) => (
+            <div key={comment.id} className="rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+              <p className="font-black text-slate-800">{userName(comment.userId)}</p>
+              <p className="mt-1 font-semibold leading-5 text-slate-600">{comment.text}</p>
+              <p className="mt-1 text-[11px] font-black uppercase tracking-wide text-slate-400">{new Date(comment.createdAt).toLocaleString('es-ES')}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+        <textarea
+          value={replyValue}
+          onChange={(event) => onReplyChange(event.target.value)}
+          placeholder="Responder u observar esta solicitud"
+          className="min-h-[58px] resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-emerald-300"
+        />
+        <button
+          type="button"
+          onClick={onAddReply}
+          disabled={!replyValue.trim()}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <MessageSquareText size={14} />
+          Responder
+        </button>
+      </div>
+    </>
+  );
+
+  if (bare) return <div>{content}</div>;
+  return (
+    <div className={classNames('rounded-xl border p-3', isActive ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50')}>
+      {content}
     </div>
   );
 }

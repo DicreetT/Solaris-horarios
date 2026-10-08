@@ -250,6 +250,9 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
             if (item.label === 'Mi jornada' && effectiveUserKey) {
                 return { ...item, path: `/time-tracking?user=${effectiveUserKey}` };
             }
+            if (item.label === 'Solicitud de apoyo' && effectiveUserKey === 'fer') {
+                return { ...item, label: 'Mis solicitudes' };
+            }
             return item;
         });
 

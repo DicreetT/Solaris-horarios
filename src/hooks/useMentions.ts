@@ -41,6 +41,7 @@ export type MentionDraft = {
   originId: string;
   originLabel?: string;
   objectPath?: string;
+  sourceUserId?: string;
   targetUserId: string;
   mentionType: MentionType;
   context: string;
@@ -66,6 +67,37 @@ function timestampMs(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function mentionDedupeKey(mention: Mention) {
+  const originType = String(mention.originType || '').trim();
+  const originId = String(mention.originId || '').trim();
+  const targetUserId = String(mention.targetUserId || '').trim();
+  if (!originType || !originId || !targetUserId) return `id:${mention.id}`;
+  return `${originType}|${originId}|${targetUserId}`;
+}
+
+function chooseMentionToKeep(current: Mention, candidate: Mention) {
+  const currentResponses = current.responses?.length || 0;
+  const candidateResponses = candidate.responses?.length || 0;
+  if (candidateResponses !== currentResponses) return candidateResponses > currentResponses ? candidate : current;
+  const candidateTime = timestampMs(candidate.updatedAt || candidate.createdAt);
+  const currentTime = timestampMs(current.updatedAt || current.createdAt);
+  return candidateTime >= currentTime ? candidate : current;
+}
+
+function dedupeMentionList(list: Mention[]) {
+  const byContext = new Map<string, Mention>();
+  list.forEach((mention) => {
+    const id = String(mention?.id || '').trim();
+    if (!id) return;
+    const key = mentionDedupeKey(mention);
+    const previous = byContext.get(key);
+    byContext.set(key, previous ? chooseMentionToKeep(previous, mention) : mention);
+  });
+  return Array.from(byContext.values()).sort((a, b) => (
+    timestampMs(b.createdAt || b.updatedAt) - timestampMs(a.createdAt || a.updatedAt)
+  ));
+}
+
 function mergeMentionLists(remote: unknown, local: unknown): Mention[] {
   const remoteList = Array.isArray(remote) ? remote as Mention[] : [];
   const localList = Array.isArray(local) ? local as Mention[] : [];
@@ -80,9 +112,7 @@ function mergeMentionLists(remote: unknown, local: unknown): Mention[] {
     byId.set(id, !previous || mentionTime >= previousTime ? { ...previous, ...mention } : { ...mention, ...previous });
   });
 
-  return Array.from(byId.values()).sort((a, b) => (
-    timestampMs(b.createdAt || b.updatedAt) - timestampMs(a.createdAt || a.updatedAt)
-  ));
+  return dedupeMentionList(Array.from(byId.values()));
 }
 
 export function mentionTypeLabel(type: MentionType) {
@@ -123,7 +153,7 @@ export function useMentions(currentUser?: User | null) {
 
   const mentions = useMemo(() => {
     const list = Array.isArray(mentionsState) ? mentionsState : [];
-    return [...list].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return dedupeMentionList(list);
   }, [mentionsState]);
 
   const mentionsForMe = useMemo(() => (
@@ -144,14 +174,19 @@ export function useMentions(currentUser?: User | null) {
     const mention: Mention = {
       ...draft,
       id: uniqueId('mention'),
-      sourceUserId: currentUser.id,
+      sourceUserId: draft.sourceUserId || currentUser.id,
       status: draft.mentionType === 'informar' ? 'informed' : 'pending',
       responses: [],
       createdAt: now,
       updatedAt: now,
     };
 
-    setMentions((prev) => [mention, ...(Array.isArray(prev) ? prev : [])]);
+    setMentions((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      const key = mentionDedupeKey(mention);
+      if (list.some((item) => mentionDedupeKey(item) === key)) return list;
+      return [mention, ...list];
+    });
 
     if (draft.targetUserId && draft.targetUserId !== currentUser.id) {
       await addNotification({

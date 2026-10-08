@@ -7,6 +7,13 @@ export const WEEKLY_WORK_PLANS_KEY = 'weekly_work_plans_v1';
 
 export type WeeklyWorkBlockKind = 'warehouse' | 'projects' | 'support' | 'admin';
 
+export type WeeklyWorkComment = {
+  id: string;
+  userId: string;
+  text: string;
+  createdAt: string;
+};
+
 export type WeeklyWorkBlock = {
   id: string;
   userId: string;
@@ -20,6 +27,7 @@ export type WeeklyWorkBlock = {
   requesterId?: string;
   priorityRank?: number;
   notes?: string;
+  comments?: WeeklyWorkComment[];
   createdAt: string;
   updatedAt: string;
   updatedBy?: string;
@@ -80,6 +88,14 @@ export function normalizeWeeklyWorkPlansState(value: unknown): WeeklyWorkPlansSt
           requesterId: clean(block?.requesterId),
           priorityRank: Number.isFinite(Number(block?.priorityRank)) ? Number(block.priorityRank) : undefined,
           notes: clean(block?.notes),
+          comments: (Array.isArray(block?.comments) ? block.comments : [])
+            .map((comment: any): WeeklyWorkComment => ({
+              id: clean(comment?.id) || uniqueId('work_comment'),
+              userId: clean(comment?.userId),
+              text: clean(comment?.text),
+              createdAt: clean(comment?.createdAt) || now,
+            }))
+            .filter((comment: WeeklyWorkComment) => comment.userId && comment.text),
           createdAt: clean(block?.createdAt) || now,
           updatedAt: clean(block?.updatedAt) || clean(block?.createdAt) || now,
           updatedBy: clean(block?.updatedBy),
@@ -113,6 +129,7 @@ export function useWeeklyWorkPlans(currentUser?: User | null) {
       createdAt: now,
       updatedAt: now,
       updatedBy: currentUser?.id,
+      comments: draft.comments || [],
     };
     setState((prev) => {
       const base = normalizeWeeklyWorkPlansState(prev);

@@ -336,6 +336,7 @@ export function useProjects(currentUser?: User | null) {
     originId: string,
     title: string,
     context: string,
+    sourceUserId = currentUser?.id,
   ): void => {
     if (!currentUser?.id) return;
     const mentionedUsers = findMentionedUsersInText(context);
@@ -355,6 +356,7 @@ export function useProjects(currentUser?: User | null) {
         originId,
         originLabel: project.name,
         objectPath: `/projects?project=${project.id}`,
+        sourceUserId,
         targetUserId: targetUser.id,
         mentionType: 'consultar',
         context,
@@ -372,15 +374,20 @@ export function useProjects(currentUser?: User | null) {
         project.id,
         `Proyecto: ${project.name}`,
         [project.objective, project.description, project.expectedResult, project.completionDefinition].join('\n\n'),
+        project.ownerId || project.responsibleId,
       );
 
       (project.steps || []).forEach((step) => {
+        const stepHistory = (project.history || [])
+          .filter((entry) => entry.type === 'step_added' && entry.text.includes(step.name))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0];
         createAutomaticProjectMentions(
           project,
           'project_step',
           `${project.id}:${step.id}`,
           `Paso de proyecto: ${step.name}`,
           [step.name, step.description, step.deliverable].join('\n\n'),
+          stepHistory?.userId || project.ownerId || project.responsibleId,
         );
       });
     });
