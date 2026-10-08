@@ -44,7 +44,7 @@ export type ProjectStep = {
 
 export type ProjectHistoryEntry = {
   id: string;
-  type: 'created' | 'updated' | 'step_added' | 'step_updated' | 'decision_requested' | 'task_linked' | 'observation' | 'closed';
+  type: 'created' | 'updated' | 'step_added' | 'step_updated' | 'step_deleted' | 'decision_requested' | 'task_linked' | 'observation' | 'closed';
   userId: string;
   text: string;
   stepId?: string;
@@ -552,6 +552,27 @@ export function useProjects(currentUser?: User | null) {
     }
   };
 
+  const deleteStep = (projectId: string, stepId: string) => {
+    if (!currentUser?.id) throw new Error('No hay usuario activo.');
+    const now = new Date().toISOString();
+    setProjects((prev) => (
+      (Array.isArray(prev) ? prev : []).map((project) => {
+        if (project.id !== projectId) return project;
+        const stepToDelete = (project.steps || []).find((step) => step.id === stepId);
+        return {
+          ...project,
+          steps: (project.steps || []).filter((step) => step.id !== stepId),
+          taskLinks: (project.taskLinks || []).filter((link) => link.stepId !== stepId),
+          history: [
+            ...(project.history || []),
+            historyEntry(currentUser.id, 'step_deleted', `Paso eliminado: ${stepToDelete?.name || stepId}`),
+          ],
+          updatedAt: now,
+        };
+      })
+    ));
+  };
+
   const linkTaskToStep = (projectId: string, stepId: string | undefined, taskId: number) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const now = new Date().toISOString();
@@ -656,6 +677,7 @@ export function useProjects(currentUser?: User | null) {
     deleteProject,
     addStep,
     updateStep,
+    deleteStep,
     linkTaskToStep,
     addObservation,
     requestDecision,

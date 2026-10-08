@@ -120,7 +120,7 @@ function ProgressRing({ value, status, size = 58 }: { value: number; status: Lun
 
 export default function ProjectsPage() {
   const { currentUser } = useAuth();
-  const { projects, visibleProjects, createProject, updateProject, deleteProject, addStep, updateStep, linkTaskToStep, addObservation, requestDecision, ensureEstebanInitialPortfolio } = useProjects(currentUser);
+  const { projects, visibleProjects, createProject, updateProject, deleteProject, addStep, updateStep, deleteStep, linkTaskToStep, addObservation, requestDecision, ensureEstebanInitialPortfolio } = useProjects(currentUser);
   const { todos, createTodo } = useTodos(currentUser);
   const [searchParams, setSearchParams] = useSearchParams();
   const [previewRoleKey, setPreviewRoleKey] = useState<string | null>(() => (
@@ -410,6 +410,15 @@ export default function ProjectsPage() {
       status: stepEditDraft.status,
     });
     setEditingStepId('');
+  };
+
+  const handleDeleteStep = (projectId: string, step: ProjectStep) => {
+    const ok = window.confirm(`¿Eliminar el paso "${step.name}"?`);
+    if (!ok) return;
+    deleteStep(projectId, step.id);
+    if (editingStepId === step.id) {
+      setEditingStepId('');
+    }
   };
 
   const handleAddObservation = (event: React.FormEvent) => {
@@ -940,6 +949,14 @@ export default function ProjectsPage() {
                             >
                               <Pencil size={13} />
                               Editar paso
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStep(selectedProject.id, step)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                            >
+                              <Trash2 size={13} />
+                              Eliminar paso
                             </button>
                             <select value={step.status} onChange={(e) => updateStep(selectedProject.id, step.id, { status: e.target.value as ProjectStepStatus })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">
                               {STEP_STATUSES.map((status) => <option key={status} value={status}>{projectStepStatusLabel(status)}</option>)}
