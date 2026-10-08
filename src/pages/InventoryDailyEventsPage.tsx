@@ -9,6 +9,7 @@ import {
   InventoryDailyReviewerKey,
   InventoryDailyReviewStatus,
   InventoryDailySimpleRow,
+  InventoryStockControlSnapshot,
   useInventoryDailyEvents,
 } from '../hooks/useInventoryDailyEvents';
 import { useSharedJsonState } from '../hooks/useSharedJsonState';
@@ -171,6 +172,34 @@ function dispatchWarehouse(order: ArchiveOrder) {
     return `${cleanText(order.transferOrigin || order.sourceWarehouse) || 'Origen sin registrar'} → ${cleanText(order.transferDestination) || 'Destino sin registrar'}`;
   }
   return cleanText(order.sourceWarehouse || order.transferOrigin) || 'Bodega sin registrar';
+}
+
+function normalizeStockLookupPart(value: unknown) {
+  return cleanText(value)
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function stockLookupKey(row: Partial<InventoryDailyManualStockRow>) {
+  return [
+    normalizeStockLookupPart(row.producto),
+    normalizeStockLookupPart(row.lote),
+    normalizeStockLookupPart(row.bodega || 'CANET'),
+  ].join('|');
+}
+
+function buildLunarisStockLookup(snapshot: InventoryStockControlSnapshot | null | undefined) {
+  const lookup = new Map<string, number>();
+  const rows = Array.isArray(snapshot?.canetVisibleStockRows) ? snapshot.canetVisibleStockRows : [];
+  rows.forEach((row) => {
+    const producto = cleanText(row.producto);
+    const lote = cleanText(row.lote);
+    const bodega = cleanText(row.bodega) || 'CANET';
+    if (!producto || !lote || normalizeStockLookupPart(bodega) !== 'CANET') return;
+    lookup.set(stockLookupKey({ producto, lote, bodega: 'CANET' }), Number(row.stock ?? row.stockTotal ?? 0));
+  });
+  return lookup;
 }
 
 function ReviewCard({
@@ -401,12 +430,28 @@ function SimpleTable({
 function StockControlTable({
   rows,
   onChange,
+  lunarisStockLookup,
 }: {
   rows: InventoryDailyManualStockRow[];
   onChange: (rows: InventoryDailyManualStockRow[]) => void;
+  lunarisStockLookup: Map<string, number>;
 }) {
   const addRow = () => onChange([...rows, { id: uid('stock'), producto: '', lote: '', bodega: 'CANET', lunaris: '', physical: '', zoho: '', observation: '' }]);
-  const patchRow = (id: string, patch: Partial<InventoryDailyManualStockRow>) => onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  const patchRow = (id: string, patch: Partial<InventoryDailyManualStockRow>) => onChange(rows.map((row) => {
+    if (row.id !== id) return row;
+    const next = { ...row, ...patch };
+    const identityChanged = patch.producto !== undefined || patch.lote !== undefined || patch.bodega !== undefined;
+    if (!identityChanged) return next;
+    const lookupValue = lunarisStockLookup.get(stockLookupKey(next));
+    if (lookupValue === undefined) return next;
+    const previousAutoValue = lunarisStockLookup.get(stockLookupKey(row));
+    const currentLunaris = cleanText(row.lunaris);
+    const canReplace = !currentLunaris || (
+      previousAutoValue !== undefined
+      && Math.abs(toNumber(currentLunaris) - previousAutoValue) < 0.000001
+    );
+    return canReplace ? { ...next, lunaris: String(lookupValue) } : next;
+  }));
   const removeRow = (id: string) => onChange(rows.filter((row) => row.id !== id));
   const decorated = rows.map((row) => {
     const lunaris = toNumber(row.lunaris);
@@ -569,6 +614,10 @@ export default function InventoryDailyEventsPage() {
   const selectedArchiveDay = useMemo(
     () => (Array.isArray(facturacionArchive) ? facturacionArchive : []).find((day) => day.dateKey === selectedDateKey),
     [facturacionArchive, selectedDateKey],
+  );
+  const lunarisStockLookup = useMemo(
+    () => buildLunarisStockLookup(inventorySnapshot),
+    [inventorySnapshot],
   );
   const currentStatus = getInventoryDailyStatus(currentReport);
   const currentUserName = currentUser?.name || '';
@@ -735,6 +784,7 @@ export default function InventoryDailyEventsPage() {
 
             <StockControlTable
               rows={tables.stock || []}
+              lunarisStockLookup={lunarisStockLookup}
               onChange={(rows) => updateManualTable(selectedDateKey, 'stock', rows)}
             />
 

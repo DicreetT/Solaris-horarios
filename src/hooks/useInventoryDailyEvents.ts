@@ -174,6 +174,8 @@ const normalizeSearch = (value: unknown) => clean(value)
   .toLowerCase()
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '');
+const normalizeStockKeyPart = (value: unknown) => normalizeSearch(value).toUpperCase();
+const isCanetWarehouse = (value: unknown) => normalizeStockKeyPart(value) === 'CANET';
 
 const findUserId = (needle: string) => (
   USERS.find((user) => user.name.toLowerCase().includes(needle) || user.email.toLowerCase().includes(needle))?.id || ''
@@ -316,12 +318,13 @@ const buildStockRowsFromSnapshot = (snapshot: InventoryStockControlSnapshot | nu
   const visibleRows = Array.isArray(snapshot?.canetVisibleStockRows) ? snapshot.canetVisibleStockRows : [];
   return visibleRows
     .filter((row) => clean(row.producto) && clean(row.lote))
+    .filter((row) => isCanetWarehouse(clean(row.bodega) || 'CANET'))
     .slice(0, 1200)
     .map((row, index) => ({
       id: `stock_${index}_${clean(row.producto)}_${clean(row.lote)}_${clean(row.bodega)}`,
       producto: clean(row.producto),
       lote: clean(row.lote),
-      bodega: clean(row.bodega) || 'CANET',
+      bodega: 'CANET',
       lunaris: String(Number(row.stock ?? row.stockTotal ?? 0)),
       physical: '',
       physicalOk: false,
@@ -332,9 +335,9 @@ const buildStockRowsFromSnapshot = (snapshot: InventoryStockControlSnapshot | nu
 };
 
 const stockRowKey = (row: Partial<InventoryDailyManualStockRow>) => [
-  clean(row.producto).toUpperCase(),
-  clean(row.lote).toUpperCase(),
-  clean(row.bodega).toUpperCase(),
+  normalizeStockKeyPart(row.producto),
+  normalizeStockKeyPart(row.lote),
+  normalizeStockKeyPart(row.bodega || 'CANET'),
 ].join('|');
 
 const mergeStockRowsFromSnapshot = (
