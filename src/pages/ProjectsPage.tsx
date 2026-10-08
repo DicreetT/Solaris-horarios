@@ -17,6 +17,7 @@ import {
 } from '../hooks/useProjects';
 import { useTodos } from '../hooks/useTodos';
 import type { Attachment } from '../types';
+import { parseTagInput } from '../utils/mentionsAndTags';
 
 const PROJECT_TYPES: ProjectType[] = ['general', 'contenido', 'sistema_tecnologia', 'formacion', 'inventario_logistica', 'finanzas', 'expansion'];
 const STEP_STATUSES: ProjectStepStatus[] = ['pending', 'in_progress', 'waiting', 'blocked', 'validation', 'completed'];
@@ -273,7 +274,7 @@ export default function ProjectsPage() {
       ...projectDraft,
       responsibleId: projectDraft.responsibleId || effectiveProjectUserId || currentUser.id,
       name: projectDraft.name.trim(),
-      tags: projectDraft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      tags: parseTagInput(projectDraft.tags),
       targetDate: projectDraft.targetDate || undefined,
     }, isPreviewingOtherUser ? { ownerId: effectiveProjectUserId, actorId: currentUser.id } : undefined);
     setSelectedProjectId(created.id);
@@ -301,7 +302,7 @@ export default function ProjectsPage() {
       description: editProjectDraft.description,
       expectedResult: editProjectDraft.expectedResult,
       completionDefinition: editProjectDraft.completionDefinition,
-      tags: editProjectDraft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      tags: parseTagInput(editProjectDraft.tags),
     }, 'Información principal del proyecto editada');
     setEditProjectOpen(false);
   };
@@ -505,6 +506,7 @@ export default function ProjectsPage() {
                         <p className="mt-1 text-xs font-bold text-slate-500">
                           {projectTypeLabel(project.type)} · {projectStatusLabel(project.status)} · {progress.completed}%
                         </p>
+                        <TagPills tags={project.tags} className="mt-2" />
                       </button>
                       <div className="flex items-center gap-2">
                         {project.weeklyPriorityRank ? (
@@ -601,6 +603,7 @@ export default function ProjectsPage() {
                   <h2 className="text-3xl font-black text-slate-950">{selectedProject.name}</h2>
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">{selectedProject.description || selectedProject.objective}</p>
                   <p className="mt-3 text-xs font-bold text-slate-500">Responsable: {userName(selectedProject.responsibleId)} · Propietario: {userName(selectedProject.ownerId)}</p>
+                  <TagPills tags={selectedProject.tags} className="mt-3" />
                 </div>
                 <div className="flex items-center gap-4">
                   <ProgressRing value={selectedProgress.completed} status={selectedProject.status} size={70} />
@@ -917,6 +920,21 @@ export default function ProjectsPage() {
           </main>
         )}
       </section>
+    </div>
+  );
+}
+
+function TagPills({ tags, className = '' }: { tags?: string[]; className?: string }) {
+  const visibleTags = Array.from(new Set((tags || []).map((tag) => tag.trim()).filter(Boolean))).slice(0, 8);
+  if (visibleTags.length === 0) return null;
+
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className}`}>
+      {visibleTags.map((tag) => (
+        <span key={tag} className="rounded-full border border-teal-100 bg-teal-50 px-2 py-1 text-[11px] font-black text-teal-700">
+          #{tag.replace(/^#+/, '')}
+        </span>
+      ))}
     </div>
   );
 }

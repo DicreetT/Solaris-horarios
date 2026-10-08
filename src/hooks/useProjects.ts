@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import { ESTEBAN_ID } from '../constants';
 import type { Attachment, User } from '../types';
-import { MentionType, useMentions } from './useMentions';
+import { findMentionedUsersInText } from '../utils/mentionsAndTags';
+import { MentionOriginType, MentionType, useMentions } from './useMentions';
 import { useSharedJsonState } from './useSharedJsonState';
 
 export const PROJECTS_KEY = 'projects_v1';
@@ -303,7 +304,7 @@ export function canUserSeeProject(project: LunarisProject, user?: User | null) {
 }
 
 export function useProjects(currentUser?: User | null) {
-  const { createMention } = useMentions(currentUser);
+  const { mentions, createMention } = useMentions(currentUser);
   const [projectsState, setProjects, isLoading] = useSharedJsonState<LunarisProject[]>(
     PROJECTS_KEY,
     [],
@@ -329,6 +330,38 @@ export function useProjects(currentUser?: User | null) {
     projects.filter((project) => canUserSeeProject(project, currentUser))
   ), [currentUser, projects]);
 
+  const createAutomaticProjectMentions = (
+    project: LunarisProject,
+    originType: Extract<MentionOriginType, 'project' | 'project_step'>,
+    originId: string,
+    title: string,
+    context: string,
+  ): void => {
+    if (!currentUser?.id) return;
+    const mentionedUsers = findMentionedUsersInText(context);
+    if (mentionedUsers.length === 0) return;
+
+    const existingKeys = new Set(
+      mentions.map((mention) => `${mention.originType}|${mention.originId}|${mention.targetUserId}`),
+    );
+
+    mentionedUsers.forEach((targetUser) => {
+      const key = `${originType}|${originId}|${targetUser.id}`;
+      if (existingKeys.has(key)) return;
+      existingKeys.add(key);
+      void createMention({
+        title,
+        originType,
+        originId,
+        originLabel: project.name,
+        objectPath: `/projects?project=${project.id}`,
+        targetUserId: targetUser.id,
+        mentionType: 'consultar',
+        context,
+      }).catch((): void => undefined);
+    });
+  };
+
   const createProject = (draft: ProjectDraft, options?: { ownerId?: string; actorId?: string }) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const now = new Date().toISOString();
@@ -348,12 +381,21 @@ export function useProjects(currentUser?: User | null) {
       updatedAt: now,
     };
     setProjects((prev) => [project, ...(Array.isArray(prev) ? prev : [])]);
+    createAutomaticProjectMentions(
+      project,
+      'project',
+      project.id,
+      `Proyecto: ${project.name}`,
+      [project.objective, project.description, project.expectedResult, project.completionDefinition].join('\n\n'),
+    );
     return project;
   };
 
   const updateProject = (projectId: string, patch: Partial<LunarisProject>, historyText = 'Proyecto actualizado') => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const now = new Date().toISOString();
+    const projectBeforeUpdate = projects.find((project) => project.id === projectId);
+    const projectAfterUpdate = projectBeforeUpdate ? { ...projectBeforeUpdate, ...patch } : null;
     setProjects((prev) => (
       (Array.isArray(prev) ? prev : []).map((project) => (
         project.id === projectId
@@ -367,6 +409,20 @@ export function useProjects(currentUser?: User | null) {
           : project
       ))
     ));
+    if (projectAfterUpdate) {
+      createAutomaticProjectMentions(
+        projectAfterUpdate,
+        'project',
+        projectAfterUpdate.id,
+        `Proyecto: ${projectAfterUpdate.name}`,
+        [
+          projectAfterUpdate.objective,
+          projectAfterUpdate.description,
+          projectAfterUpdate.expectedResult,
+          projectAfterUpdate.completionDefinition,
+        ].join('\n\n'),
+      );
+    }
   };
 
   const deleteProject = (projectId: string) => {
@@ -390,6 +446,7 @@ export function useProjects(currentUser?: User | null) {
   const addStep = (projectId: string, draft: ProjectStepDraft) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const now = new Date().toISOString();
+    const project = projects.find((item) => item.id === projectId);
     const step: ProjectStep = {
       ...draft,
       id: uniqueId('project-step'),
@@ -413,12 +470,24 @@ export function useProjects(currentUser?: User | null) {
           : project
       ))
     ));
+    if (project) {
+      createAutomaticProjectMentions(
+        project,
+        'project_step',
+        `${projectId}:${step.id}`,
+        `Paso de proyecto: ${step.name}`,
+        [step.name, step.description, step.deliverable].join('\n\n'),
+      );
+    }
     return step;
   };
 
   const updateStep = (projectId: string, stepId: string, patch: Partial<ProjectStep>) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const now = new Date().toISOString();
+    const projectBeforeUpdate = projects.find((project) => project.id === projectId);
+    const stepBeforeUpdate = projectBeforeUpdate?.steps.find((step) => step.id === stepId);
+    const stepAfterUpdate = stepBeforeUpdate ? { ...stepBeforeUpdate, ...patch } : null;
     setProjects((prev) => (
       (Array.isArray(prev) ? prev : []).map((project) => {
         if (project.id !== projectId) return project;
@@ -439,6 +508,15 @@ export function useProjects(currentUser?: User | null) {
         };
       })
     ));
+    if (projectBeforeUpdate && stepAfterUpdate) {
+      createAutomaticProjectMentions(
+        projectBeforeUpdate,
+        'project_step',
+        `${projectId}:${stepId}`,
+        `Paso de proyecto: ${stepAfterUpdate.name}`,
+        [stepAfterUpdate.name, stepAfterUpdate.description, stepAfterUpdate.deliverable].join('\n\n'),
+      );
+    }
   };
 
   const linkTaskToStep = (projectId: string, stepId: string | undefined, taskId: number) => {

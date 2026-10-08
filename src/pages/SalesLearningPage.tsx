@@ -4,6 +4,7 @@ import { Archive, ArrowRight, BookOpen, CheckCircle2, FolderKanban, HelpCircle, 
 import { useAuth } from '../context/AuthContext';
 import { CommercialNeedRecord, FaqRecord, StudentSupportRecord, useSalesLearning } from '../hooks/useSalesLearning';
 import { useProjects } from '../hooks/useProjects';
+import { parseTagInput } from '../utils/mentionsAndTags';
 
 const PRODUCT_OPTIONS = [
   { code: 'SV', label: 'Solar Vital' },
@@ -17,7 +18,7 @@ const PRODUCT_OPTIONS = [
 ];
 
 function splitTags(value: string) {
-  return value.split(',').map((tag) => tag.trim()).filter(Boolean);
+  return parseTagInput(value);
 }
 
 function normalizeRadarTag(value: string) {

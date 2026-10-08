@@ -1685,6 +1685,7 @@ function RoleHomePrototypePage() {
                 rows={decisionMentionsForSelectedUser}
                 empty="No hay decisiones ni validaciones pendientes."
                 onOpenAll={() => navigate('/mentions')}
+                onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
               />
               <MentionSummaryCard
                 role={selectedRole}
@@ -1693,6 +1694,7 @@ function RoleHomePrototypePage() {
                 rows={generalMentionsForSelectedUser}
                 empty="No hay menciones informativas o de consulta pendientes."
                 onOpenAll={() => navigate('/mentions')}
+                onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
               />
             </div>
 
@@ -1702,6 +1704,7 @@ function RoleHomePrototypePage() {
               sentMentions={mentionsBySelectedUser}
               repliedMentions={mentionResponsesForSelectedUser}
               onOpenAll={() => navigate('/mentions')}
+              onOpenMention={(mention) => navigate(mention.objectPath || '/mentions')}
             />
 
             <HomeSectionHeader
@@ -2406,12 +2409,14 @@ function MentionActivityDrawer({
   sentMentions,
   repliedMentions,
   onOpenAll,
+  onOpenMention,
 }: {
   role: RoleHome;
   receivedMentions: Mention[];
   sentMentions: Mention[];
   repliedMentions: Mention[];
   onOpenAll: () => void;
+  onOpenMention: (mention: Mention) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const pendingReceived = receivedMentions.filter((mention) => mention.status === 'pending').length;
@@ -2459,6 +2464,7 @@ function MentionActivityDrawer({
               mentions={receivedMentions}
               mode="received"
               onOpenAll={onOpenAll}
+              onOpenMention={onOpenMention}
             />
             <MentionActivityList
               title="Menciones que hice"
@@ -2466,6 +2472,7 @@ function MentionActivityDrawer({
               mentions={sentMentions}
               mode="sent"
               onOpenAll={onOpenAll}
+              onOpenMention={onOpenMention}
             />
             <MentionActivityList
               title="Respuestas recibidas"
@@ -2473,6 +2480,7 @@ function MentionActivityDrawer({
               mentions={repliedMentions}
               mode="responses"
               onOpenAll={onOpenAll}
+              onOpenMention={onOpenMention}
             />
           </div>
           <button
@@ -2494,12 +2502,14 @@ function MentionActivityList({
   mentions,
   mode,
   onOpenAll,
+  onOpenMention,
 }: {
   title: string;
   empty: string;
   mentions: Mention[];
   mode: 'received' | 'sent' | 'responses';
   onOpenAll: () => void;
+  onOpenMention: (mention: Mention) => void;
 }) {
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -2529,7 +2539,7 @@ function MentionActivityList({
             <button
               key={mention.id}
               type="button"
-              onClick={onOpenAll}
+              onClick={() => mention.objectPath ? onOpenMention(mention) : onOpenAll()}
               className="w-full rounded-lg border border-white bg-white px-3 py-2 text-left hover:border-slate-200 hover:bg-slate-50"
             >
               <div className="flex items-start justify-between gap-2">
@@ -2562,13 +2572,15 @@ function MentionSummaryCard({
   rows,
   empty,
   onOpenAll,
+  onOpenMention,
 }: {
   role: RoleHome;
   title: string;
   icon: React.ElementType;
-  rows: any[];
+  rows: Mention[];
   empty: string;
   onOpenAll: () => void;
+  onOpenMention: (mention: Mention) => void;
 }) {
   return (
     <article className="rounded-2xl border border-white/85 bg-white/82 p-4 shadow-sm backdrop-blur-sm">
@@ -2591,7 +2603,7 @@ function MentionSummaryCard({
             <button
               key={mention.id}
               type="button"
-              onClick={onOpenAll}
+              onClick={() => mention.objectPath ? onOpenMention(mention) : onOpenAll()}
               className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white px-3 py-2 text-left hover:bg-slate-50"
             >
               <span className="min-w-0">
