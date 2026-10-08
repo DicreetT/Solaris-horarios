@@ -46,16 +46,23 @@ function writeTodosCache(userId: string, todos: Todo[]) {
     }
 }
 
-function userCanSeeTodo(userId: string | undefined, todo: Todo) {
+function userCanSeeTodo(userId: string | undefined, todo: Todo, isAdminView = false) {
     if (!userId) return false;
+    if (isAdminView) return true;
     const user = USERS.find((item) => item.id === userId);
     if (user?.isAdmin) return true;
     return todo.created_by === userId || (todo.assigned_to || []).includes(userId);
 }
 
-function replaceOrInsertTodo(list: Todo[], todo: Todo, userId?: string) {
+function mergeTodosWithCache(freshTodos: Todo[], cachedTodos: Todo[], userId?: string, isAdminView = false) {
+    const freshIds = new Set(freshTodos.map((todo) => todo.id));
+    const cachedVisible = cachedTodos.filter((todo) => !freshIds.has(todo.id) && userCanSeeTodo(userId, todo, isAdminView));
+    return [...freshTodos, ...cachedVisible];
+}
+
+function replaceOrInsertTodo(list: Todo[], todo: Todo, userId?: string, isAdminView = false) {
     const nextWithoutTodo = list.filter((item) => item.id !== todo.id);
-    if (!userCanSeeTodo(userId, todo)) return nextWithoutTodo;
+    if (!userCanSeeTodo(userId, todo, isAdminView)) return nextWithoutTodo;
     return [todo, ...nextWithoutTodo].sort((a, b) => {
         if (a.due_date_key && b.due_date_key && a.due_date_key !== b.due_date_key) {
             return a.due_date_key.localeCompare(b.due_date_key);
@@ -68,12 +75,13 @@ function replaceOrInsertTodo(list: Todo[], todo: Todo, userId?: string) {
 
 function updateTodoCaches(
     queryClient: QueryClient,
-    updater: (todos: Todo[], userId?: string) => Todo[],
+    updater: (todos: Todo[], userId?: string, isAdminView?: boolean) => Todo[],
 ) {
     queryClient.getQueriesData<Todo[]>({ queryKey: ['todos'] }).forEach(([queryKey, current]) => {
         if (!Array.isArray(current)) return;
         const userId = Array.isArray(queryKey) ? String(queryKey[1] || '') : '';
-        const next = updater(current, userId);
+        const isAdminView = Array.isArray(queryKey) && queryKey[2] === 'admin';
+        const next = updater(current, userId, isAdminView);
         queryClient.setQueryData(queryKey as QueryKey, next);
         if (userId) writeTodosCache(userId, next);
     });
@@ -123,12 +131,12 @@ export function useTodos(currentUser: User | null) {
         if (cached.length > 0) {
             lastNonEmptyTodosRef.current = cached;
             lastNonEmptyAtRef.current = Date.now();
-            queryClient.setQueryData(['todos', currentUser.id], cached);
+            queryClient.setQueryData(['todos', currentUser.id, currentUser.isAdmin ? 'admin' : 'member'], cached);
         }
-    }, [currentUser?.id, queryClient]);
+    }, [currentUser?.id, currentUser?.isAdmin, queryClient]);
 
     const { data: todos = EMPTY_ARRAY, isLoading, error } = useQuery({
-        queryKey: ['todos', currentUser?.id],
+        queryKey: ['todos', currentUser?.id, currentUser?.isAdmin ? 'admin' : 'member'],
         queryFn: async () => {
             if (!currentUser) return [];
             const { data, error } = await supabase
@@ -148,12 +156,14 @@ export function useTodos(currentUser: User | null) {
                     t.created_by === currentUser.id ||
                     (t.assigned_to || []).includes(currentUser.id)
             );
+            const cached = readTodosCache(currentUser.id);
+            const mergedVisible = mergeTodosWithCache(visible, cached, currentUser.id, !!currentUser.isAdmin);
 
-            if (visible.length > 0) {
-                lastNonEmptyTodosRef.current = visible;
+            if (mergedVisible.length > 0) {
+                lastNonEmptyTodosRef.current = mergedVisible;
                 lastNonEmptyAtRef.current = Date.now();
-                writeTodosCache(currentUser.id, visible);
-                return visible;
+                writeTodosCache(currentUser.id, mergedVisible);
+                return mergedVisible;
             }
 
             const hasRecentNonEmpty =
@@ -166,7 +176,7 @@ export function useTodos(currentUser: User | null) {
                 return lastNonEmptyTodosRef.current;
             }
 
-            return visible;
+            return mergedVisible;
         },
         enabled: !!currentUser,
     });
@@ -224,7 +234,7 @@ export function useTodos(currentUser: User | null) {
         },
         onSuccess: async (createdTodo, variables) => {
             const normalized = normalizeTodo(createdTodo);
-            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, normalized, userId));
+            updateTodoCaches(queryClient, (current, userId, isAdminView) => replaceOrInsertTodo(current, normalized, userId, isAdminView));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea creada con éxito.');
 
@@ -289,11 +299,11 @@ export function useTodos(currentUser: User | null) {
                 ? todo.completed_by.filter((id: string) => id !== currentUser.id)
                 : Array.from(new Set([...todo.completed_by, currentUser.id]));
 
-            updateTodoCaches(queryClient, (current, userId) => current.map((item) => (
+            updateTodoCaches(queryClient, (current, userId, isAdminView) => current.map((item) => (
                 item.id === todo.id
                     ? { ...item, completed_by: nextCompleted }
                     : item
-            )).filter((item) => userCanSeeTodo(userId, item)));
+            )).filter((item) => userCanSeeTodo(userId, item, isAdminView)));
 
             return { snapshots };
         },
@@ -305,7 +315,7 @@ export function useTodos(currentUser: User | null) {
             });
         },
         onSuccess: (result) => {
-            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, result.todo, userId));
+            updateTodoCaches(queryClient, (current, userId, isAdminView) => replaceOrInsertTodo(current, result.todo, userId, isAdminView));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback(result?.isNowCompleted ? 'Tarea finalizada con éxito.' : 'Tarea reabierta con éxito.');
         },
@@ -315,8 +325,10 @@ export function useTodos(currentUser: User | null) {
         mutationFn: async (id: number) => {
             const { error } = await supabase.from('todos').delete().eq('id', id);
             if (error) throw error;
+            return id;
         },
-        onSuccess: () => {
+        onSuccess: (id) => {
+            updateTodoCaches(queryClient, (current) => current.filter((todo) => todo.id !== id));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea eliminada con éxito.');
         },
@@ -407,9 +419,9 @@ export function useTodos(currentUser: User | null) {
             await queryClient.cancelQueries({ queryKey: ['todos'] });
             const snapshots = queryClient.getQueriesData<Todo[]>({ queryKey: ['todos'] });
 
-            updateTodoCaches(queryClient, (current, userId) => current
+            updateTodoCaches(queryClient, (current, userId, isAdminView) => current
                 .map((todo) => (todo.id === id ? { ...todo, ...updates } as Todo : todo))
-                .filter((todo) => userCanSeeTodo(userId, todo)));
+                .filter((todo) => userCanSeeTodo(userId, todo, isAdminView)));
 
             return { snapshots };
         },
@@ -421,7 +433,7 @@ export function useTodos(currentUser: User | null) {
             });
         },
         onSuccess: (updatedTodo) => {
-            updateTodoCaches(queryClient, (current, userId) => replaceOrInsertTodo(current, updatedTodo, userId));
+            updateTodoCaches(queryClient, (current, userId, isAdminView) => replaceOrInsertTodo(current, updatedTodo, userId, isAdminView));
             queryClient.invalidateQueries({ queryKey: ['todos'] });
             emitSuccessFeedback('Tarea actualizada con éxito.');
         },
