@@ -3,6 +3,7 @@ import { USERS } from '../constants';
 import { useSharedJsonState } from './useSharedJsonState';
 import { InventoryMovementRow, useInventoryMovementsDB } from './useInventoryMovementsDB';
 import { toDateKey } from '../utils/dateUtils';
+import { calculateInventoryStockSnapshot, normalizeInventoryWarehouse } from '../utils/inventoryStock';
 
 export const DAILY_INVENTORY_CONTROL_KEY = 'daily_inventory_control_events_v1';
 export const INVENTORY_STOCK_CONTROL_SNAPSHOT_KEY = 'inventory_stock_control_snapshot_v1';
@@ -130,6 +131,11 @@ export type InventoryStockControlSnapshot = {
     lote?: string;
     stockCanet?: number;
   }>;
+  canetControlRows?: Array<{
+    producto?: string;
+    lote?: string;
+    stockCanet?: number;
+  }>;
 };
 
 type BillingArchiveEntry = {
@@ -176,6 +182,19 @@ const normalizeSearch = (value: unknown) => clean(value)
   .replace(/[\u0300-\u036f]/g, '');
 const normalizeStockKeyPart = (value: unknown) => normalizeSearch(value).toUpperCase();
 const isCanetWarehouse = (value: unknown) => normalizeStockKeyPart(value) === 'CANET';
+const dateFromDateKey = (value: unknown): Date | null => {
+  const text = clean(value);
+  if (!text) return null;
+  const [year, month, day] = text.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+const monthEndFromDateKey = (dateKey: string) => {
+  const date = dateFromDateKey(dateKey);
+  if (!date) return null;
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+};
 
 const findUserId = (needle: string) => (
   USERS.find((user) => user.name.toLowerCase().includes(needle) || user.email.toLowerCase().includes(needle))?.id || ''
@@ -314,24 +333,72 @@ export const normalizeInventoryDailyState = (value: unknown): InventoryDailyStat
   return { reports, deletedReportIds, deletedEventIds };
 };
 
+const toDailyStockRow = (
+  row: { producto?: unknown; lote?: unknown; bodega?: unknown; stock?: unknown; stockTotal?: unknown; stockCanet?: unknown },
+  index: number,
+): InventoryDailyManualStockRow | null => {
+  const producto = clean(row.producto);
+  const lote = clean(row.lote);
+  const stock = Number(row.stock ?? row.stockTotal ?? row.stockCanet ?? 0);
+  if (!producto || !lote || !Number.isFinite(stock) || stock <= 0) return null;
+  return {
+    id: `stock_${index}_${producto}_${lote}_CANET`,
+    producto,
+    lote,
+    bodega: 'CANET',
+    lunaris: String(stock),
+    physical: '',
+    physicalOk: false,
+    zoho: '',
+    zohoOk: false,
+    observation: '',
+  };
+};
+
 const buildStockRowsFromSnapshot = (snapshot: InventoryStockControlSnapshot | null | undefined): InventoryDailyManualStockRow[] => {
   const visibleRows = Array.isArray(snapshot?.canetVisibleStockRows) ? snapshot.canetVisibleStockRows : [];
-  return visibleRows
-    .filter((row) => clean(row.producto) && clean(row.lote))
+  const exactRows = visibleRows
     .filter((row) => isCanetWarehouse(clean(row.bodega) || 'CANET'))
     .slice(0, 1200)
-    .map((row, index) => ({
-      id: `stock_${index}_${clean(row.producto)}_${clean(row.lote)}_${clean(row.bodega)}`,
-      producto: clean(row.producto),
-      lote: clean(row.lote),
-      bodega: 'CANET',
-      lunaris: String(Number(row.stock ?? row.stockTotal ?? 0)),
-      physical: '',
-      physicalOk: false,
-      zoho: '',
-      zohoOk: false,
-      observation: '',
-    }));
+    .map((row, index) => toDailyStockRow(row, index))
+    .filter(Boolean) as InventoryDailyManualStockRow[];
+  if (exactRows.length > 0) return exactRows;
+
+  const canetRows = Array.isArray(snapshot?.canetRows) && snapshot.canetRows.length > 0
+    ? snapshot.canetRows
+    : (Array.isArray(snapshot?.canetControlRows) ? snapshot.canetControlRows : []);
+  return canetRows
+    .slice(0, 1200)
+    .map((row, index) => toDailyStockRow({ ...row, bodega: 'CANET' }, index))
+    .filter(Boolean) as InventoryDailyManualStockRow[];
+};
+
+const buildStockRowsFromMovements = (dateKey: string, movements: InventoryMovementRow[] | null | undefined): InventoryDailyManualStockRow[] => {
+  const periodEnd = monthEndFromDateKey(dateKey);
+  const stockRows = calculateInventoryStockSnapshot(
+    (Array.isArray(movements) ? movements : [])
+      .filter((movement) => clean(movement.afecta_stock || 'SI').toUpperCase() === 'SI')
+      .filter((movement) => {
+        if (!periodEnd) return true;
+        const date = dateFromDateKey(movement.fecha);
+        return !date || date <= periodEnd;
+      }),
+    {
+      scope: 'canet',
+      normalizeProduct: (value) => clean(value),
+      normalizeLot: (value) => clean(value),
+      normalizeWarehouse: (value) => normalizeInventoryWarehouse(value),
+      includeMovement: (movement) => isCanetWarehouse(normalizeInventoryWarehouse(movement.bodega)),
+      floorNegativeRunningBalance: true,
+      rowTransform: (row) => ({ ...row, bodega: 'CANET', stock: Math.max(0, Number(row.stock || 0)) }),
+      rowFilter: (row) => isCanetWarehouse(row.bodega) && Number(row.stock || 0) > 0,
+    },
+  ).rows;
+
+  return stockRows
+    .slice(0, 1200)
+    .map((row, index) => toDailyStockRow(row, index))
+    .filter(Boolean) as InventoryDailyManualStockRow[];
 };
 
 const stockRowKey = (row: Partial<InventoryDailyManualStockRow>) => [
@@ -341,7 +408,9 @@ const stockRowKey = (row: Partial<InventoryDailyManualStockRow>) => [
 ].join('|');
 
 const mergeStockRowsFromSnapshot = (
+  dateKey: string,
   snapshot: InventoryStockControlSnapshot | null | undefined,
+  movements: InventoryMovementRow[] | null | undefined,
   currentRows: InventoryDailyManualStockRow[] | undefined,
 ): InventoryDailyManualStockRow[] => {
   const currentByKey = new Map<string, InventoryDailyManualStockRow>();
@@ -350,9 +419,12 @@ const mergeStockRowsFromSnapshot = (
     if (key !== '||') currentByKey.set(key, row);
   });
 
-  const snapshotRows: InventoryDailyManualStockRow[] = buildStockRowsFromSnapshot(snapshot);
+  const snapshotRows = buildStockRowsFromSnapshot(snapshot);
+  const sourceRows: InventoryDailyManualStockRow[] = snapshotRows.length > 0
+    ? snapshotRows
+    : buildStockRowsFromMovements(dateKey, movements);
   const mergedKeys = new Set<string>();
-  const merged: InventoryDailyManualStockRow[] = snapshotRows.map((row) => {
+  const merged: InventoryDailyManualStockRow[] = sourceRows.map((row) => {
     const key = stockRowKey(row);
     const previous = currentByKey.get(key);
     mergedKeys.add(key);
@@ -482,7 +554,9 @@ const buildReport = (
   movements?: InventoryMovementRow[] | null,
   userId?: string,
 ): InventoryDailyReport => {
-  const stockRows = buildStockRowsFromSnapshot(snapshot);
+  const stockRows = buildStockRowsFromSnapshot(snapshot).length > 0
+    ? buildStockRowsFromSnapshot(snapshot)
+    : buildStockRowsFromMovements(dateKey, movements);
   const archiveTables = buildTablesFromArchive(dateKey, archives);
   const assemblies = buildAssembliesFromMovements(dateKey, movements);
   const now = nowIso();
@@ -600,7 +674,7 @@ export function useInventoryDailyEvents(currentUserId?: string) {
       const base = current || buildReport(dateKey, inventorySnapshot, dispatchArchive, inventoryMovements, currentUserId);
       const archiveTables = buildTablesFromArchive(dateKey, dispatchArchive);
       const assemblies = buildAssembliesFromMovements(dateKey, inventoryMovements);
-      const stock = mergeStockRowsFromSnapshot(inventorySnapshot, base.manualTables?.stock);
+      const stock = mergeStockRowsFromSnapshot(dateKey, inventorySnapshot, inventoryMovements, base.manualTables?.stock);
       return {
         ...base,
         manualTables: {
