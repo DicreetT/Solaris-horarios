@@ -6,7 +6,6 @@ import { ThemeProvider } from './context/ThemeContext';
 // Components
 import LoginView from './components/LoginView';
 import Layout from './components/Layout';
-import { InstallPWAPrompt } from './components/InstallPWAPrompt';
 import { NotificationsProvider } from './context/NotificationsContext';
 import { CARLOS_EMAIL } from './constants';
 
@@ -225,9 +224,6 @@ function App() {
             }
           />
         </Routes>
-
-        {/* PWA Install Prompt */}
-        <InstallPWAPrompt />
       </BrowserRouter>
     </ThemeProvider>
   );
