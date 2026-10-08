@@ -72,6 +72,16 @@ type RoleSidebarItem = {
     isActive?: (pathname: string, search: string) => boolean;
 };
 
+const stockAreaSidebarItem: RoleSidebarItem = {
+    path: '/inventory?view=canet',
+    label: 'Stock',
+    icon: Boxes,
+    isActive: (pathname, search) => {
+        const params = new URLSearchParams(search);
+        return pathname === '/inventory' && params.get('view') === 'canet' && !params.get('tab');
+    },
+};
+
 const commonRoleItems: RoleSidebarItem[] = [
     { path: '/inicio-roles', label: 'Mi espacio', icon: PanelsTopLeft },
     { path: '/checklist', label: 'Checklist diario', icon: ClipboardCheck },
@@ -93,6 +103,18 @@ const commonRoleItems: RoleSidebarItem[] = [
 ];
 
 const fallbackRoleItems: RoleSidebarItem[] = commonRoleItems;
+
+const withSharedAreaItems = (items: RoleSidebarItem[]) => {
+    const hasStock = items.some((item) => item.label === stockAreaSidebarItem.label);
+    if (hasStock) return items;
+    const couponsIndex = items.findIndex((item) => item.label === 'Cupones y descuentos');
+    if (couponsIndex === -1) return [stockAreaSidebarItem, ...items];
+    return [
+        ...items.slice(0, couponsIndex + 1),
+        stockAreaSidebarItem,
+        ...items.slice(couponsIndex + 1),
+    ];
+};
 
 const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
     thalia: [
@@ -241,7 +263,7 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
         t.assigned_to?.includes(effectiveSidebarUserId) &&
         !t.completed_by?.includes(effectiveSidebarUserId)
     ).length;
-    const areaNavigationItems = roleSpecificSidebarItemsByUser[effectiveUserKey] || [];
+    const areaNavigationItems = withSharedAreaItems(roleSpecificSidebarItemsByUser[effectiveUserKey] || []);
     const roleNavigationItems = (roleSpecificSidebarItemsByUser[effectiveUserKey] ? commonRoleItems : fallbackRoleItems)
         .filter((item) => (
             effectiveUserKey !== 'esteban'
