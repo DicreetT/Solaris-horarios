@@ -8,6 +8,7 @@ import {
   calculateProjectProgress,
   LunarisProject,
   ProjectPriority,
+  ProjectStep,
   ProjectStepStatus,
   ProjectType,
   projectStatusLabel,
@@ -119,7 +120,7 @@ function ProgressRing({ value, status, size = 58 }: { value: number; status: Lun
 
 export default function ProjectsPage() {
   const { currentUser } = useAuth();
-  const { projects, visibleProjects, createProject, updateProject, deleteProject, addStep, updateStep, linkTaskToStep, requestDecision, ensureEstebanInitialPortfolio } = useProjects(currentUser);
+  const { projects, visibleProjects, createProject, updateProject, deleteProject, addStep, updateStep, linkTaskToStep, addObservation, requestDecision, ensureEstebanInitialPortfolio } = useProjects(currentUser);
   const { todos, createTodo } = useTodos(currentUser);
   const [searchParams, setSearchParams] = useSearchParams();
   const [previewRoleKey, setPreviewRoleKey] = useState<string | null>(() => (
@@ -197,7 +198,19 @@ export default function ProjectsPage() {
   });
 
   const [taskDraftByStep, setTaskDraftByStep] = useState<Record<string, { title: string; assignedTo: string; dueDate: string }>>({});
-  const [activeProjectAction, setActiveProjectAction] = useState<'step' | 'decision' | null>(null);
+  const [activeProjectAction, setActiveProjectAction] = useState<'step' | 'decision' | 'observation' | null>(null);
+  const [observationDraft, setObservationDraft] = useState({ stepId: '', text: '' });
+  const [editingStepId, setEditingStepId] = useState('');
+  const [stepEditDraft, setStepEditDraft] = useState({
+    name: '',
+    description: '',
+    responsibleId: '',
+    targetDate: '',
+    deliverable: '',
+    attachments: [] as Attachment[],
+    weight: 10,
+    status: 'pending' as ProjectStepStatus,
+  });
   const suppressedProjectParamRef = useRef<string | null>(null);
   const pendingEditProjectIdRef = useRef<string | null>(null);
 
@@ -367,6 +380,43 @@ export default function ProjectsPage() {
       weight: 10,
       status: 'pending',
     }));
+    setActiveProjectAction(null);
+  };
+
+  const openStepEditor = (step: ProjectStep) => {
+    setEditingStepId(step.id);
+    setStepEditDraft({
+      name: step.name,
+      description: step.description || '',
+      responsibleId: step.responsibleId || effectiveProjectUserId || currentUser?.id || '',
+      targetDate: step.targetDate || '',
+      deliverable: step.deliverable || '',
+      attachments: step.attachments || [],
+      weight: Number(step.weight || 0),
+      status: step.status,
+    });
+  };
+
+  const handleSaveStepEdit = (projectId: string, stepId: string) => {
+    if (!stepEditDraft.name.trim()) return;
+    updateStep(projectId, stepId, {
+      name: stepEditDraft.name.trim(),
+      description: stepEditDraft.description,
+      responsibleId: stepEditDraft.responsibleId,
+      targetDate: stepEditDraft.targetDate || undefined,
+      deliverable: stepEditDraft.deliverable,
+      attachments: stepEditDraft.attachments,
+      weight: Number(stepEditDraft.weight || 0),
+      status: stepEditDraft.status,
+    });
+    setEditingStepId('');
+  };
+
+  const handleAddObservation = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedProject || !observationDraft.text.trim()) return;
+    addObservation(selectedProject.id, observationDraft.text, observationDraft.stepId || undefined);
+    setObservationDraft({ stepId: '', text: '' });
     setActiveProjectAction(null);
   };
 
@@ -658,8 +708,8 @@ export default function ProjectsPage() {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700"
-                  title="La observación del proyecto irá en una siguiente mejora del cuaderno/historial."
+                  onClick={() => setActiveProjectAction((prev) => prev === 'observation' ? null : 'observation')}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black transition ${activeProjectAction === 'observation' ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
                 >
                   Añadir observación
                 </button>
@@ -826,6 +876,42 @@ export default function ProjectsPage() {
               </section>
             )}
 
+            {activeProjectAction === 'observation' && (
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center gap-2">
+                  <span className="rounded-xl bg-slate-100 p-2 text-slate-700"><Pencil size={18} /></span>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-950">Añadir observación</h3>
+                    <p className="text-sm font-semibold text-slate-500">Puede quedar en el proyecto general o vinculada a un paso concreto.</p>
+                  </div>
+                </div>
+                <form onSubmit={handleAddObservation} className="grid gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Vincular a</span>
+                    <select
+                      value={observationDraft.stepId}
+                      onChange={(e) => setObservationDraft((prev) => ({ ...prev, stepId: e.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none"
+                    >
+                      <option value="">Proyecto general</option>
+                      {selectedProject.steps.map((step) => <option key={step.id} value={step.id}>{step.name}</option>)}
+                    </select>
+                  </label>
+                  <textarea
+                    value={observationDraft.text}
+                    onChange={(e) => setObservationDraft((prev) => ({ ...prev, text: e.target.value }))}
+                    rows={4}
+                    placeholder="Escribe la observación, bloqueo, avance o contexto..."
+                    className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none"
+                  />
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button type="button" onClick={() => setActiveProjectAction(null)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Cerrar</button>
+                    <button type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white">Guardar observación</button>
+                  </div>
+                </form>
+              </section>
+            )}
+
             <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex items-center justify-between gap-3">
@@ -846,10 +932,73 @@ export default function ProjectsPage() {
                             <p className="mt-1 text-sm font-semibold text-slate-600">{step.description || step.deliverable}</p>
                             <p className="mt-2 text-xs font-bold text-slate-500">{userName(step.responsibleId)} · {step.weight}% · {step.targetDate || 'sin fecha'}</p>
                           </div>
-                          <select value={step.status} onChange={(e) => updateStep(selectedProject.id, step.id, { status: e.target.value as ProjectStepStatus })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">
-                            {STEP_STATUSES.map((status) => <option key={status} value={status}>{projectStepStatusLabel(status)}</option>)}
-                          </select>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => editingStepId === step.id ? setEditingStepId('') : openStepEditor(step)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+                            >
+                              <Pencil size={13} />
+                              Editar paso
+                            </button>
+                            <select value={step.status} onChange={(e) => updateStep(selectedProject.id, step.id, { status: e.target.value as ProjectStepStatus })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">
+                              {STEP_STATUSES.map((status) => <option key={status} value={status}>{projectStepStatusLabel(status)}</option>)}
+                            </select>
+                          </div>
                         </div>
+
+                        {editingStepId === step.id && (
+                          <div className="mt-3 rounded-2xl border border-teal-100 bg-white p-3">
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <label className="block">
+                                <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Nombre</span>
+                                <input value={stepEditDraft.name} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, name: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Responsable</span>
+                                <select value={stepEditDraft.responsibleId} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, responsibleId: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none">
+                                  {USERS.filter((user) => !user.isRestricted).map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                                </select>
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Entregable</span>
+                                <input value={stepEditDraft.deliverable} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, deliverable: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                              </label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Peso %</span>
+                                  <input type="number" min="0" max="100" value={stepEditDraft.weight} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, weight: Number(e.target.value) }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Fecha</span>
+                                  <input type="date" value={stepEditDraft.targetDate} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, targetDate: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none" />
+                                </label>
+                              </div>
+                              <label className="block">
+                                <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Estado</span>
+                                <select value={stepEditDraft.status} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, status: e.target.value as ProjectStepStatus }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none">
+                                  {STEP_STATUSES.map((status) => <option key={status} value={status}>{projectStepStatusLabel(status)}</option>)}
+                                </select>
+                              </label>
+                              <textarea value={stepEditDraft.description} onChange={(e) => setStepEditDraft((prev) => ({ ...prev, description: e.target.value }))} rows={3} placeholder="Descripción del paso" className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold outline-none md:col-span-2" />
+                              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 md:col-span-2">
+                                <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Archivos del paso</p>
+                                <FileUploader
+                                  folderPath={`projects/${selectedProject.id}/step-deliverables`}
+                                  existingFiles={stepEditDraft.attachments}
+                                  onUploadComplete={(files) => setStepEditDraft((prev) => ({ ...prev, attachments: files }))}
+                                  acceptedTypes="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
+                                  compact
+                                  maxSizeMB={20}
+                                />
+                              </div>
+                            </div>
+                            <div className="mt-3 flex justify-end gap-2">
+                              <button type="button" onClick={() => setEditingStepId('')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Cancelar</button>
+                              <button type="button" onClick={() => handleSaveStepEdit(selectedProject.id, step.id)} className="rounded-xl bg-teal-700 px-3 py-2 text-xs font-black text-white">Guardar paso</button>
+                            </div>
+                          </div>
+                        )}
 
                         <div className="mt-3 flex flex-wrap gap-2">
                           {linkedTasks.map((task) => (
@@ -902,6 +1051,11 @@ export default function ProjectsPage() {
                       <div key={entry.id} className="flex gap-2 rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-600">
                         <CircleDot size={15} className="mt-0.5 shrink-0 text-teal-700" />
                         <div>
+                          {entry.stepId && (
+                            <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-teal-700">
+                              Paso: {selectedProject.steps.find((step) => step.id === entry.stepId)?.name || 'paso eliminado'}
+                            </p>
+                          )}
                           <p>{entry.text}</p>
                           <p className="mt-1 text-[11px] font-black text-slate-400">{userName(entry.userId)} · {new Date(entry.createdAt).toLocaleString('es-ES')}</p>
                         </div>

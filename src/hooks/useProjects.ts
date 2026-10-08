@@ -44,9 +44,10 @@ export type ProjectStep = {
 
 export type ProjectHistoryEntry = {
   id: string;
-  type: 'created' | 'updated' | 'step_added' | 'step_updated' | 'decision_requested' | 'task_linked' | 'closed';
+  type: 'created' | 'updated' | 'step_added' | 'step_updated' | 'decision_requested' | 'task_linked' | 'observation' | 'closed';
   userId: string;
   text: string;
+  stepId?: string;
   createdAt: string;
 };
 
@@ -211,12 +212,13 @@ function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function historyEntry(userId: string, type: ProjectHistoryEntry['type'], text: string): ProjectHistoryEntry {
+function historyEntry(userId: string, type: ProjectHistoryEntry['type'], text: string, stepId?: string): ProjectHistoryEntry {
   return {
     id: uniqueId('project-history'),
     type,
     userId,
     text,
+    stepId,
     createdAt: new Date().toISOString(),
   };
 }
@@ -572,6 +574,25 @@ export function useProjects(currentUser?: User | null) {
     ));
   };
 
+  const addObservation = (projectId: string, text: string, stepId?: string) => {
+    if (!currentUser?.id) throw new Error('No hay usuario activo.');
+    const cleanText = String(text || '').trim();
+    if (!cleanText) return;
+    const now = new Date().toISOString();
+    setProjects((prev) => (
+      (Array.isArray(prev) ? prev : []).map((project) => {
+        if (project.id !== projectId) return project;
+        const step = stepId ? (project.steps || []).find((item) => item.id === stepId) : null;
+        const label = step ? `Observación en paso "${step.name}": ${cleanText}` : `Observación del proyecto: ${cleanText}`;
+        return {
+          ...project,
+          history: [...(project.history || []), historyEntry(currentUser.id, 'observation', label, stepId)],
+          updatedAt: now,
+        };
+      })
+    ));
+  };
+
   const requestDecision = async (project: LunarisProject, draft: ProjectDecisionDraft) => {
     if (!currentUser?.id) throw new Error('No hay usuario activo.');
     const context = [
@@ -636,6 +657,7 @@ export function useProjects(currentUser?: User | null) {
     addStep,
     updateStep,
     linkTaskToStep,
+    addObservation,
     requestDecision,
     ensureEstebanInitialPortfolio,
   };
