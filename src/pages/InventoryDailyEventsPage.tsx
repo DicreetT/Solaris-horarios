@@ -693,7 +693,17 @@ export default function InventoryDailyEventsPage() {
   const { currentUser } = useAuth();
   const todayKey = toDateKey(new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(todayKey);
-  const { reports, inventorySnapshot, createEventForDate, updateReview, updateNotes, updateManualTable, loading } = useInventoryDailyEvents(currentUser?.id);
+  const {
+    reports,
+    inventorySnapshot,
+    createEventForDate,
+    createFreshEventForDate,
+    deleteEventForDate,
+    updateReview,
+    updateNotes,
+    updateManualTable,
+    loading,
+  } = useInventoryDailyEvents(currentUser?.id);
   const [facturacionArchive, , archiveLoading] = useSharedJsonState<BillingArchiveEntry[]>(
     FACTURACION_ARCHIVE_KEY,
     [],
@@ -730,6 +740,17 @@ export default function InventoryDailyEventsPage() {
     createEventForDate(selectedDateKey);
   };
 
+  const handleCreateFresh = () => {
+    if (currentReport && !window.confirm('¿Crear un control nuevo para esta fecha? Se reiniciarán filas, revisiones y notas de este control.')) return;
+    createFreshEventForDate(selectedDateKey);
+  };
+
+  const handleDelete = () => {
+    if (!currentReport) return;
+    if (!window.confirm(`¿Eliminar el control de inventario de ${selectedDateKey}?`)) return;
+    deleteEventForDate(selectedDateKey);
+  };
+
   const tables = currentReport?.manualTables || {};
 
   return (
@@ -743,21 +764,50 @@ export default function InventoryDailyEventsPage() {
               Anabela crea el control, Itzi valida movimientos/Zoho y Heidy valida conciliación. La plantilla se alimenta de despachos y Control de Stock, pero permite correcciones manuales guardadas.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 lg:max-w-xs lg:justify-end">
             <input
               type="date"
               value={selectedDateKey}
               onChange={(event) => setSelectedDateKey(event.target.value || todayKey)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700"
             />
-            <button
-              type="button"
-              onClick={handleCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-teal-800"
-            >
-              <CalendarClock size={16} />
-              {currentReport ? 'Actualizar control' : 'Crear control inventario diario'}
-            </button>
+            {currentReport ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-teal-800"
+                >
+                  <CalendarClock size={16} />
+                  Actualizar control
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateFresh}
+                  className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2 text-sm font-black text-teal-700 shadow-sm hover:bg-teal-50"
+                >
+                  <Plus size={16} />
+                  Crear control nuevo
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-4 py-2 text-sm font-black text-rose-600 shadow-sm hover:bg-rose-50"
+                >
+                  <Trash2 size={16} />
+                  Eliminar control
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCreateFresh}
+                className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-teal-800"
+              >
+                <CalendarClock size={16} />
+                Crear control inventario diario
+              </button>
+            )}
           </div>
         </div>
       </section>

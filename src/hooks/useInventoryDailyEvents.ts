@@ -700,6 +700,39 @@ export function useInventoryDailyEvents(currentUserId?: string) {
     });
   };
 
+  const createFreshEventForDate = (dateKey = toDateKey(new Date())) => {
+    setState((prev) => {
+      const base = normalizeInventoryDailyState(prev);
+      const current = base.reports.find((report) => report.dateKey === dateKey) || null;
+      const next = buildReport(dateKey, inventorySnapshot, dispatchArchive, inventoryMovements, currentUserId);
+      return {
+        deletedReportIds: current?.id
+          ? Array.from(new Set([...(base.deletedReportIds || []), current.id]))
+          : (base.deletedReportIds || []),
+        deletedEventIds: current?.eventId
+          ? Array.from(new Set([...(base.deletedEventIds || []), current.eventId]))
+          : (base.deletedEventIds || []),
+        reports: [next, ...base.reports.filter((report) => report.dateKey !== dateKey)],
+      };
+    });
+  };
+
+  const deleteEventForDate = (dateKey: string) => {
+    setState((prev) => {
+      const base = normalizeInventoryDailyState(prev);
+      const current = base.reports.find((report) => report.dateKey === dateKey) || null;
+      return {
+        deletedReportIds: current?.id
+          ? Array.from(new Set([...(base.deletedReportIds || []), current.id]))
+          : (base.deletedReportIds || []),
+        deletedEventIds: current?.eventId
+          ? Array.from(new Set([...(base.deletedEventIds || []), current.eventId]))
+          : (base.deletedEventIds || []),
+        reports: base.reports.filter((report) => report.dateKey !== dateKey),
+      };
+    });
+  };
+
   const updateReview = (
     dateKey: string,
     reviewerKey: InventoryDailyReviewerKey,
@@ -767,6 +800,8 @@ export function useInventoryDailyEvents(currentUserId?: string) {
     reports: normalized.reports,
     inventorySnapshot,
     createEventForDate,
+    createFreshEventForDate,
+    deleteEventForDate,
     updateReview,
     updateNotes,
     updateManualTable,
