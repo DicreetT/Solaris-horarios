@@ -88,7 +88,7 @@ function formatDate(dateKey: string) {
 function canReview(currentUserName: string, isAdmin: boolean, reviewerKey: InventoryDailyReviewerKey) {
   if (isAdmin) return true;
   const normalized = currentUserName.toLowerCase();
-  if (reviewerKey === 'anabella') return normalized.includes('anab');
+  if (reviewerKey === 'anabella') return normalized.includes('anab') || normalized.includes('fer');
   if (reviewerKey === 'heidy') return normalized.includes('heid');
   return normalized.includes('itzi');
 }

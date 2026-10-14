@@ -164,7 +164,7 @@ const REVIEWER_CONFIG: Array<{
   label: string;
   responsibility: string;
 }> = [
-  { key: 'anabella', nameNeedle: 'anab', label: 'Anabela', responsibility: 'Físico' },
+  { key: 'anabella', nameNeedle: 'anab', label: 'Anabela / Fer', responsibility: 'Físico' },
   { key: 'itzi', nameNeedle: 'itzi', label: 'Itzi', responsibility: 'Movimientos / Zoho' },
   { key: 'heidy', nameNeedle: 'heid', label: 'Heidy', responsibility: 'Conciliación' },
 ];
