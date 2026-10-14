@@ -190,6 +190,12 @@ const dateFromDateKey = (value: unknown): Date | null => {
   const date = new Date(year, month - 1, day);
   return Number.isNaN(date.getTime()) ? null : date;
 };
+const timestampMs = (value: unknown) => {
+  const text = clean(value);
+  if (!text) return 0;
+  const parsed = new Date(text).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 const monthEndFromDateKey = (dateKey: string) => {
   const date = dateFromDateKey(dateKey);
   if (!date) return null;
@@ -331,6 +337,107 @@ export const normalizeInventoryDailyState = (value: unknown): InventoryDailyStat
     .sort((a: InventoryDailyReport, b: InventoryDailyReport) => b.dateKey.localeCompare(a.dateKey));
 
   return { reports, deletedReportIds, deletedEventIds };
+};
+
+const mergeReview = (remote: InventoryDailyReview, local: InventoryDailyReview): InventoryDailyReview => {
+  const remoteTs = timestampMs(remote.reviewedAt);
+  const localTs = timestampMs(local.reviewedAt);
+  return localTs >= remoteTs ? { ...remote, ...local } : { ...local, ...remote };
+};
+
+const mergeReviews = (
+  remote?: InventoryDailyReport['reviews'],
+  local?: InventoryDailyReport['reviews'],
+): Record<InventoryDailyReviewerKey, InventoryDailyReview> => {
+  const remoteReviews = normalizeReviews(remote);
+  const localReviews = normalizeReviews(local);
+  const merged = createDefaultReviews();
+  REVIEWER_CONFIG.forEach((reviewer) => {
+    merged[reviewer.key] = mergeReview(remoteReviews[reviewer.key], localReviews[reviewer.key]);
+  });
+  return merged;
+};
+
+const reportVersionMs = (report: InventoryDailyReport) => Math.max(
+  timestampMs(report.updatedAt),
+  timestampMs(report.savedAt),
+  timestampMs(report.createdAt),
+);
+
+const mergeInventoryDailyReport = (
+  remote: InventoryDailyReport,
+  local: InventoryDailyReport,
+): InventoryDailyReport => {
+  const localIsNewer = reportVersionMs(local) >= reportVersionMs(remote);
+  const base = localIsNewer ? remote : local;
+  const incoming = localIsNewer ? local : remote;
+  return {
+    ...base,
+    ...incoming,
+    manualSections: {
+      ...(base.manualSections || {}),
+      ...(incoming.manualSections || {}),
+    },
+    manualTables: {
+      ...(base.manualTables || {}),
+      ...(incoming.manualTables || {}),
+    },
+    snapshot: {
+      ...(base.snapshot || {}),
+      ...(incoming.snapshot || {}),
+    },
+    rows: {
+      ...(base.rows || {}),
+      ...(incoming.rows || {}),
+    },
+    checks: {
+      ...(base.checks || { shipments: false, assemblies: false, stock: false }),
+      ...(incoming.checks || {}),
+    },
+    reviews: mergeReviews(remote.reviews, local.reviews),
+  };
+};
+
+const inventoryReportMergeKey = (report: InventoryDailyReport) => (
+  clean(report.id) || clean(report.eventId) || clean(report.dateKey)
+);
+
+const mergeInventoryDailyStates = (remoteValue: unknown, localValue: unknown): InventoryDailyState => {
+  const remote = normalizeInventoryDailyState(remoteValue);
+  const local = normalizeInventoryDailyState(localValue);
+  const deletedReportIds = Array.from(new Set([
+    ...(remote.deletedReportIds || []),
+    ...(local.deletedReportIds || []),
+  ].map(clean).filter(Boolean)));
+  const deletedEventIds = Array.from(new Set([
+    ...(remote.deletedEventIds || []),
+    ...(local.deletedEventIds || []),
+  ].map((id) => Number(id)).filter(Number.isFinite)));
+  const byId = new Map<string, InventoryDailyReport>();
+  const byDate = new Map<string, string>();
+
+  const upsert = (report: InventoryDailyReport) => {
+    if (deletedReportIds.includes(report.id) || (report.eventId && deletedEventIds.includes(report.eventId))) return;
+    const key = inventoryReportMergeKey(report);
+    if (!key) return;
+    const dateKey = clean(report.dateKey);
+    const dateExistingKey = dateKey ? byDate.get(dateKey) : undefined;
+    const targetKey = dateExistingKey || key;
+    const existing = byId.get(targetKey);
+    const next = existing ? mergeInventoryDailyReport(existing, report) : report;
+    byId.delete(key);
+    byId.set(targetKey, next);
+    if (dateKey) byDate.set(dateKey, targetKey);
+  };
+
+  remote.reports.forEach(upsert);
+  local.reports.forEach(upsert);
+
+  return normalizeInventoryDailyState({
+    deletedReportIds,
+    deletedEventIds,
+    reports: Array.from(byId.values()),
+  });
 };
 
 const toDailyStockRow = (
@@ -634,7 +741,10 @@ export function useInventoryDailyEvents(currentUserId?: string) {
       pollIntervalMs: 3000,
       protectFromEmptyOverwrite: true,
       mergeBeforePersist: true,
+      mergeStrategy: mergeInventoryDailyStates,
       mergeIncomingWithLocal: true,
+      enableHistory: true,
+      isUsefulPayload: (payload) => normalizeInventoryDailyState(payload).reports.length > 0,
     },
   );
   const [inventorySnapshot] = useSharedJsonState<InventoryStockControlSnapshot | null>(
