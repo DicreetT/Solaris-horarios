@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Boxes, CalendarClock, CheckCircle2, ClipboardCheck, FileText, History, Plus, Save, Trash2, Truck } from 'lucide-react';
+import { AlertTriangle, Boxes, CalendarClock, ClipboardCheck, FileText, History, Plus, Save, Trash2, Truck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   getInventoryDailyStatus,
@@ -603,92 +603,6 @@ function StockControlTable({
   );
 }
 
-function DifferencesSummary({
-  stockRows,
-  currentStatus,
-}: {
-  stockRows: ReturnType<typeof getStockRows>;
-  currentStatus: ReturnType<typeof getInventoryDailyStatus>;
-}) {
-  const missingPhysical = stockRows.filter((row) => row.physical === '').length;
-  const missingZoho = stockRows.filter((row) => row.zoho === '').length;
-  const differences = countStockDifferences(stockRows);
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ClipboardCheck size={18} className="text-teal-700" />
-          <h2 className="text-lg font-black text-slate-950">Resumen de diferencias del control</h2>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', missingPhysical > 0 ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
-            Físico: {missingPhysical > 0 ? `${missingPhysical} pendiente(s)` : 'completo'}
-          </span>
-          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', missingZoho > 0 ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
-            Zoho: {missingZoho > 0 ? `${missingZoho} pendiente(s)` : 'completo'}
-          </span>
-          <span className={classNames('rounded-full border px-2 py-1 text-[11px] font-black', differences > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
-            Diferencias: {differences}
-          </span>
-        </div>
-      </div>
-      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-        <table className="min-w-full text-left text-xs">
-          <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-widest text-slate-500">
-            <tr>
-              <th className="px-3 py-2">Producto</th>
-              <th className="px-3 py-2">Lote</th>
-              <th className="px-3 py-2">Bodega</th>
-              <th className="px-3 py-2">Lunaris</th>
-              <th className="px-3 py-2">Físico</th>
-              <th className="px-3 py-2">Zoho</th>
-              <th className="px-3 py-2">L-F</th>
-              <th className="px-3 py-2">L-Z</th>
-              <th className="px-3 py-2">F-Z</th>
-              <th className="px-3 py-2">Obs.</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {stockRows.slice(0, 120).map((row) => (
-              <tr key={row.key || `${row.producto}-${row.lote}-${row.bodega}`}>
-                <td className="px-3 py-2 font-black text-slate-800">{row.producto}</td>
-                <td className="px-3 py-2 font-semibold text-slate-700">{row.lote}</td>
-                <td className="px-3 py-2 font-semibold text-slate-700">{row.bodega}</td>
-                <td className="px-3 py-2 font-semibold text-slate-700">{row.lunaris}</td>
-                <td className="px-3 py-2 font-semibold text-slate-700">{row.physical || '-'}</td>
-                <td className="px-3 py-2 font-semibold text-slate-700">{row.zoho || '-'}</td>
-                <td className={classNames('px-3 py-2 font-black', diffClass(row.diffPhysical))}>{formatDiff(row.diffPhysical)}</td>
-                <td className={classNames('px-3 py-2 font-black', diffClass(row.diffZoho))}>{formatDiff(row.diffZoho)}</td>
-                <td className={classNames('px-3 py-2 font-black', diffClass(row.diffPhysicalZoho))}>{formatDiff(row.diffPhysicalZoho)}</td>
-                <td className="px-3 py-2 font-semibold text-slate-600">{row.observation || '-'}</td>
-              </tr>
-            ))}
-            {stockRows.length === 0 && (
-              <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-sm font-semibold text-slate-500">
-                  No hay filas de stock en este control. Entra primero a Control de Stock para generar snapshot, o añade filas manuales.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      {currentStatus.complete && (
-        <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
-          <CheckCircle2 size={17} />
-          {differences > 0 ? 'Inventario diario conciliado con diferencias registradas.' : 'Inventario diario conciliado y visible para Dirección como resumen.'}
-        </div>
-      )}
-      {!currentStatus.complete && stockRows.length > 0 && (
-        <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-black text-sky-700">
-          <AlertTriangle size={17} />
-          El resumen se mantiene visible mientras faltan columnas o revisiones.
-        </div>
-      )}
-    </section>
-  );
-}
-
 export default function InventoryDailyEventsPage() {
   const { currentUser } = useAuth();
   const todayKey = toDateKey(new Date());
@@ -932,8 +846,6 @@ export default function InventoryDailyEventsPage() {
               lunarisStockLookup={lunarisStockLookup}
               onChange={(rows) => updateManualTable(selectedDateKey, 'stock', rows)}
             />
-
-            <DifferencesSummary stockRows={stockRows} currentStatus={currentStatus} />
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between gap-3">
