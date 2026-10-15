@@ -557,6 +557,15 @@ const isTransferLikeMovement = (movement: InventoryMovementRow) => {
   ].filter(Boolean).join(' '));
   return haystack.includes('traspas') || haystack.includes('transfer') || haystack.includes('traslado');
 };
+const isSaleMovement = (movement: InventoryMovementRow) => {
+  const type = normalize(String(movement.tipo_movimiento || ''));
+  return type.includes('venta') && !isTransferLikeMovement(movement);
+};
+const isTransferOrShipmentMovement = (movement: InventoryMovementRow) => {
+  if (isTransferLikeMovement(movement)) return true;
+  const type = normalize(String(movement.tipo_movimiento || ''));
+  return !isSaleMovement(movement) && (type.includes('envio') || type.includes('salida'));
+};
 const transferOriginFromNotes = (movement: InventoryMovementRow) => {
   const notes = String((movement as any).notas || '');
   const match = notes.match(/desde\s+([^|]+)/i);
@@ -573,19 +582,14 @@ const isIncomingTransferMovement = (movement: InventoryMovementRow) => {
     || notes.includes('auto entrada por traspaso')
   );
 };
-const isMonthlyOutputMovement = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
+const isMonthlySaleMovement = (movement: InventoryMovementRow, targetYear: number, targetMonth: number) => {
   if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
   if (!movementDateInMonth(movement, targetYear, targetMonth)) return false;
   const type = normalize(String(movement.tipo_movimiento || ''));
   if (type.includes('inicio') || type.includes('cierre') || type.includes('ensambl')) return false;
   const signed = getInventorySignedQuantity(movement as any);
   if (signed >= 0) return false;
-  return (
-    type.includes('venta') ||
-    type.includes('envio') ||
-    type.includes('salida') ||
-    type.includes('traspas')
-  );
+  return type.includes('venta') && !isTransferLikeMovement(movement);
 };
 const isSpainAssemblyMovement = (movement: InventoryMovementRow) => {
   if (String((movement as any).afecta_stock || 'SI').trim().toUpperCase() !== 'SI') return false;
@@ -923,14 +927,14 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       button: 'bg-violet-700 hover:bg-violet-800',
       ring: 'focus:ring-violet-100 focus:border-violet-500',
     },
-    summary: 'Comparación de salidas por venta entre Zoho y Lunaris por producto, lote e inventario.',
+    summary: 'Ventas y salidas físicas separadas para comparar Zoho y Lunaris sin mezclar traspasos con ventas.',
     fields: [
-      { id: 'ventas_mes_lunaris', label: 'Ventas/salidas por venta del mes en Lunaris', type: 'number' },
-      { id: 'ventas_mes_zoho', label: 'Ventas/salidas por venta del mes en Zoho', type: 'number' },
+      { id: 'ventas_mes_lunaris', label: 'Ventas del mes en Lunaris', type: 'number' },
+      { id: 'ventas_mes_zoho', label: 'Ventas del mes en Zoho', type: 'number' },
       { id: 'diferencia_ventas_mes', label: 'Diferencia ventas Zoho - Lunaris', type: 'number' },
-      { id: 'traspasos_mes_lunaris', label: 'Traspasos del mes en Lunaris', type: 'number' },
-      { id: 'traspasos_mes_zoho', label: 'Traspasos del mes en Zoho', type: 'number' },
-      { id: 'diferencia_traspasos_mes', label: 'Diferencia traspasos Zoho - Lunaris', type: 'number' },
+      { id: 'traspasos_mes_lunaris', label: 'Traspasos y envíos del mes en Lunaris', type: 'number' },
+      { id: 'traspasos_mes_zoho', label: 'Traspasos y envíos del mes en Zoho', type: 'number' },
+      { id: 'diferencia_traspasos_mes', label: 'Diferencia traspasos y envíos Zoho - Lunaris', type: 'number' },
       { id: 'total_salidas_mes_lunaris', label: 'Total salidas del mes en Lunaris', type: 'number' },
       { id: 'total_salidas_mes_zoho', label: 'Total salidas del mes en Zoho', type: 'number' },
       { id: 'diferencia_total_salidas_mes', label: 'Diferencia total salidas Zoho - Lunaris', type: 'number' },
@@ -939,17 +943,17 @@ const PROCESS_DEFINITIONS: Record<ProcessKey, ProcessDefinition> = {
       { id: 'diferencia_devoluciones_mes', label: 'Diferencia devoluciones Zoho - Lunaris' },
       { id: 'ventas_por_bodega_lunaris', label: 'Ventas por bodega en Lunaris', type: 'textarea' },
       { id: 'ventas_por_bodega_zoho', label: 'Ventas por bodega en Zoho', type: 'textarea' },
-      { id: 'traspasos_por_bodega_lunaris', label: 'Traspasos por bodega en Lunaris', type: 'textarea' },
-      { id: 'traspasos_por_bodega_zoho', label: 'Traspasos por bodega en Zoho', type: 'textarea' },
+      { id: 'traspasos_por_bodega_lunaris', label: 'Traspasos y envíos por bodega en Lunaris', type: 'textarea' },
+      { id: 'traspasos_por_bodega_zoho', label: 'Traspasos y envíos por bodega en Zoho', type: 'textarea' },
       { id: 'estado_ventas_salidas', label: 'Estado ventas vs salidas', type: 'status' },
       { id: 'comentario_ventas', label: 'Comentario de ventas/salidas', type: 'textarea' },
     ],
     tables: [
       {
         id: 'ventas_producto_lote',
-        title: 'Salidas por producto, lote e inventario',
-        subtitle: 'Lunaris prellena movimientos negativos del mes por producto, lote e inventario; Zoho se completa para comparar por línea.',
-        columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad salida Lunaris', 'Diferencia', 'Salidas revisadas por contabilidad', 'Motivo diferencia', 'Observaciones'],
+        title: 'Ventas por producto, lote e inventario',
+        subtitle: 'Lunaris prellena únicamente movimientos de venta del mes por producto, lote e inventario; Zoho se completa para comparar por línea.',
+        columns: ['Producto', 'Lote', 'Inventario', 'Cantidad vendida Zoho', 'Cantidad vendida Lunaris', 'Diferencia', 'Ventas revisadas por contabilidad', 'Motivo diferencia', 'Observaciones'],
         rows: ['Línea 1', 'Línea 2', 'Línea 3', 'Línea 4', 'Línea 5'],
       },
       {
@@ -2212,11 +2216,11 @@ export default function OperationalControlPage() {
       map.set(key, existing);
     };
     (canetMovements || [])
-      .filter((movement) => isTransferLikeMovement(movement))
+      .filter((movement) => isTransferOrShipmentMovement(movement))
       .filter((movement) => movementDateInMonth(movement, year, month))
       .forEach((movement) => registerTransferMovement(movement, 'Canet'));
     (huarteMovements || [])
-      .filter((movement) => isTransferLikeMovement(movement))
+      .filter((movement) => isTransferOrShipmentMovement(movement))
       .filter((movement) => movementDateInMonth(movement, year, month))
       .forEach((movement) => registerTransferMovement(movement, 'Huarte'));
     return Array.from(map.values()).sort((a, b) => (
@@ -2329,7 +2333,7 @@ export default function OperationalControlPage() {
       documents: Set<string>;
     }>();
     const pushMovement = (movement: InventoryMovementRow, fallbackInventory: string) => {
-      if (!isMonthlyOutputMovement(movement, year, month)) return;
+      if (!isMonthlySaleMovement(movement, year, month)) return;
       const signed = getInventorySignedQuantity(movement as any);
       const quantity = Math.abs(signed);
       const product = operationalProductCode(movement.producto);
@@ -2404,7 +2408,8 @@ export default function OperationalControlPage() {
   const transferTotalsByWarehouse = useMemo(() => {
     const map = new Map<string, number>();
     transferSummaryRows.forEach((row) => {
-      const quantity = row.sent || row.received || row.lunaris;
+      const quantity = row.sent;
+      if (quantity <= 0) return;
       if (row.origin && row.origin !== '-') map.set(row.origin, (map.get(row.origin) || 0) + quantity);
     });
     return Array.from(map.entries())
@@ -2413,7 +2418,7 @@ export default function OperationalControlPage() {
   }, [transferSummaryRows]);
   const automaticFieldValues = useMemo(() => {
     const salesTotal = salesExitSummaryRows.reduce((total, row) => total + row.quantity, 0);
-    const transferTotal = transferSummaryRows.reduce((total, row) => total + (row.sent || row.received || row.lunaris), 0);
+    const transferTotal = transferSummaryRows.reduce((total, row) => total + row.sent, 0);
     const totalExits = salesTotal + transferTotal;
     const salesZoho = parseControlNumber(draftFields.ventas_mes_zoho || '');
     const transferZoho = parseControlNumber(draftFields.traspasos_mes_zoho || '');
@@ -2438,8 +2443,8 @@ export default function OperationalControlPage() {
       traspasos_mes_lunaris: String(transferTotal),
       total_salidas_mes_lunaris: String(totalExits),
       devoluciones_mes_lunaris: returnSummary.count > 0 ? `${returnSummary.count} mov. / ${returnSummary.quantity} unidades` : '0',
-      ventas_por_bodega_lunaris: salesTotalsByWarehouse.join('\n') || 'Sin ventas/salidas por venta registradas.',
-      traspasos_por_bodega_lunaris: transferTotalsByWarehouse.join('\n') || 'Sin traspasos registrados.',
+      ventas_por_bodega_lunaris: salesTotalsByWarehouse.join('\n') || 'Sin ventas registradas.',
+      traspasos_por_bodega_lunaris: transferTotalsByWarehouse.join('\n') || 'Sin traspasos o envíos registrados.',
     };
     if (salesZoho !== null) values.diferencia_ventas_mes = String(Math.round(salesZoho - salesTotal));
     if (transferZoho !== null) values.diferencia_traspasos_mes = String(Math.round(transferZoho - transferTotal));
@@ -2824,8 +2829,8 @@ export default function OperationalControlPage() {
       values[fieldKey('ventas_producto_lote', rowLabel, 'Producto')] = row.product;
       values[fieldKey('ventas_producto_lote', rowLabel, 'Lote')] = row.lot;
       values[fieldKey('ventas_producto_lote', rowLabel, 'Inventario')] = row.inventory;
-      values[fieldKey('ventas_producto_lote', rowLabel, 'Cantidad salida Lunaris')] = String(row.quantity);
-      values[fieldKey('ventas_producto_lote', rowLabel, 'Salidas revisadas por contabilidad')] = row.documents.size > 0
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Cantidad vendida Lunaris')] = String(row.quantity);
+      values[fieldKey('ventas_producto_lote', rowLabel, 'Ventas revisadas por contabilidad')] = row.documents.size > 0
         ? `Pendiente de revisar (${row.documents.size} doc(s))`
         : 'Pendiente de revisar';
     });

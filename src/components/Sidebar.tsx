@@ -37,7 +37,6 @@ import { RoleBadge } from './RoleBadge';
 import { SidebarMoodBackground } from './SidebarMoodBackground';
 import { FileUploader, Attachment } from './FileUploader';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
 import { useNotificationsContext } from '../context/NotificationsContext';
 import { useDailyStatus } from '../hooks/useDailyStatus';
 import { useTodos } from '../hooks/useTodos';
@@ -208,7 +207,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
     const {
         notifications
     } = useNotificationsContext();
-    const { theme, toggleTheme } = useTheme();
 
     const { todos } = useTodos(currentUser);
     const { dailyStatuses } = useDailyStatus(currentUser);
@@ -693,22 +691,6 @@ function Sidebar({ isOpen, onClose, isCollapsed, onToggleCollapse, onOpenPasswor
                                                             <FileText size={16} />
                                                             Descargar manual
                                                         </button>
-                                                        <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
-                                                        <div className="px-3 py-2 flex items-center justify-between">
-                                                            <span className="text-xs font-bold text-gray-400 uppercase">Tema</span>
-                                                            <button
-                                                                onClick={toggleTheme}
-                                                                className={`
-                                                                    w-10 h-6 rounded-full transition-colors flex items-center px-1
-                                                                    ${theme === 'dark' ? 'bg-gray-800 border border-gray-600' : 'bg-gray-200'}
-                                                                `}
-                                                            >
-                                                                <motion.div
-                                                                    layout
-                                                                    className="w-4 h-4 bg-white rounded-full shadow-sm"
-                                                                />
-                                                            </button>
-                                                        </div>
                                                         <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
                                                         <button
                                                             onClick={handleLogout}
