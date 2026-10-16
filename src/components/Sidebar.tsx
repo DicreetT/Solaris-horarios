@@ -98,6 +98,7 @@ const commonRoleItems: RoleSidebarItem[] = [
         isActive: (pathname, search) => pathname === '/inventory' && new URLSearchParams(search).get('tab') === 'control_stock',
     },
     { path: '/operaciones-fer?view=solicitud-apoyo', label: 'Solicitud de apoyo', icon: Users },
+    { path: '/shopping', label: 'Compras', icon: ShoppingCart },
     { path: '/folders', label: 'Documentos y recursos', icon: FileText },
 ];
 
@@ -148,7 +149,12 @@ const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
         { path: '/albaranes', label: 'Incidencias producto/lote', icon: AlertCircle },
         { path: '/despachos', label: 'Despachos', icon: Truck },
         { path: '/eventos-inventario', label: 'Evento diario inventario', icon: CalendarClock },
-        { path: '/shopping', label: 'Compras', icon: ShoppingCart },
+        {
+            path: '/facturacion?tab=cash',
+            label: 'Efectivo nave',
+            icon: ReceiptText,
+            isActive: (pathname, search) => pathname === '/facturacion' && new URLSearchParams(search).get('tab') === 'cash',
+        },
         { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
     ],
     heidy: [
@@ -156,7 +162,6 @@ const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
         { path: '/control-operativo', label: 'Control operativo', icon: ClipboardCheck },
         { path: '/eventos-inventario', label: 'Evento inventario', icon: CalendarClock },
         { path: '/facturacion', label: 'Facturación', icon: ReceiptText },
-        { path: '/shopping', label: 'Compras', icon: ShoppingCart },
         { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
         { path: '/finanzas-operativas?view=costes', label: 'Proyectos costes', icon: BriefcaseBusiness },
     ],
@@ -173,6 +178,12 @@ const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
         { path: '/finanzas-operativas?view=promociones', label: 'Cupones y descuentos', icon: Tags },
         { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
         { path: '/eventos-inventario', label: 'Evento diario inventario', icon: CalendarClock },
+        {
+            path: '/facturacion?tab=cash',
+            label: 'Efectivo nave',
+            icon: ReceiptText,
+            isActive: (pathname, search) => pathname === '/facturacion' && new URLSearchParams(search).get('tab') === 'cash',
+        },
         { path: '/operaciones-fer?view=entregables', label: 'Entregables', icon: ClipboardCheck },
         { path: '/operaciones-fer?view=jornada', label: 'Jornada semanal', icon: CalendarClock },
     ],

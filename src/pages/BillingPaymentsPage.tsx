@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -599,6 +600,7 @@ function parsePaymentRequestsFromWorkbook(
 export default function BillingPaymentsPage() {
   const { currentUser } = useAuth();
   const { addNotification } = useNotificationsContext();
+  const location = useLocation();
   const [requests, setRequests, requestsLoading] = useSharedJsonState<PaymentRequest[]>(
     PAYMENT_REQUESTS_KEY,
     [],
@@ -625,7 +627,9 @@ export default function BillingPaymentsPage() {
     },
   );
 
-  const [activeTab, setActiveTab] = useState<'payments' | 'cash'>('payments');
+  const [activeTab, setActiveTab] = useState<'payments' | 'cash'>(() => (
+    new URLSearchParams(location.search).get('tab') === 'cash' ? 'cash' : 'payments'
+  ));
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [manualProvider, setManualProvider] = useState('');
@@ -658,6 +662,10 @@ export default function BillingPaymentsPage() {
   const [editingCashMovementId, setEditingCashMovementId] = useState<string | null>(null);
   const [existingCashFileName, setExistingCashFileName] = useState('');
   const [existingCashFileDataUrl, setExistingCashFileDataUrl] = useState('');
+
+  useEffect(() => {
+    setActiveTab(new URLSearchParams(location.search).get('tab') === 'cash' ? 'cash' : 'payments');
+  }, [location.search]);
 
   const email = clean(currentUser?.email).toLowerCase();
   const isAdmin = !!currentUser?.isAdmin;
