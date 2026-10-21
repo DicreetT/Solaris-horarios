@@ -172,6 +172,7 @@ const roleSpecificSidebarItemsByUser: Record<string, RoleSidebarItem[]> = {
         { path: '/operaciones-fer?view=solicitud-apoyo', label: 'Solicitud de apoyo', icon: Users },
         { path: '/finanzas-operativas?view=informes', label: 'Informes', icon: FileText },
         { path: '/facturacion', label: 'Facturación', icon: ReceiptText },
+        { path: '/despachos', label: 'Despachos', icon: Truck },
         { path: '/formacion-ventas?view=active', label: 'Formaciones activas', icon: BookOpen },
     ],
     fer: [
