@@ -623,7 +623,7 @@ function PromotionsView({
   navigate: (path: string) => void;
 }) {
   return (
-    <section className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+    <section className="grid gap-6 text-slate-950 [color-scheme:light] xl:grid-cols-[420px_minmax(0,1fr)] [&_input]:placeholder:text-slate-500 [&_textarea]:placeholder:text-slate-500">
       <form onSubmit={handleCreatePromotion} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2">
           <Megaphone size={18} className="text-violet-700" />
