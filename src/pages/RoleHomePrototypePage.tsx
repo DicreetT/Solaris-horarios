@@ -2898,7 +2898,7 @@ function WeeklyPersonalAgendaCard({
                     </div>
                   ))}
                   {dayBlocks.length === 0 && daySuggestions.length === 0 && (
-                    <p className="pt-10 text-center text-[11px] font-semibold text-slate-300">Sin fechas</p>
+                    <p className="pt-10 text-center text-[11px] font-semibold text-slate-600">Sin fechas</p>
                   )}
                   {(dayBlocks.length + daySuggestions.length) > 4 && (
                     <p className="text-[10px] font-black text-slate-400">+{dayBlocks.length + daySuggestions.length - 4} más</p>
@@ -3033,7 +3033,7 @@ function DailyAgendaCard({
               onChange={(event) => onChange(hour, event.target.value)}
               onBlur={(event) => onCommitMentions?.(hour, event.target.value)}
               placeholder="Actividad, reunión, foco de trabajo..."
-              className="min-w-0 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none placeholder:text-slate-300"
+              className="min-w-0 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none placeholder:text-slate-500"
             />
           </div>
         ))}

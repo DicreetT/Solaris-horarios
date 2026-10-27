@@ -409,7 +409,7 @@ export default function TimeTrackerWidget({ date = new Date(), showEntries = fal
 
                         {/* Clock Display */}
                         <div className="flex items-center gap-4">
-                            <div className={`${compact ? 'text-3xl' : 'text-5xl'} font-black tracking-tighter font-mono ${hasActiveSession ? 'text-gray-900' : 'text-gray-300'
+                            <div className={`${compact ? 'text-3xl' : 'text-5xl'} font-black tracking-tighter font-mono ${hasActiveSession ? 'text-gray-900' : 'text-gray-600'
                                 }`}>
                                 {elapsedTime}
                             </div>

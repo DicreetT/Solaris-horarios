@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Follow ThemeProvider's explicit theme instead of the operating system. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-primary: var(--primary);
   --color-primary-dark: var(--primary-dark);
@@ -19,6 +22,7 @@
 
 /* Base Themes */
 :root {
+  color-scheme: light;
   --primary: #0F766E;
   --primary-dark: #115E59;
   --primary-light: #14B8A6;
